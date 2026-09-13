@@ -1,10 +1,7 @@
-import { mcpBrokerRequestTimeoutMsFor } from '../mcp/McpBrokerTimeouts'
 import {
-  handleMcpJsonRpcMessage,
-  type McpBridgeAgentRunRoute,
-  type McpToolDefinition
-} from '../mcp/McpBridgeRuntime'
-import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
+  createInProcessMcpDispatch,
+  type InProcessMcpDispatchTimeout
+} from '../mcp/InProcessMcpDispatch'
 import {
   isGatewayV13DirectTaskWraithMcpProfile,
   isMeshCanvasDirectTaskWraithMcpProfile,
@@ -13,12 +10,10 @@ import {
   isSoloTaskWraithMcpProfile,
   isSketchCanvasDirectTaskWraithMcpProfile
 } from '../mcp/McpSessionProfileFence'
-import {
-  MCP_BRIDGE_ENDPOINT_ENV_KEYS,
-  MCP_BRIDGE_PROFILE_ENV_KEYS,
-  MCP_BRIDGE_ROUTE_ENV_KEYS
-} from '../mcp/McpBridgeRoute'
+import type { McpBridgeAgentRunRoute, McpToolDefinition } from '../mcp/McpBridgeRuntime'
+import type { McpBridgeProfileEnvironment } from '../mcp/McpBridgeRoute'
 import type { TaskWraithMcpProfileId } from '../store/types'
+export type KimiMcpDispatchTimeout = InProcessMcpDispatchTimeout
 
 export interface KimiMcpDispatchOptions {
   route: McpBridgeAgentRunRoute
@@ -37,157 +32,43 @@ export interface KimiMcpDispatchOptions {
   onDispatchTimeout?: (input: KimiMcpDispatchTimeout) => void | Promise<void>
 }
 
-export interface KimiMcpDispatchTimeout {
-  appRunId?: string
-  appChatId?: string
-  requestId: string | number | null
-  toolName?: string
-}
-
-/**
- * Kimi's HTTP bridge runs in the Electron process, so inheriting its ambient
- * environment would let a stale provider launch widen or otherwise alter this
- * run's catalogue. Keep every bridge route and profile selector explicit here;
- * this mirrors the complete-zeroes posture of the stdio route builder.
- */
-function buildKimiMcpDispatchEnvironment(options: KimiMcpDispatchOptions): NodeJS.ProcessEnv {
-  const portableEnsembleControl = isPortableEnsembleControlMcpProfile(
-    options.taskWraithMcpProfileId
-  )
-  const soloSubset = isSoloTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-  const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-  const meshTopologyDirect = isMeshTopologyDirectTaskWraithMcpProfile(
-    options.taskWraithMcpProfileId
-  )
-  const sketchDirect = isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-  const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(options.taskWraithMcpProfileId)
-
+function kimiMcpDispatchProfile(options: KimiMcpDispatchOptions): McpBridgeProfileEnvironment {
   return {
-    // This legacy opt-in is not consumed by the bridge, but must not leak as a
-    // profile hint to code subsequently reached from the in-process dispatch.
-    TASKWRAITH_CORE_MCP_PROFILE: '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.safeSubset]: '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.planSubset]: '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.coreSubset]: '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.gatewaySubset]: '1',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]: soloSubset ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.portableEnsembleControl]: portableEnsembleControl ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshDirect]: meshDirect ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]: meshTopologyDirect ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.sketchDirect]: sketchDirect ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]: orchestrationDirect ? '1' : '0',
-    [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: options.auditSubset ? '1' : '0',
-    [MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]: 'kimi',
-    [MCP_BRIDGE_ROUTE_ENV_KEYS.runId]: options.route.appRunId || '',
-    [MCP_BRIDGE_ROUTE_ENV_KEYS.chatId]: options.route.appChatId || '',
-    [MCP_BRIDGE_ROUTE_ENV_KEYS.workspacePath]: options.workspace || '',
-    // Kimi dispatches directly to Electron main rather than a socket bridge.
-    // Explicit blank values prevent an inherited endpoint/profile from becoming
-    // ambient authority if this adapter later shares more runtime plumbing.
-    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.socketPath]: '',
-    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.brokerToken]: '',
-    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.instanceEpoch]: options.instanceEpoch,
-    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.bridgeLogEpoch]: '0',
-    [MCP_BRIDGE_ENDPOINT_ENV_KEYS.isolatedInstanceId]: ''
+    // Preserve the historical Kimi in-process profile exactly: Kimi always
+    // enters through the gateway catalogue, with optional newer direct surfaces.
+    safeSubset: false,
+    planSubset: false,
+    coreSubset: false,
+    gatewaySubset: true,
+    soloSubset: isSoloTaskWraithMcpProfile(options.taskWraithMcpProfileId),
+    portableEnsembleControl: isPortableEnsembleControlMcpProfile(options.taskWraithMcpProfileId),
+    meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId),
+    meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId),
+    sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(options.taskWraithMcpProfileId),
+    orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(options.taskWraithMcpProfileId),
+    permissionOpportunityDirect: false,
+    auditSubset: options.auditSubset === true
   }
 }
 
 /**
- * Adapt Kimi Code's per-run HTTP MCP transport to TaskWraith's shared MCP
- * catalogue/call guard. The final broker hop stays in-process: the HTTP server
- * already runs in the Electron main process, so sending the request back out
- * through the Unix socket only adds a second transport that can go stale.
+ * Kimi's HTTP bridge runs in Electron main, so it must receive a complete
+ * explicit route/profile rather than inherit ambient MCP selectors.
  */
 export function createKimiMcpDispatch(
   options: KimiMcpDispatchOptions
 ): (message: Record<string, unknown>) => Promise<Record<string, unknown> | null> {
-  const deps = {
-    getDefaultSocketPath: () => 'in-process://kimi',
-    getAppVersion: () => options.appVersion,
+  return createInProcessMcpDispatch({
+    parentProvider: 'kimi',
+    route: options.route,
+    profile: kimiMcpDispatchProfile(options),
+    workspace: options.workspace,
+    appVersion: options.appVersion,
+    brokerToken: options.brokerToken,
+    instanceEpoch: options.instanceEpoch,
     getMcpToolDefinitions: options.getMcpToolDefinitions,
-    brokerRequest: (_socketPath: string, request: unknown) =>
-      options.dispatchBrokerRequest(request),
-    env: buildKimiMcpDispatchEnvironment(options)
-  }
-
-  return (message) =>
-    new Promise((resolve) => {
-      if (typeof message.method === 'string' && message.method.startsWith('notifications/')) {
-        resolve(null)
-        return
-      }
-
-      let settled = false
-      let timeout: NodeJS.Timeout | null = null
-      const finish = (value: Record<string, unknown> | null): void => {
-        if (settled) return
-        settled = true
-        if (timeout) clearTimeout(timeout)
-        resolve(value)
-      }
-      const writer = {
-        write: (line: string) => {
-          try {
-            finish(JSON.parse(String(line).trim()))
-          } catch {
-            finish(null)
-          }
-          return true
-        }
-      } as unknown as NodeJS.WriteStream
-
-      try {
-        handleMcpJsonRpcMessage(
-          { ...deps, stdout: writer },
-          'in-process://kimi',
-          options.brokerToken,
-          message,
-          'line'
-        )
-      } catch {
-        finish(mcpUnexpectedInternalError(message.id))
-      }
-
-      if (!settled) {
-        timeout = setTimeout(
-          () => {
-            const params =
-              message.params && typeof message.params === 'object' && !Array.isArray(message.params)
-                ? (message.params as Record<string, unknown>)
-                : null
-            void (async () => {
-              try {
-                await options.onDispatchTimeout?.({
-                  ...(options.route.appRunId ? { appRunId: options.route.appRunId } : {}),
-                  ...(options.route.appChatId ? { appChatId: options.route.appChatId } : {}),
-                  requestId:
-                    typeof message.id === 'string' || typeof message.id === 'number'
-                      ? message.id
-                      : null,
-                  ...(message.method === 'tools/call' && typeof params?.name === 'string'
-                    ? { toolName: params.name }
-                    : {})
-                })
-              } catch {
-                // Cancellation failure is not settlement evidence. Keep the
-                // dispatch pending so the terminal watchdog remains fail closed.
-                return
-              }
-              finish({
-                jsonrpc: '2.0',
-                id: message.id ?? null,
-                error: { code: -32000, message: 'TaskWraith MCP dispatch timed out.' }
-              })
-            })()
-          },
-          // Match the stdio broker's approval-aware request budget (tool-aware:
-          // long-poll tools like ensemble_await get their clamp ceiling +
-          // grace). Kimi's normal approval window is longer than 30s; resolving
-          // earlier leaves the host mutation running and encourages the model
-          // to retry, which can duplicate a roster import after the first call
-          // eventually wins.
-          options.timeoutMs ?? mcpBrokerRequestTimeoutMsFor(message)
-        )
-      }
-    })
+    dispatchBrokerRequest: options.dispatchBrokerRequest,
+    ...(options.timeoutMs !== undefined ? { timeoutMs: options.timeoutMs } : {}),
+    ...(options.onDispatchTimeout ? { onDispatchTimeout: options.onDispatchTimeout } : {})
+  })
 }

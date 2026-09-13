@@ -36,6 +36,7 @@ import {
   createAcpTurnAbortController,
   runAcpTurn,
   type AcpChildProcess,
+  type AcpMcpServerSelectionResult,
   type AcpSessionConfigSelection,
   type AcpSteerPromptContext,
   type AcpToolRecoveryContext,
@@ -52,6 +53,7 @@ import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import type { EffectiveRunPermissions } from '../store/types'
 import { runMistralAcknowledgedTurn } from './MistralIntroduction'
 import { withMistralProgressSteer } from './MistralLongTurnProgress'
+import { redactMistralMcpTransportText } from './MistralMcpTransport'
 import {
   mistralPermissionRefusalText,
   type MistralPermissionDecision,
@@ -357,14 +359,19 @@ export interface MistralAcpRunOptions {
   /** Spawns `vibe-acp` (injected for testability). */
   spawnProcess: () => AcpChildProcess
   /**
-   * MCP servers advertised to session/new. vibe-acp accepts stdio servers
-   * directly — its session/new signature takes
-   * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]` — so
-   * this seat uses the Grok-style direct path and needs no loopback HTTP bridge.
+   * MCP servers advertised to session/new. vibe-acp accepts HTTP and stdio
+   * servers directly — its session/new signature takes
+   * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]`.
    * The ACP McpServer enum is UNTAGGED: do not add a `type: 'stdio'` discriminator,
    * which matches no variant and produces a -32602 that hangs the turn.
    */
   mcpServers?: unknown[]
+  /** Choose HTTP versus a safe stdio fallback from the runtime's initialize response. */
+  selectMcpServers?: (
+    initializeResult: unknown,
+    configuredMcpServers: readonly unknown[],
+    prompt: string
+  ) => AcpMcpServerSelectionResult | Promise<AcpMcpServerSelectionResult>
   /**
    * Config selections applied to the fresh session after `session/new` and
    * before the prompt.
@@ -384,6 +391,11 @@ export interface MistralAcpRunOptions {
    */
   sessionConfigOptions?: ReadonlyArray<AcpSessionConfigSelection>
   onEvent: (event: NormalizedGrokRunEvent) => void
+  /** Exact working-phase prompt after transport selection and fallback repair. */
+  onWirePrompt?: (
+    text: string,
+    selected?: { sessionId: string; kind: 'initial' | 'retry' | 'steer' }
+  ) => void
   /** Exact notification after every tool in one parallel ACP batch settles. */
   onToolBatchBoundary?: () => void
   onProcess?: (child: AcpChildProcess) => void
@@ -562,6 +574,7 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     spawnProcess: options.spawnProcess,
     initializeParams: buildMistralInitializeParams(options.appVersion),
     mcpServers: options.mcpServers,
+    selectMcpServers: options.selectMcpServers,
     // Fresh-session lane only. `resumeConfigOptions` is deliberately NOT set:
     // this seat opens a new session every turn (mistralSeatSessionsEnabled() is
     // hard-disabled), so there is never a persisted provider-side selection to
@@ -569,6 +582,10 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
     sessionConfigOptions: options.sessionConfigOptions,
     formatSteerPrompt: formatMistralSteerPrompt,
     onEvent: (event) => {
+      if (event.type === 'provider_warning' && event.text) {
+        options.onEvent({ ...event, text: redactMistralMcpTransportText(event.text) })
+        return
+      }
       const refusal =
         event.type === 'tool_result' && event.toolId ? refusals.get(event.toolId) : undefined
       if (refusal && event.toolStatus === 'error') {
@@ -583,6 +600,7 @@ function runMistralWorkingTurn(options: MistralAcpRunOptions): MistralAcpRunHand
       }
     },
     onToolBatchBoundary: options.onToolBatchBoundary,
+    onWirePrompt: options.onWirePrompt,
     onProcess: options.onProcess,
     onPermissionRequest: options.onPermissionRequest
       ? async (request) => {

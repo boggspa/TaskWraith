@@ -139,6 +139,10 @@ import { shellSandboxEnabled } from './shellSandboxGate'
 import { resolveShellSandboxPlan, type ShellSandboxPlan } from './shell-sandbox/ShellSandboxProfile'
 import { startKimiHttpMcpBridge, type KimiHttpMcpBridgeHandle } from './kimi/KimiHttpMcpBridge'
 import { createKimiMcpDispatch, type KimiMcpDispatchTimeout } from './kimi/KimiMcpDispatch'
+import {
+  createInProcessMcpDispatch,
+  type InProcessMcpDispatchTimeout
+} from './mcp/InProcessMcpDispatch'
 import { flushKimiThinkingChunks, queueKimiThinkingChunk } from './kimi/KimiThinkingBatcher'
 import {
   detectKimiManagedAuthState,
@@ -187,7 +191,11 @@ import {
   kimiMeshArgumentsFromAcpToolCall
 } from './kimi/KimiMeshApprovalRelay'
 import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from '../host-shared/KimiAcpUsage'
-import { createAcpTurnAbortController, type AcpSessionConfigSelection } from './acp/AcpTurnClient'
+import {
+  createAcpTurnAbortController,
+  type AcpMcpServerSelectionResult,
+  type AcpSessionConfigSelection
+} from './acp/AcpTurnClient'
 import type {
   CodexRunState,
   GeminiToolContext,
@@ -1750,6 +1758,15 @@ import {
 } from './mistral/MistralCliArgs'
 import { resolveMistralCredentialLaunch } from './mistral/MistralCredentialLane'
 import { createMistralTurnAbortController, runMistralAcpTurn } from './mistral/MistralAcpClient'
+import {
+  isMistralMcpUnavailableWarning,
+  mistralAcpMcpSelectionForTransport,
+  redactMistralMcpTransportSecrets,
+  redactMistralMcpTransportText,
+  selectMistralMcpTransport,
+  startMistralHttpMcpTransport,
+  type MistralHttpMcpTransportHandle
+} from './mistral/MistralMcpTransport'
 import { createMistralPermissionHandler, mistralPermissionLedgerRecord } from './mistral/MistralPermissionPolicy'
 import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
@@ -3982,6 +3999,9 @@ function cancelAbandonedBrokerHostCommands(
 
 function cancelTimedOutKimiHostCommands(input: KimiMcpDispatchTimeout): Promise<void> {
   return cancelHostCommandsForRun(input.appRunId, 'kimi-mcp-dispatch-timeout')
+}
+function cancelTimedOutMistralHostCommands(input: InProcessMcpDispatchTimeout): Promise<void> {
+  return cancelHostCommandsForRun(input.appRunId, 'mistral-mcp-dispatch-timeout')
 }
 interface ProviderDispatchReservation {
   authority: HistoryClearDispatchAuthority
@@ -25356,7 +25376,8 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
     const stopReason = normalizeGrokStopReason(evt.status)
     if (stopReason !== 'success') state.grokStopReason = stopReason
   } else if (evt.type === 'provider_warning' && evt.text) {
-    if (isMistralRateLimitText(evt.text)) {
+    const warningText = redactMistralMcpTransportText(evt.text)
+    if (isMistralRateLimitText(warningText)) {
       // Retain the RAW text as the classifier's input, but never let it reach
       // the transcript verbatim: "Rate limit exceeded. Please wait a moment
       // before trying again." reads as a monthly wall, and most of the time it
@@ -25366,8 +25387,8 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       // mid-turn on a run which then finishes would otherwise be invisible, and
       // a silently-throttled turn that simply took two minutes is exactly the
       // experience this seat's classifier exists to explain.
-      mistralLimitStopEvidence.set(state, evt.text)
-      const verdict = classifyMistralLimit({ errorText: evt.text, consecutiveAttempts: 0 })
+      mistralLimitStopEvidence.set(state, warningText)
+      const verdict = classifyMistralLimit({ errorText: warningText, consecutiveAttempts: 0 })
       sendAgentCompatLine(
         state.sender,
         'mistral',
@@ -25382,7 +25403,22 @@ function applyMistralRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
       )
       return
     }
-    sendAgentCompatError(state.sender, 'mistral', evt.text, state)
+    if (isMistralMcpUnavailableWarning(warningText)) {
+      sendAgentCompatLine(
+        state.sender,
+        'mistral',
+        {
+          type: 'provider_warning',
+          provider: 'mistral',
+          severity: 'warning',
+          title: 'Mistral MCP bridge unavailable',
+          message: warningText
+        },
+        state
+      )
+      return
+    }
+    sendAgentCompatError(state.sender, 'mistral', warningText, state)
   }
 }
 
@@ -25397,7 +25433,7 @@ function maybeLogMistralRawAcp(direction: 'in' | 'out', message: unknown): void 
   if (flag !== '1' && flag !== 'true' && flag !== 'yes') return
   let serialized = ''
   try {
-    serialized = JSON.stringify(message)
+    serialized = JSON.stringify(redactMistralMcpTransportSecrets(message))
   } catch {
     return
   }
@@ -25662,19 +25698,28 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // that, this default and the run-management declaration for `mistral` must
   // change together.
   let mistralMcpServers: unknown[] = []
+  let mistralSelectMcpServers:
+    | ((
+        initializeResult: unknown,
+        configuredMcpServers: readonly unknown[],
+        prompt: string
+      ) => AcpMcpServerSelectionResult | Promise<AcpMcpServerSelectionResult>)
+    | undefined
+  let mistralHttpMcpTransport: MistralHttpMcpTransportHandle | null = null
+  const closeMistralHttpMcpTransport = async (): Promise<void> => {
+    const transport = mistralHttpMcpTransport
+    mistralHttpMcpTransport = null
+    await transport?.close()
+  }
   const mistralWriteSeat = mistralWriteCapable(payload.approvalMode)
   const mistralReadOnlySeat = !mistralWriteSeat
   const mistralAdvertiseTaskWraithMcp =
     payload.taskWraithMcpAdvertised === true && mistralMcpAdvertiseEnabled()
   if (mistralAdvertiseTaskWraithMcp) {
     try {
-      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-      if (!bridgeCommandStatus.available) {
-        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
-      }
-      await mcpBridgeRuntime.startGeminiMcpBroker()
       if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
         settleDeniedProviderTransportLaunch(route)
+        await closeMistralHttpMcpTransport()
         mistralTransportClose.markTransportClosed()
         await mistralTransportOperation
         return
@@ -25687,32 +25732,47 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       const mistralAuditRun = Boolean(payload.auditRun)
       const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
       const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const mistralBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-        safeSubset,
-        planSubset: mistralPlanSeat,
-        coreSubset,
-        gatewaySubset,
-        portableEnsembleControl: isPortableEnsembleControlMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
-        meshDirect: isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        meshTopologyDirect: isMeshTopologyDirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        ),
-        sketchDirect: isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        orchestrationDirect: isGatewayV13DirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        soloSubset: isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-        permissionOpportunityDirect: isPermissionOpportunityDirectTaskWraithMcpProfile(
-          payload.taskWraithMcpProfileId
-        )
-      })
-      mistralMcpServers = [
-        {
-          // ACP McpServer is an UNTAGGED enum: the stdio variant is
-          // {name, command, args, env} with NO `type` field and env REQUIRED. A
-          // stray `type:'stdio'` matches no variant and produces a -32602 that
-          // also hangs the turn. env carries the routing identity in the ACP
-          // EnvVariable shape ({name,value}) so broker calls map to THIS run.
+      const portableEnsembleControl = isPortableEnsembleControlMcpProfile(
+        payload.taskWraithMcpProfileId
+      )
+      const meshDirect = isMeshCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const meshTopologyDirect = isMeshTopologyDirectTaskWraithMcpProfile(
+        payload.taskWraithMcpProfileId
+      )
+      const sketchDirect = isSketchCanvasDirectTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const orchestrationDirect = isGatewayV13DirectTaskWraithMcpProfile(
+        payload.taskWraithMcpProfileId
+      )
+      const soloSubset = isSoloTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const permissionOpportunityDirect = isPermissionOpportunityDirectTaskWraithMcpProfile(
+        payload.taskWraithMcpProfileId
+      )
+      const getStdioServer = async (): Promise<unknown | null> => {
+        if (!providerTransportLaunchAuthorized('mistral', payload, route)) return null
+        try {
+          await mcpBridgeRuntime.startGeminiMcpBroker()
+        } catch {
+          return null
+        }
+        if (!providerTransportLaunchAuthorized('mistral', payload, route)) return null
+        const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+        if (!bridgeCommandStatus.available) return null
+        const mistralBridgeArgs = taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+          safeSubset,
+          planSubset: mistralPlanSeat,
+          coreSubset,
+          gatewaySubset,
+          portableEnsembleControl,
+          meshDirect,
+          meshTopologyDirect,
+          sketchDirect,
+          orchestrationDirect,
+          soloSubset,
+          permissionOpportunityDirect
+        })
+        return {
+          // ACP's stdio variant is untagged; `type: 'stdio'` is invalid. This
+          // compatibility route is resolved lazily only when HTTP is unsupported.
           name: safeSubset ? MISTRAL_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
           command: bridgeCommandStatus.command,
           args: mistralAuditRun
@@ -25730,8 +25790,67 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
             ...(mistralAuditRun ? [{ name: 'TASKWRAITH_MCP_AUDIT', value: '1' }] : [])
           ]
         }
-      ]
+      }
+      let httpTransportSetupFailed = false
+      try {
+        mistralHttpMcpTransport = await startMistralHttpMcpTransport({
+          serverName: safeSubset ? MISTRAL_SCOPED_MCP_SERVER_NAME : GEMINI_MCP_SERVER_NAME,
+          dispatch: createInProcessMcpDispatch({
+            parentProvider: 'mistral',
+            route,
+            profile: {
+              safeSubset,
+              planSubset: mistralPlanSeat,
+              coreSubset,
+              gatewaySubset,
+              portableEnsembleControl,
+              meshDirect,
+              meshTopologyDirect,
+              sketchDirect,
+              orchestrationDirect,
+              soloSubset,
+              permissionOpportunityDirect,
+              auditSubset: mistralAuditRun
+            },
+            workspace: payload.scope === 'global' ? undefined : payload.workspace,
+            appVersion: mistralAppVersion,
+            brokerToken: geminiMcpBrokerToken,
+            instanceEpoch,
+            getMcpToolDefinitions: () => mcpToolDefinitions(),
+            dispatchBrokerRequest: (request) =>
+              mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request),
+            onDispatchTimeout: cancelTimedOutMistralHostCommands
+          }),
+          getStdioServer
+        })
+      } catch {
+        httpTransportSetupFailed = true
+      }
+      mistralSelectMcpServers = async (initializeResult, _configuredMcpServers, prompt) => {
+        let selection
+        try {
+          selection = mistralHttpMcpTransport
+            ? await mistralHttpMcpTransport.selectMcpTransport(initializeResult)
+            : await selectMistralMcpTransport({ initializeResult, getStdioServer })
+        } catch {
+          selection = { transport: 'none' as const, servers: [], reason: 'http-unavailable' as const }
+        }
+        if (selection.transport !== 'none') return selection.servers
+        payload.taskWraithMcpAdvertised = false
+        state.taskWraithMcpAdvertised = false
+        return mistralAcpMcpSelectionForTransport({
+          selection,
+          prompt,
+          sanitizePrompt: (value) =>
+            sanitizeTaskWraithMcpPromptClaims(value, {
+              advertised: false,
+              coreProfile: false
+            }),
+          httpTransportSetupFailed
+        })
+      }
     } catch (error) {
+      await closeMistralHttpMcpTransport()
       // Broker failed to start → no tools (safe). The turn still runs, toolless,
       // and the prompt's tool claims are stripped so it does not promise a
       // capability that is not attached.
@@ -26000,7 +26119,15 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
               (finalFailed ? 'failed' : 'completed')
           )
         } finally {
-          mistralTransportClose.markTransportClosed()
+          void closeMistralHttpMcpTransport()
+            .catch((error) => {
+              try {
+                console.error('[mistral-mcp] HTTP transport cleanup failed', error)
+              } catch {
+                // Exact transport settlement still occurs below.
+              }
+            })
+            .finally(() => mistralTransportClose.markTransportClosed())
         }
       }
     }
@@ -26012,27 +26139,19 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
   // Read-only seats get the recon steer (answer from reads rather than
   // attempting a write the host will refuse); write seats get the write steer.
   mistralProviderPrompt = applyMistralPromptPreamble(payload.prompt, mistralWriteSeat)
-  // Vibe ACP opens a fresh session each turn — no resume swap can change this.
-  emitWirePromptCapture({
-    appRunId: route.appRunId,
-    appChatId: route.appChatId,
-    provider: 'mistral',
-    transport: 'mistral-vibe-acp',
-    part: 'user',
-    text: mistralProviderPrompt,
-    transforms: [mistralWriteSeat ? 'mistral write-mode preamble' : 'mistral read-only preamble']
-  })
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are
   // pending; never spawn a fresh ACP child after its exact authority is gone.
   if (!providerTransportLaunchAuthorized('mistral', payload, route)) {
     settleDeniedProviderTransportLaunch(route)
+    await closeMistralHttpMcpTransport()
     mistralTransportClose.markTransportClosed()
     await mistralTransportOperation
     return
   }
 
   let mistralAcpHandle: ReturnType<typeof runMistralAcpTurn>
+  let mistralWirePromptAttempt = 0
   try {
     mistralAcpHandle = runMistralAcpTurn({
       prompt: mistralProviderPrompt,
@@ -26042,6 +26161,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       // reach Mistral; pre-checked above, and this catch is the backstop.
       appVersion: mistralAppVersion,
       mcpServers: mistralMcpServers,
+      selectMcpServers: mistralSelectMcpServers,
       sessionConfigOptions: mistralSessionConfigOptions,
       spawnProcess: mistralSpawnAcpProcess,
       onProcess: (child) => {
@@ -26058,6 +26178,25 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           workspacePath: payload.workspace
         }, request, denial)
       ),
+      onWirePrompt: (text, selected) => {
+        mistralWirePromptAttempt += 1
+        if (!selected || selected.kind === 'initial') mistralProviderPrompt = text
+        emitWirePromptCapture({
+          appRunId: route.appRunId,
+          appChatId: route.appChatId,
+          provider: 'mistral',
+          providerSessionId: selected?.sessionId,
+          promptKind: selected?.kind,
+          transport: 'mistral-vibe-acp',
+          part: 'user',
+          text,
+          attempt: mistralWirePromptAttempt,
+          transforms: [
+            mistralWriteSeat ? 'mistral write-mode preamble' : 'mistral read-only preamble',
+            ...(mistralSelectMcpServers ? ['post-initialize MCP transport selection'] : [])
+          ]
+        })
+      },
       onEvent: (evt) => applyMistralRunEvent(state, evt),
       onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),

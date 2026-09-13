@@ -578,6 +578,69 @@ const sessionReady = (child: FakeAcpChild): void => {
   child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
 }
 
+it('redacts an echoed HTTP bearer from ACP lifecycle error data before projection', async () => {
+  const child = new FakeAcpChild()
+  const events: NormalizedGrokRunEvent[] = []
+  const handle = runMistralAcpTurn({
+    skipIntroduction: true,
+    prompt: 'inspect the workspace',
+    cwd: '/tmp/workspace',
+    appVersion: '1.9.8-test',
+    spawnProcess: () => child,
+    onEvent: (event) => events.push(event)
+  })
+  child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+  await vi.waitFor(() =>
+    expect(child.sent().some((message) => message.method === 'session/new')).toBe(true)
+  )
+  child.emit({
+    jsonrpc: '2.0',
+    id: 2,
+    error: {
+      code: -32602,
+      message: 'MCP setup failed',
+      data: 'Authorization rejected: Bearer private-echo-token'
+    }
+  })
+  await handle.closed
+
+  const warning = events.find((event) => event.type === 'provider_warning')?.text || ''
+  expect(warning).toContain('MCP setup failed')
+  expect(warning).toContain('Bearer [redacted-token]')
+  expect(warning).not.toContain('private-echo-token')
+})
+
+it('reports the actual post-selection prompt at the working wire boundary', async () => {
+  const child = new FakeAcpChild()
+  const onWirePrompt = vi.fn()
+  const handle = runMistralAcpTurn({
+    skipIntroduction: true,
+    prompt: 'prompt with MCP claims',
+    cwd: '/tmp/workspace',
+    appVersion: '1.9.8-test',
+    spawnProcess: () => child,
+    selectMcpServers: () => ({
+      servers: [],
+      transformPrompt: (prompt) => prompt.replace('with MCP claims', 'without MCP claims')
+    }),
+    onWirePrompt,
+    onEvent: () => {}
+  })
+  child.emit({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } })
+  await vi.waitFor(() =>
+    expect(child.sent().some((message) => message.method === 'session/new')).toBe(true)
+  )
+  child.emit({ jsonrpc: '2.0', id: 2, result: { sessionId: 'session-1' } })
+  await vi.waitFor(() => expect(onWirePrompt).toHaveBeenCalledOnce())
+  expect(onWirePrompt).toHaveBeenCalledWith('prompt without MCP claims', {
+    sessionId: 'session-1',
+    kind: 'initial'
+  })
+
+  handle.cancel()
+  await handle.closed
+})
+
 describe('Mistral opening-to-work adapter', () => {
   it('keeps model selection and the working MCP route while the private terminal stays private', async () => {
     const children: FakeAcpChild[] = []

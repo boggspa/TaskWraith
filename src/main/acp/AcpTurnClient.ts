@@ -124,6 +124,24 @@ export interface AcpSessionPromptContext {
   prompt: string
 }
 
+export interface AcpMcpServerSelection {
+  servers: readonly unknown[]
+  /** Provider-visible replacement applied before the first session prompt. */
+  prompt?: string
+  /** Reapply a transport-aware repair when resume falls back to a fresh prompt. */
+  transformPrompt?: (prompt: string) => string
+  /** Visible transport diagnosis emitted before session creation. */
+  warning?: string
+}
+
+export type AcpMcpServerSelectionResult = readonly unknown[] | AcpMcpServerSelection
+
+function isStructuredAcpMcpServerSelection(
+  selection: AcpMcpServerSelectionResult
+): selection is AcpMcpServerSelection {
+  return !Array.isArray(selection)
+}
+
 export type AcpSessionPromptPreparation =
   | { status: 'ready'; prompt?: string }
   | { status: 'recover' | 'blocked'; message: string }
@@ -216,6 +234,16 @@ export interface AcpTurnOptions {
   initializeParams: Record<string, unknown>
   /** MCP servers advertised to session/new (per-run TaskWraith bridge). */
   mcpServers?: unknown[]
+  /**
+   * Select the MCP transport after the agent's real initialize response. Absent
+   * keeps `mcpServers` byte-compatible. A selector failure fails closed to no
+   * servers instead of guessing a transport the runtime may not support.
+   */
+  selectMcpServers?: (
+    initializeResult: unknown,
+    configuredMcpServers: readonly unknown[],
+    prompt: string
+  ) => AcpMcpServerSelectionResult | Promise<AcpMcpServerSelectionResult>
   /**
    * Called after session/resume succeeds and before config/prompt. Resolve
    * true to keep the resumed session; false to abandon it and mint a fresh
@@ -719,6 +747,9 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   let resumeRpcSent = false
   let fallbackFromResume = false
   let promptForTurn = options.prompt
+  let selectedMcpServers: readonly unknown[] = options.mcpServers ?? []
+  let selectedMcpPromptTransform: ((prompt: string) => string) | undefined
+  let mcpSelectionStarted = false
   const initialImagePaths = [...(options.imagePaths ?? [])]
   const readImageFile = options.readImageFile ?? readMainAuthorizedAcpImageFile
   let agentSupportsImagePrompts = false
@@ -1131,11 +1162,23 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
   const sendSessionNew = (isResumeFallback: boolean): void => {
     fallbackFromResume = isResumeFallback
     if (isResumeFallback && typeof options.resumeFallbackPrompt === 'string') {
-      promptForTurn = options.resumeFallbackPrompt
+      try {
+        promptForTurn = selectedMcpPromptTransform
+          ? selectedMcpPromptTransform(options.resumeFallbackPrompt)
+          : options.resumeFallbackPrompt
+      } catch {
+        terminalStatus = 'rpc_error:session/new'
+        options.onEvent({
+          type: 'provider_warning',
+          text: 'ACP MCP prompt repair failed; the fallback session was not opened.'
+        })
+        endProcess()
+        return
+      }
     }
     writeRpc(ACP_ID.sessionNew, 'session/new', {
       cwd: options.cwd,
-      mcpServers: options.mcpServers ?? []
+      mcpServers: selectedMcpServers
     })
   }
 
@@ -1445,6 +1488,91 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
   }
 
+  const continueAfterInitialize = (initializeResult: unknown): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    agentSupportsImagePrompts = agentSupportsPromptImages(initializeResult)
+    if (initialImagePaths.length > 0) {
+      if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
+        failInitialImagePrompt(
+          'the runtime did not advertise agentCapabilities.promptCapabilities.image=true. No image was silently omitted.'
+        )
+        return
+      }
+      if (!agentSupportsImagePrompts) {
+        options.onEvent({
+          type: 'provider_warning',
+          text: 'ACP runtime reported promptCapabilities.image=false; forwarding the verified inline image blocks through the provider compatibility path.'
+        })
+      }
+      try {
+        initialPromptImages = loadMainAuthorizedAcpImageContents(initialImagePaths, readImageFile)
+      } catch (error) {
+        failInitialImagePrompt(
+          `${error instanceof Error ? error.message : String(error)} No image was silently omitted.`
+        )
+        return
+      }
+    }
+    if (resumeRequested && agentSupportsSessionResume(initializeResult)) {
+      resumeRpcSent = true
+      writeRpc(ACP_ID.sessionResume, 'session/resume', {
+        sessionId: requestedResumeSessionId,
+        cwd: options.cwd,
+        mcpServers: selectedMcpServers
+      })
+    } else if (resumeRequested && options.allowResumeFallback === false) {
+      options.onEvent({
+        type: 'provider_warning',
+        text: 'ACP session/resume is not advertised by this provider runtime.'
+      })
+      endProcess()
+    } else {
+      sendSessionNew(resumeRequested)
+    }
+  }
+
+  const applyMcpServerSelection = (
+    selection: AcpMcpServerSelectionResult,
+    initializeResult: unknown
+  ): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    if (isStructuredAcpMcpServerSelection(selection)) {
+      selectedMcpServers = Array.isArray(selection.servers) ? selection.servers : []
+      if (typeof selection.transformPrompt === 'function') {
+        selectedMcpPromptTransform = selection.transformPrompt
+        if (typeof selection.prompt === 'string' && selection.prompt.trim()) {
+          promptForTurn = selection.prompt
+        } else {
+          try {
+            promptForTurn = selection.transformPrompt(promptForTurn)
+          } catch {
+            failMcpServerSelection(initializeResult)
+            return
+          }
+        }
+      } else if (typeof selection.prompt === 'string' && selection.prompt.trim()) {
+        promptForTurn = selection.prompt
+      }
+      if (typeof selection.warning === 'string' && selection.warning.trim()) {
+        options.onEvent({ type: 'provider_warning', text: selection.warning.trim() })
+      }
+    } else {
+      selectedMcpServers = selection
+    }
+    continueAfterInitialize(initializeResult)
+  }
+
+  const failMcpServerSelection = (initializeResult: unknown): void => {
+    if (closed || cancelRequested || stdinClosed) return
+    selectedMcpServers = []
+    selectedMcpPromptTransform = undefined
+    options.onEvent({
+      type: 'provider_warning',
+      text: 'ACP MCP transport selection failed; continuing without advertised MCP servers.'
+    })
+    continueAfterInitialize(initializeResult)
+  }
+
   child.stdout?.on('data', (chunk) => {
     const parsed = parseAcpStreamChunk(chunk.toString(), carry)
     carry = parsed.carry
@@ -1568,48 +1696,30 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         continue
       }
       if (message.id === ACP_ID.initialize && message.result) {
-        agentSupportsImagePrompts = agentSupportsPromptImages(message.result)
-        if (initialImagePaths.length > 0) {
-          if (!agentSupportsImagePrompts && !options.allowUnadvertisedPromptImages) {
-            failInitialImagePrompt(
-              'the runtime did not advertise agentCapabilities.promptCapabilities.image=true. No image was silently omitted.'
-            )
-            continue
-          }
-          if (!agentSupportsImagePrompts) {
-            options.onEvent({
-              type: 'provider_warning',
-              text: 'ACP runtime reported promptCapabilities.image=false; forwarding the verified inline image blocks through the provider compatibility path.'
-            })
-          }
-          try {
-            initialPromptImages = loadMainAuthorizedAcpImageContents(
-              initialImagePaths,
-              readImageFile
-            )
-          } catch (error) {
-            failInitialImagePrompt(
-              `${error instanceof Error ? error.message : String(error)} No image was silently omitted.`
-            )
-            continue
-          }
+        const initializeResult = message.result
+        if (!options.selectMcpServers) {
+          continueAfterInitialize(initializeResult)
+          continue
         }
-        if (resumeRequested && agentSupportsSessionResume(message.result)) {
-          resumeRpcSent = true
-          writeRpc(ACP_ID.sessionResume, 'session/resume', {
-            sessionId: requestedResumeSessionId,
-            cwd: options.cwd,
-            mcpServers: options.mcpServers ?? []
-          })
-        } else if (resumeRequested && options.allowResumeFallback === false) {
-          options.onEvent({
-            type: 'provider_warning',
-            text: 'ACP session/resume is not advertised by this provider runtime.'
-          })
-          endProcess()
-        } else {
-          sendSessionNew(resumeRequested)
+        if (mcpSelectionStarted) continue
+        mcpSelectionStarted = true
+        let selection:
+          | AcpMcpServerSelectionResult
+          | Promise<AcpMcpServerSelectionResult>
+        try {
+          selection = options.selectMcpServers(
+            initializeResult,
+            options.mcpServers ?? [],
+            promptForTurn
+          )
+        } catch {
+          failMcpServerSelection(initializeResult)
+          continue
         }
+        void Promise.resolve(selection).then(
+          (selected) => applyMcpServerSelection(selected, initializeResult),
+          () => failMcpServerSelection(initializeResult)
+        )
         continue
       }
       if (message.id === ACP_ID.sessionNew && message.result) {
