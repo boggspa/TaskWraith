@@ -8,6 +8,7 @@ import type {
   TaskWraithControlThreadSnapshot
 } from '../../shared/taskWraithControlProtocol'
 import { clampTaskWraithControlThreadLimit } from '../../shared/taskWraithControlProjection'
+import { KIMI_K27_MODEL_ID } from '../../shared/kimiModels'
 import {
   hydrateTaskWraithControlThread,
   hydrateTaskWraithControlThreadSnapshot,
@@ -629,7 +630,14 @@ function seedGoldenChats(): void {
     workspaceId: workspace.id,
     workspacePath: workspace.path
   })
-  const first = created.ensemble!.participants[0]!
+  // This fixture is the exact pre-projector history captured in GOLDEN above.
+  // Fresh panels intentionally move with current provider defaults, so freeze
+  // the retired K2.7 seat explicitly rather than letting today's K2.8 seed
+  // rewrite a historical projector input.
+  const historicalParticipants = created.ensemble!.participants.map((participant) =>
+    participant.provider === 'kimi' ? { ...participant, model: KIMI_K27_MODEL_ID } : participant
+  )
+  const first = historicalParticipants[0]!
   const ensemble = {
     ...created,
     appChatId: 'ensemble-live',
@@ -637,6 +645,7 @@ function seedGoldenChats(): void {
     pinnedNotes: 'Remember the deadline',
     ensemble: {
       ...created.ensemble!,
+      participants: historicalParticipants,
       activeRosterPresetId: 'build-review',
       activeRound: {
         roundId: 'round-1',
@@ -644,7 +653,7 @@ function seedGoldenChats(): void {
         prompt: 'before',
         startedAt: iso(NOW - 2 * MINUTE),
         activeParticipantId: first.id,
-        participants: created.ensemble!.participants.map((participant, index) => ({
+        participants: historicalParticipants.map((participant, index) => ({
           participantId: participant.id,
           provider: participant.provider,
           role: participant.role,
