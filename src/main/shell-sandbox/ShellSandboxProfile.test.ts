@@ -158,6 +158,16 @@ describe('resolveShellSandboxPlan — the contained plan', () => {
     }
   })
 
+  // A file-read deny on Keychains makes `security find-identity` report zero
+  // identities with exit 0, which agents misread as missing certs or a Full
+  // Disk Access problem. Keep SSH/TCC denied; do not deny the keychain path.
+  it('does not deny Library/Keychains', () => {
+    const result = plan()
+    if (!result.sandboxed) throw new Error('expected a contained plan')
+    expect(result.profile).not.toContain('/Users/dev/Library/Keychains')
+    expect(SHELL_SANDBOX_DENIED_READ_RELPATHS).not.toContain('Library/Keychains')
+  })
+
   // The agent is already authorized to read the workspace. Denying a path that
   // happens to sit inside it would be a confusing partial refusal, not a boundary.
   it('does not deny a secret path that lives inside the workspace', () => {
@@ -356,6 +366,15 @@ describeLive('sandbox-exec, for real', () => {
     mkdirSync(join(outside, 'home', '.ssh'), { recursive: true })
     writeFileSync(secret, 'PRIVATE KEY')
     expect(run(`cat ${JSON.stringify(secret)}`).status).not.toBe(0)
+  })
+
+  it('allows a read of Library/Keychains under the home denylist', () => {
+    const keychainDir = join(outside, 'home', 'Library', 'Keychains')
+    const keychain = join(keychainDir, 'login.keychain-db')
+    mkdirSync(keychainDir, { recursive: true })
+    writeFileSync(keychain, 'not-a-real-keychain')
+    expect(run(`cat ${JSON.stringify(keychain)}`).status).toBe(0)
+    expect(readFileSync(keychain, 'utf8')).toBe('not-a-real-keychain')
   })
 })
 
