@@ -161,12 +161,12 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
   'scripts/perf/electronChildSession.cjs':
-    '49de84f79099488808cc7575c6169aa380d4fdfbb638df7518e6b5c5993f901c',
+    'dbd48428ce079b99c6f239200ed850c4fc320eff435d87cba7ee796424394264',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
   'scripts/perf/cdpWebSocketSession.cjs':
-    '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01'
+    '3bd5394220bf612bb79dfaf4438b5df8e9a0c72572be4d10abe5cb482a3afbe7'
 })
 const STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS = Object.freeze([
   'build/icon.icns',
@@ -245,11 +245,12 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
  * the false provenance this receipt exists to catch. Update all four together,
  * from one rebuild, or leave every one of them alone.
  *
- * The similarly-shaped pin in `studio-acceptance-harness.test.ts` is a
- * different instrument and moves independently: it measures with
- * `buildReady: false`, which nulls every binary hash, so it detects workspace
- * drift and asserts nothing about provenance. Whoever lands last re-pins that
- * one. The two numbers disagreeing is the expected state, not a bug.
+ * The source-measurement test deliberately does not pin today's mutable
+ * checkout digest. A deterministic fixture proves included-byte sensitivity
+ * and test-source exclusion, while the real launch path compares its measured
+ * tree to this immutable tuple. The support hashes above bind the current
+ * acceptance control plane independently; moving one does not claim that an
+ * old native product was rebuilt from newer source.
  */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
   sourceDigest: '9d000306f0aa7313865bc29b383cd98d151068268338687de02dd4caecc3416d',
@@ -5720,6 +5721,7 @@ module.exports = {
   assertGeneratedSpeechFixtureCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
   assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,

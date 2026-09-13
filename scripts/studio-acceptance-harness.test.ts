@@ -17,6 +17,7 @@ const {
   assertStudioAcceptanceCustody,
   classifyStudioAcceptanceDirt,
   measureStudioAcceptanceCustody,
+  measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
@@ -79,6 +80,9 @@ const {
     options: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  measureStudioAcceptanceSource: (
+    repoRoot: string
+  ) => Promise<{ digest: string; fileCount: number }>
   measureStudioAcceptanceArtifacts: (repoRoot: string) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
@@ -4841,6 +4845,54 @@ describe('Studio acceptance harness', () => {
     })
   })
 
+  it('measures deterministic included source bytes while excluding test source', async () => {
+    const root = await temporaryRoot('studio-acceptance-source-measurement-')
+    const includedFiles: Record<string, string> = {
+      'src/main/product.ts': 'export const product = 1\n',
+      'swift/TaskWraithBridge/Sources/Studio/Studio.swift': 'struct Studio {}\n',
+      'build/icon.icns': 'fixture icon',
+      'electron.vite.config.ts': 'fixture electron config',
+      'package-lock.json': '{}\n',
+      'package.json': '{}\n',
+      'scripts/build-bridge-daemon.cjs': 'fixture bridge build',
+      'scripts/build-studio-companion.cjs': 'fixture companion build',
+      'swift/TaskWraithBridge/Package.swift': 'fixture swift package',
+      'tsconfig.json': '{}\n',
+      'tsconfig.node.json': '{}\n',
+      'tsconfig.web.json': '{}\n'
+    }
+    const excludedTestPath = 'src/main/product.test.ts'
+    const allFiles = { ...includedFiles, [excludedTestPath]: 'test source is excluded\n' }
+    await Promise.all(
+      Object.entries(allFiles).map(async ([relativePath, contents]) => {
+        const absolutePath = path.join(root, relativePath)
+        await fsPromises.mkdir(path.dirname(absolutePath), { recursive: true })
+        await fsPromises.writeFile(absolutePath, contents)
+      })
+    )
+    const expectedEntries = Object.entries(includedFiles)
+      .map(([entryPath, contents]) => ({
+        path: entryPath,
+        sha256: crypto.createHash('sha256').update(contents).digest('hex')
+      }))
+      .sort((left, right) => left.path.localeCompare(right.path))
+    const expectedDigest = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(expectedEntries))
+      .digest('hex')
+
+    const baseline = await measureStudioAcceptanceSource(root)
+    expect(baseline).toEqual({ fileCount: 12, digest: expectedDigest })
+
+    await fsPromises.writeFile(path.join(root, excludedTestPath), 'changed test source\n')
+    expect(await measureStudioAcceptanceSource(root)).toEqual(baseline)
+
+    await fsPromises.writeFile(path.join(root, 'src/main/product.ts'), 'export const product = 2\n')
+    const changed = await measureStudioAcceptanceSource(root)
+    expect(changed.fileCount).toBe(baseline.fileCount)
+    expect(changed.digest).not.toBe(baseline.digest)
+  })
+
   it.runIf(process.platform !== 'win32')('builds the exact resolver-preferred debug products before selecting them', async () => {
     const calls: Array<{ command: string; args: string[]; cwd: string }> = []
     const result = await runStudioAcceptanceBuild({
@@ -4932,7 +4984,7 @@ describe('Studio acceptance harness', () => {
     })
   })
 
-  it('measures the pinned live-build source and support custody from the workspace', async () => {
+  it('measures current source shape and separately pinned support custody from the workspace', async () => {
     const receipt = await measureStudioAcceptanceCustody({
       repoRoot: path.resolve(__dirname, '..'),
       env: {},
@@ -4942,8 +4994,8 @@ describe('Studio acceptance harness', () => {
     expect(receipt).toMatchObject({
       requiredProductAncestor: '4b4c1913acd777277d16ae638c39bae635f1355e',
       productAncestorPresent: true,
-      sourceDigest: '63f2b860f718cb63939b6c403933712bdabd604a2e4f6c0d57987486b1e0b0c0',
-      sourceCount: 2660,
+      sourceDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+      sourceCount: expect.any(Number),
       buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
       buildEnvironmentCount: 0,
       supportMatches: true,
@@ -4954,6 +5006,8 @@ describe('Studio acceptance harness', () => {
       companionSha256: null,
       bridgeDaemonSha256: null
     })
+    expect(Number.isSafeInteger(receipt.sourceCount)).toBe(true)
+    expect(receipt.sourceCount).toBeGreaterThan(0)
     expect(receipt.supportHashes).toEqual(receipt.expectedSupportHashes)
     expect(receipt.runnerSha256).toMatch(/^[a-f0-9]{64}$/)
   }, 30_000)
@@ -5020,6 +5074,14 @@ describe('Studio acceptance harness', () => {
     expect(assertStudioAcceptanceCustody(sourceCustody, { phase: 'source', expected })).toBe(
       sourceCustody
     )
+    expect(() =>
+      assertStudioAcceptanceCustody(sourceCustody, {
+        phase: 'before-run',
+        sourceCustody,
+        fixture,
+        expected
+      })
+    ).toThrow(/built artifact custody is invalid/)
     expect(
       assertStudioAcceptanceCustody(custodyBefore, {
         phase: 'before-run',
