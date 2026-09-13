@@ -46,10 +46,7 @@ describe('ACP image dispatch integration', () => {
     )
     const mistralLaunch = index.callsTo(index.fn('runMistralAcpProvider'), 'runMistralAcpTurn')
     const kimiLaunch = index.callsTo(index.fn('runKimiAcpProvider'), 'runKimiAcpTurn')
-    const compactionLaunch = index.callsTo(
-      index.fn('compactKimiProviderContext'),
-      'runKimiAcpTurn'
-    )
+    const compactionLaunch = index.callsTo(index.fn('compactKimiProviderContext'), 'runKimiAcpTurn')
 
     // Exactly one launch site per lane. A second one is a lane that forked
     // without carrying the image wiring with it.

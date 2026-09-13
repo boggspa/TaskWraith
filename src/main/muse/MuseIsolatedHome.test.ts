@@ -302,7 +302,6 @@ describe('Muse isolated home', () => {
     }
   })
 
-
   it('forwards MUSE_LOG and RUST_LOG when museLogLevel is provided and omits them otherwise', () => {
     const leaseWithLog = createMuseIsolatedHome({
       temporaryRoot: TEMP_ROOT,

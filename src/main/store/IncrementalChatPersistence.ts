@@ -198,7 +198,10 @@ export function createIncrementalChatPersistence(
   /** Appended batches since each chat's last full checkpoint (replay depth). */
   const appendsSinceCheckpointByChatId = new Map<string, number>()
   const noteAppend = (chatId: string): void => {
-    appendsSinceCheckpointByChatId.set(chatId, (appendsSinceCheckpointByChatId.get(chatId) ?? 0) + 1)
+    appendsSinceCheckpointByChatId.set(
+      chatId,
+      (appendsSinceCheckpointByChatId.get(chatId) ?? 0) + 1
+    )
   }
   const noteCheckpoint = (chatId: string): void => {
     appendsSinceCheckpointByChatId.set(chatId, 0)

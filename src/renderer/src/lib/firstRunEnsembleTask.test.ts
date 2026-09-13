@@ -12,9 +12,7 @@ describe('first-run Ensemble task', () => {
     expect(FIRST_RUN_ENSEMBLE_TASK.prompt).toContain('[TaskWraith first-run Ensemble sample]')
     expect(FIRST_RUN_ENSEMBLE_TASK.prompt).toMatch(/read-only exercise/i)
     expect(FIRST_RUN_ENSEMBLE_TASK.prompt).toMatch(/do not edit, create, delete, commit/i)
-    expect(FIRST_RUN_ENSEMBLE_TASK.recommendedSetup.join('\n')).toMatch(
-      /permission preset to Ask/i
-    )
+    expect(FIRST_RUN_ENSEMBLE_TASK.recommendedSetup.join('\n')).toMatch(/permission preset to Ask/i)
     expect(FIRST_RUN_ENSEMBLE_TASK.recommendedSetup.join('\n')).toMatch(
       /prompt cannot set permissions/i
     )

@@ -121,9 +121,7 @@ export function QuotaProgressBar({
   const surfacePace = pace !== null && paceShouldSurface(pace)
   // Pass 1 dash markers: non-finite, null, or < 2 renders nothing.
   const segmentTotal =
-    typeof segmentCount === 'number' && Number.isFinite(segmentCount)
-      ? Math.floor(segmentCount)
-      : 0
+    typeof segmentCount === 'number' && Number.isFinite(segmentCount) ? Math.floor(segmentCount) : 0
   const renderSegments = segmentTotal >= 2 ? segmentTotal : 0
 
   return (

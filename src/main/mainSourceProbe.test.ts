@@ -141,7 +141,7 @@ describe('MainSourceProbe.construction', () => {
 
 describe('MainSourceProbe.binding', () => {
   it('reads a non-function initializer and refuses a missing one', () => {
-    const source = probe("const sandboxPlan = projectionScope?.shellSandbox\n")
+    const source = probe('const sandboxPlan = projectionScope?.shellSandbox\n')
 
     expect(source.text(source.binding('sandboxPlan'))).toBe('projectionScope?.shellSandbox')
     expect(() => source.binding('shellSandbox')).toThrow(/declares no non-function binding/)

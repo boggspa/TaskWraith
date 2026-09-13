@@ -81,8 +81,7 @@ export function seatFromEnsembleMetadata(
   const reasoningEffort = trimmed(snapshot?.reasoningEffort)
   const permissionPresetId = run?.permissionPosture?.signaturePresent
     ? trimmed(run.permissionPosture.presetId)
-    : trimmed(run?.permissionPosture?.presetId) ||
-      trimmed(snapshot?.configuredPermissionPresetId)
+    : trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot?.configuredPermissionPresetId)
   const seatNumber = positiveInt(metadata.ensembleOrder)
   const stageRole = stageRoleOf(metadata.ensembleStageRole)
   // Sibling field rather than part of the snapshot: authority is chat-level,
@@ -151,8 +150,7 @@ export function seatFromChatRun(run: ChatRun | null | undefined): SeatChangeSeat
   // never a matter of not having the authoritative one to hand.
   const permissionPresetId = run?.permissionPosture?.signaturePresent
     ? trimmed(run.permissionPosture.presetId)
-    : trimmed(run?.permissionPosture?.presetId) ||
-      trimmed(snapshot.configuredPermissionPresetId)
+    : trimmed(run?.permissionPosture?.presetId) || trimmed(snapshot.configuredPermissionPresetId)
 
   return {
     provider,

@@ -101,7 +101,7 @@ describe('rendererChatTranscriptMutation', () => {
         transcriptOps: [{ op: 'truncateFrom', id: '' }]
       })
     ).toBeNull()
-      expect(
+    expect(
       parseRendererChatTranscriptMutationRequest({
         ...request,
         // Unknown op must stay rejected. No @ts-expect-error here: the parser

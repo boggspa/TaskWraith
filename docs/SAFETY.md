@@ -114,7 +114,7 @@ false`, and a narrow preload bridge.
   not proven blocked. Prefer project workspaces outside `$HOME` when untrusted
   repos matter.
 - The production Host runs as a standalone pure-Node process (`taskwraith-host
-  serve --mode production`), not inside Electron main; Desktop attaches to it by
+serve --mode production`), not inside Electron main; Desktop attaches to it by
   default (`TASKWRAITH_DESKTOP_EXTERNAL_HOST !== '0'`). Its control surface is a
   Unix domain socket under a `0700` directory, the socket itself at `0600`, with
   a token-authenticated bootstrap. It is not a network listener and must never be

@@ -97,7 +97,7 @@ against a live window. Verify at recapture rather than trusting either state:
   (emulator, browser, mesh viewport) is its own Electron page target, so
   `Page.captureScreenshot` against the renderer returns the dock chrome with a
   blank content area. Two consequences: a CDP driver must select the renderer
-  target explicitly, because the *first* page target is whichever Canvas is open;
+  target explicitly, because the _first_ page target is whichever Canvas is open;
   and any shot needing dock chrome **and** live surface content in one frame has
   to be taken at OS level, not over CDP. **`fromSurface: true` does not fix
   this** — it was tried against a Canvas Browser with `example.com` genuinely

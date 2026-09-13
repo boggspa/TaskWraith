@@ -888,7 +888,9 @@ describe('launchd timer plist', () => {
   })
 
   it('declares the interval the staleness threshold is calibrated against', () => {
-    expect(plist()).toContain(`<key>StartInterval</key><integer>${TIMER_INTERVAL_SECONDS}</integer>`)
+    expect(plist()).toContain(
+      `<key>StartInterval</key><integer>${TIMER_INTERVAL_SECONDS}</integer>`
+    )
   })
 
   it('keeps the staleness threshold a clear multiple of the interval', () => {

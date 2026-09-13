@@ -344,9 +344,9 @@ describe('HostProfileRecordCommandExecutor', () => {
     )
     // A store that did not adopt must not leave the owner-only artifact
     // behind; cleanup is the executor's, best-effort, and idempotent.
-    expect(existsSync(join(profilePath, 'host-thread-record-transfer', 'transfer-handoff-1.record.json'))).toBe(
-      false
-    )
+    expect(
+      existsSync(join(profilePath, 'host-thread-record-transfer', 'transfer-handoff-1.record.json'))
+    ).toBe(false)
   })
 
   it('adopts a stamped-ahead transfer end to end: artifact gone, chat file is the artifact bytes', () => {

@@ -582,7 +582,9 @@ describe('createTaskWraithQuotaSnapshotHook', () => {
     )
   })
 
-  function cliReading(overrides?: Partial<MuseSubscriptionUsageReading>): MuseSubscriptionUsageReading {
+  function cliReading(
+    overrides?: Partial<MuseSubscriptionUsageReading>
+  ): MuseSubscriptionUsageReading {
     return {
       planName: 'Muse Code High Usage',
       hasSubscription: true,

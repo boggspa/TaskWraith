@@ -236,7 +236,9 @@ describe('antigravity reasoning ladder options', () => {
 
 describe('antigravity-acp namespace is stripped for picker labels', () => {
   it('renders the same concrete display name as the bare agy id', () => {
-    expect(antigravityDisplayName('antigravity-acp:gemini-3-flash-high')).toBe('Gemini 3 Flash High')
+    expect(antigravityDisplayName('antigravity-acp:gemini-3-flash-high')).toBe(
+      'Gemini 3 Flash High'
+    )
     expect(antigravityDisplayName('gemini-3-flash-high')).toBe('Gemini 3 Flash High')
     expect(antigravityDisplayName('antigravity-acp:gemini-3.8-flash')).toBe('Gemini 3.8 Flash')
     expect(antigravityDisplayName('gemini-3.8-flash')).toBe('Gemini 3.8 Flash')

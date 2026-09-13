@@ -69,11 +69,7 @@ describe('AntigravityOptInCard', () => {
 
   it('defaults to the preserved legacy CLI transport after consent', () => {
     const html = renderToStaticMarkup(
-      <AntigravityOptInCard
-        enabled
-        acceptedAt={1_769_000_000_000}
-        onChange={() => {}}
-      />
+      <AntigravityOptInCard enabled acceptedAt={1_769_000_000_000} onChange={() => {}} />
     )
 
     expect(html).toContain('Transport (existing CLI preserved)')

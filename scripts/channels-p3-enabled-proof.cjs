@@ -331,11 +331,7 @@ function verifyProtectedBoundary(candidateCommit) {
   for (const [file, expectedCommit] of PROTECTED_BLOB_PINS) {
     assertPinnedBlob(candidateCommit, file, expectedCommit)
   }
-  assertPinnedBlob(
-    candidateCommit,
-    'docs/channels-p3-adversarial-review.md',
-    ACCEPTANCE_COMMIT
-  )
+  assertPinnedBlob(candidateCommit, 'docs/channels-p3-adversarial-review.md', ACCEPTANCE_COMMIT)
   assertPinnedBlob(
     candidateCommit,
     'docs/channels-p3-security-design.md',

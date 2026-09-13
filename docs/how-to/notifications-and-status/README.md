@@ -9,7 +9,6 @@ Overview of in-app and push notifications, health indicators, and status surface
 - [Participant health](./participant-health.md) — ensemble participant status cards
 - [Provider health chips](./provider-health-chips.md) — connectivity/model-load state chips
 
-
 ## Related (cross-links)
 
 - Update status → [Sidebar: Update pill](../sidebar-navigation/update-pill.md)

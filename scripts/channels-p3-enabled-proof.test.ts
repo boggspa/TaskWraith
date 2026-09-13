@@ -210,9 +210,7 @@ describe('Channels P3 enabled proof harness', () => {
     expect(proof.MUSE_ROSTER_REVIEW_COMMIT).toBe('ac6c7a552a074ebfa76e36af4a4a0d97fc90f834')
     expect(proof.MUSE_EFFORT_SOURCE_COMMIT).toBe('c22f159432f8e380fe9ad4b6c66e8140415c72fd')
     expect(proof.MUSE_DELTA_ACCEPTANCE_COMMIT).toBe('aa94e20c4a9e8db3010c15748b19776303d47a5e')
-    expect(proof.SECURITY_DESIGN_CONTENT_COMMIT).toBe(
-      'c2181f2ab32645c02792d880681394622b32e292'
-    )
+    expect(proof.SECURITY_DESIGN_CONTENT_COMMIT).toBe('c2181f2ab32645c02792d880681394622b32e292')
   })
 
   it('runs one real production dispatch and verifies its signed post after restart', () => {

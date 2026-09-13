@@ -386,7 +386,9 @@ describe('runMuseProvider', () => {
     expect(launchPrompt).toContain('say hi')
     expect(launchPrompt).toContain('Do not stop after announcing a plan')
     expect(launchPrompt).toContain('phase-based, not per tool or fixed count')
-    expect(launchPrompt).toContain('not a final answer, question, yield, handoff, or completion signal')
+    expect(launchPrompt).toContain(
+      'not a final answer, question, yield, handoff, or completion signal'
+    )
   })
 
   it('leaves a slash-prefixed Muse prompt on the wire prefix', async () => {

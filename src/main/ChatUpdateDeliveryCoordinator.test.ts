@@ -1062,9 +1062,8 @@ describe('out-of-order producer broadcasts (delegate-wave return burst)', () => 
   })
 
   it('does not put the full messages array on the wire when a baseline drop snapshots an oversized chat', () => {
-    const messages = Array.from(
-      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 },
-      (_, index) => message(`m-${index}`, `row ${index}`)
+    const messages = Array.from({ length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 80 }, (_, index) =>
+      message(`m-${index}`, `row ${index}`)
     )
     const oversized = {
       ...chat(3, ['placeholder']),
