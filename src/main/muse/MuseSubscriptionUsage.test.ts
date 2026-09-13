@@ -136,8 +136,8 @@ describe('parseMuseSubscriptionUsagePanel', () => {
     expect(parseMuseSubscriptionUsagePanel('', '2026-09-03T15:50:00.000Z').hasSubscription).toBe(
       false
     )
-    // @ts-expect-error — defensively accepts non-string at runtime.
     expect(
+      // @ts-expect-error — defensively accepts non-string at runtime.
       parseMuseSubscriptionUsagePanel(undefined, '2026-09-03T15:50:00.000Z').hasSubscription
     ).toBe(false)
   })
