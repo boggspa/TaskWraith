@@ -23,7 +23,7 @@
     "tuiNodeRuntime": {
       "version": "22.23.2",
       "releasedOn": "2026-07-29",
-      "maximumAgeDays": 45
+      "maximumAgeDays": 60
     }
   },
   "scripts": {

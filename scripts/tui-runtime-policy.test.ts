@@ -22,7 +22,7 @@ function packageWithPolicy(overrides: Record<string, unknown> = {}) {
       tuiNodeRuntime: {
         version: '22.23.2',
         releasedOn: '2026-07-29',
-        maximumAgeDays: 45,
+        maximumAgeDays: 60,
         ...overrides
       }
     }
@@ -51,8 +51,8 @@ describe('TUI Node runtime policy', () => {
   })
 
   it('fails closed after the offline freshness window expires', () => {
-    expect(validateRuntimePolicy(packageWithPolicy(), new Date('2026-09-13T00:00:00Z'))).toEqual([
-      expect.stringContaining('policy maximum is 45 days')
+    expect(validateRuntimePolicy(packageWithPolicy(), new Date('2026-09-29T00:00:00Z'))).toEqual([
+      expect.stringContaining('policy maximum is 60 days')
     ])
   })
 
