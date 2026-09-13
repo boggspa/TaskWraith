@@ -126,6 +126,12 @@ export interface ShellSandboxPlanInput {
  * Home-relative secret locations denied even though reads are otherwise broad.
  * A denylist, with a denylist's limits — this narrows the obvious blast radius
  * of an agent shell, it does not make the filesystem confidential.
+ *
+ * `Library/Keychains` is intentionally absent. A file-read deny there makes
+ * `security find-identity` report zero identities with exit 0, and `ls` fail
+ * with Operation not permitted. Agents then hunt Full Disk Access on
+ * TaskWraith.app vs helper instead of signing. The Security framework still
+ * opens those files; writes stay contained by the workspace write deny.
  */
 export const SHELL_SANDBOX_DENIED_READ_RELPATHS = [
   '.ssh',
@@ -138,7 +144,6 @@ export const SHELL_SANDBOX_DENIED_READ_RELPATHS = [
   '.netrc',
   '.npmrc',
   '.pypirc',
-  'Library/Keychains',
   'Library/Application Support/com.apple.TCC'
 ] as const
 
