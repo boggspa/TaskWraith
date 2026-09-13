@@ -76,6 +76,11 @@ async function fixture(baseUrl?: string) {
     join(root, 'electron-builder.debut.yml'),
     'appId: com.taskwraith.desktop\nversion: 0.1.0\ntaskwraithDistributionIdentity: release\ntaskwraithUpdateFeedChannel: release\ngenerateUpdatesFilesForAllChannels: false\nchannel: release\n'
   )
+  mkdirSync(join(root, 'src', 'main'), { recursive: true })
+  writeFileSync(
+    join(root, 'src', 'main', 'UpdateService.ts'),
+    'autoUpdater.allowDowngrade = false\n'
+  )
   return { root, artifactDir, payload }
 }
 

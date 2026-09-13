@@ -248,12 +248,12 @@ describe('composer model dispatch fallthrough', () => {
     }
   })
 
-  it('keeps Pi and Mistral selections in their own composer catalogues', () => {
+  it('keeps Pi and Mistral selections behind the reviewed catalogue-validity helper', () => {
     // This predicate is intentionally local to App because it closes over the
     // live, key-filtered Pi model list. Exercise the actual source rather than
-    // duplicating a second predicate in the test: without these branches valid
-    // Pi/Mistral ids fall through to `isGeminiModelId`, then silently become
-    // their provider's default at dispatch time.
+    // duplicating a second predicate in the test: the shared helper preserves a
+    // stored id while an empty catalogue is still unknown, while a populated
+    // catalogue still rejects an id it does not contain.
     const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
     const predicateStart = appSource.indexOf('const isValidModelForProvider =')
     const predicateEnd = appSource.indexOf('const rememberOllamaInstalledModels =')
@@ -261,11 +261,11 @@ describe('composer model dispatch fallthrough', () => {
 
     expect(predicate).toContain("if (provider === 'pi')")
     expect(predicate).toContain(
-      "return getProviderModelOptions('pi').some((model) => model.id === modelId)"
+      "return providerModelCatalogueAccepts(getProviderModelOptions('pi'), modelId)"
     )
     expect(predicate).toContain("if (provider === 'mistral')")
     expect(predicate).toContain(
-      "return getProviderModelOptions('mistral').some((model) => model.id === modelId)"
+      "return providerModelCatalogueAccepts(getProviderModelOptions('mistral'), modelId)"
     )
   })
 

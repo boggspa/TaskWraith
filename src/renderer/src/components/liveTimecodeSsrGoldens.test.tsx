@@ -15,7 +15,9 @@ import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemet
  * value rather than a degenerate zero.
  *
  * It was produced by running this exact matrix against a pristine HEAD
- * worktree, and is byte-identical to the post-refactor output. It fails if the
+ * worktree and remains the unchanged pre-refactor reference. The explicitly
+ * accepted round-anchor lifecycle differences are applied below; all other
+ * markup must remain byte-identical. It fails if the
  * first paint ever stops being declarative (the ticker cannot run under
  * renderToStaticMarkup — refs never attach and effects never fire), if a value
  * or an aria-label goes missing, or if the DOM shape shifts.
@@ -66,6 +68,39 @@ const BAR_CASES = [
   { running: false, startedAt: null, cumulativeBaseMs: 0 },
   { running: false, startedAt: '2026-09-10T11:58:13.000Z', cumulativeBaseMs: 90_061_000 }
 ]
+
+/**
+ * b6e06e619 implements the user's round-clock contract: a valid round anchor
+ * keeps ticking through a handoff even if the generic run flag drops; clearing
+ * that anchor stops the clock even if the flag lags. Keep the historical blob
+ * intact and spell out only those three accepted differences, independently
+ * of the component/formatter under test. The handoff adds 107 seconds to the
+ * captured 90,061-second cumulative base: 90,168 seconds = 01:01:02:48.
+ */
+function expectedRoundAnchorMatrix(): string {
+  return SSR_GOLDEN.split('\n\n')
+    .map((block) => {
+      const header = block.split('\n', 1)[0]
+      if (
+        header === `BAR ${JSON.stringify(BAR_CASES[2])}` ||
+        header === `BAR ${JSON.stringify(BAR_CASES[3])}`
+      ) {
+        expect(block).toContain('data-running="true"')
+        return block.replace('data-running="true"', 'data-running="false"')
+      }
+      if (header === `BAR ${JSON.stringify(BAR_CASES[5])}`) {
+        expect(block).toContain('data-running="false"')
+        expect(block).toContain('00:00:00:00')
+        expect(block).toContain('01:01:01:01')
+        return block
+          .replace('data-running="false"', 'data-running="true"')
+          .replaceAll('00:00:00:00', '00:00:01:47')
+          .replaceAll('01:01:01:01', '01:01:02:48')
+      }
+      return block
+    })
+    .join('\n\n')
+}
 
 const CHIP_CASES = [
   { startedAt: '2026-09-10T11:58:13.000Z', avail: true, state: 'available' as const },
@@ -122,8 +157,8 @@ function renderMatrix(): string {
 }
 
 describe('live timecode SSR goldens', () => {
-  it('renders byte-identical markup to the pre-refactor implementation', () => {
-    expect(renderMatrix()).toBe(SSR_GOLDEN)
+  it('preserves the historical markup with the accepted round-anchor lifecycle', () => {
+    expect(renderMatrix()).toBe(expectedRoundAnchorMatrix())
   })
 
   it('actually exercises a live turn (guards against a degenerate all-zero golden)', () => {

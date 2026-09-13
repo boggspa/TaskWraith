@@ -814,7 +814,7 @@ describe('buildModelUsageTableForSettings — private-home supplements when exte
     expect(kimi.models.map((model) => model.model).sort()).toEqual([
       'Kimi',
       'kimi-k2.6',
-      'kimi-k2.7-code',
+      'kimi-k2.8-preview',
       'kimi-k3'
     ])
     expect(kimi.totals.h24).toMatchObject({ tokensIn: 1_600, runs: 4 })

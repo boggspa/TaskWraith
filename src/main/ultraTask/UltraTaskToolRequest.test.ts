@@ -154,7 +154,9 @@ describe('resolveUltraTaskToolRequest', () => {
   it.each([
     ['codex', 'gpt-5.5', 'xhigh'],
     ['claude', 'claude-sonnet-5', 'max'],
-    ['kimi', 'kimi-k2.7-code', 'on'],
+    ['kimi', 'kimi-k2.7-code', 'max'],
+    ['kimi', 'kimi-k2.8-preview', 'max'],
+    ['kimi', 'kimi-k2.7-code-highspeed', 'on'],
     ['kimi', 'kimi-k3', 'max'],
     ['kimi', 'kimi-k3-256k', 'max'],
     ['grok', 'grok-4.5', 'high'],

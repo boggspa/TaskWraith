@@ -853,7 +853,8 @@ describe('EnsembleOrchestrator', () => {
 
     expect(harness.dispatched[0].providerSessionId).toBeNull()
     expect(harness.dispatched[0].prompt).toContain('ULTRA-TASK MODE ACTIVE')
-    expect(harness.dispatched[0].prompt).toContain('delegate_wave (all chats)')
+    expect(harness.dispatched[0].prompt).toContain("Priority order among this seat's listed tools")
+    expect(harness.dispatched[0].prompt).toContain('ensemble_fanout (Ensemble only)')
   })
 
   it('recovers a Cursor turn after a rejected yield and missing terminal so rotation advances', async () => {
@@ -3749,8 +3750,9 @@ describe('EnsembleOrchestrator', () => {
         ensemblePromptAttribution: expect.objectContaining({
           schemaVersion: 1,
           promptKind: 'slim',
-          sessionContext: 'resume-requested',
+          sessionContext: 'resume-requested-with-fallback',
           primaryPromptChars: harness.dispatched[0].prompt.length,
+          fallbackPromptChars: harness.dispatched[0].resumeFallbackPrompt!.length,
           sourceRequestChars: 'Continue from the existing session.'.length,
           replayedTranscriptMessageChars: 0,
           replayedTranscriptMessageCount: 0

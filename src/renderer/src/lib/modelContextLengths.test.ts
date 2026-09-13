@@ -80,14 +80,15 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('200k')
   })
 
-  it('kimi kimi-k2.7-code resolves to 256k', () => {
+  it('shows K2.8 at 1M and its separate K2.7 Highspeed route at 256k', () => {
     const groups = buildModelContextLengthGroups()
     const kimiGroup = groups.find((g) => g.provider === 'kimi')
     expect(kimiGroup).toBeDefined()
-    const row = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.7-code')
-    expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(262_144)
-    expect(row!.formatted).toBe('256k')
+    const standard = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.8-preview')
+    const highspeed = kimiGroup!.models.find((m) => m.modelId === 'kimi-k2.7-code-highspeed')
+    expect(standard).toMatchObject({ contextWindow: 1_048_576, formatted: '1.0M' })
+    expect(highspeed).toMatchObject({ contextWindow: 262_144, formatted: '256k' })
+    expect(kimiGroup!.models.map((model) => model.modelId)).not.toContain('kimi-k2.7-code')
   })
 
   it('shows the long-context K3 route as an official fixed 1.0M window', () => {

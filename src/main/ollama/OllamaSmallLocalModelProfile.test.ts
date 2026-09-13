@@ -135,11 +135,15 @@ describe('advertised surface', () => {
     expect(small).toContain('run_shell_command')
   })
 
-  it('still honours read-only posture for a small model', () => {
+  it('retains read-only inspection without advertising file mutations for a small model', () => {
     const small = ollamaAdvertisedToolNames({ smallLocalModel: true, readOnly: true })
     expect(small).not.toContain('write_file')
     expect(small).not.toContain('replace')
-    expect(small).not.toContain('run_shell_command')
+    // The normal read-only surface now includes the governed inspection route;
+    // the small-model schema must preserve that same posture, not remove it.
+    expect(small).toContain('run_shell_command')
+    const readOnlySurface = ollamaAdvertisedToolNames({ readOnly: true })
+    for (const tool of small) expect(readOnlySurface).toContain(tool)
     expect(small).toContain('read_file')
   })
 

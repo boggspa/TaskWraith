@@ -19,8 +19,10 @@ api_key = "also-ignored"
 [models."kimi-code/kimi-for-coding"]
 provider = "managed:kimi-code"
 model = "kimi-for-coding"
-max_context_size = 262144
-display_name = "K2.7 Coding"
+max_context_size = 1048576
+display_name = "K2.8 Preview"
+support_efforts = [ "low", "high", "max" ]
+default_effort = "max"
 
 [models."kimi-code/kimi-for-coding-highspeed"]
 provider = "managed:kimi-code"
@@ -56,6 +58,14 @@ describe('KimiModelCatalog', () => {
       'kimi-code/k3',
       'kimi-code/k3-256k'
     ])
+    expect(aliases.get('kimi-code/kimi-for-coding')).toEqual({
+      alias: 'kimi-code/kimi-for-coding',
+      modelId: 'kimi-for-coding',
+      displayName: 'K2.8 Preview',
+      supportEfforts: ['low', 'high', 'max'],
+      defaultEffort: 'max',
+      maxContextSize: 1_048_576
+    })
     expect(aliases.get('kimi-code/k3')).toEqual({
       alias: 'kimi-code/k3',
       modelId: 'k3',
@@ -68,12 +78,33 @@ describe('KimiModelCatalog', () => {
     expect(JSON.stringify([...aliases.values()])).not.toContain('also-ignored')
   })
 
-  it('projects both K3 routes and gates K2.7 Fast on the discovered Highspeed alias', () => {
+  it('projects K2.8, Highspeed, and both K3 routes as distinct rows', () => {
     const rows = projectKimiManagedModelRows(FULL_CONFIG, fallbackRows())
-    expect(rows?.map((row) => row.id)).toEqual(['kimi-k2.7-code', 'kimi-k3', 'kimi-k3-256k'])
-    expect(rows?.find((row) => row.id === 'kimi-k2.7-code')).toMatchObject({
-      additionalSpeedTiers: ['fast']
+    expect(rows?.map((row) => row.id)).toEqual([
+      'kimi-k2.8-preview',
+      'kimi-k2.7-code-highspeed',
+      'kimi-k3',
+      'kimi-k3-256k'
+    ])
+    const standard = rows?.find((row) => row.id === 'kimi-k2.8-preview')
+    expect(standard).toMatchObject({
+      label: 'K2.8 Preview',
+      defaultReasoningEffort: 'max',
+      contextWindow: 1_048_576
     })
+    expect(standard?.supportedReasoningEfforts?.map((effort) => effort.reasoningEffort)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
+    expect(standard?.additionalSpeedTiers).toBeUndefined()
+    const highspeed = rows?.find((row) => row.id === 'kimi-k2.7-code-highspeed')
+    expect(highspeed).toMatchObject({
+      label: 'K2.7 Coding Highspeed',
+      defaultReasoningEffort: 'on',
+      contextWindow: 262_144
+    })
+    expect(highspeed?.additionalSpeedTiers).toBeUndefined()
     const k3 = rows?.find((row) => row.id === 'kimi-k3')
     expect(k3).toMatchObject({
       label: 'K3 (1M)',
@@ -90,16 +121,18 @@ describe('KimiModelCatalog', () => {
     expect(k3Short?.additionalSpeedTiers).toBeUndefined()
   })
 
-  it('shows a plan-capped long route and removes Fast when Highspeed is unavailable', () => {
+  it('shows a plan-capped K3 route and omits Highspeed when its alias is unavailable', () => {
     const config = FULL_CONFIG.replace(
       /\n\[models\."kimi-code\/kimi-for-coding-highspeed"\][\s\S]*?(?=\n\[models\.)/,
       '\n'
-    ).replace('max_context_size = 1048576', 'max_context_size = 262144')
+    ).replace(
+      /(\[models\."kimi-code\/k3"\][\s\S]*?max_context_size = )1048576/,
+      (_match, prefix: string) => `${prefix}262144`
+    )
     const rows = projectKimiManagedModelRows(config, fallbackRows())
 
-    expect(rows?.find((row) => row.id === 'kimi-k2.7-code')).toMatchObject({
-      additionalSpeedTiers: []
-    })
+    expect(rows?.map((row) => row.id)).not.toContain('kimi-k2.7-code-highspeed')
+    expect(rows?.find((row) => row.id === 'kimi-k2.8-preview')?.contextWindow).toBe(1_048_576)
     expect(rows?.find((row) => row.id === 'kimi-k3')?.label).toBe('K3 (plan-capped 256K)')
   })
 
@@ -116,10 +149,10 @@ max_context_size = 262144
   it('omits absent managed routes and falls back when no recognized alias exists', () => {
     const standardOnly = `
 [models."kimi-code/kimi-for-coding"]
-max_context_size = 262144
+max_context_size = 1048576
 `
     expect(projectKimiManagedModelRows(standardOnly, fallbackRows())?.map((row) => row.id)).toEqual(
-      ['kimi-k2.7-code']
+      ['kimi-k2.8-preview']
     )
     expect(
       projectKimiManagedModelRows('[models."custom/kimi"]\nmax_context_size = 1', fallbackRows())
@@ -128,8 +161,8 @@ max_context_size = 262144
 
   it('does not label a remapped alias as K3 or expose unknown effort tokens', () => {
     const config = FULL_CONFIG.replace('model = "k3-256k"', 'model = "not-k3"').replace(
-      'support_efforts = [ "low", "high", "max" ]',
-      'support_efforts = [ "low", "invented", "max" ]'
+      'display_name = "K3"\nsupport_efforts = [ "low", "high", "max" ]',
+      'display_name = "K3"\nsupport_efforts = [ "low", "invented", "max" ]'
     )
     const rows = projectKimiManagedModelRows(config, fallbackRows())
 
@@ -145,7 +178,7 @@ max_context_size = 262144
     const readFile = vi.fn(async () => FULL_CONFIG)
     await expect(
       discoverKimiManagedModelRows('/tmp/kimi-home', fallbackRows(), readFile)
-    ).resolves.toHaveLength(3)
+    ).resolves.toHaveLength(4)
     // The catalog joins the config filename onto the home with path.join, whose
     // separator is platform-specific; build the expectation the same way.
     expect(readFile).toHaveBeenCalledWith(join('/tmp/kimi-home', 'config.toml'))

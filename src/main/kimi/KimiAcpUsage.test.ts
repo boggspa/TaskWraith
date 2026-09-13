@@ -12,7 +12,7 @@ describe('estimateKimiAcpTokenUsage', () => {
       estimateKimiAcpTokenUsage({
         inputChars: 9,
         outputChars: 5,
-        model: 'kimi-k2.7-code',
+        model: 'kimi-k2.8-preview',
         durationMs: 1234,
         totalTokenLimit: 262_144
       })
@@ -24,7 +24,7 @@ describe('estimateKimiAcpTokenUsage', () => {
       totalTokenLimit: 262_144,
       _taskwraith_token_count_confidence: 'estimated',
       _taskwraith_usage_source: KIMI_ACP_TOKEN_ESTIMATE_SOURCE,
-      _taskwraith_cost_rate_model: 'kimi-k2.7-code'
+      _taskwraith_cost_rate_model: 'kimi-k2.8-preview'
     })
   })
 
@@ -56,11 +56,23 @@ describe('kimiCostRateModel', () => {
     expect(kimiCostRateModel('kimi-code/k3-256k', 'fast')).toBe('kimi-k3-256k')
   })
 
-  it('maps K2.7 fast mode to the published Highspeed pricing row', () => {
-    expect(kimiCostRateModel('kimi-k2.7-code', 'fast')).toBe(
+  it('prices each managed route by its own id, whatever a stale serviceTier says', () => {
+    // Highspeed is a model now, not a speed tier, so an explicit selection wins
+    // outright: a record still carrying `fast` must not re-price the row the
+    // user actually chose at Moonshot's 2x Highspeed rate.
+    expect(kimiCostRateModel('kimi-k2.8-preview', 'fast')).toBe('kimi-k2.8-preview')
+    expect(kimiCostRateModel('kimi-k2.7-code-highspeed', 'standard')).toBe(
       'kimi-k2.7-code-highspeed'
     )
-    expect(kimiCostRateModel('kimi-k2.7-code', 'standard')).toBe('kimi-k2.7-code')
+    // The retired combined id resolves forward to the route it dispatched.
+    expect(kimiCostRateModel('kimi-k2.7-code', 'standard')).toBe('kimi-k2.8-preview')
+  })
+
+  it('still honours serviceTier when the record names no known route', () => {
+    // Pre-split records that stored only an upstream spelling or nothing at all
+    // have no model to resolve; the tier is the last signal left.
+    expect(kimiCostRateModel('', 'fast')).toBe('kimi-k2.7-code-highspeed')
+    expect(kimiCostRateModel('', 'standard')).toBe('kimi-k2.8-preview')
   })
 })
 

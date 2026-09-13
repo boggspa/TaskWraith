@@ -206,17 +206,20 @@ describe('ModelUsageTableTotalsFooter (populated render)', () => {
       { currency: 'USD' },
       NOW
     )
-    const ollamaGroup = buildOllamaMemoryModelTable([
-      {
-        ...makeRecord({
-          provider: 'ollama',
-          model: 'qwen3:4b-instruct',
-          timestamp: NOW - 60_000
-        }),
-        ollamaMemoryPeakRssGb: 12,
-        ollamaMemorySampleCount: 8
-      }
-    ])
+    const ollamaGroup = buildOllamaMemoryModelTable(
+      [
+        {
+          ...makeRecord({
+            provider: 'ollama',
+            model: 'qwen3:4b-instruct',
+            timestamp: NOW - 60_000
+          }),
+          ollamaMemoryPeakRssGb: 12,
+          ollamaMemorySampleCount: 8
+        }
+      ],
+      NOW
+    )
     const html = renderToStaticMarkup(
       <table>
         <ModelUsageTableTotalsFooter
@@ -407,6 +410,12 @@ describe('ModelContextLengthsSettingsTable (SSR — static data, no effects)', (
   it('contains the formatted window 1.0M for claude-opus-4-8-1m', () => {
     const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
     expect(html).toContain('1.0M')
+  })
+
+  it('contains the current K2.8 standard and separate K2.7 Highspeed rows', () => {
+    const html = renderToStaticMarkup(<ModelContextLengthsSettingsTable />)
+    expect(html).toContain('K2.8 Preview')
+    expect(html).toContain('K2.7 Code Highspeed')
   })
 
   it('shows each K3 route as its own fixed window, with the range display retired', () => {

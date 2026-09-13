@@ -4414,13 +4414,13 @@ describe('participant yield transcript rows', () => {
     expect(start).toBeGreaterThan(-1)
     expect(next).toBeGreaterThan(start)
     expect(yieldBlock).toContain('Codex / Validator')
-    expect(yieldBlock).toContain('yielding to')
+    expect(yieldBlock).toContain('yielded to')
     expect(yieldBlock).toContain('@Paperwork')
     expect(yieldBlock).not.toContain('Used 1 tool')
     expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')
   })
 
-  it('keeps a targetless standalone Yielding lifecycle row open', () => {
+  it('keeps a targetless settled Yielded lifecycle row visible', () => {
     const messages: ChatMessage[] = [
       { id: 'u1', role: 'user', content: 'Coordinate.', timestamp: '2026-01-01T00:00:00.000Z' },
       {
@@ -4456,7 +4456,7 @@ describe('participant yield transcript rows', () => {
 
     expect(start).toBeGreaterThan(-1)
     expect(next).toBeGreaterThan(start)
-    expect(yieldBlock).toContain('>Yielding</span>')
+    expect(yieldBlock).toContain('>Yielded</span>')
     expect(yieldBlock).toContain('11ms')
     expect(yieldBlock).not.toContain('Used 1 tool')
     expect(yieldBlock).not.toContain('collapsed-activity-stack-summary')

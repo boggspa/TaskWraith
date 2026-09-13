@@ -120,7 +120,8 @@ describe('live clock surfaces stay off the per-second React subscription', () =>
     // re-adds the per-second Sync-lane render while reading like a revert and
     // leaving every other assertion here green.
     expect(bar).not.toMatch(/useTimecodeNow\s*\(/)
-    expect(bar).toContain('useSharedNowEffect(running, (nowMs) => {')
+    expect(bar).toContain("const clockRunning = Number.isFinite(Date.parse(startedAt || ''))")
+    expect(bar).toContain('useSharedNowEffect(clockRunning, (nowMs) => {')
   })
 
   it('the bar keeps a declarative first paint', () => {
@@ -165,7 +166,7 @@ describe('live clock surfaces stay off the per-second React subscription', () =>
     // The live callback must read the TICK's clock. Recomputing from
     // `initialNow` freezes the display at first paint while every other
     // assertion here still passes.
-    expect(bar).toContain('cumulativeBaseMs, nowMs }')
+    expect(bar).toMatch(/cumulativeBaseMs,\s*nowMs\s*}/)
     expect(bar).not.toMatch(/const live = getComposerTimecodePresentation\([^)]*initialNow/)
   })
 

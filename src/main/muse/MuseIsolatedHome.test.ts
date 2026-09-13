@@ -714,7 +714,7 @@ describe('Muse durable per-chat seat home', () => {
     expect(existsSync(join(first.museDataDir, 'sessions'))).toBe(true)
   })
 
-  it('destroys a seat it cannot reduce rather than handing it to a provider', () => {
+  it('refuses a seat it cannot reduce and self-heals after the obstruction clears', () => {
     if (process.platform === 'win32') return
     const target = seat('unreducible')
     const first = attach(target)
@@ -728,17 +728,18 @@ describe('Muse durable per-chat seat home', () => {
     // Fails closed, and says whether the seat was actually discarded — an
     // unreadable directory defeats the destroy for the same reason it defeated
     // the scrub, and "may still hold run material" is a different problem.
-    expect(() => attach(target)).toThrow(
-      /could not be reduced to session continuity and was left in place/
-    )
-
-    // The best-effort destroy takes the session log with it — that is the
-    // accepted cost of failing closed, and it is why this seat cannot resume.
-    expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(false)
+    try {
+      expect(() => attach(target)).toThrow(
+        /could not be reduced to session continuity and was left in place/
+      )
+      expect(existsSync(target.path)).toBe(true)
+      expect(existsSync(locked)).toBe(true)
+    } finally {
+      if (existsSync(locked)) chmodSync(locked, 0o700)
+    }
 
     // Self-healing: once the obstruction is gone the next attach reduces the
     // seat and proceeds, so the chat is not permanently unusable.
-    chmodSync(locked, 0o700)
     const recovered = attach(target)
     expect(existsSync(locked)).toBe(false)
     expect(existsSync(recovered.settingsPath)).toBe(true)

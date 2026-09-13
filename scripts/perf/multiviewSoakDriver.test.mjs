@@ -1,6 +1,7 @@
-'use strict'
+import { createRequire } from 'node:module'
+import { afterEach, test } from 'vitest'
 
-const { test } = require('node:test')
+const require = createRequire(import.meta.url)
 const assert = require('node:assert/strict')
 const fs = require('node:fs')
 const os = require('node:os')
@@ -19,9 +20,15 @@ const {
 } = require('./multiviewSoakDriver.cjs')
 const { parseArgs } = require('./runMultiviewSoak.cjs')
 
-function temp(t) {
+const tempRoots = []
+
+afterEach(() => {
+  for (const dir of tempRoots.splice(0)) fs.rmSync(dir, { recursive: true, force: true })
+})
+
+function temp() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tw-soak-test-'))
-  t.after(() => fs.rmSync(dir, { recursive: true, force: true }))
+  tempRoots.push(dir)
   return dir
 }
 

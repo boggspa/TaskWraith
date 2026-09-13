@@ -296,7 +296,7 @@ describe('scoped line-window read keeps the whole-file security sequence', () =>
     for (const guard of [
       'normalizeAuthority(authority, false)',
       'snapshotDirectoryChain(rootPath, dirname(targetPath))',
-      'requireRegularTarget(targetPath)',
+      'requireReadTarget(targetPath)',
       'openNoFollow(targetPath, constants.O_RDONLY)',
       'requireOpenedTarget(',
       'assertDirectoryChainStable(directorySnapshot)',
@@ -305,6 +305,14 @@ describe('scoped line-window read keeps the whole-file security sequence', () =>
     ]) {
       expect(windowReader, guard).toContain(guard)
     }
+    // Shared-workspace read attribution wraps the original regular-file guard;
+    // it must still delegate that check and propagate every rejection.
+    const readTargetGuard = scopedSource.slice(
+      scopedSource.indexOf('async function requireReadTarget('),
+      scopedSource.indexOf('async function normalizeAuthority(')
+    )
+    expect(readTargetGuard).toContain('return await requireRegularTarget(targetPath)')
+    expect(readTargetGuard).toContain('throw error')
   })
 
   it('never widens the byte cap that protects the bridge', () => {
