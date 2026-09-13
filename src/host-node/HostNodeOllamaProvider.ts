@@ -559,6 +559,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       // forever, or keeps hitting the same failure.
       const assistantSegments: string[] = []
       let pendingContentDelta = ''
+      let pendingThinkingDelta = ''
       let turnState = createOllamaHostToolTurnState()
       let ceilingFired = false
       let promptTokens: number | undefined
@@ -619,10 +620,33 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
               text,
               at: new Date().toISOString()
             })
+          },
+          onThinkingDelta: (delta, full) => {
+            pendingThinkingDelta += delta
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.reasoning',
+              runId: request.runId,
+              threadId: request.threadId,
+              text: pendingThinkingDelta,
+              at: new Date().toISOString()
+            })
+            pendingThinkingDelta = ''
           }
         })
 
         if (result.content.trim()) assistantSegments.push(result.content)
+        if (result.thinking?.trim()) {
+          // Surface thinking as a reasoning event if not already streamed
+          if (!pendingThinkingDelta) {
+            this.options.runPort.publishRunEvent(request.target, {
+              type: 'run.reasoning',
+              runId: request.runId,
+              threadId: request.threadId,
+              text: result.thinking,
+              at: new Date().toISOString()
+            })
+          }
+        }
         if (result.usage?.promptTokens !== undefined) {
           promptTokens = (promptTokens ?? 0) + result.usage.promptTokens
         }
@@ -643,6 +667,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         conversation.push({
           role: 'assistant',
           content: result.content,
+          thinking: result.thinking,
           tool_calls: result.toolCalls.map((toolCall) => ({
             function: { name: toolCall.name, arguments: toolCall.arguments }
           }))

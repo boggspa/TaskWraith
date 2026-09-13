@@ -103,6 +103,7 @@ export interface OllamaModelShowResponse {
 export interface OllamaChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
   content: string
+  thinking?: string
   tool_calls?: Array<{
     function: {
       name: string
@@ -139,6 +140,7 @@ export interface OllamaChatChunk {
   message?: {
     role: string
     content: string
+    thinking?: string
     tool_calls?: Array<{
       function: {
         name: string
@@ -161,6 +163,7 @@ export interface OllamaChatCompletion {
   message: {
     role: string
     content: string
+    thinking?: string
     tool_calls?: Array<{
       function: {
         name: string

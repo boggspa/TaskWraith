@@ -142,6 +142,13 @@ export type HostProviderRunEvent =
       readonly at: string
     }
   | {
+      readonly type: 'run.reasoning'
+      readonly runId: string
+      readonly threadId: string
+      readonly text: string
+      readonly at: string
+    }
+  | {
       readonly type: 'run.status'
       readonly runId: string
       readonly threadId: string
@@ -405,6 +412,13 @@ export function normalizeHostProviderRunEvent(
     )
     return text ? { ...value, text } : null
   }
+  if (value.type === 'run.reasoning') {
+    const text = normalizeHostProviderRunPresentationText(
+      value.text,
+      HOST_PROVIDER_RUN_MAX_EVENT_TEXT_CHARS
+    )
+    return text ? { ...value, text } : null
+  }
   if (value.type === 'run.started') {
     return canonicalIdentifier(value.providerId) && canonicalIdentifier(value.sessionId)
       ? { ...value }
@@ -441,14 +455,16 @@ export function normalizeHostProviderRunEvent(
     if (!presentation.ok) return null
     return { ...value }
   }
-  if (
-    !['running', 'completed', 'failed', 'cancelled'].includes(value.status) ||
-    (value.warningCount !== undefined &&
-      (!Number.isSafeInteger(value.warningCount) ||
-        value.warningCount < 0 ||
-        value.warningCount > HOST_PROVIDER_RUN_MAX_WARNING_COUNT))
-  ) {
-    return null
+  if (value.type === 'run.status') {
+    if (
+      !['running', 'completed', 'failed', 'cancelled'].includes(value.status) ||
+      (value.warningCount !== undefined &&
+        (!Number.isSafeInteger(value.warningCount) ||
+          value.warningCount < 0 ||
+          value.warningCount > HOST_PROVIDER_RUN_MAX_WARNING_COUNT))
+    ) {
+      return null
+    }
   }
   return { ...value }
 }
