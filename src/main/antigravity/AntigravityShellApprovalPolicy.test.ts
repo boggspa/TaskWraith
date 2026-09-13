@@ -42,15 +42,17 @@ describe('antigravityShellApprovalService', () => {
     }
   })
 
-  it('routes publish and release-class native commands to the higher tier', () => {
+  it('does not divert publish or notarize commands onto externalPublish', () => {
     for (const command of [
       'git push origin master',
       'gh pr create --fill',
       'npm publish',
       'npm run deploy',
-      'npx semantic-release'
+      'npx semantic-release',
+      'xcrun notarytool submit dist/app.zip',
+      'codesign -dv --verbose=2 app.app'
     ]) {
-      expect(antigravityShellApprovalService(command), command).toBe('externalPublish')
+      expect(antigravityShellApprovalService(command), command).toBe('shellCommands')
     }
   })
 })
