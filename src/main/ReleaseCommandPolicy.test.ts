@@ -1,87 +1,52 @@
 import { describe, expect, it } from 'vitest'
 import {
+  classifyReleaseCommand,
   releaseCommandBlockReason,
   releasePackageScriptBlockReason,
   releaseScriptBlockReason
 } from './ReleaseCommandPolicy'
 
 describe('ReleaseCommandPolicy', () => {
-  it('blocks direct release, publish, and signing commands', () => {
-    expect(releaseCommandBlockReason('gh release create v1.0.0 dist/app.zip')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('gh --repo owner/repo pr create --fill')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('gh api /repos/owner/repo/releases -X POST')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason(['npm', 'publish'])).toContain('release-class command')
-    expect(releaseCommandBlockReason('npm --registry https://registry.npmjs.org publish')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('pnpm -r publish')).toContain('release-class command')
-    expect(releaseCommandBlockReason('yarn --cwd packages/app npm publish')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('npx semantic-release')).toContain('release-class command')
-    expect(releaseCommandBlockReason('npx release-it')).toContain('release-class command')
-    expect(releaseCommandBlockReason(['xcrun', 'notarytool', 'submit', 'dist/app.zip'])).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('git push --tags')).toContain('release-class command')
-    expect(releaseCommandBlockReason('git -C /repo push origin main')).toContain(
-      'release-class command'
-    )
-    expect(releaseCommandBlockReason('/usr/bin/git -c credential.helper= push')).toContain(
-      'release-class command'
-    )
+  it('never classifies or blocks former release-class commands', () => {
+    const formerDenylist = [
+      'gh release create v1.0.0 dist/app.zip',
+      'gh --repo owner/repo pr create --fill',
+      'gh api /repos/owner/repo/releases -X POST',
+      ['npm', 'publish'],
+      'npm --registry https://registry.npmjs.org publish',
+      'pnpm -r publish',
+      'yarn --cwd packages/app npm publish',
+      'npx semantic-release',
+      'npx release-it',
+      ['xcrun', 'notarytool', 'submit', 'dist/app.zip'],
+      'git push --tags',
+      'git -C /repo push origin main',
+      '/usr/bin/git -c credential.helper= push',
+      'npm run deploy',
+      'codesign -dv --verbose=2 "/Applications/Limit Counter.app"',
+      "pgrep -lf 'xcodebuild|notarytool|build_and_notarise'"
+    ]
+
+    for (const command of formerDenylist) {
+      expect(classifyReleaseCommand(command), String(command)).toBeNull()
+      expect(releaseCommandBlockReason(command), String(command)).toBeNull()
+    }
   })
 
-  it('blocks package-script indirection for release-class scripts', () => {
+  it('never blocks package-script names or bodies that used to match the denylist', () => {
     expect(
       releaseScriptBlockReason(
         'build:mac:notarized',
         'electron-builder --mac --universal -c.mac.notarize=true'
       )
-    ).toContain('release-class command')
-    expect(releaseScriptBlockReason('release', 'node scripts/release.cjs')).toContain(
-      'release-class command'
-    )
+    ).toBeNull()
+    expect(releaseScriptBlockReason('release', 'node scripts/release.cjs')).toBeNull()
     expect(
       releasePackageScriptBlockReason('npm run build:mac', {
         'build:mac': 'electron-builder --mac -c.mac.notarize=true'
       })
-    ).toContain('release-class command')
-    expect(releaseCommandBlockReason('npm run deploy')).toContain('release-class command')
-  })
-
-  it('allows ordinary verification scripts', () => {
+    ).toBeNull()
     expect(releaseCommandBlockReason(['npm', 'test', '--', '--run'])).toBeNull()
     expect(releaseScriptBlockReason('test', 'vitest --run')).toBeNull()
-    expect(releaseScriptBlockReason('prerelease:verify', 'vitest --run')).toBeNull()
-    expect(releaseCommandBlockReason('electron-builder --publish never')).toBeNull()
-  })
-
-  it('allows release-class commands only with an explicit approval-aware bypass', () => {
-    const approval = {
-      allowReleaseCommand: true,
-      approvalSource: 'approvedMcpTask' as const
-    }
-
-    expect(releaseCommandBlockReason('git push --tags', approval)).toBeNull()
-    expect(releaseScriptBlockReason('release', 'node scripts/release.cjs', approval)).toBeNull()
-    expect(
-      releasePackageScriptBlockReason(
-        'npm run build:mac:notarized',
-        {
-          'build:mac:notarized': 'electron-builder --mac -c.mac.notarize=true'
-        },
-        approval
-      )
-    ).toBeNull()
-    expect(releaseCommandBlockReason('git push --tags', { allowReleaseCommand: true })).toContain(
-      'release-class command'
-    )
   })
 })

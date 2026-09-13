@@ -24,35 +24,29 @@ function registryAt(startMs: number) {
 const START = Date.parse('2026-08-18T12:00:00.000Z')
 
 describe('ReleaseAuthorizationLeaseRegistry', () => {
-  it('returns no approval without a lease, so the gate stays closed by default', () => {
-    const { registry } = registryAt(START)
-    expect(
-      registry.approvalFor({
-        command: 'git push --force origin v1.9.6',
-        source: 'approvedMcpShell'
-      })
-    ).toBeNull()
-  })
-
-  it('satisfies the release gate on a route that previously had no approval source', () => {
+  it('does not treat former release-class commands as classified', () => {
     const { registry } = registryAt(START)
     const command = 'git push --force origin refs/tags/v1.9.6'
 
-    // Without the lease this is exactly the wall the release stalled against.
-    expect(releaseCommandBlockReason(command)).toContain('release-class command')
+    expect(releaseCommandBlockReason(command)).toBeNull()
+    expect(
+      registry.approvalFor({
+        command,
+        source: 'approvedMcpShell'
+      })
+    ).toBeNull()
 
     registry.grant({ minutes: 60, note: 'AFK release run' })
-    const approval = registry.approvalFor({ command, source: 'approvedMcpShell' })
-
-    expect(approval?.commandClass).toBe('git push')
-    expect(approval?.approval).toEqual({
-      allowReleaseCommand: true,
-      approvalSource: 'approvedMcpShell'
-    })
-    expect(releaseCommandBlockReason(command, approval?.approval)).toBeNull()
+    expect(
+      registry.approvalFor({
+        command,
+        source: 'approvedMcpShell'
+      })
+    ).toBeNull()
+    expect(releaseCommandBlockReason(command)).toBeNull()
   })
 
-  it('carries the approval source of the calling route rather than a fixed one', () => {
+  it('still answers a caller-named class after a grant', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30 })
     for (const source of [
@@ -61,13 +55,13 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
       'approvedBackgroundProcess',
       'approvedHostCommand'
     ] as const) {
-      const approval = registry.approvalFor({ command: 'npm publish', source })
+      const approval = registry.approvalForClass('git push', { source })
       expect(approval?.approval.approvalSource).toBe(source)
-      expect(releaseCommandBlockReason('npm publish', approval?.approval)).toBeNull()
+      expect(approval?.approval.allowReleaseCommand).toBe(true)
     }
   })
 
-  it('ignores commands that are not release-class so ordinary work never consumes a lease', () => {
+  it('ignores ordinary commands so they never consume a lease', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30 })
     expect(
@@ -80,13 +74,13 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30, commandClasses: ['git push'] })
     expect(
-      registry.approvalFor({ command: 'git push origin master', source: 'approvedMcpShell' })
+      registry.approvalForClass('git push', { source: 'approvedMcpShell' })
     ).not.toBeNull()
     expect(
-      registry.approvalFor({ command: 'npm publish --access public', source: 'approvedMcpShell' })
+      registry.approvalForClass('npm publish', { source: 'approvedMcpShell' })
     ).toBeNull()
     expect(
-      registry.approvalFor({ command: 'gh release create v1.9.6', source: 'approvedMcpShell' })
+      registry.approvalForClass('gh release', { source: 'approvedMcpShell' })
     ).toBeNull()
   })
 
@@ -94,30 +88,27 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30, workspacePath: '/Users/dev/AGBench' })
     expect(
-      registry.approvalFor({
-        command: 'git push',
+      registry.approvalForClass('git push', {
         source: 'approvedMcpShell',
         workspacePath: '/Users/dev/AGBench'
       })
     ).not.toBeNull()
     expect(
-      registry.approvalFor({
-        command: 'git push',
+      registry.approvalForClass('git push', {
         source: 'approvedMcpShell',
         workspacePath: '/Users/dev/other-repo'
       })
     ).toBeNull()
-    // A workspace-scoped lease must not answer an unscoped query either.
-    expect(registry.approvalFor({ command: 'git push', source: 'approvedMcpShell' })).toBeNull()
+    expect(registry.approvalForClass('git push', { source: 'approvedMcpShell' })).toBeNull()
   })
 
   it('expires, and stops approving the moment it does', () => {
     const { registry, advanceMinutes } = registryAt(START)
     registry.grant({ minutes: 15 })
     advanceMinutes(14)
-    expect(registry.approvalFor({ command: 'git push', source: 'approvedMcpShell' })).not.toBeNull()
+    expect(registry.approvalForClass('git push', { source: 'approvedMcpShell' })).not.toBeNull()
     advanceMinutes(2)
-    expect(registry.approvalFor({ command: 'git push', source: 'approvedMcpShell' })).toBeNull()
+    expect(registry.approvalForClass('git push', { source: 'approvedMcpShell' })).toBeNull()
     expect(registry.active()).toHaveLength(0)
   })
 
@@ -133,7 +124,7 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
     expect(Date.parse(negative.expiresAt) - START).toBe(RELEASE_LEASE_DEFAULT_MINUTES * 60_000)
   })
 
-  it('approves a caller-named class, which is how a package script reaches the gate', () => {
+  it('approves a caller-named class', () => {
     const { registry } = registryAt(START)
     registry.grant({ minutes: 30, commandClasses: ['package script release:mac'] })
     expect(
@@ -161,6 +152,6 @@ describe('ReleaseAuthorizationLeaseRegistry', () => {
     expect(registry.revoke(first.id)).toBe(1)
     expect(registry.active()).toHaveLength(1)
     expect(registry.revoke()).toBe(1)
-    expect(registry.approvalFor({ command: 'git push', source: 'approvedMcpShell' })).toBeNull()
+    expect(registry.approvalForClass('git push', { source: 'approvedMcpShell' })).toBeNull()
   })
 })

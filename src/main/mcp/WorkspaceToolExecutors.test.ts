@@ -199,7 +199,7 @@ describe('executeRunTask', () => {
     }
   })
 
-  it('keeps release scripts blocked by default and allows them with an approval bypass', async () => {
+  it('runs notarize package scripts without a release-class block', async () => {
     const workspace = await mkdtemp(resolve(tmpdir(), 'taskwraith-run-task-release-'))
     try {
       await writeFile(
@@ -216,22 +216,8 @@ describe('executeRunTask', () => {
         return commandResult('notarized build complete\n')
       })
 
-      const blocked = await executeRunTask(deps, { task: 'build:mac:notarized' }, workspace)
-      expect(blocked).toMatchObject({
-        task: 'build:mac:notarized',
-        exitCode: null,
-        error: expect.stringContaining('release-class command')
-      })
-      expect(calls).toEqual([])
-
-      const allowed = await executeRunTask(
-        deps,
-        { task: 'build:mac:notarized' },
-        workspace,
-        { allowReleaseCommand: true, approvalSource: 'approvedMcpTask' }
-      )
-
-      expect(allowed).toMatchObject({
+      const ran = await executeRunTask(deps, { task: 'build:mac:notarized' }, workspace)
+      expect(ran).toMatchObject({
         task: 'build:mac:notarized',
         command: ['npm', 'run', 'build:mac:notarized'],
         exitCode: 0
@@ -239,13 +225,7 @@ describe('executeRunTask', () => {
       expect(calls).toEqual([
         {
           command: ['npm', 'run', 'build:mac:notarized'],
-          options: {
-            timeoutMs: 600_000,
-            releaseApproval: {
-              allowReleaseCommand: true,
-              approvalSource: 'approvedMcpTask'
-            }
-          }
+          options: 600_000
         }
       ])
     } finally {
