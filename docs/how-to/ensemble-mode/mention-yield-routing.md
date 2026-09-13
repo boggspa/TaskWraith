@@ -10,6 +10,12 @@ exception: mentioning a background participant starts detached background work w
 
 Type `@` plus a name that matches exactly one enabled seat. If a name matches more than one seat, TaskWraith warns and routing stays unchanged instead of guessing.
 
+Routing priority is a valid direct `ensemble_yield(target: …)`, then a valid
+participant `@` mention, then the next eligible seat in the serial queue. A
+quiet response or unresolved/self mention does not re-summon the Boss. Once a
+pass drains, an automatic pass uses normal serial order unless explicit
+assignments or a queued participant selection provide a current work plan.
+
 ## Where to find it
 Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. Routing from a participant's own reply happens automatically whenever their response text contains an `@Role` mention or they call the `ensemble_yield` tool; there's no separate control for that half.
 
@@ -21,10 +27,11 @@ Type `@` followed by a participant's role or model name in the composer during a
 2. Send a prompt addressed to exactly one participant to reach only
    that seat for the round. Mentioning a BG participant does not narrow the round; it starts background work and keeps the normal round going.
 3. During a round, a participant can tag one or more peers in its reply text
-   (`"@Researcher and @Reviewer, check this"`). Each named seat that has not spoken is added in the order named. In Continuous
-   mode, a participant that already answered is not
-   called again; the active Boss — or Captain once the Boss is unavailable — is the
-   exception.
+   (`"@Researcher and @Reviewer, check this"`). Pending seats are promoted in the
+   order named. In Continuous mode, an eligible participant that already answered
+   or yielded can be called again by a unique mention; that extra turn consumes
+   one continuation hop. Disabled, failed, cancelled, unreachable, or otherwise
+   blocked seats remain excluded.
 4. A participant can call `ensemble_yield` with one optional `target` and
    `reason` to make a single explicit handoff. An unclear yield target falls through to normal ordering.
    Yielding to `user`, `human`,
@@ -32,9 +39,10 @@ Type `@` followed by a participant's role or model name in the composer during a
    Managed Cursor can call `ensemble_yield` when its TaskWraith tool gateway is
    active. If a turn visibly falls back to native-only operation, use
    @-mention routing from a tool-capable peer or normal turn order.
-5. The active Boss takes routing priority: if a reply tags the Boss and another
+5. Among text mentions, the active Boss takes routing priority: if a reply tags the Boss and another
    participant, only the Boss route is applied; once the Boss is
-   unavailable, the active Captain gets that priority instead.
+   unavailable, the active Captain gets that priority instead. This does not
+   override a valid direct yield in the same turn.
 6. **Group tokens address a set at once.** Typing `@All`, `@Captains`,
    `@Management`, `@Scouts`, `@Workers`, `@Reviewers`, or `@BG` targets every
    enabled participant in that group rather than one seat. The groups appear at

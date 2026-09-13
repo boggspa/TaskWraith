@@ -144,17 +144,13 @@ import { buildEnsembleFanoutDispatchPayload } from './EnsembleFanoutDispatchTran
 import { sideMessageLaneMetadataForAudience } from '../../shared/ensembleSideMessage'
 import {
   resolvePhraseToParticipant,
-  resolveYieldTargetDetail,
-  type ParticipantMentionMatch
+  resolveYieldTargetDetail
 } from './EnsembleMentionAlias'
 import {
   applyQueuedAuthorityRosterSelection,
-  authorityRoutingCheckpointExhausted,
-  collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
-  MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
   resolveAuthoritySelection,
-  shouldResummonAuthorityForUnresolvedRouting,
+  resolveAutomaticContinuationRoster,
   type EnsembleAuthorityRoutingCheckpoint,
   type EnsembleAuthorityRoutingDecision,
   type QueuedAuthorityRosterSelection
@@ -1422,14 +1418,6 @@ interface ActiveRoundRuntime {
   queuedAuthoritySelection?: QueuedAuthorityRosterSelection
   /** Tagged authority call-ins waiting to be attached to the resulting run. */
   pendingAuthorityRoutingCheckpoints?: Map<string, EnsembleAuthorityRoutingCheckpoint>
-  /**
-   * Bounded checkpoint chances spent per authority seat this round — counting
-   * both rejected yields and unresolved-checkpoint re-summons, because a seat
-   * that cannot answer the checkpoint exhibits both shapes. Runtime-only: the
-   * bound exists to guarantee forward progress inside one round, and a restart
-   * legitimately re-earns the nudge.
-   */
-  authorityRoutingCheckpointAttempts?: Map<string, number>
   continuationLimitNotified?: boolean
   /**
    * The serial continuation budget is exhausted, but terminal publication is
@@ -4245,65 +4233,6 @@ export class EnsembleOrchestrator {
         return fanoutHandoffHold
       }
     }
-    const checkpoint = run.authorityRoutingCheckpoint
-    const explicitCheckpointTarget = target
-      ? resolveYieldTargetDetail(
-          target,
-          chat?.ensemble?.participants || [],
-          new Set([run.participant.id])
-        )
-      : undefined
-    const requiresExplicitAuthorityRoutingDecision =
-      checkpoint?.selectionRequired || checkpoint?.kind === 'tagged_intervention'
-    // The gate is bounded. A seat whose MCP profile advertises the control
-    // front door under the other spelling — or whose transport strips the tool
-    // arguments carrying the decision — can never satisfy this checkpoint, and
-    // an unbounded gate turns that into a livelock: every yield rejected, the
-    // seat re-summoned, the hop budget spent without dispatching anyone. After
-    // its chances are spent the host preserves the queue on the seat's behalf
-    // and lets the yield through.
-    const authorityCheckpointExhausted =
-      requiresExplicitAuthorityRoutingDecision &&
-      Boolean(runtime) &&
-      authorityRoutingCheckpointExhausted(
-        this.authorityRoutingCheckpointAttemptsFor(runtime!, run.participant.id)
-      )
-    if (
-      requiresExplicitAuthorityRoutingDecision &&
-      !run.authorityRoutingDecision &&
-      authorityCheckpointExhausted
-    ) {
-      this.markAuthorityRoutingDecision(run, 'skipped_intervention')
-      this.appendRoundStatus(
-        run.chatId,
-        run.roundId,
-        `Authority routing checkpoint: ${participantDisplayName(run.participant)} could not record a routing decision after ${MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS} attempts; the host preserved the existing queue and accepted this yield. If this repeats, check that this seat's MCP profile advertises an Ensemble control tool it can call.`
-      )
-    }
-    if (
-      requiresExplicitAuthorityRoutingDecision &&
-      !run.authorityRoutingDecision &&
-      (!target || isUserYieldTarget(target) || explicitCheckpointTarget?.kind !== 'resolved')
-    ) {
-      if (runtime) this.noteAuthorityRoutingCheckpointAttempt(runtime, run.participant.id)
-      this.appendRoundStatus(
-        run.chatId,
-        run.roundId,
-        checkpoint?.kind === 'tagged_intervention'
-          ? `Authority routing checkpoint: ${participantDisplayName(run.participant)} must make a targeted routing decision or explicitly skip this tagged intervention before yielding.`
-          : `Authority routing checkpoint: ${participantDisplayName(run.participant)} must select pending participants, route with a targeted yield/@mention/fan-out, or explicitly preserve the queue before yielding this Continuous pass.`
-      )
-      const outcome: EnsembleYieldOutcome = {
-        kind: 'authority_routing_decision_required',
-        pass: checkpoint.pass,
-        requirement:
-          checkpoint?.kind === 'tagged_intervention'
-            ? 'tagged_intervention'
-            : 'later_pass_selection'
-      }
-      this.completeYieldActivity(run, reason, target, outcome)
-      return outcome
-    }
     run.status = 'yielded'
     let routing: EnsembleYieldRoutingResult | undefined
 
@@ -4324,13 +4253,13 @@ export class EnsembleOrchestrator {
           })
         : undefined
       if (stored) runtime.yieldRouting = stored
-      if (routing?.ok && routing.action !== 'user') {
+      if (routing?.ok) {
         this.markAuthorityRoutingDecision(run, 'redirected')
       } else if (routing?.ok === false && routing.reason !== 'unresolved' && routing.reason !== 'ambiguous') {
         // An explicit yield to a concrete target that was rejected for structural
         // reasons (blocked_status, outside_scope, authority_precedence, hop_limit)
-        // still counts as a routing decision for checkpoint purposes. Otherwise a
-        // structurally-unable authority seat would be re-summoned indefinitely.
+        // still counts as a routing decision so the checkpoint note does not
+        // incorrectly claim that the authority supplied no decision.
         this.markAuthorityRoutingDecision(run, 'rejected_handoff')
       }
     }
@@ -12239,10 +12168,6 @@ export class EnsembleOrchestrator {
     return this.resolveBossAuthorityForCaller(chat, runtime, participantId).ok
   }
 
-  private isInitialAuthorityPass(runtime: ActiveRoundRuntime): boolean {
-    return runtime.continuationPass <= 1
-  }
-
   private takeAuthorityRoutingCheckpoint(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
@@ -12258,13 +12183,12 @@ export class EnsembleOrchestrator {
       return tagged
     }
 
-    // Continuous acting Boss/Captain owns queue direction whenever ordinary
-    // serial seats remain.
+    // A Continuous acting Boss/Captain may direct the queue whenever ordinary
+    // serial seats remain; without a valid route, the serial queue advances.
     if ((runtime.remainingParticipants?.length || 0) > 0) {
       return {
         kind: 'later_pass',
-        pass: runtime.continuationPass,
-        selectionRequired: true
+        pass: runtime.continuationPass
       }
     }
     return undefined
@@ -12278,28 +12202,10 @@ export class EnsembleOrchestrator {
     run.authorityRoutingDecision = decision
   }
 
-  private authorityRoutingCheckpointAttemptsFor(
-    runtime: ActiveRoundRuntime,
-    participantId: string
-  ): number {
-    return runtime.authorityRoutingCheckpointAttempts?.get(participantId) || 0
-  }
-
-  /** Spend one bounded checkpoint chance and report the new total. */
-  private noteAuthorityRoutingCheckpointAttempt(
-    runtime: ActiveRoundRuntime,
-    participantId: string
-  ): number {
-    runtime.authorityRoutingCheckpointAttempts ??= new Map()
-    const spent = this.authorityRoutingCheckpointAttemptsFor(runtime, participantId) + 1
-    runtime.authorityRoutingCheckpointAttempts.set(participantId, spent)
-    return spent
-  }
-
   private noteUnresolvedAuthorityRoutingCheckpoint(run: ActiveParticipantRun): void {
     const checkpoint = run.authorityRoutingCheckpoint
     if (!checkpoint || run.authorityRoutingDecision) return
-    const requirement = checkpoint.selectionRequired
+    const requirement = checkpoint.kind === 'later_pass'
       ? 'No explicit keep/skip, targeted fan-out, or redirect decision was received'
       : 'No explicit interstitial routing decision was received'
     this.appendRoundStatus(
@@ -12323,66 +12229,8 @@ export class EnsembleOrchestrator {
     return {
       kind: 'tagged_intervention',
       pass: runtime.continuationPass,
-      selectionRequired: !this.isInitialAuthorityPass(runtime),
       sourceParticipantLabel: participantDisplayName(sourceRun.participant)
     }
-  }
-
-  private scheduleTaggedAuthorityIntervention(
-    chat: ChatRecord,
-    runtime: ActiveRoundRuntime,
-    remaining: EnsembleParticipant[],
-    sourceRun: ActiveParticipantRun,
-    matches: ParticipantMentionMatch[]
-  ): boolean {
-    const bossmanParticipantId = this.activeBossmanParticipantId(chat, runtime)
-    const primary = this.primaryBossUnavailable(chat, runtime, bossmanParticipantId)
-    const authorityId = primary.unavailable
-      ? this.activeActingCaptainParticipantId(chat, runtime)
-      : bossmanParticipantId
-    if (!authorityId) return false
-    const authorityMatch = matches.find(
-      (match) =>
-        match.participant.id === authorityId &&
-        !match.ambiguousAmong?.length &&
-        !isBackgroundParticipant(match.participant)
-    )
-    if (!authorityMatch) return false
-
-    const checkpoint = this.taggedAuthorityRoutingCheckpoint(runtime, sourceRun)
-    const authority = authorityMatch.participant
-    const pendingIndex = remaining.findIndex((participant) => participant.id === authority.id)
-    if (pendingIndex >= 0) {
-      const [pending] = remaining.splice(pendingIndex, 1)
-      remaining.unshift(pending)
-      runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
-      runtime.pendingAuthorityRoutingCheckpoints.set(authority.id, checkpoint)
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `Authority checkpoint: ${participantDisplayName(authority)} was tagged by ${participantDisplayName(sourceRun.participant)} and takes precedence before the requested handoff.`
-      )
-      return true
-    }
-
-    const continuation = this.tryAppendContinuationTurn(
-      runtime,
-      remaining,
-      authority,
-      `Authority checkpoint: ${participantDisplayName(authority)} was tagged by ${participantDisplayName(sourceRun.participant)}.`,
-      { allowAnsweredParticipant: true, allowYieldedParticipant: true }
-    )
-    if (!continuation.appended) {
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `Authority checkpoint: could not summon ${participantDisplayName(authority)} after ${participantDisplayName(sourceRun.participant)} tagged it — ${this.describeContinuationDecline(continuation)}.`
-      )
-      return false
-    }
-    runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
-    runtime.pendingAuthorityRoutingCheckpoints.set(authority.id, checkpoint)
-    return true
   }
 
   private lockedWriterFanoutAuthorizationMessage(
@@ -16142,17 +15990,6 @@ export class EnsembleOrchestrator {
         remaining.length = 0
         break
       }
-      // Continuous selectionRequired checkpoints are resolved after yield/@mention
-      // routing below. Soft-note only the non-blocking tagged interventions here.
-      if (
-        !shouldResummonAuthorityForUnresolvedRouting({
-          selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
-          decision: run.authorityRoutingDecision,
-          attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
-        })
-      ) {
-        this.noteUnresolvedAuthorityRoutingCheckpoint(run)
-      }
       const bossYieldedToUser =
         runtime.returnedControlToUser && this.isBossParticipant(chat, runtime, participant.id)
       if (bossYieldedToUser) {
@@ -16249,20 +16086,8 @@ export class EnsembleOrchestrator {
         }
       })
       const detectedParticipantTagMatches = assistantMentionRoutingPlan.participantMatches
-      // An explicit yield normally wins over conversational @mentions. The
-      // active Boss/Captain is the deliberate exception: if a participant tags
-      // the authority and then yields, run the bounded authority checkpoint
-      // first, then let the requested handoff continue. This makes the tag a
-      // usable between-turn intervention rather than an accidental no-op.
-      if (routedByYieldTarget && !runtime.returnedControlToUser) {
-        this.scheduleTaggedAuthorityIntervention(
-          chat,
-          runtime,
-          remaining,
-          run,
-          detectedParticipantTagMatches
-        )
-      }
+      // A valid direct yield wins over every conversational tag, including
+      // authority tags. Only an unresolved yield leaves tag routing available.
       if (!routedByYieldTarget) {
         for (const notice of assistantMentionRoutingPlan.groupNotices) {
           this.appendRoundStatus(
@@ -16438,14 +16263,9 @@ export class EnsembleOrchestrator {
           (tagged) => !remainingTargetIds.has(tagged.id)
         )
         for (const tagged of extraTargets.slice().reverse()) {
-          // The Boss/Captain priority authority is re-summoned even after it
-          // already spoke ('answered') OR explicitly yielded ('yielded') this
-          // round — a directed @-mention to the Boss must actually route, not
-          // just print the priority note above (mirrors summon_participant at
-          // :5194, which passes both allowAnswered + allowYielded).
-          // The hop budget still throttles it (one hop per re-summon, same as
-          // any continuation). Advisory (non-authority) participants keep the
-          // existing "no re-summon of an already-terminal participant" behavior.
+          // A valid foreground tag can recall any eligible answered/yielded
+          // peer. The continuation helper still enforces scope, live lanes,
+          // hard terminal exclusions, seat budgets, and one hop per extra turn.
           const isPriorityAuthority = tagged.id === priorityAuthorityMatch?.participant.id
           const continuation = this.tryAppendContinuationTurn(
             runtime,
@@ -16453,8 +16273,8 @@ export class EnsembleOrchestrator {
             tagged,
             `@-mention: extra turn appended for ${tagged.role || tagged.provider}.`,
             {
-              allowAnsweredParticipant: isPriorityAuthority,
-              allowYieldedParticipant: isPriorityAuthority
+              allowAnsweredParticipant: true,
+              allowYieldedParticipant: true
             }
           )
           if (continuation.appended) {
@@ -16486,40 +16306,9 @@ export class EnsembleOrchestrator {
           this.markAuthorityRoutingDecision(run, 'mentioned')
         }
       }
-      if (
-        !goalBecameTerminalDuringRound({
-          activeGoal: this.deps.getChat(runtime.chatId)?.activeGoal,
-          roundStartGoalId: runtime.roundStartGoalId,
-          roundStartGoalWasTerminal: runtime.roundStartGoalWasTerminal
-        }) &&
-        shouldResummonAuthorityForUnresolvedRouting({
-          selectionRequired: run.authorityRoutingCheckpoint?.selectionRequired,
-          decision: run.authorityRoutingDecision,
-          attempts: this.authorityRoutingCheckpointAttemptsFor(runtime, participant.id)
-        })
-      ) {
-        const statusMessage = `Authority routing checkpoint: ${participantDisplayName(participant)} ended without an explicit routing decision; re-summoning before ordinary serial writers.`
-        if (
-          this.requeueAuthorityForActiveFanoutHold(runtime, remaining, participant, statusMessage)
-        ) {
-          // Spend a bounded chance: a seat that cannot answer the checkpoint
-          // must not be re-summoned indefinitely against the hop budget.
-          this.noteAuthorityRoutingCheckpointAttempt(runtime, participant.id)
-          runtime.pendingAuthorityRoutingCheckpoints ??= new Map()
-          runtime.pendingAuthorityRoutingCheckpoints.set(
-            participant.id,
-            run.authorityRoutingCheckpoint!
-          )
-          continue
-        }
-        this.appendRoundStatus(
-          runtime.chatId,
-          runtime.roundId,
-          `${statusMessage} Could not re-summon ${participantDisplayName(participant)}; pausing ordinary serial writers for this round.`
-        )
-        remaining.length = 0
-        break
-      }
+      // No usable direct yield or tag leaves the existing serial queue intact.
+      // A quiet authority is not a reason to append the same seat and spend a hop.
+      this.noteUnresolvedAuthorityRoutingCheckpoint(run)
       // 1.0.4 — remember whose dispatch is "the yield target" for
       // the next iteration so a failed dispatch on that participant
       // emits the yield-specific transcript note. Only the yield
@@ -19507,9 +19296,8 @@ export class EnsembleOrchestrator {
     const narrowedRoster = this.narrowContinuationRosterToOpenWork(chat, fullRoster, runtime)
     // Consume a queued late `select_participants` exactly once. It resolves
     // against the FULL admissible roster, not the narrowed one: an explicit
-    // authority keep-list is exactly the "authority-directed seats" input the
-    // narrowing heuristic exists to approximate (`select_participants expands
-    // within the authority-only pass` — EnsembleAuthorityRouting). The outcome
+    // authority keep-list overrides automatic fallback without inventing
+    // another instruction from the prior pass. The outcome
     // only decides which seats join this pass, in normal roster order with no
     // per-seat state rewrites, and fails open to the standard pass with a
     // visible note when it no longer resolves.
@@ -19605,13 +19393,12 @@ export class EnsembleOrchestrator {
    *    acting Captain when the Boss is unavailable (standby Captain
    *    confirmation turns were a measured waste pattern).
    *
-   * When assign_work was never used, Continuous still avoids full-roster
-   * churn by admitting authority-directed seats only (fan-out / reserved
-   * fan-out / yield-return / foreground synthesizer when configured) plus
-   * Boss/acting Captain. Prior speakers are not re-seeded from round status.
+   * When assign_work was never used, the next automatic pass keeps the full
+   * eligible serial roster. Settled fan-out history, prior speakers, and a
+   * configured final synthesizer do not imply a new routing instruction.
    *
-   * Fail-open: missing Continuous runtime / empty directed admit set keeps
-   * the full roster; an open poll keeps the full roster (voting is the whole
+   * Fail-open: an empty assignment-aware admit set keeps the full roster;
+   * an open poll keeps the full roster (voting is the whole
    * roster's job, and polls always close/expire so this cannot pin forever);
    * a narrowing that would admit nobody falls back to the full roster instead
    * of stranding the goal.
@@ -19643,27 +19430,6 @@ export class EnsembleOrchestrator {
           admitted.add(participantId)
         }
       }
-    } else if (runtime) {
-      const synthesizerParticipantId =
-        chat.ensemble && resolveForegroundSynthesizerParticipantId(chat.ensemble)
-      const synthesizerInRoster =
-        synthesizerParticipantId &&
-        fullRoster.some((participant) => participant.id === synthesizerParticipantId)
-          ? synthesizerParticipantId
-          : undefined
-      for (const participantId of collectAuthorityOnlyContinuationCandidateIds({
-        fannedOutParticipantIds: runtime.fannedOutParticipantIds,
-        fanoutReservedParticipantIds: runtime.fanoutReservedParticipantIds,
-        yieldReturnParticipantIds: (runtime.yieldReturnStack || []).flatMap((frame) => [
-          frame.returnParticipantId,
-          frame.targetParticipantId
-        ]),
-        synthesizerParticipantId: synthesizerInRoster
-      })) {
-        admitted.add(participantId)
-      }
-    } else {
-      return fullRoster
     }
 
     const bossId = chat.ensemble?.bossmanParticipantId
@@ -19684,9 +19450,11 @@ export class EnsembleOrchestrator {
           })
         })
     if (captainId && !bossEligible) admitted.add(captainId)
-    const narrowed = fullRoster.filter((participant) => admitted.has(participant.id))
-    if (narrowed.length === 0) return fullRoster
-    return narrowed
+    return resolveAutomaticContinuationRoster({
+      fullRoster,
+      hasStructuredAssignments: assignments.length > 0,
+      admittedParticipantIds: admitted
+    })
   }
 
   private async probeParticipantsForRound(

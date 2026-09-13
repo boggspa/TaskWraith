@@ -1,12 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyQueuedAuthorityRosterSelection,
-  authorityRoutingCheckpointExhausted,
-  collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
-  MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS,
-  resolveAuthoritySelection,
-  shouldResummonAuthorityForUnresolvedRouting
+  resolveAutomaticContinuationRoster,
+  resolveAuthoritySelection
 } from './EnsembleAuthorityRouting'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import type { EnsembleParticipant } from './store/types'
@@ -119,63 +116,6 @@ describe('resolveAuthoritySelection', () => {
 })
 
 describe('Continuous Boss ownership helpers', () => {
-  it('re-summons authority only for unmet selectionRequired checkpoints', () => {
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: true,
-        decision: undefined
-      })
-    ).toBe(true)
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: true,
-        decision: 'mentioned'
-      })
-    ).toBe(false)
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: false,
-        decision: undefined
-      })
-    ).toBe(false)
-  })
-
-  it('stops re-summoning once the seat has spent its bounded checkpoint chances', () => {
-    // An authority seat can be structurally unable to resolve its checkpoint
-    // (control tool advertised under the other spelling, or an arg-stripping
-    // transport). Re-summoning it forever burns the whole hop budget.
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: true,
-        decision: undefined,
-        attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS - 1
-      })
-    ).toBe(true)
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: true,
-        decision: undefined,
-        attempts: MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
-      })
-    ).toBe(false)
-    // Omitted attempts stay backwards-compatible with pre-bound callers.
-    expect(authorityRoutingCheckpointExhausted(undefined)).toBe(false)
-    expect(authorityRoutingCheckpointExhausted(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS)).toBe(
-      true
-    )
-  })
-
-  it('suppresses re-summon when authority routing decision is rejected_handoff', () => {
-    // A rejected_handoff decision (e.g., explicit yield to a blocked target) satisfies
-    // the checkpoint, preventing indefinite re-summon loops.
-    expect(
-      shouldResummonAuthorityForUnresolvedRouting({
-        selectionRequired: true,
-        decision: 'rejected_handoff'
-      })
-    ).toBe(false)
-  })
-
   it('distinguishes a goal terminalized during this round from stale terminal context', () => {
     const activeGoal = {
       id: 'goal-live',
@@ -215,26 +155,37 @@ describe('Continuous Boss ownership helpers', () => {
       })
     ).toBe(true)
   })
+})
 
-  it('collects authority-only fan-out, yield-return, and optional synthesizer seats', () => {
+describe('resolveAutomaticContinuationRoster', () => {
+  it('keeps serial order when static Boss and synthesizer candidates exist without assignments', () => {
     expect(
-      collectAuthorityOnlyContinuationCandidateIds({
-        fannedOutParticipantIds: ['reviewer'],
-        fanoutReservedParticipantIds: ['builder'],
-        yieldReturnParticipantIds: ['boss', 'worker'],
-        synthesizerParticipantId: 'synth'
-      }).sort()
-    ).toEqual(['boss', 'builder', 'reviewer', 'synth', 'worker'])
+      resolveAutomaticContinuationRoster({
+        fullRoster: participants,
+        hasStructuredAssignments: false,
+        admittedParticipantIds: new Set(['boss', 'reviewer'])
+      }).map((participant) => participant.id)
+    ).toEqual(['boss', 'worker', 'reviewer'])
   })
 
-  it('does not admit prior speakers alone for authority-only auto-continue', () => {
+  it('preserves assignment-aware narrowing in serial roster order', () => {
     expect(
-      collectAuthorityOnlyContinuationCandidateIds({
-        fannedOutParticipantIds: [],
-        fanoutReservedParticipantIds: [],
-        yieldReturnParticipantIds: []
-      })
-    ).toEqual([])
+      resolveAutomaticContinuationRoster({
+        fullRoster: participants,
+        hasStructuredAssignments: true,
+        admittedParticipantIds: new Set(['reviewer', 'boss'])
+      }).map((participant) => participant.id)
+    ).toEqual(['boss', 'reviewer'])
+  })
+
+  it('fails open to the serial roster when structured assignments admit no eligible seat', () => {
+    expect(
+      resolveAutomaticContinuationRoster({
+        fullRoster: participants,
+        hasStructuredAssignments: true,
+        admittedParticipantIds: new Set(['missing'])
+      }).map((participant) => participant.id)
+    ).toEqual(['boss', 'worker', 'reviewer'])
   })
 })
 

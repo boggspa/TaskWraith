@@ -44,7 +44,6 @@ import { TASKWRAITH_CONTEXT_USAGE_KEY, withContextUsageSnapshot } from '../../sh
 import type { EnsembleRosterPreset } from '../../shared/EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
-import { MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS } from '../EnsembleAuthorityRouting'
 import {
   ANTIGRAVITY_GOAL_COMPLETE_FALLBACK_PREFIX,
   ANTIGRAVITY_GOAL_SET_FALLBACK_PREFIX
@@ -8531,8 +8530,7 @@ Next action:
           message.content.includes('Boss selection queued during pass 2 applied: keeping')
       )
     ).toBe(true)
-    // The pass-3 authority turn makes its routing decision explicitly so its
-    // completion advances the kept Worker instead of re-summoning the Boss.
+    // The pass-3 authority explicitly preserves the kept queue.
     await harness.orchestrator.bossmanControlForRun(harness.dispatched[1].appRunId, {
       action: 'skip_intervention'
     })
@@ -8543,8 +8541,8 @@ Next action:
       harness.dispatched.slice(1).map((payload) => payload.ensembleRun?.participantId)
     ).not.toContain('kimi')
 
-    // One-shot: pass 4 forms via ordinary narrowing (authority-only here),
-    // not the consumed queue, and the applied note never repeats.
+    // One-shot: pass 4 forms via ordinary serial fallback, not the consumed
+    // queue, and the applied note never repeats.
     completeDispatchedRun(harness, 2)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
     expect(harness.dispatched[3].ensembleRun?.participantId).toBe('claude')
@@ -8619,7 +8617,7 @@ Next action:
     ).toBe(false)
   })
 
-  it('inserts a tagged Boss checkpoint before a peer yield and allows an explicit opt-out', async () => {
+  it('keeps a valid peer yield ahead of a simultaneous Boss tag', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.orchestrationMode = 'continuous'
@@ -8653,40 +8651,22 @@ Next action:
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
       { type: 'content', text: '@Boss please make the next routing decision.' }
     )
-    expectYielded(
+    expect(
       harness.orchestrator.markYielded(
         harness.dispatched[1].appRunId!,
-        'Researcher should prepare evidence after the authority check.',
+        'Researcher should prepare evidence next.',
         'Researcher'
       )
-    )
+    ).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, targetParticipantId: 'kimi' }
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    expect(harness.dispatched[2].provider).toBe('claude')
-    expect(harness.dispatched[2].prompt).toContain('Authority routing checkpoint')
-
-    expect(
-      harness.orchestrator.markYielded(harness.dispatched[2].appRunId!, 'No routing change.')
-    ).toEqual({
-      kind: 'authority_routing_decision_required',
-      pass: 1,
-      requirement: 'tagged_intervention'
-    })
-    const optOut = await harness.orchestrator.bossmanControlForRun(harness.dispatched[2].appRunId, {
-      action: 'skip_intervention'
-    })
-    expect(optOut).toMatchObject({ ok: true, action: 'skip_intervention' })
-    expectYielded(
-      harness.orchestrator.markYielded(
-        harness.dispatched[2].appRunId!,
-        'Proceed with the original handoff.',
-        'Researcher'
-      )
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
-    expect(harness.dispatched[3].provider).toBe('kimi')
+    expect(harness.dispatched[2].provider).toBe('kimi')
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('kimi')
   })
 
-  it('Continuous later-pass Boss quiet answer re-summons authority and does not dispatch Worker', async () => {
+  it('advances a quiet later-pass Boss to the next serial Worker without spending a hop', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.orchestrationMode = 'continuous'
@@ -8705,10 +8685,8 @@ Next action:
       }
     ).roundsByChatId.get('ensemble-chat')!
     runtime.continuationPass = 2
-    // Re-dispatch is not automatic when we mutate pass mid-run; the active Boss
-    // run already carries (or will carry) a selectionRequired checkpoint once
-    // Continuous later-pass ownership is enforced. Quiet-answer without a
-    // routing decision must re-summon Boss rather than advance to Worker.
+    // Re-dispatch is not automatic when we mutate pass mid-run. With no valid
+    // direct yield or @tag, the host follows the existing serial queue.
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -8720,15 +8698,15 @@ Next action:
       { type: 'result', status: 'success' }
     )
     await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThan(1))
-    expect(harness.dispatched[1].provider).toBe('claude')
-    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('claude')
-    expect(harness.dispatched.slice(1).some((entry) => entry.provider === 'codex')).toBe(false)
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
     expect(harness.chat.messages.some((message) => /re-summon/i.test(message.content || ''))).toBe(
-      true
+      false
     )
   })
 
-  it('Continuous pass-1 Boss can select_participants / skip; quiet answer without decision re-summons', async () => {
+  it('lets a pass-1 Boss select participants while a quiet Boss follows serial order', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.orchestrationMode = 'continuous'
@@ -8800,8 +8778,8 @@ Next action:
       { type: 'result', status: 'success' }
     )
     await vi.waitFor(() => expect(quiet.dispatched.length).toBeGreaterThan(1))
-    expect(quiet.dispatched[1].provider).toBe('claude')
-    expect(quiet.dispatched.some((entry) => entry.provider === 'codex')).toBe(false)
+    expect(quiet.dispatched[1].provider).toBe('codex')
+    expect(quiet.chat.ensemble?.activeRound?.continuationHops).toBe(0)
   })
 
   it('unique @Worker mention from Continuous Boss counts as a routing decision', async () => {
@@ -8836,11 +8814,9 @@ Next action:
     )
   })
 
-  it('default-config Boss prompt carries the Continuous must-route gate and an explicit preserve advances', async () => {
-    // Continuous-only: a chat that never chose a mode (the old Turn-bound
-    // default) now runs Continuous, so the pass-1 Boss prompt carries the
-    // must-route checkpoint and a quiet answer only advances once the Boss
-    // explicitly preserves the queue.
+  it('gives a default-config Boss advisory routing controls and advances a quiet turn', async () => {
+    // A chat that never chose a mode still normalizes to Continuous. The Boss
+    // can steer the pass, while ordinary serial order is the host fallback.
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
     initialChat.ensemble!.participants[0].role = 'Boss'
@@ -8854,11 +8830,8 @@ Next action:
     expect(harness.dispatched[0].prompt || '').toContain(
       'Authority routing checkpoint (Continuous pass'
     )
-    await expect(
-      harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-        action: 'skip_intervention'
-      })
-    ).resolves.toMatchObject({ ok: true, action: 'skip_intervention' })
+    expect(harness.dispatched[0].prompt).toContain('These controls are optional')
+    expect(harness.dispatched[0].prompt).toContain('next eligible serial seat')
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -8871,6 +8844,7 @@ Next action:
     )
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
   })
 
   it('lets Boss explicitly re-summon an answered worker in Continuous mode', async () => {
@@ -8938,7 +8912,7 @@ Next action:
     expect(harness.dispatched[3].provider).toBe('codex')
   })
 
-  it('does not let a Boss @mention re-summon an already answered worker', async () => {
+  it('lets a Boss @mention re-summon an eligible answered worker', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.orchestrationMode = 'continuous'
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -8980,8 +8954,9 @@ Next action:
       { type: 'result', status: 'success' }
     )
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(3)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+    expect(harness.dispatched[3].ensembleRun?.participantId).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
   })
 
   it('accepts Boss summon on a legacy turn_bound chat (mode normalizes to Continuous)', async () => {
@@ -14131,9 +14106,7 @@ Next action:
   })
 
   it('closes the round when a speaker explicitly yields to user', async () => {
-    // Continuous-only: a NON-authority speaker's user yield is terminal
-    // immediately. (An authority speaker with pending seats must resolve its
-    // must-route checkpoint first — pinned by the Continuous test below.)
+    // A valid direct yield to the user is terminal immediately.
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -14176,26 +14149,6 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    // Continuous Boss with remaining seats must resolve the selectionRequired
-    // checkpoint before a yield-to-user can close the round.
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
-        'Return control to the user.',
-        'user'
-      )
-    ).toEqual({
-      kind: 'authority_routing_decision_required',
-      pass: 1,
-      requirement: 'later_pass_selection'
-    })
-    const preserve = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'skip_intervention'
-      }
-    )
-    expect(preserve).toMatchObject({ ok: true, action: 'skip_intervention' })
     expectYielded(
       harness.orchestrator.markYielded(
         harness.dispatched[0].appRunId!,
@@ -14212,11 +14165,7 @@ Next action:
     ).toBe(false)
   })
 
-  it('accepts the yield once an unresolvable authority routing checkpoint exhausts its chances', async () => {
-    // Reproduces the observed stall: a Continuous Boss whose surface advertises
-    // the control tool under the other spelling (or whose transport strips the
-    // decision arguments) can never record a routing decision, so every yield
-    // is rejected and the seat spins until the hop budget is gone.
+  it('accepts a targetless Boss yield and advances the existing serial queue', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'claude'
     harness.chat.ensemble!.orchestrationMode = 'continuous'
@@ -14229,29 +14178,13 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const bossRunId = harness.dispatched[0].appRunId!
 
-    // The seat never calls the control tool — it cannot. Its bounded chances
-    // are spent on rejected yields.
-    for (let attempt = 0; attempt < MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS; attempt += 1) {
-      expect(
-        harness.orchestrator.markYielded(bossRunId, 'Returning control to the user.', 'user')
-      ).toMatchObject({ kind: 'authority_routing_decision_required' })
-    }
-
-    // The gate must now fail open rather than reject a third time.
-    expectYielded(
-      harness.orchestrator.markYielded(bossRunId, 'Returning control to the user.', 'user')
-    )
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(
-      harness.chat.messages.some(
-        (message) =>
-          typeof message.content === 'string' &&
-          message.content.includes('preserved the existing queue')
-      )
-    ).toBe(true)
+    expectYielded(harness.orchestrator.markYielded(bossRunId, 'No direct handoff needed.'))
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
   })
 
-  it('re-summons an unresolved authority checkpoint a bounded number of times, then advances', async () => {
+  it('advances immediately after a quiet Boss completion with no routing directive', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'claude'
     harness.chat.ensemble!.orchestrationMode = 'continuous'
@@ -14263,30 +14196,14 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    // The Boss keeps ending quietly with no routing decision. Each quiet end
-    // used to re-summon it unconditionally; the bound must let the ordinary
-    // serial queue through instead of looping on the same seat.
-    for (let turn = 0; turn < MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS + 2; turn += 1) {
-      const pending = harness.dispatched[harness.dispatched.length - 1]
-      if (pending.provider !== 'claude') break
-      harness.orchestrator.handleProviderOutput(
-        'claude',
-        { appRunId: pending.appRunId, appChatId: 'ensemble-chat' },
-        { type: 'result', status: 'success', stats: { total_tokens: 10 } }
-      )
-      await vi.waitFor(() =>
-        expect(harness.dispatched.length).toBeGreaterThan(
-          harness.dispatched.indexOf(pending) + 0
-        )
-      )
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    }
-
-    await vi.waitFor(() =>
-      expect(harness.dispatched.some((payload) => payload.provider === 'codex')).toBe(true)
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
-    const bossTurns = harness.dispatched.filter((payload) => payload.provider === 'claude').length
-    expect(bossTurns).toBeLessThanOrEqual(MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS + 1)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched.map((payload) => payload.provider)).toEqual(['claude', 'codex'])
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
   })
 
   it('settles the round at yield-to-user acceptance instead of waiting for the provider transport', async () => {
@@ -17462,9 +17379,8 @@ Next action:
   })
 
   it('rejects ambiguous same-provider yield targets with tool-visible failure', async () => {
-    // Continuous-only: keep the caller non-authority — an authority seat with
-    // pending peers hits the must-route checkpoint before target resolution,
-    // which would mask the ambiguity rejection under test.
+    // Keep the caller non-authority so this case isolates ambiguous target
+    // resolution from authority-specific controls.
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -17505,7 +17421,7 @@ Next action:
     })
   })
 
-  it('does not append an extra turn when @-tagging a participant who already reached a terminal status', async () => {
+  it('appends one bounded extra turn when @-tagging an eligible answered participant', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     // Pre-completed goal disables auto-continuation to isolate the @-mention
@@ -17539,7 +17455,12 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('claude')
 
-    // Claude finishes without an @-mention.
+    // Claude answers without an @-mention.
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'content', text: 'Initial plan ready.' }
+    )
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
@@ -17548,8 +17469,8 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
 
-    // Codex finishes and mentions @Planner — Claude already answered
-    // earlier in this round, so no extra turn should be appended.
+    // Codex mentions @Planner after Claude answered. The valid handoff
+    // re-opens that eligible seat without waiting for an automatic pass.
     const codexRoute = {
       appRunId: harness.dispatched[1].appRunId,
       appChatId: 'ensemble-chat'
@@ -17564,17 +17485,12 @@ Next action:
       stats: { total_tokens: 10 }
     })
 
-    await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
-    expect(harness.dispatched).toHaveLength(2)
-    expect(harness.chat.ensemble?.activeRound?.continuationHops || 0).toBe(0)
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('ensemble-claude')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
   })
 
-  it('drops a non-authority @mention of an already-spoken participant and auto-continues a fresh pass', async () => {
-    // Continuous-only replacement for the turn-bound "no extra turn" pin: a
-    // generic @mention of an already-answered NON-authority seat still appends
-    // nothing (only the Boss/Captain priority route may re-summon a spoken
-    // seat), but the round no longer ends there — the drain forms a fresh
-    // full-roster pass, and the PASS is what consumes continuation hops.
+  it('routes a non-authority @mention before automatic continuation', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.maxContinuationHops = 2
     harness.chat.ensemble!.participants = [
@@ -17627,25 +17543,25 @@ Next action:
       { type: 'result', status: 'success', stats: { total_tokens: 10 } }
     )
 
-    // Pass 2 forms with the full roster (2 seats = 2 hops); the mention itself
-    // appended no extra turn and consumed nothing.
+    // The unique mention itself re-opens Planner and consumes one hop. It is a
+    // direct in-round handoff, so no automatic pass forms at this boundary.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('ensemble-claude')
-    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(2)
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
     expect(
       harness.chat.messages.some(
         (message) =>
           typeof message.content === 'string' &&
           message.content.includes('auto-continuing for pass 2')
       )
-    ).toBe(true)
+    ).toBe(false)
     expect(
       harness.chat.messages.some(
         (message) =>
           typeof message.content === 'string' &&
           message.content.includes('extra turn appended')
       )
-    ).toBe(false)
+    ).toBe(true)
   })
 
   it('yield plus @mention re-summons an already-spoken participant exactly once', async () => {
@@ -19123,10 +19039,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('codex') // Boss speaks first
 
-    // Continuous Boss must clear the selectionRequired checkpoint before a
-    // targetless yield is accepted. Keep Worker, then yield without a target so
-    // NO yield-return frame is created: the ONLY path that can bring the Boss
-    // back is the priority @-mention under test.
+    // Keep Worker, then yield without a target so no yield-return frame is
+    // created: the only path that can bring the Boss back is the valid
+    // @-mention under test.
     const bossKeep = await harness.orchestrator.bossmanControlForRun(
       harness.dispatched[0].appRunId,
       {
@@ -21828,10 +21743,10 @@ Next action:
       { type: 'content', text: 'BOSS-SYNTHESIS after the fan-out wave.' }
     )
     completeDispatchedRun(harness, 3)
-    // Authority-only Continuous auto-continue re-admits Boss (and fan-out
-    // targets), not unanswered ordinary writers, after a productive synthesis.
+    // Once the owned fan-out and required synthesis are settled, the pending
+    // serial Worker advances instead of implicitly re-summoning Boss again.
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(5), { timeout: 1000 })
-    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('boss')
+    expect(harness.dispatched[4].ensembleRun?.participantId).toBe('worker')
     await harness.orchestrator.cancelRound('ensemble-chat', 'Test complete.')
   })
 
@@ -27072,13 +26987,14 @@ describe('assignment-aware continuation roster narrowing', () => {
     expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
   })
 
-  it('authority-only Continuous auto-continue admits fan-out targets plus Boss, not prior speakers alone', async () => {
+  it('keeps the serial roster despite settled fan-out history and a configured synthesizer', async () => {
     const harness = makeHarness()
     const roster = [...fullRoster]
     harness.chat.ensemble!.participants = roster
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.bossmanParticipantId = 'boss'
     harness.chat.ensemble!.secondInCommandParticipantId = 'captain'
+    harness.chat.ensemble!.synthesizerParticipantId = 'reviewer1'
     harness.chat.activeGoal = buildActiveGoal('goal-directed')
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -27109,11 +27025,12 @@ describe('assignment-aware continuation roster narrowing', () => {
       roster,
       runtime
     )
-    // fan-out admits worker1; answered scout1 alone must NOT admit
-    expect(narrowed.map((participant) => participant.id)).toEqual(['boss', 'worker1'])
+    expect(narrowed.map((participant) => participant.id)).toEqual(
+      fullRoster.map((participant) => participant.id)
+    )
   })
 
-  it('authority-only Continuous narrowing drops answered-only workers with no fan-out or yield-return', async () => {
+  it('keeps answered participants in serial fallback when no structured assignments exist', async () => {
     const harness = makeHarness()
     const roster = [...fullRoster]
     harness.chat.ensemble!.participants = roster
@@ -27148,10 +27065,12 @@ describe('assignment-aware continuation roster narrowing', () => {
       roster,
       runtime
     )
-    expect(narrowed.map((participant) => participant.id)).toEqual(['boss'])
+    expect(narrowed.map((participant) => participant.id)).toEqual(
+      fullRoster.map((participant) => participant.id)
+    )
   })
 
-  it('authority-only Continuous Boss-only hop after productive pass with no expansion', async () => {
+  it('auto-continues a productive no-assignment pass with the full serial roster', async () => {
     const harness = makeHarness()
     const roster = [...fullRoster]
     harness.chat.ensemble!.participants = roster
@@ -27176,13 +27095,14 @@ describe('assignment-aware continuation roster narrowing', () => {
 
     const fresh = io.tryAutoContinueRound.call(harness.orchestrator, runtime, harness.chat)
     expect(fresh).not.toBeNull()
-    expect(fresh!.map((entry) => entry.id)).toEqual(['boss'])
+    expect(fresh!.map((entry) => entry.id)).toEqual(fullRoster.map((entry) => entry.id))
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(fullRoster.length)
     expect(harness.chat.ensemble?.activeRound?.continuationPass).toBe(2)
     expect(
       harness.chat.messages.some((message) =>
         /Focused continuation pass: 1 of 5 seats/.test(message.content || '')
       )
-    ).toBe(true)
+    ).toBe(false)
   })
 
   it('authority-directed Continuous narrowing fail-opens to the full roster when the admit set is empty', async () => {

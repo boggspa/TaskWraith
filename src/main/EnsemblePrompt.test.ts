@@ -2101,7 +2101,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).not.toContain('Continuation-hop budget is nearly exhausted')
   })
 
-  it('gives a later-pass authority an explicit keep/skip routing checkpoint', () => {
+  it('gives a later-pass authority an advisory keep/skip routing checkpoint', () => {
     const continuousEnsemble: EnsembleConfig = {
       ...ensemble,
       orchestrationMode: 'continuous',
@@ -2115,8 +2115,7 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       authorityRoutingCheckpoint: {
         kind: 'later_pass',
-        pass: 2,
-        selectionRequired: true
+        pass: 2
       }
     })
 
@@ -2125,10 +2124,14 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('skip_intervention')
     expect(prompt).toContain('Continuous pass 1 may select')
     expect(prompt).toContain('unique foreground')
+    expect(prompt).toContain('These controls are optional')
+    expect(prompt).toContain('A valid direct yield wins over text mentions')
+    expect(prompt).toContain('the existing serial queue continues')
+    expect(prompt).not.toContain('re-summons you')
     expect(prompt).not.toContain('do not use a broad/all target')
   })
 
-  it('gives Continuous pass-1 authority the same must-route checkpoint stanza', () => {
+  it('tells Continuous pass-1 authority that a quiet turn advances the serial queue', () => {
     const continuousEnsemble: EnsembleConfig = {
       ...ensemble,
       orchestrationMode: 'continuous',
@@ -2142,13 +2145,13 @@ describe('Ensemble prompt composition', () => {
       roundId: 'round-1',
       authorityRoutingCheckpoint: {
         kind: 'later_pass',
-        pass: 1,
-        selectionRequired: true
+        pass: 1
       }
     })
 
     expect(prompt).toContain('Authority routing checkpoint (Continuous pass 1)')
-    expect(prompt).toContain('re-summons you instead of advancing ordinary serial seats')
+    expect(prompt).toContain('ending without a valid route advances the next eligible serial seat')
+    expect(prompt).not.toContain('re-summons you')
   })
 
   // 1.0.4-AR8 — meta-round suspension. When the chat has no workspace

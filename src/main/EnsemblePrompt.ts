@@ -621,10 +621,10 @@ function formatBossPostRound1HandoffRule(
     return []
   }
   return [
-    '- POST-ROUND-1 BOSS HANDOFF (applies after the first full pass / continuationHops >=1, or any time pass >0): you MUST end this turn with an explicit handoff. Do not emit a small follow-up that loops back to yourself.',
+    '- BOSS HANDOFF: when another seat should speak next, request an explicit handoff. Routing priority is a valid direct yield, then a unique routable @Role/@Model mention, then the next eligible seat in serial order.',
     '  - If work remains owned by another seat: call a listed `ensemble_yield(target)` with a specific participant/role/model target (preferred for 1:1), OR call listed `ensemble_fanout` / `ensemble_fanout_all` for explicit parallel assignments.',
     '  - Use `ensemble_fanout` for recon/review sweeps and for implementation slices that can run in parallel; use `ensemble_yield(target)` for a single-owner slice. Broad `all` is allowed for fan-out — see Parallel policy — but for yield the target must be specific, never `all`.',
-    '  - Narrating `@Worker should do X` without a tool call or a unique routable `@Role/@Model` mention is NOT a handoff and will re-summon you. If the needed tool is not listed, write one unambiguous @Role/@Model mention instead.',
+    '  - If the needed tool is not listed, write one unambiguous @Role/@Model mention. When no valid handoff is requested, TaskWraith advances the serial queue; a quiet response does not re-summon you.',
     '- Commit discipline (WIP marker + slices): claim the workspace write lock before any file edits — TaskWraith creates `.WORK-IN-PROGRESS-taskwraith-runtime-<instance>-<sha256>.md` (see WorkspaceLockMarkerProjection.ts:127 / RuntimeMarkerPattern.ts:8). Do not start writes without that marker. Commit in small path-scoped slices (one logical slice per commit) and keep the marker until the slice lands; the unlock/commit flow removes it. Report lock conflicts rather than retrying around the lock.'
   ]
 }
@@ -1239,20 +1239,18 @@ export function buildEnsembleParticipantPromptProjection(
     const source = checkpoint.sourceParticipantLabel
       ? ` A peer (${checkpoint.sourceParticipantLabel}) explicitly tagged you for this intervention.`
       : ''
-    if (checkpoint.selectionRequired) {
+    if (checkpoint.kind === 'later_pass') {
       const routingRule =
-        checkpoint.kind === 'tagged_intervention'
-          ? '- A targeted listed `ensemble_fanout` or `ensemble_yield(target)` also counts as a routing decision, but the target must name specific participants or a specific stage/role; do not use a broad/all target for this tagged checkpoint.'
-          : "- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention that routes also counts as a routing decision. Follow each tool's normal target policy; use `select_participants` when you need to reduce serial churn."
+        "- A listed `ensemble_fanout` (≥1 accepted lane), a targeted `ensemble_yield(target)`, or a unique foreground `@Role`/`@Model` mention can direct the work. Follow each tool's normal target policy; use `select_participants` when you need to reduce serial churn."
       return [
-        `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): before you end or yield, make one explicit routing decision.${source}`,
-        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. Ending quietly without a decision re-summons you instead of advancing ordinary serial seats.',
-        `${routingRule} If the needed tool is absent, state the precise selection or opt-out visibly with unique @Role/@Model names.`
+        `Authority routing checkpoint (Continuous pass ${checkpoint.pass}): you may direct the remaining queue before ending.${source}`,
+        '- If `ensemble_control` is listed, call `select_participants` with explicit participantIds and/or participantRoles to keep those pending seats (Continuous pass 1 may select); every other pending serial seat is skipped. Or call `skip_intervention` / `skip_participant` / `summon_participant` when those controls are listed. These controls are optional: ending without a valid route advances the next eligible serial seat.',
+        `${routingRule} A valid direct yield wins over text mentions; without either, the existing serial queue continues.`
       ]
     }
     return [
       `Authority routing checkpoint: you were explicitly tagged for an interstitial Boss/Captain decision.${source}`,
-      '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or say that you are preserving the queue; do not guess or fan out broadly.'
+      '- You may launch targeted listed fan-out, redirect with `ensemble_yield(target)`, or call `ensemble_control` with an explicit participant/role selection. If the tag was only informational, call `skip_intervention` when that control is listed, or preserve the queue by finishing normally; do not guess or fan out broadly. A valid direct yield wins over text mentions; without either, the next eligible serial seat runs.'
     ]
   })()
   // Continuous-only: every round is Continuous; legacy 'turn_bound' records

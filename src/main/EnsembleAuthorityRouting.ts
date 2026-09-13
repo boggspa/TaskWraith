@@ -12,8 +12,6 @@ export interface EnsembleAuthorityRoutingCheckpoint {
   kind: 'later_pass' | 'tagged_intervention'
   /** One-based autonomous pass number within the active Ensemble round. */
   pass: number
-  /** Continuous authority passes require a keep/skip/routing decision before ending. */
-  selectionRequired: boolean
   /** Present when a peer explicitly summoned the active authority by @-mention. */
   sourceParticipantLabel?: string
 }
@@ -27,40 +25,6 @@ export type EnsembleAuthorityRoutingDecision =
   | 'redirected'
   | 'mentioned'
   | 'rejected_handoff'
-
-/**
- * How many chances one authority seat gets to resolve its routing checkpoint
- * before the host preserves the queue for it.
- *
- * The checkpoint asks the seat to call its Ensemble control tool, but a seat
- * can be structurally unable to answer: the control front door is advertised as
- * `ensemble_control` on v2+ MCP profiles and `ensemble_bossman_control` on
- * v1/pinned ones, and some transports drop the tool arguments that carry the
- * decision. An unbounded gate turns that into a livelock — every yield is
- * rejected and each quiet turn re-summons the same seat, so a Continuous round
- * can burn its whole hop budget without ever dispatching another participant.
- * Two chances keeps the nudge and guarantees progress.
- */
-export const MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS = 2
-
-/** Chances already spent by this seat this round; absent counts as none. */
-export function authorityRoutingCheckpointExhausted(attempts: number | undefined): boolean {
-  return (attempts || 0) >= MAX_AUTHORITY_ROUTING_CHECKPOINT_ATTEMPTS
-}
-
-/** Quiet authority completion with an unmet selection checkpoint. */
-export function shouldResummonAuthorityForUnresolvedRouting(input: {
-  selectionRequired: boolean | undefined
-  decision: EnsembleAuthorityRoutingDecision | undefined
-  /** Bounded chances already spent; omitted keeps pre-bound caller behaviour. */
-  attempts?: number
-}): boolean {
-  return (
-    Boolean(input.selectionRequired) &&
-    !input.decision &&
-    !authorityRoutingCheckpointExhausted(input.attempts)
-  )
-}
 
 /**
  * Whether this round owns a newly-terminal goal. A terminal goal carried in
@@ -78,33 +42,21 @@ export function goalBecameTerminalDuringRound(input: {
 }
 
 /**
- * Candidate seat ids for Continuous auto-continue when assign_work was never
- * used: authority-directed expansion only (fan-out targets, reserved fan-out,
- * yield-return stack, optional foreground synthesizer). Prior speakers
- * (answered/yielded/sleeping) are NOT re-admitted from status harvest —
- * select_participants expands within the authority-only pass instead.
- * Callers still add Boss/acting Captain and fail-open to the full roster when
- * the filtered admit set is empty.
+ * Automatic continuation uses serial order unless structured assignments give
+ * the host a current work plan. Prior fan-out output and a configured closing
+ * synthesizer are not new routing instructions. Pending lanes and direct
+ * handoffs are settled by their own lifecycle before this drain boundary.
  */
-export function collectAuthorityOnlyContinuationCandidateIds(input: {
-  fannedOutParticipantIds?: Iterable<string>
-  fanoutReservedParticipantIds?: Iterable<string>
-  yieldReturnParticipantIds?: Iterable<string>
-  synthesizerParticipantId?: string
-}): string[] {
-  const admitted = new Set<string>()
-  for (const id of input.fannedOutParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  for (const id of input.fanoutReservedParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  for (const id of input.yieldReturnParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  const synthesizerId = input.synthesizerParticipantId?.trim()
-  if (synthesizerId) admitted.add(synthesizerId)
-  return [...admitted]
+export function resolveAutomaticContinuationRoster(input: {
+  fullRoster: EnsembleParticipant[]
+  hasStructuredAssignments: boolean
+  admittedParticipantIds: ReadonlySet<string>
+}): EnsembleParticipant[] {
+  if (!input.hasStructuredAssignments) return input.fullRoster
+  const narrowed = input.fullRoster.filter((participant) =>
+    input.admittedParticipantIds.has(participant.id)
+  )
+  return narrowed.length > 0 ? narrowed : input.fullRoster
 }
 
 export interface ResolveAuthoritySelectionInput {

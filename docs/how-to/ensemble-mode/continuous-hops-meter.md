@@ -3,7 +3,12 @@
 **Platform:** Electron
 
 ## What it is
-The `n/m` chip that counts handoffs in an Ensemble round: how many have been used, out of the limit you set. `2/6` means two of six are gone. A handoff is spent whenever the round passes to another agent — whether someone mentioned them, yielded to them, or TaskWraith started the next pass on its own.
+The `n/m` chip counts continuation turns in an Ensemble round: how many have
+been used, out of the limit you set. `2/6` means two of six are gone. Recalling
+an eligible participant for an extra turn consumes one hop, and an automatic
+new pass reserves one hop for each admitted seat. Advancing or promoting a seat
+already waiting in the serial queue consumes no additional hop. A quiet Boss
+response follows that queue instead of spending a hop to run the Boss again.
 
 ## Where to find it
 In the **Turns** cell on the second row of the Roster Presets section above the composer, beside **Fan-Out** and **Isolate**.
