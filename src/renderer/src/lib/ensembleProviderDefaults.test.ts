@@ -96,11 +96,11 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns kimi defaults: K2.7 Coding, Standard speed, thinking On', () => {
+  it('returns kimi defaults: K2.8 Preview, Max, Standard speed, thinking on', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
-      model: 'kimi-k2.7-code',
+      model: 'kimi-k2.8-preview',
       permissionPresetId: 'default',
-      reasoningEffort: 'on',
+      reasoningEffort: 'max',
       fastModeEnabled: false,
       thinkingEnabled: true,
       serviceTier: 'standard'
@@ -750,6 +750,8 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(defaults.fastModeEnabled).toBe(false)
     expect(defaults.serviceTier).toBe('standard')
     expect(defaults.permissionPresetId).toBe('default')
+    expect(defaults.model).toBe('kimi-k2.8-preview')
+    expect(defaults.reasoningEffort).toBe('max')
 
     const overridden = resolveEnsembleParticipantSettings(
       participant({
@@ -912,7 +914,8 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   it('exposes Highspeed as its own row with fixed thinking and no Fast toggle', () => {
     const kimi = getEnsembleModelDefaults('kimi')
     expect(kimi.defaultModelId).toBe('kimi-k2.8-preview')
-    expect(kimi.defaultReasoning).toBe('on')
+    expect(kimi.defaultReasoning).toBe('max')
+    expect(kimi.reasoningOptions.map((option) => option.value)).toEqual(['low', 'high', 'max'])
     expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code-highspeed')).toEqual([
       expect.objectContaining({ value: 'on', label: 'On' })
     ])

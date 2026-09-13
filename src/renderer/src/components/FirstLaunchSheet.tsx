@@ -1025,14 +1025,14 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and Kimi K2.7 Coding) expose a
-              Fast choice — K2.7 Coding switches between Standard and
-              Highspeed (neither K3 route has a Fast tier), while Grok 4.6 and the retained
-              Grok 4.5 model on the Grok CLI are always labelled Fast.
+              GPT-5.6 / 5.5 / 5.4 and supported Claude Opus models) expose a Fast choice, while Grok
+              4.6 and the retained Grok 4.5 model on the Grok CLI are always labelled Fast. Kimi
+              exposes no Fast toggle: K2.8 Preview, K2.7 Code Highspeed, and both K3 routes are
+              separate model rows.
             </li>
             <li>
-              <strong>Kimi thinking stays on.</strong> K2.7 Coding has a fixed On setting; both K3
-              routes let you choose Low, High, or Max effort, but thinking cannot be disabled.
+              <strong>Kimi thinking stays on.</strong> K2.8 Preview and both K3 routes let you
+              choose Low, High, or Max effort; K2.7 Code Highspeed has a fixed On setting.
             </li>
             <li>
               <strong>Delegate a focused worker.</strong> With approval, an agent can open a

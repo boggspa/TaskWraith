@@ -163,7 +163,7 @@ describe('ComposerShellPreview — single metadata source', () => {
       ['cursor', 'cursor', 'Composer 2.5', 'default', 'Accept Edits'],
       ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Accept Edits'],
       ['gemini', 'gemini', 'Gemini Pro', 'default', 'Accept Edits'],
-      ['kimi', 'kimi', 'K2.7 Coding', 'read_only', 'Read workspace'],
+      ['kimi', 'kimi', 'K2.8 Preview', 'read_only', 'Read workspace'],
       ['default', 'codex', 'Auto', 'default', 'Accept Edits'],
       ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']
     ]
@@ -177,8 +177,8 @@ describe('ComposerShellPreview — single metadata source', () => {
     }
 
     const kimi = render('kimi')
-    expect(kimi).toContain('data-selected-reasoning="on"')
-    expect(kimi).toContain('Thinking')
+    expect(kimi).toContain('data-selected-reasoning="max"')
+    expect(kimi).toContain('composer-combined-picker-trigger-suffix">Max')
 
     const native = render('default')
     expect(native).toContain('composer-combined-picker-trigger-provider-label">TaskWraith')

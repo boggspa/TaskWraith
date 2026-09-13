@@ -186,11 +186,12 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('choose individual saved panels')
     expect(html).toContain('namespaced workspace tools')
     expect(html).toContain('repository-local hooks, filters')
-    expect(html).toContain('K2.7 Coding switches between Standard and Highspeed')
-    expect(html).toContain('neither K3 route has a Fast tier')
-    expect(html).toContain('K2.7 Coding has a fixed On setting')
-    expect(html).toContain('both K3')
+    expect(html).toContain('Kimi exposes no Fast toggle')
+    expect(html).toContain('K2.8 Preview, K2.7 Code Highspeed, and both K3 routes')
+    expect(html).toContain('K2.8 Preview and both K3 routes')
+    expect(html).toContain('K2.7 Code Highspeed has a fixed On setting')
     expect(html).toContain('choose Low, High, or Max effort')
+    expect(html).not.toContain('K2.7 Coding switches between Standard and Highspeed')
   })
 
   it('intro prose advertises live providers but not the retired Gemini', () => {

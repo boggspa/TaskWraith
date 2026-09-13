@@ -791,9 +791,9 @@ export function getDefaultEnsembleParticipantConfig(
       }
     case 'kimi':
       return {
-        model: 'kimi-k2.7-code',
+        model: KIMI_K28_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: 'on',
+        reasoningEffort: 'max',
         fastModeEnabled: false,
         thinkingEnabled: true,
         serviceTier: 'standard'
@@ -1560,8 +1560,8 @@ export function getEnsembleModelDefaults(
     case 'kimi':
       return {
         modelOptions: KIMI_MODELS,
-        reasoningOptions: KIMI_ALWAYS_ON_REASONING,
-        defaultReasoning: 'on',
+        reasoningOptions: KIMI_K3_REASONING,
+        defaultReasoning: 'max',
         fastModeCapableModelIds: KIMI_FAST_CAPABLE,
         defaultModelId: KIMI_K28_MODEL_ID
       }

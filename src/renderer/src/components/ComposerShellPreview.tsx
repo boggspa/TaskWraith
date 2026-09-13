@@ -33,6 +33,11 @@ import { ContextMeterPopover } from './ContextMeterPopover'
 import type { ContextMeterModel } from '../lib/contextMeter'
 import { ComposerWorkspaceSwitcher } from './ComposerWorkspaceSwitcher'
 import { CopyTranscriptButton, type CopyTranscriptResult } from './CopyTranscriptButton'
+import {
+  KIMI_K28_MODEL_ID,
+  KIMI_K28_MODEL_LABEL,
+  KIMI_K3_REASONING_EFFORTS
+} from '../../../shared/kimiModels'
 
 /**
  * ComposerShellPreview — the single source of truth for the inert composer
@@ -122,7 +127,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'kimi':
       return {
         providerLabel: 'Kimi',
-        modelLabel: 'K2.7 Coding Thinking',
+        modelLabel: KIMI_K28_MODEL_LABEL,
         permissionLabel: 'Read workspace',
         placeholder: 'Type "/" to quickly access skills'
       }
@@ -198,7 +203,7 @@ function previewModelIdForStyle(style: ComposerStyle): string {
     case 'gemini':
       return 'pro'
     case 'kimi':
-      return 'kimi-k2.7-code'
+      return KIMI_K28_MODEL_ID
     case 'terminal':
       return 'preview-shell'
     default:
@@ -214,6 +219,10 @@ function previewPermissionValueForStyle(style: ComposerStyle): string {
 }
 
 const NOOP = (): void => {}
+const PREVIEW_KIMI_REASONING_OPTIONS = KIMI_K3_REASONING_EFFORTS.map((value) => ({
+  value,
+  label: value.charAt(0).toUpperCase() + value.slice(1)
+}))
 const PREVIEW_PLUS_SECTIONS: ComposerPlusPickerSection[] = [
   {
     id: 'preview-add',
@@ -518,10 +527,13 @@ export function ComposerShellPreview({
                         onSelectModel={NOOP}
                         providerGroups={previewProviderGroups}
                         onSelectProviderModel={NOOP}
-                        reasoningOptions={[]}
-                        selectedReasoning={composerStyle === 'kimi' ? 'on' : ''}
+                        reasoningOptions={
+                          composerStyle === 'kimi' ? PREVIEW_KIMI_REASONING_OPTIONS : []
+                        }
+                        selectedReasoning={composerStyle === 'kimi' ? 'max' : ''}
                         onSelectReasoning={NOOP}
                         kimiThinkingEnabled={composerStyle === 'kimi'}
+                        kimiReasoningEffort={composerStyle === 'kimi' ? 'max' : undefined}
                       />
                       <CombinedPermissionsPicker
                         provider={previewProviderId}
