@@ -6,6 +6,7 @@ import type {
 } from './store/types'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../shared/ensembleLimits'
 import { DEVIN_DEFAULT_MODEL_ID } from '../shared/devinModelCatalog'
+import { KIMI_K28_MODEL_ID } from '../shared/kimiModels'
 
 /*
  * F2 (1.0.3) — the per-provider MODEL defaults below MUST stay in
@@ -252,7 +253,7 @@ export function createDefaultEnsembleConfig(
 function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'codex') return 'gpt-5.5'
   if (provider === 'claude') return 'claude-sonnet-5'
-  if (provider === 'kimi') return 'kimi-k2.7-code'
+  if (provider === 'kimi') return KIMI_K28_MODEL_ID
   if (provider === 'grok') return 'grok-4.6'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3.5:9b'
