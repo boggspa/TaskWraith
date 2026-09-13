@@ -4,6 +4,7 @@ import {
   getKnownModelLabels,
   humaniseModelId,
   humaniseModelIdCompact,
+  humaniseRecordedModelIdCompact,
   humaniseModelIdTableCell
 } from './modelDisplayName'
 import { CURSOR_GROK_46_WIRE_MODEL_IDS } from '../../../shared/grok45Models'
@@ -104,6 +105,13 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('kimi', 'kimi-k2.5')).toBe('Kimi K2.5')
       expect(humaniseModelId('kimi', 'kimi-k2')).toBe('Kimi K2')
       expect(humaniseModelId('kimi', 'kimi-latest')).toBe('Kimi (Latest)')
+    })
+
+    it('keeps the retired K2.7 label only for immutable recorded presentation', () => {
+      expect(humaniseModelIdCompact('kimi', 'kimi-k2.7-code')).toBe('K2.8 Preview')
+      expect(humaniseRecordedModelIdCompact('kimi', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+      expect(humaniseRecordedModelIdCompact('kimi', 'KIMI-K2.7-CODE')).toBe('K2.7 Coding')
+      expect(humaniseRecordedModelIdCompact('kimi', 'kimi-k2.8-preview')).toBe('K2.8 Preview')
     })
 
     it('maps preview / dated Kimi variants', () => {

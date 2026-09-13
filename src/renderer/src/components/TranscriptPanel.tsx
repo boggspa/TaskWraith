@@ -49,6 +49,7 @@ import {
   formatAssistantMessageLabel,
   mostRecentSoloRunModel
 } from '../lib/assistantMessageLabel'
+import { transcriptRunModelPresentation } from '../lib/transcriptRunModelPresentation'
 import { formatEnsembleYieldContentForDisplay } from '../lib/EnsembleYieldPresentation'
 import { readMessageFeedbackVote, type MessageFeedbackDetails } from '../lib/messageFeedback'
 import type { ProjectReferenceCitationOpenTarget } from '../lib/projectReferenceCitations'
@@ -401,7 +402,8 @@ function activitySpeakerMessage(
   chat: ChatRecord | null,
   run?: ChatRun | null
 ): ChatMessage {
-  const metadata: Record<string, unknown> = { ...(message.metadata || {}) }
+  const presented = transcriptRunModelPresentation(message, run, chat?.chatKind === 'ensemble')
+  const metadata: Record<string, unknown> = { ...(presented.metadata || {}) }
   const firstActivityWithMetadata = message.toolActivities?.find((activity) => activity.metadata)
   const activityMetadata = firstActivityWithMetadata?.metadata
   const seatSnapshot = run?.ensembleSeatSnapshot
@@ -6301,7 +6303,11 @@ export const TranscriptPanel = memo(
                           pooledAgentIdentity
                         } =
                           formatAssistantMessageLabel(
-                            assistantLabelMessage,
+                            transcriptRunModelPresentation(
+                              assistantLabelMessage,
+                              assistantRun,
+                              currentChat?.chatKind === 'ensemble'
+                            ),
                             getProviderLabel(assistantRunProvider),
                             assistantRunProvider,
                             {

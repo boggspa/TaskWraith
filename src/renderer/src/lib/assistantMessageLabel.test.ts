@@ -375,6 +375,45 @@ describe('formatAssistantMessageLabel', () => {
     ).toBe('Sonnet 5')
   })
 
+  it('keeps an exact recorded K2.7 identity without changing current K2.8 presentation', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          assistantProvider: 'kimi',
+          providerModel: 'kimi-k2.7-code'
+        }),
+        'Kimi',
+        'kimi'
+      ).modelBadge
+    ).toBe('K2.7 Coding')
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleModel: 'kimi-k2.7-code',
+          ensembleThinkingEnabled: true
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K2.7 Coding Thinking')
+
+    expect(
+      formatAssistantMessageLabel(
+        assistant({
+          ensembleProvider: 'kimi',
+          ensembleModel: 'kimi-k2.8-preview',
+          ensembleReasoningEffort: 'max'
+        }),
+        'Kimi',
+        'kimi',
+        { isEnsembleChat: true }
+      ).modelBadge
+    ).toBe('K2.8 Preview Max')
+  })
+
   it('recovers K3 effort from a captured seat snapshot for older transcript rows', () => {
     expect(
       formatAssistantMessageLabel(

@@ -1,5 +1,9 @@
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
-import { canonicalModelIdForProvider, humaniseModelId } from './modelDisplayName'
+import {
+  canonicalModelIdForProvider,
+  humaniseModelId,
+  humaniseRecordedModelIdCompact
+} from './modelDisplayName'
 import {
   resolveOllamaDisplayBrand,
   resolveProviderBrandLabel,
@@ -11,6 +15,7 @@ import type {
   PooledAgentIdentitySnapshot,
   ProviderId
 } from '../../../main/store/types'
+import { KIMI_K27_MODEL_ID } from '../../../shared/kimiModels'
 
 type AssistantMessageLabelPresentation = {
   label: string
@@ -166,6 +171,9 @@ function transcriptShortModelName(
   modelLabel: string,
   modelId: string
 ): string {
+  if (provider === 'kimi' && modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID) {
+    return humaniseRecordedModelIdCompact(provider, modelId)
+  }
   // `shortModelName` preserves the wire id for legacy `cli-default` rows.
   // Resolve the provider-aware concrete default first so an assistant header
   // never says the raw sentinel or an old sibling model name.
@@ -180,6 +188,17 @@ function transcriptReasoningLabel(input: {
   thinkingEnabled?: boolean
 }): string {
   const { provider, modelId, reasoningEffort, thinkingEnabled } = input
+  const normalizedEffort = String(reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (
+    provider === 'kimi' &&
+    modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID &&
+    (normalizedEffort === '' || normalizedEffort === 'on') &&
+    (thinkingEnabled === true || normalizedEffort === 'on')
+  ) {
+    return 'Thinking'
+  }
   return reasoningDisplayLabel({
     provider,
     composerStyle: 'default',

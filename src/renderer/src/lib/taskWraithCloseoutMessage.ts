@@ -33,9 +33,13 @@ import {
 } from '../../../shared/closeoutReceipt'
 import { commitAttributionActivityKind } from '../../../shared/commitAttributionProjection'
 import type { SeatChangeLink, SeatChangeSeatState } from '../../../shared/seatChange'
+import {
+  KIMI_K27_MODEL_ID,
+  kimiModelSupportsReasoningEfforts
+} from '../../../shared/kimiModels'
 import { formatContextTokens } from './contextWindows'
 import { reasoningDisplayLabel } from './composerChipFormat'
-import { humaniseModelIdCompact } from './modelDisplayName'
+import { humaniseRecordedModelIdCompact } from './modelDisplayName'
 import {
   DEFAULT_APPROVAL_LABEL,
   PLAN_LABEL,
@@ -1547,6 +1551,41 @@ function participantFallbackSeatSnapshot(
   }
 }
 
+const KIMI_LADDER_EFFORTS = new Set(['low', 'high', 'max'])
+
+/**
+ * Reconcile a configured Kimi effort with an authoritative recorded actual
+ * model. Shared by close-out and transcript presentation; it never changes a
+ * configured-only snapshot or an exact historical K2.7 actual model.
+ */
+export function effectiveRecordedKimiReasoningEffort(
+  provider: ProviderId,
+  actualModel: string | undefined,
+  reasoningEffort: string | undefined
+): string | undefined {
+  const actual = String(actualModel || '').trim()
+  if (
+    provider !== 'kimi' ||
+    !actual ||
+    actual.toLowerCase() === KIMI_K27_MODEL_ID ||
+    !kimiModelSupportsReasoningEfforts(actual)
+  ) {
+    return reasoningEffort
+  }
+  const normalized = String(reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'ultratask' || KIMI_LADDER_EFFORTS.has(normalized)) {
+    return reasoningEffort
+  }
+  // A post-migration Kimi init reports the canonical actual model. Its
+  // immutable configured snapshot may still carry K2.7's retired on/off
+  // control, but the dispatch boundary projected that state to K2.8's Max
+  // default. Only apply that projection when an actual model proves the newer
+  // route ran; a pre-init failure keeps the historical configured snapshot.
+  return 'max'
+}
+
 function participantTurnConfiguration(
   chat: ChatRecord,
   participant: EnsembleRoundParticipantState,
@@ -1566,10 +1605,16 @@ function participantTurnConfiguration(
     typeof metadata?.ensembleModel === 'string' ? metadata.ensembleModel : undefined
   const provider =
     run.providerReroute?.to || snapshot?.provider || run.provider || participant.provider
+  const modelId = run.actualModel || snapshot?.model || run.requestedModel || metadataModel || ''
+  const reasoningEffort = snapshot?.reasoningEffort ?? metadataReasoning
   return {
     provider,
-    modelId: run.actualModel || snapshot?.model || run.requestedModel || metadataModel || '',
-    reasoningEffort: snapshot?.reasoningEffort ?? metadataReasoning,
+    modelId,
+    reasoningEffort: effectiveRecordedKimiReasoningEffort(
+      provider,
+      run.actualModel,
+      reasoningEffort
+    ),
     thinkingEnabled: snapshot?.thinkingEnabled ?? metadataThinking,
     reasoningCaptured:
       Boolean(snapshot) ||
@@ -1596,7 +1641,7 @@ function latestEnsembleMetadataForRun(
 
 function formatParticipantModel(provider: ProviderId, modelId?: string): string {
   if (!modelId) return '—'
-  return humaniseModelIdCompact(provider, modelId) || modelId
+  return humaniseRecordedModelIdCompact(provider, modelId) || modelId
 }
 
 /**
@@ -1660,6 +1705,17 @@ function formatParticipantReasoning(input: {
   reasoningEffort?: string
   thinkingEnabled?: boolean
 }): string {
+  const normalizedEffort = String(input.reasoningEffort || '')
+    .trim()
+    .toLowerCase()
+  if (
+    input.provider === 'kimi' &&
+    input.modelId.trim().toLowerCase() === KIMI_K27_MODEL_ID &&
+    (normalizedEffort === '' || normalizedEffort === 'on') &&
+    (input.thinkingEnabled === true || normalizedEffort === 'on')
+  ) {
+    return 'Thinking'
+  }
   const label = reasoningDisplayLabel({
     provider: input.provider,
     composerStyle: 'default',

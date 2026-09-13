@@ -1775,6 +1775,81 @@ Next action:
     expect(table?.rows?.[2]?.workLabel).toBe('—')
   })
 
+  it('lets an actual K2.8 run outrank a legacy snapshot and projects only obsolete effort', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-kimi-migration',
+      status: 'completed',
+      prompt: 'Exercise the migrated Kimi seat.',
+      startedAt: '2026-09-12T12:00:00.000Z',
+      endedAt: '2026-09-12T12:01:00.000Z',
+      participants: [
+        {
+          participantId: 'kimi',
+          provider: 'kimi',
+          role: 'Reviewer',
+          order: 1,
+          status: 'answered',
+          initialSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'on',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'read_only'
+          }
+        }
+      ]
+    }
+    const snapshot = (reasoningEffort: string): NonNullable<ChatRun['ensembleSeatSnapshot']> => ({
+      schemaVersion: 1,
+      provider: 'kimi',
+      model: reasoningEffort === 'on' ? 'kimi-k2.7-code' : 'kimi-k2.8-preview',
+      reasoningEffort,
+      thinkingEnabled: true,
+      configuredPermissionPresetId: 'read_only'
+    })
+    const runs: ChatRun[] = [
+      {
+        runId: 'run-kimi-old-control',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:00.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        requestedModel: 'kimi-k2.7-code',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('on')
+      },
+      {
+        runId: 'run-kimi-high',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:10.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('high')
+      },
+      {
+        runId: 'run-kimi-ultratask',
+        provider: 'kimi',
+        startedAt: '2026-09-12T12:00:20.000Z',
+        ensembleRoundId: round.roundId,
+        ensembleParticipantId: 'kimi',
+        actualModel: 'kimi-k2.8-preview',
+        ensembleSeatSnapshot: snapshot('ultraTask')
+      }
+    ]
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({ chatKind: 'ensemble', runs }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    const seatText = closeout.metadata?.closeoutParticipantTable?.rows[0]?.seatText
+    expect(seatText).toContain('K2.8 Preview · Max → High → UltraTask')
+    expect(seatText).not.toContain('K2.7 Coding')
+    expect(seatText).not.toContain('Thinking')
+  })
+
   it('uses compact status icons without repeating participant counts in prose', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-status-icons',

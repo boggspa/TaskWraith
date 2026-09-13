@@ -483,6 +483,87 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('Model: K3 Max')
   })
 
+  it.each([
+    ['assistant', 'kimi-k2.8-preview', 'K2.8 Preview Max'],
+    ['tool', 'kimi-k2.8-preview', 'K2.8 Preview Max'],
+    ['assistant', 'kimi-k2.7-code', 'K2.7 Coding Thinking'],
+    ['tool', 'kimi-k2.7-code', 'K2.7 Coding Thinking']
+  ] as const)('attributes a %s header to its recorded %s run', (role, actualModel, badge) => {
+    const chat = {
+      appChatId: 'kimi-recorded-header',
+      chatKind: 'ensemble',
+      provider: 'codex',
+      title: 'Recorded header',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'run-recorded',
+          provider: 'kimi',
+          requestedModel: 'kimi-k2.7-code',
+          actualModel,
+          startedAt: '2026-09-12T12:00:00.000Z',
+          ensembleSeatSnapshot: {
+            schemaVersion: 1,
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            reasoningEffort: 'on',
+            thinkingEnabled: true,
+            configuredPermissionPresetId: 'read_only'
+          }
+        }
+      ]
+    } as ChatRecord
+    const message: ChatMessage = {
+      id: 'recorded-header',
+      role,
+      content: role === 'assistant' ? 'Completed the review.' : '',
+      timestamp: '2026-09-12T12:00:01.000Z',
+      runId: 'run-recorded',
+      metadata: {
+        kind: role === 'assistant' ? 'ensembleParticipant' : 'ensembleParticipantTools',
+        ensembleProvider: 'kimi',
+        ensembleRole: 'Reviewer',
+        ensembleModel: 'kimi-k2.7-code',
+        ensembleReasoningEffort: 'on',
+        ensembleThinkingEnabled: true
+      },
+      ...(role === 'tool'
+        ? {
+            toolActivities: [
+              {
+                id: 'thinking-recorded',
+                toolName: 'kimi_reasoning',
+                displayName: 'Kimi thinking',
+                category: 'task',
+                status: 'success',
+                resultSummary: 'Reviewed the request.'
+              } as ToolActivity
+            ]
+          }
+        : {})
+    }
+    const captured = JSON.stringify({ chat, message })
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          liveActivityViewport: true,
+          currentChat: chat,
+          currentProvider: 'codex',
+          currentProviderLabel: 'Codex',
+          messages: [message]
+        })}
+      />
+    )
+
+    expect(html).toContain('Kimi / Reviewer')
+    expect(html).toContain(`title="Model: ${badge}"`)
+    expect(JSON.stringify({ chat, message })).toBe(captured)
+  })
+
   it('renders one unified Working signal with the active Ensemble seat and telemetry', () => {
     const chat = activeEnsembleChat(
       ensembleParticipant({ tokenTotals: { total_tokens: 28_500 } })

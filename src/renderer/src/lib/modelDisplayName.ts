@@ -13,6 +13,7 @@ import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailabi
 import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 import {
   KIMI_K27_HIGHSPEED_MODEL_LABEL,
+  KIMI_K27_MODEL_ID,
   KIMI_K28_MODEL_LABEL,
   KIMI_K3_256K_MODEL_LABEL,
   KIMI_K3_MODEL_LABEL,
@@ -601,6 +602,29 @@ export function humaniseModelIdCompact(
   if (!pattern) return full
   const stripped = full.replace(pattern, '').trim()
   return stripped || full
+}
+
+/**
+ * Humanise an immutable run/snapshot model without rewriting the one retired
+ * Kimi identity whose upstream route later changed names.
+ *
+ * Current selection and usage surfaces must keep using
+ * {@link humaniseModelIdCompact}: there, `kimi-k2.7-code` intentionally folds
+ * into K2.8 Preview. A completed transcript/close-out instead records what the
+ * run or seat called itself at the time, so the exact retired id keeps its
+ * historical label. Every other id delegates to the canonical humaniser.
+ */
+export function humaniseRecordedModelIdCompact(
+  provider: ProviderId | undefined,
+  modelId: string | undefined | null
+): string {
+  const key = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  if (provider === 'kimi' && key === KIMI_K27_MODEL_ID) {
+    return KNOWN_MODEL_LABELS[KIMI_K27_MODEL_ID] || 'K2.7 Coding'
+  }
+  return humaniseModelIdCompact(provider, modelId)
 }
 
 const DATED_CLAUDE_MODEL_ID = /^claude-(haiku|sonnet|opus|fable|mythos)-(\d+)-(\d+)(?:-\d{8})?$/i
