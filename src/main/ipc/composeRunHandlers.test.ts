@@ -89,7 +89,7 @@ describe('registerComposeRunHandlers', () => {
     expect(deps.composeRun).not.toHaveBeenCalled()
   })
 
-  it('rejects a Test 1 popout using a Test 3 attachment before ComposerService', async () => {
+  it('drops a Test 3 attachment a Test 1 popout is not authorized for and still composes', async () => {
     const test1Popout = { sender: { id: 11 } }
     const deps = createDeps()
     deps.resolveSenderAttachmentPaths = vi.fn(() => {
@@ -101,13 +101,16 @@ describe('registerComposeRunHandlers', () => {
       imageAttachments: [{ path: '/Test 3/secret.pdf', name: 'secret.pdf' }]
     }
 
-    await expect(handlerFor('compose-run')(test1Popout, input)).rejects.toThrow(
-      'Renderer is not authorized to use one or more attachments.'
-    )
+    await expect(handlerFor('compose-run')(test1Popout, input)).resolves.toEqual({
+      provider: 'codex'
+    })
     expect(deps.resolveSenderAttachmentPaths).toHaveBeenCalledWith(test1Popout, [
       '/Test 3/secret.pdf'
     ])
-    expect(deps.composeRun).not.toHaveBeenCalled()
+    expect(deps.composeRun).toHaveBeenCalledWith({
+      ...input,
+      imageAttachments: []
+    })
   })
 
   it('passes canonical caller-authorized attachments to ComposerService', async () => {
