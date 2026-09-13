@@ -1,4 +1,5 @@
 import { defineConfig, configDefaults } from 'vitest/config'
+import { availableParallelism } from 'node:os'
 
 const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 
@@ -14,6 +15,11 @@ export default defineConfig({
   // throws "ReferenceError: React is not defined".
   esbuild: { jsx: 'automatic' },
   test: {
+    // Host/SQLite/Git suites create their own workers and durable transactions.
+    // Nine top-level forks made unrelated imports and cursor checks miss their
+    // deadlines; three passed the complete suite with those deadlines intact.
+    // Keep Vitest's run default on smaller hosts and cap larger test machines.
+    maxWorkers: Math.min(3, Math.max(availableParallelism() - 1, 1)),
     // The Windows CI runner is materially slower than the other legs -- the same
     // suite takes ~505s there against ~150s elsewhere -- and tests that are
     // nowhere near the limit locally intermittently blow vitest's 5s default.
