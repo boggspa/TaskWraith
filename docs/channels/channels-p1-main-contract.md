@@ -53,17 +53,17 @@ design and adversarial review. People conversion belongs to P4.
 P1 reuses reviewed mechanics without pretending People already has the Channel
 data model.
 
-| Current People component | P1 treatment |
-| --- | --- |
-| [`HumanCollaborationCipher`](../../src/shared/collaboration/HumanCollaborationCipher.ts) and [`HumanCollaborationKeySchedule`](../../src/shared/collaboration/HumanCollaborationKeySchedule.ts) | Reuse pairwise E2EE, fresh ephemeral keys, transcript signatures, and SAS derivation unchanged. There is one independent encrypted session per member room. |
-| [`HumanCollaborationIdentityStore`](../../src/main/collaboration/HumanCollaborationIdentityStore.ts) | Reuse the persisted human identity key and pinned-key reconnect rule. A member id never substitutes for proof of the pinned key. |
-| [`HumanContributionRules`](../../src/main/collaboration/HumanContributionRules.ts) | Reuse fail-closed normalization and the existing 8,000-byte contribution bound as design inputs. P1 admits only the human text append capability; host-action requests and provider dispatch are absent. |
-| [`HumanCollaborationAuditLog`](../../src/main/collaboration/HumanCollaborationAuditLog.ts) | Reuse bounded, redacted audit conventions for admission, rejection, revocation, recovery, and protocol errors. The audit log is not the Channel message log. |
-| [`secretRedaction`](../../src/shared/secretRedaction.ts) and the path scrubber in [`HumanShareProjection`](../../src/main/collaboration/HumanShareProjection.ts) | Reuse before content becomes a committed outbound Channel record. Raw secrets and host paths are neither persisted in the Channel log nor fanned out. |
-| [`HumanCollaborationHostTransport`](../../src/main/collaboration/HumanCollaborationHostTransport.ts) | Keep one host `mac` seat paired with one remote `iphone` seat per room, reconnect backoff, and bounded frames. Replace the single-share projection routing with channel/member routing and N-room fan-out. |
-| [`HumanCollaborationStore`](../../src/main/collaboration/HumanCollaborationStore.ts) | Do not extend the share snapshot into Channels. Replace it with Channel and Member metadata plus a separate append-log owner. |
-| `HumanShareProjection` | Do not reuse. A trimmed view of a host chat is the wrong primitive for mutually visible Channel history. |
-| [`relay/src/server.ts`](../../relay/src/server.ts) | No change. It remains a blind two-seat forwarder with single occupancy per role and a 1 MiB frame ceiling. |
+| Current People component                                                                                                                                                                        | P1 treatment                                                                                                                                                                                               |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`HumanCollaborationCipher`](../../src/shared/collaboration/HumanCollaborationCipher.ts) and [`HumanCollaborationKeySchedule`](../../src/shared/collaboration/HumanCollaborationKeySchedule.ts) | Reuse pairwise E2EE, fresh ephemeral keys, transcript signatures, and SAS derivation unchanged. There is one independent encrypted session per member room.                                                |
+| [`HumanCollaborationIdentityStore`](../../src/main/collaboration/HumanCollaborationIdentityStore.ts)                                                                                            | Reuse the persisted human identity key and pinned-key reconnect rule. A member id never substitutes for proof of the pinned key.                                                                           |
+| [`HumanContributionRules`](../../src/main/collaboration/HumanContributionRules.ts)                                                                                                              | Reuse fail-closed normalization and the existing 8,000-byte contribution bound as design inputs. P1 admits only the human text append capability; host-action requests and provider dispatch are absent.   |
+| [`HumanCollaborationAuditLog`](../../src/main/collaboration/HumanCollaborationAuditLog.ts)                                                                                                      | Reuse bounded, redacted audit conventions for admission, rejection, revocation, recovery, and protocol errors. The audit log is not the Channel message log.                                               |
+| [`secretRedaction`](../../src/shared/secretRedaction.ts) and the path scrubber in [`HumanShareProjection`](../../src/main/collaboration/HumanShareProjection.ts)                                | Reuse before content becomes a committed outbound Channel record. Raw secrets and host paths are neither persisted in the Channel log nor fanned out.                                                      |
+| [`HumanCollaborationHostTransport`](../../src/main/collaboration/HumanCollaborationHostTransport.ts)                                                                                            | Keep one host `mac` seat paired with one remote `iphone` seat per room, reconnect backoff, and bounded frames. Replace the single-share projection routing with channel/member routing and N-room fan-out. |
+| [`HumanCollaborationStore`](../../src/main/collaboration/HumanCollaborationStore.ts)                                                                                                            | Do not extend the share snapshot into Channels. Replace it with Channel and Member metadata plus a separate append-log owner.                                                                              |
+| `HumanShareProjection`                                                                                                                                                                          | Do not reuse. A trimmed view of a host chat is the wrong primitive for mutually visible Channel history.                                                                                                   |
+| [`relay/src/server.ts`](../../relay/src/server.ts)                                                                                                                                              | No change. It remains a blind two-seat forwarder with single occupancy per role and a 1 MiB frame ceiling.                                                                                                 |
 
 The existing People flow remains operational and unchanged until P4. P1 code
 must live beside it, not dual-write People shares into an unfinished Channel
@@ -76,28 +76,28 @@ owned by `ChannelStore` and `ChannelMessageLog`.
 
 ### 3.1 Channel
 
-| Field | Contract |
-| --- | --- |
-| `channelId` | Opaque stable id generated by main. |
-| `chatId` | Stable owning General-chat id. Exactly one Channel per General chat in the future model; P1 must not mutate current chat records. |
-| `createdAt`, `updatedAt` | Host timestamps. |
-| `status` | `active` or `closed`; unknown values fail closed as closed. |
-| `nextSequence` | Next host sequence, starting at 1. Recovered from the durable log, never trusted only from mutable metadata. |
-| `membershipRevision` | Monotonic main-owned revision for membership snapshots. |
-| `ownerMemberId` | The local human host member. |
+| Field                    | Contract                                                                                                                          |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
+| `channelId`              | Opaque stable id generated by main.                                                                                               |
+| `chatId`                 | Stable owning General-chat id. Exactly one Channel per General chat in the future model; P1 must not mutate current chat records. |
+| `createdAt`, `updatedAt` | Host timestamps.                                                                                                                  |
+| `status`                 | `active` or `closed`; unknown values fail closed as closed.                                                                       |
+| `nextSequence`           | Next host sequence, starting at 1. Recovered from the durable log, never trusted only from mutable metadata.                      |
+| `membershipRevision`     | Monotonic main-owned revision for membership snapshots.                                                                           |
+| `ownerMemberId`          | The local human host member.                                                                                                      |
 
 ### 3.2 Member
 
-| Field | Contract |
-| --- | --- |
-| `memberId` | Opaque stable id generated by main. |
-| `channelId` | Owning Channel. |
-| `kind` | Literal `human`. No other value is valid in P1. |
-| `displayName` | Host-normalized, bounded display name; never an authority identifier. |
-| `identityPublicKey` | Pinned Ed25519 public identity established by SAS admission. |
-| `status` | `pending`, `active`, or `revoked`; unknown values fail closed as revoked. |
-| `roomId` | Unique two-seat relay room for a non-host member. It is routing data, not identity or authorization. |
-| `joinedAt`, `revokedAt` | Host timestamps. |
+| Field                   | Contract                                                                                             |
+| ----------------------- | ---------------------------------------------------------------------------------------------------- |
+| `memberId`              | Opaque stable id generated by main.                                                                  |
+| `channelId`             | Owning Channel.                                                                                      |
+| `kind`                  | Literal `human`. No other value is valid in P1.                                                      |
+| `displayName`           | Host-normalized, bounded display name; never an authority identifier.                                |
+| `identityPublicKey`     | Pinned Ed25519 public identity established by SAS admission.                                         |
+| `status`                | `pending`, `active`, or `revoked`; unknown values fail closed as revoked.                            |
+| `roomId`                | Unique two-seat relay room for a non-host member. It is routing data, not identity or authorization. |
+| `joinedAt`, `revokedAt` | Host timestamps.                                                                                     |
 
 The host is a human member but has no relay room. The active-member limit is
 checked transactionally before admission. Reconnecting the same pinned identity
@@ -106,17 +106,17 @@ rejoin through a fresh invite in P1.
 
 ### 3.3 ChannelMessage
 
-| Field | Contract |
-| --- | --- |
-| `channelId` | Owning Channel. |
-| `sequence` | Host-assigned positive integer, unique and strictly increasing within the Channel. |
-| `messageId` | Opaque stable id generated by main. |
-| `authorMemberId` | Derived from the authenticated session; never accepted from the inbound body. |
-| `clientMessageId` | Bounded sender-generated id used with `authorMemberId` for idempotency. |
-| `kind` | Literal `human.text` in P1. Unknown or agent-shaped kinds are rejected. |
-| `content` | UTF-8 human text, non-empty after validation, secret/path-redacted before persistence, at most 8,000 bytes after redaction. |
-| `acceptedAt` | Host timestamp stamped when the record is sequenced. |
-| `contentHash` | Hash used for idempotency-conflict and evidence checks; it is not an authentication signature. |
+| Field             | Contract                                                                                                                    |
+| ----------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `channelId`       | Owning Channel.                                                                                                             |
+| `sequence`        | Host-assigned positive integer, unique and strictly increasing within the Channel.                                          |
+| `messageId`       | Opaque stable id generated by main.                                                                                         |
+| `authorMemberId`  | Derived from the authenticated session; never accepted from the inbound body.                                               |
+| `clientMessageId` | Bounded sender-generated id used with `authorMemberId` for idempotency.                                                     |
+| `kind`            | Literal `human.text` in P1. Unknown or agent-shaped kinds are rejected.                                                     |
+| `content`         | UTF-8 human text, non-empty after validation, secret/path-redacted before persistence, at most 8,000 bytes after redaction. |
+| `acceptedAt`      | Host timestamp stamped when the record is sequenced.                                                                        |
+| `contentHash`     | Hash used for idempotency-conflict and evidence checks; it is not an authentication signature.                              |
 
 No provider name, model, run id, tool call, prompt intent, action request, or
 dispatch field exists in a P1 message.
@@ -191,14 +191,14 @@ source of truth.
 
 The implementation must obey these persistence outcomes:
 
-| Failure point | Required recovery result |
-| --- | --- |
-| Before the durable append starts | No record and no consumed sequence. |
-| Partial/torn final record | Discard or truncate only the provably incomplete tail; never invent an acknowledgement. |
-| Durable record complete, process dies before reply/fan-out | Record exists after restart; retry returns it through idempotency; replay delivers it. |
-| Reply sent, process dies before some fan-out sends | Record exists; lagging members receive it through resume. |
-| Corruption before the final tail | Mark the Channel recovery-blocked and surface a typed error. Do not silently reset history or continue at a guessed sequence. |
-| Metadata lags a valid log | Rebuild metadata-derived sequence/idempotency from the log. |
+| Failure point                                              | Required recovery result                                                                                                      |
+| ---------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Before the durable append starts                           | No record and no consumed sequence.                                                                                           |
+| Partial/torn final record                                  | Discard or truncate only the provably incomplete tail; never invent an acknowledgement.                                       |
+| Durable record complete, process dies before reply/fan-out | Record exists after restart; retry returns it through idempotency; replay delivers it.                                        |
+| Reply sent, process dies before some fan-out sends         | Record exists; lagging members receive it through resume.                                                                     |
+| Corruption before the final tail                           | Mark the Channel recovery-blocked and surface a typed error. Do not silently reset history or continue at a guessed sequence. |
+| Metadata lags a valid log                                  | Rebuild metadata-derived sequence/idempotency from the log.                                                                   |
 
 The writer must use a single ordered write path and sync accepted bytes before
 acknowledgement. Startup validates version, channel id, sequence continuity,
@@ -234,16 +234,16 @@ peer-to-peer fallback, alternate sequencer, or group key is introduced in P1.
 P1 uses the versioned, closed `taskwraith-channel-wire-v1` method set inside the
 pairwise encrypted envelope. These names and semantics are implemented:
 
-| Method/event | Direction | Semantics |
-| --- | --- | --- |
-| `channel.admission.begin` / `confirm` | member → host | Existing signed transcript and human SAS admission, scoped to one Channel invite. |
-| `channel.reconnect` | member → host | Fresh session keys, same pinned member and host identities, no new seat. |
-| `channel.members.snapshot` | host → member | Bounded human-member attribution at one `membershipRevision`; sent at admission/resume and after a revision change. |
-| `channel.log.append` | member → host | Request id, human text, and `clientMessageId`; no author, agent, dispatch, or action field. |
-| `channel.log.appendResult` | host → member | Correlated accepted/deduplicated record or typed rejection. A committed echo in a batch still converges the sender's applied view. |
-| `channel.log.resume` | member → host | Request records strictly after `resumeAfter`. |
-| `channel.log.batch` | host → member | Ordered committed records and a high-water cursor. |
-| `channel.member.revoked` | host → member | Terminal notice for that member when delivery is possible. |
+| Method/event                          | Direction     | Semantics                                                                                                                          |
+| ------------------------------------- | ------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `channel.admission.begin` / `confirm` | member → host | Existing signed transcript and human SAS admission, scoped to one Channel invite.                                                  |
+| `channel.reconnect`                   | member → host | Fresh session keys, same pinned member and host identities, no new seat.                                                           |
+| `channel.members.snapshot`            | host → member | Bounded human-member attribution at one `membershipRevision`; sent at admission/resume and after a revision change.                |
+| `channel.log.append`                  | member → host | Request id, human text, and `clientMessageId`; no author, agent, dispatch, or action field.                                        |
+| `channel.log.appendResult`            | host → member | Correlated accepted/deduplicated record or typed rejection. A committed echo in a batch still converges the sender's applied view. |
+| `channel.log.resume`                  | member → host | Request records strictly after `resumeAfter`.                                                                                      |
+| `channel.log.batch`                   | host → member | Ordered committed records and a high-water cursor.                                                                                 |
+| `channel.member.revoked`              | host → member | Terminal notice for that member when delivery is possible.                                                                         |
 
 The parser rejects unknown methods, unknown record kinds, non-human actors,
 overlong ids, oversized content, invalid cursors, and unexpected fields that
@@ -320,19 +320,19 @@ agent identity/delegation contract.
 
 Main returns stable machine codes with bounded human text:
 
-| Code | Meaning |
-| --- | --- |
-| `protocol_unsupported` | Unknown protocol version, method, or record kind. |
-| `human_only` | An actor/message/field attempts agent or dispatch semantics. |
-| `not_member` | Session does not map to a Channel member. |
-| `identity_mismatch` | Session identity differs from the pinned identity. |
-| `revoked` | Member or Channel is revoked/closed. |
-| `quota_exceeded` | Member, message, rate, replay, or storage bound reached. |
-| `idempotency_conflict` | Same sender/client id names different canonical content. |
-| `invalid_cursor` | Cursor is malformed or ahead of the host. |
-| `resync_required` | Replay cannot continue from the requested cursor. |
-| `recovery_blocked` | Durable state is corrupt or cannot be proven safe. |
-| `host_unavailable` | The host/sequencer is offline or restarting. |
+| Code                   | Meaning                                                      |
+| ---------------------- | ------------------------------------------------------------ |
+| `protocol_unsupported` | Unknown protocol version, method, or record kind.            |
+| `human_only`           | An actor/message/field attempts agent or dispatch semantics. |
+| `not_member`           | Session does not map to a Channel member.                    |
+| `identity_mismatch`    | Session identity differs from the pinned identity.           |
+| `revoked`              | Member or Channel is revoked/closed.                         |
+| `quota_exceeded`       | Member, message, rate, replay, or storage bound reached.     |
+| `idempotency_conflict` | Same sender/client id names different canonical content.     |
+| `invalid_cursor`       | Cursor is malformed or ahead of the host.                    |
+| `resync_required`      | Replay cannot continue from the requested cursor.            |
+| `recovery_blocked`     | Durable state is corrupt or cannot be proven safe.           |
+| `host_unavailable`     | The host/sequencer is offline or restarting.                 |
 
 Errors never include raw keys, invite tokens, message content, local paths, or
 unbounded peer-controlled text.

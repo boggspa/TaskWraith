@@ -121,9 +121,9 @@ describe('parseDevinPlanInfoBlob', () => {
   it('ignores rows with no plan-info shape and garbage numbers', () => {
     expect(parseDevinPlanInfoBlob(null).windows).toEqual([])
     expect(parseDevinPlanInfoBlob('text').windows).toEqual([])
-    expect(parseDevinPlanInfoBlob({ apiKey: 'x', userStatusProtoBinaryBase64: 'y' }).windows).toEqual(
-      []
-    )
+    expect(
+      parseDevinPlanInfoBlob({ apiKey: 'x', userStatusProtoBinaryBase64: 'y' }).windows
+    ).toEqual([])
     expect(
       parseDevinPlanInfoBlob(
         fullPlanInfo({ quotaUsage: { dailyRemainingPercent: 'soon', weeklyRemainingPercent: NaN } })
@@ -285,4 +285,3 @@ describe('Devin free-plan detection', () => {
     expect(parseDevinPlanInfoBlob(null).freePlan).toBeUndefined()
   })
 })
-

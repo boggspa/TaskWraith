@@ -8,15 +8,15 @@ provider dispatch.
 
 ## Evidence identity
 
-| Item | Recorded value |
-| --- | --- |
-| P0 prerequisite | User attestation: the existing People flow passed between two real Macs on unrelated networks on 2026-08-09. |
-| Durable-authority commit | `f2b88a2cfaf1968fa52735e054276a70552726ad` |
-| Encrypted-runtime commit | `a188c8503b726c31967d78a610fa91620a849b37` |
-| Process-harness/source commit | `896bd89143a485721ed9b185322545e4cfb32442` |
-| Harness | [`scripts/channels-p1-proof.cjs`](../../scripts/channels-p1-proof.cjs) |
-| Worker | [`scripts/channels-p1-proof-worker.ts`](../../scripts/channels-p1-proof-worker.ts) |
-| Local evidence | `.local-only/channels-p1-proof-evidence.json`, deliberately gitignored and mode `0600` |
+| Item                          | Recorded value                                                                                               |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| P0 prerequisite               | User attestation: the existing People flow passed between two real Macs on unrelated networks on 2026-08-09. |
+| Durable-authority commit      | `f2b88a2cfaf1968fa52735e054276a70552726ad`                                                                   |
+| Encrypted-runtime commit      | `a188c8503b726c31967d78a610fa91620a849b37`                                                                   |
+| Process-harness/source commit | `896bd89143a485721ed9b185322545e4cfb32442`                                                                   |
+| Harness                       | [`scripts/channels-p1-proof.cjs`](../../scripts/channels-p1-proof.cjs)                                       |
+| Worker                        | [`scripts/channels-p1-proof-worker.ts`](../../scripts/channels-p1-proof-worker.ts)                           |
+| Local evidence                | `.local-only/channels-p1-proof-evidence.json`, deliberately gitignored and mode `0600`                       |
 
 The evidence file records fingerprints and content hashes, never invite tokens,
 raw room ids, public/private keys, SAS confirmation codes, or message content.
@@ -50,16 +50,16 @@ Run with:
 node scripts/channels-p1-proof.cjs --runs 2
 ```
 
-| Measurement | Run 1 | Run 2 |
-| --- | ---: | ---: |
-| Duration | 3,581 ms | 3,460 ms |
-| Final durable high-water | 149 | 149 |
-| Large replay batches | 3 | 3 |
-| Largest replay batch | 70 records / 521,827 bytes | 70 records / 521,827 bytes |
-| Largest observed wire frame | 696,117 bytes | 696,117 bytes |
-| Encrypted frames observed | 613 | 613 |
-| Plaintext application frames | 0 | 0 |
-| Final log digest | `0f5dbbe632fa6f62cfd8b9456e74b964e91c3d80b540de840e586c18cb3fc8ed` | `7b4c5d41702816565150f69c724baee5302498638be450e6ad3cb4aef6d21aa0` |
+| Measurement                  |                                                              Run 1 |                                                              Run 2 |
+| ---------------------------- | -----------------------------------------------------------------: | -----------------------------------------------------------------: |
+| Duration                     |                                                           3,581 ms |                                                           3,460 ms |
+| Final durable high-water     |                                                                149 |                                                                149 |
+| Large replay batches         |                                                                  3 |                                                                  3 |
+| Largest replay batch         |                                         70 records / 521,827 bytes |                                         70 records / 521,827 bytes |
+| Largest observed wire frame  |                                                      696,117 bytes |                                                      696,117 bytes |
+| Encrypted frames observed    |                                                                613 |                                                                613 |
+| Plaintext application frames |                                                                  0 |                                                                  0 |
+| Final log digest             | `0f5dbbe632fa6f62cfd8b9456e74b964e91c3d80b540de840e586c18cb3fc8ed` | `7b4c5d41702816565150f69c724baee5302498638be450e6ad3cb4aef6d21aa0` |
 
 The two final digests intentionally differ because each clean run generates new
 opaque ids and acceptance timestamps. Within each run, every surviving applied

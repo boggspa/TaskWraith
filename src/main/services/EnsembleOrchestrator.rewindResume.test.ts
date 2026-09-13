@@ -177,9 +177,7 @@ describe('EnsembleOrchestrator rewind-from-message restart', () => {
       expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
     })
     expect(
-      harness.dispatched.filter(
-        (payload) => payload.ensembleRun?.roundId === rewound.roundId
-      )
+      harness.dispatched.filter((payload) => payload.ensembleRun?.roundId === rewound.roundId)
     ).toHaveLength(2)
   })
 

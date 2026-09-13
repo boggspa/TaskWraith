@@ -34,11 +34,7 @@
  * and it is precisely the boundary between them that the fan-out policy turns
  * on — so the policy stays a one-line change in EITHER direction.
  */
-export type RewindKind =
-  | 'chat-opening'
-  | 'round-opening'
-  | 'mid-round-steer'
-  | 'solo-turn'
+export type RewindKind = 'chat-opening' | 'round-opening' | 'mid-round-steer' | 'solo-turn'
 
 /**
  * The minimum a transcript row must expose to be classified. Kept structural
@@ -79,9 +75,7 @@ export type ClassifyRewindTargetResult =
  * That is the pre-round/legacy-transcript case and matches what the user sees:
  * the prompt at the top of the transcript.
  */
-export function classifyRewindTarget(
-  input: ClassifyRewindTargetInput
-): ClassifyRewindTargetResult {
+export function classifyRewindTarget(input: ClassifyRewindTargetInput): ClassifyRewindTargetResult {
   const { messages, messageId, isEnsemble } = input
   const index = messages.findIndex((message) => message?.id === messageId)
   if (index < 0) return { ok: false, reason: 'not-found' }
@@ -134,10 +128,7 @@ export function classifyRewindTarget(
  * exactly one line:
  *   return (kind === 'chat-opening' || kind === 'round-opening') && fanoutEnabled
  */
-export function shouldRefireOpeningScoutFanout(
-  kind: RewindKind,
-  fanoutEnabled: boolean
-): boolean {
+export function shouldRefireOpeningScoutFanout(kind: RewindKind, fanoutEnabled: boolean): boolean {
   return kind === 'chat-opening' && fanoutEnabled
 }
 

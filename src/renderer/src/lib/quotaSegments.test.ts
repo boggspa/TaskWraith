@@ -170,9 +170,9 @@ describe('quotaSegmentCount — duration band boundaries', () => {
   })
 
   it('falls through to the regex for a non-finite duration', () => {
-    expect(quotaSegmentCount('grok', makeTestWindow({ label: 'Weekly', limitWindowSeconds: NaN }))).toBe(
-      7
-    )
+    expect(
+      quotaSegmentCount('grok', makeTestWindow({ label: 'Weekly', limitWindowSeconds: NaN }))
+    ).toBe(7)
   })
 
   it('falls through to the regex for a zero duration', () => {
@@ -185,9 +185,9 @@ describe('quotaSegmentCount — duration band boundaries', () => {
 describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', () => {
   describe('5 dashes — 5H / Session windows', () => {
     it('Codex 5H Session returns 5', () => {
-      expect(quotaSegmentCount('codex', makeTestWindow({ id: 'codex-5h', label: '5H Session' }))).toBe(
-        5
-      )
+      expect(
+        quotaSegmentCount('codex', makeTestWindow({ id: 'codex-5h', label: '5H Session' }))
+      ).toBe(5)
     })
 
     it('Codex Spark 5H returns 5', () => {
@@ -228,7 +228,10 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
 
     it('Ollama Session returns 5', () => {
       expect(
-        quotaSegmentCount('ollama', makeTestWindow({ id: 'ollama-session-5h', label: 'Session usage' }))
+        quotaSegmentCount(
+          'ollama',
+          makeTestWindow({ id: 'ollama-session-5h', label: 'Session usage' })
+        )
       ).toBe(5)
     })
 
@@ -248,7 +251,10 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
 
     it('Codex Spark Weekly returns 7', () => {
       expect(
-        quotaSegmentCount('codex', makeTestWindow({ id: 'codex-spark-weekly', label: 'Spark Weekly' }))
+        quotaSegmentCount(
+          'codex',
+          makeTestWindow({ id: 'codex-spark-weekly', label: 'Spark Weekly' })
+        )
       ).toBe(7)
     })
 
@@ -271,7 +277,9 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
     })
 
     it('Kimi Weekly returns 7', () => {
-      expect(quotaSegmentCount('kimi', makeTestWindow({ id: 'kimi-weekly', label: 'Weekly' }))).toBe(7)
+      expect(
+        quotaSegmentCount('kimi', makeTestWindow({ id: 'kimi-weekly', label: 'Weekly' }))
+      ).toBe(7)
     })
 
     it('AntiGravity Gemini Weekly returns 7', () => {
@@ -284,9 +292,9 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
     })
 
     it('Grok Weekly returns 7', () => {
-      expect(quotaSegmentCount('grok', makeTestWindow({ id: 'grok-credits', label: 'Weekly' }))).toBe(
-        7
-      )
+      expect(
+        quotaSegmentCount('grok', makeTestWindow({ id: 'grok-credits', label: 'Weekly' }))
+      ).toBe(7)
     })
 
     it('Ollama Weekly returns 7', () => {
@@ -296,9 +304,9 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
     })
 
     it('Devin Weekly returns 7', () => {
-      expect(quotaSegmentCount('devin', makeTestWindow({ id: 'devin-weekly', label: '7-Day' }))).toBe(
-        7
-      )
+      expect(
+        quotaSegmentCount('devin', makeTestWindow({ id: 'devin-weekly', label: '7-Day' }))
+      ).toBe(7)
     })
 
     it('Qwen Weekly returns 7', () => {
@@ -329,7 +337,10 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
 
     it('Mistral Vibe Code Usage returns 4', () => {
       expect(
-        quotaSegmentCount('mistral', makeTestWindow({ id: 'mistral-vibe', label: 'Vibe Code Usage' }))
+        quotaSegmentCount(
+          'mistral',
+          makeTestWindow({ id: 'mistral-vibe', label: 'Vibe Code Usage' })
+        )
       ).toBe(4)
     })
 
@@ -352,9 +363,9 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
     })
 
     it('MiMo Plan Quota returns 4', () => {
-      expect(quotaSegmentCount('mimo', makeTestWindow({ id: 'mimo-plan', label: 'Plan Quota' }))).toBe(
-        4
-      )
+      expect(
+        quotaSegmentCount('mimo', makeTestWindow({ id: 'mimo-plan', label: 'Plan Quota' }))
+      ).toBe(4)
     })
 
     it('Meta Credit Used returns 4', () => {
@@ -365,13 +376,19 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
 
     it('DeepSeek Credit Used returns 4', () => {
       expect(
-        quotaSegmentCount('deepseek', makeTestWindow({ id: 'deepseek-credit', label: 'Credit used' }))
+        quotaSegmentCount(
+          'deepseek',
+          makeTestWindow({ id: 'deepseek-credit', label: 'Credit used' })
+        )
       ).toBe(4)
     })
 
     it('Cerebras Credit Used returns 4', () => {
       expect(
-        quotaSegmentCount('cerebras', makeTestWindow({ id: 'cerebras-credit', label: 'Credit used' }))
+        quotaSegmentCount(
+          'cerebras',
+          makeTestWindow({ id: 'cerebras-credit', label: 'Credit used' })
+        )
       ).toBe(4)
     })
 
@@ -387,7 +404,9 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
 
   describe('6 dashes — Devin Daily only', () => {
     it('Devin Daily returns 6', () => {
-      expect(quotaSegmentCount('devin', makeTestWindow({ id: 'devin-daily', label: 'Daily' }))).toBe(6)
+      expect(
+        quotaSegmentCount('devin', makeTestWindow({ id: 'devin-daily', label: 'Daily' }))
+      ).toBe(6)
     })
 
     it('a non-Devin Daily window returns null', () => {
@@ -411,9 +430,7 @@ describe('quotaSegmentCount — resolution order 2: label/id/windowKind regex', 
     })
 
     it('matches weekly from id when label and windowKind are empty', () => {
-      expect(
-        quotaSegmentCount('claude', makeTestWindow({ id: 'weekly-usage', label: '' }))
-      ).toBe(7)
+      expect(quotaSegmentCount('claude', makeTestWindow({ id: 'weekly-usage', label: '' }))).toBe(7)
     })
   })
 

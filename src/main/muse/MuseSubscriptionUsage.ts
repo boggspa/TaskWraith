@@ -318,15 +318,15 @@ export function probeMuseSubscriptionUsage(
       const stripped = stripMuseSubscriptionAnsi(buffer)
       if (/Current\s+\d/i.test(stripped) && /Weekly\s+\d/i.test(stripped)) {
         settleArmed = true
-        timers.push(setTimer(() => finish(parseMuseSubscriptionUsagePanel(buffer, now())), settleDelayMs))
+        timers.push(
+          setTimer(() => finish(parseMuseSubscriptionUsagePanel(buffer, now())), settleDelayMs)
+        )
       }
     })
 
     child.onExit(() => finish(parseMuseSubscriptionUsagePanel(buffer, now())))
 
     timers.push(setTimer(() => child?.write(MUSE_SUBSCRIPTION_USAGE_COMMAND), readyDelayMs))
-    timers.push(
-      setTimer(() => finish(parseMuseSubscriptionUsagePanel(buffer, now())), timeoutMs)
-    )
+    timers.push(setTimer(() => finish(parseMuseSubscriptionUsagePanel(buffer, now())), timeoutMs))
   })
 }

@@ -165,7 +165,10 @@ describe('compactCursorPathBHostContext', () => {
     expect(saved[0]?.contextCompactionSummary?.provider).toBe('cursor')
     expect(saved[0]?.updatedAt).toBe(99)
     expect(durable).toEqual([
-      expect.objectContaining({ kind: 'context_compaction', summary: expect.stringContaining('Context compacted') })
+      expect.objectContaining({
+        kind: 'context_compaction',
+        summary: expect.stringContaining('Context compacted')
+      })
     ])
     expect(progress).toEqual(['started', 'completed'])
   })

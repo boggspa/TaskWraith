@@ -187,9 +187,9 @@ describe('App wires the live surfaces through this seam', () => {
     // Positive half, so the negative above cannot pass by the sites vanishing:
     // the pane shell and the pane composer ctx each resolve one.
     expect(app.split('const viewerRun =').length - 1).toBe(2)
-    expect(
-      app.split('resolveCurrentChatTranscriptWindow(viewerChat, null).runs').length - 1
-    ).toBe(2)
+    expect(app.split('resolveCurrentChatTranscriptWindow(viewerChat, null).runs').length - 1).toBe(
+      2
+    )
   })
 
   it('imports the helper', () => {

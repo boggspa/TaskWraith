@@ -26,10 +26,7 @@ function observedPanel(): string {
 
 describe('parseMuseSubscriptionUsagePanel', () => {
   it('parses the screenshot panel: plan, percents, resets, zero session counts', () => {
-    const r = parseMuseSubscriptionUsagePanel(
-      observedPanel(),
-      '2026-09-03T15:50:00.000Z'
-    )
+    const r = parseMuseSubscriptionUsagePanel(observedPanel(), '2026-09-03T15:50:00.000Z')
     expect(r.planName).toBe('Muse Code High Usage')
     expect(r.hasSubscription).toBe(true)
     expect(r.current.usedPercent).toBe(47)
@@ -52,12 +49,18 @@ describe('parseMuseSubscriptionUsagePanel', () => {
   })
 
   it('resolves a bare Current clock earlier than now to TOMORROW (wrap case)', () => {
-    const r = parseMuseSubscriptionUsagePanel('Current 47% Resets 4:18 PM', '2026-09-03T18:00:00.000Z')
+    const r = parseMuseSubscriptionUsagePanel(
+      'Current 47% Resets 4:18 PM',
+      '2026-09-03T18:00:00.000Z'
+    )
     expect(r.current.resetAt).toBe('2026-09-04T16:18:00.000Z')
   })
 
   it('resolves a bare Current clock later than now to TODAY (same-day case)', () => {
-    const r = parseMuseSubscriptionUsagePanel('Current 47% Resets 4:18 PM', '2026-09-03T15:50:00.000Z')
+    const r = parseMuseSubscriptionUsagePanel(
+      'Current 47% Resets 4:18 PM',
+      '2026-09-03T15:50:00.000Z'
+    )
     expect(r.current.resetAt).toBe('2026-09-03T16:18:00.000Z')
   })
 
@@ -91,7 +94,10 @@ describe('parseMuseSubscriptionUsagePanel', () => {
   })
 
   it('keeps the percent when the reset text is unparseable, with null resetAt', () => {
-    const r = parseMuseSubscriptionUsagePanel('Current 47% Resets soon-ish', '2026-09-03T15:50:00.000Z')
+    const r = parseMuseSubscriptionUsagePanel(
+      'Current 47% Resets soon-ish',
+      '2026-09-03T15:50:00.000Z'
+    )
     expect(r.current.usedPercent).toBe(47)
     expect(r.current.resetAtText).toBe('soon-ish')
     expect(r.current.resetAt).toBeNull()
@@ -131,9 +137,9 @@ describe('parseMuseSubscriptionUsagePanel', () => {
       false
     )
     // @ts-expect-error — defensively accepts non-string at runtime.
-    expect(parseMuseSubscriptionUsagePanel(undefined, '2026-09-03T15:50:00.000Z').hasSubscription).toBe(
-      false
-    )
+    expect(
+      parseMuseSubscriptionUsagePanel(undefined, '2026-09-03T15:50:00.000Z').hasSubscription
+    ).toBe(false)
   })
 })
 

@@ -93,7 +93,9 @@ describe('pop-out / Compact Companion boot adopts the paged-open policy', () => 
   })
 
   it('keeps the non-paged path on the raw channel it used before', () => {
-    expect(popoutOpen).toContain('fullHydrate: async (chatId) => (await window.api.getChat(chatId))')
+    expect(popoutOpen).toContain(
+      'fullHydrate: async (chatId) => (await window.api.getChat(chatId))'
+    )
   })
 
   it('commits a paged open through the shell+page committer', () => {

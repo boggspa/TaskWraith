@@ -407,7 +407,9 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
       fetchSettleTimeoutMs: 1_000,
       fetchPage: () => {
         calls += 1
-        return calls === 1 ? new Promise<TranscriptPage | null>(() => {}) : Promise.resolve(page('chat-a', 1))
+        return calls === 1
+          ? new Promise<TranscriptPage | null>(() => {})
+          : Promise.resolve(page('chat-a', 1))
       },
       commit
     })

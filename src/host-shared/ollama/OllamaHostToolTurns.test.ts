@@ -98,7 +98,11 @@ describe('foldOllamaHostToolOutcome', () => {
     // would let a model reword its way past the breaker forever.
     let state = createOllamaHostToolTurnState()
     let productive = true
-    for (let attempt = 0; attempt < HOST_OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES; attempt++) {
+    for (
+      let attempt = 0;
+      attempt < HOST_OLLAMA_MAX_CONSECUTIVE_IDENTICAL_TOOL_FAILURES;
+      attempt++
+    ) {
       const folded = foldOllamaHostToolOutcome(state, {
         toolName: 'run_shell_command',
         ok: false,

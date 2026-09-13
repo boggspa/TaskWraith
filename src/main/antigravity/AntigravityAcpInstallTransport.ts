@@ -236,10 +236,7 @@ async function defaultExecFile(
   })
 }
 
-function wrapExecFileError(
-  error: unknown,
-  tool: string
-): AntigravityAcpInstallTransportError {
+function wrapExecFileError(error: unknown, tool: string): AntigravityAcpInstallTransportError {
   if (error instanceof AntigravityAcpInstallTransportError) return error
   const code =
     error && typeof error === 'object' && 'code' in error

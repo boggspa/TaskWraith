@@ -92,7 +92,7 @@ with its exact retained ids before it introduces such a share; it is the only
 remaining People edge by design.
 
 > **Superseded 2026-08-16 — P5 removed the port instead of filling it.** The
-> paragraph above predicted *how* P5 would resolve this seam, and the prediction
+> paragraph above predicted _how_ P5 would resolve this seam, and the prediction
 > was wrong in the more decisive direction. `25d676263` (P5-C) deleted the
 > `retainedWorkspaceBootstrapShareIds` callback from the production root
 > outright rather than supplying ids into it, on the frozen contract that
@@ -103,7 +103,7 @@ remaining People edge by design.
 > The nuance that survives, and that a reader of the paragraph above would miss:
 > a **sealed P4 compatibility share stays readable** through the checkpoint and
 > explicitly cannot be retired (`PeopleToChannelMigrationLegacyWriteGate.ts`).
-> So the retention *port* is gone while the sealed *scope* remains — "the only
+> So the retention _port_ is gone while the sealed _scope_ remains — "the only
 > remaining People edge" is now a frozen artefact of P4, not a live seam P5 owns.
 >
 > The proof body above is left unedited; this note records only that its

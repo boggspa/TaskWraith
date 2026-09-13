@@ -9,11 +9,11 @@ import {
 import { applyChatTranscriptOps, type ChatTranscriptOp } from './chatUpdateTransport'
 import type { ChatMessage } from '../main/store/types'
 
-const row = (
-  id: string,
-  role: string,
-  roundId?: string | null
-): RewindTranscriptRow => ({ id, role, ...(roundId !== undefined ? { roundId } : {}) })
+const row = (id: string, role: string, roundId?: string | null): RewindTranscriptRow => ({
+  id,
+  role,
+  ...(roundId !== undefined ? { roundId } : {})
+})
 
 /** Two rounds, each opened by a user prompt and steered once mid-round. */
 const twoRoundTranscript: RewindTranscriptRow[] = [
@@ -97,12 +97,16 @@ describe('classifyRewindTarget', () => {
 
   it('treats the first un-rounded user prompt as chat-opening', () => {
     const legacy = [row('u1', 'user'), row('a1', 'assistant'), row('u2', 'user')]
-    expect(
-      classifyRewindTarget({ messages: legacy, messageId: 'u1', isEnsemble: true })
-    ).toEqual({ ok: true, kind: 'chat-opening', index: 0 })
-    expect(
-      classifyRewindTarget({ messages: legacy, messageId: 'u2', isEnsemble: true })
-    ).toEqual({ ok: true, kind: 'mid-round-steer', index: 2 })
+    expect(classifyRewindTarget({ messages: legacy, messageId: 'u1', isEnsemble: true })).toEqual({
+      ok: true,
+      kind: 'chat-opening',
+      index: 0
+    })
+    expect(classifyRewindTarget({ messages: legacy, messageId: 'u2', isEnsemble: true })).toEqual({
+      ok: true,
+      kind: 'mid-round-steer',
+      index: 2
+    })
   })
 
   it('rejects an unknown message id', () => {
@@ -126,12 +130,7 @@ describe('classifyRewindTarget', () => {
   })
 })
 
-const ALL_REWIND_KINDS = [
-  'chat-opening',
-  'round-opening',
-  'mid-round-steer',
-  'solo-turn'
-] as const
+const ALL_REWIND_KINDS = ['chat-opening', 'round-opening', 'mid-round-steer', 'solo-turn'] as const
 
 describe('shouldRefireOpeningScoutFanout', () => {
   it('re-fires the scout wave for a corrected chat-opening prompt', () => {
@@ -154,9 +153,7 @@ describe('shouldRefireOpeningScoutFanout', () => {
   })
 
   it('re-fires for exactly one kind, so the policy cannot silently widen', () => {
-    const refiring = ALL_REWIND_KINDS.filter((kind) =>
-      shouldRefireOpeningScoutFanout(kind, true)
-    )
+    const refiring = ALL_REWIND_KINDS.filter((kind) => shouldRefireOpeningScoutFanout(kind, true))
     expect(refiring).toEqual(['chat-opening'])
   })
 
@@ -226,9 +223,7 @@ describe('truncateFrom transcript op', () => {
   })
 
   it('rejects an anchor that is not in the transcript', () => {
-    expect(
-      applyChatTranscriptOps(transcript(), [{ op: 'truncateFrom', id: 'nope' }])
-    ).toBeNull()
+    expect(applyChatTranscriptOps(transcript(), [{ op: 'truncateFrom', id: 'nope' }])).toBeNull()
   })
 
   it('does not mutate the caller transcript', () => {

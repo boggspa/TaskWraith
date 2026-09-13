@@ -256,21 +256,30 @@ function identified(chatId: string, title: string, revision = 1): ThreadCatalogu
 }
 
 function neverPort(): ThreadCatalogueReadPort {
-  return { query: async () => { throw new Error('port unused') } }
+  return {
+    query: async () => {
+      throw new Error('port unused')
+    }
+  }
 }
 
 describe('ThreadCatalogueMirror re-apply equality gate', () => {
   it('notifies listeners once when the same row is re-applied with the same witness', () => {
     const mirror = new ThreadCatalogueMirror(neverPort())
     const notifications: Array<string | null> = []
-    mirror.subscribe((row, chatId) => notifications.push(row ? `${chatId}:${row.summary.title}` : `${chatId}:removed`))
+    mirror.subscribe((row, chatId) =>
+      notifications.push(row ? `${chatId}:${row.summary.title}` : `${chatId}:removed`)
+    )
 
     mirror.observe(projection('same', 1), 'witness-a')
     // The poll re-applies indexed rows every pass; a same-content apply is not
     // news. Before the gate, each duplicate fanned listeners out again and one
     // save produced a saveless invalidation storm.
     mirror.observe(projection('same', 1), 'witness-a')
-    mirror.observe({ ...projection('same', 1), summary: { ...projection('same', 1).summary } }, 'witness-a')
+    mirror.observe(
+      { ...projection('same', 1), summary: { ...projection('same', 1).summary } },
+      'witness-a'
+    )
 
     expect(notifications).toEqual(['chat-one:same'])
   })
@@ -278,7 +287,9 @@ describe('ThreadCatalogueMirror re-apply equality gate', () => {
   it('still notifies when content changes and on removal, but not for a witness-only re-apply', () => {
     const mirror = new ThreadCatalogueMirror(neverPort())
     const notifications: Array<string | null> = []
-    mirror.subscribe((row, chatId) => notifications.push(row ? `${chatId}:${row.summary.title}` : `${chatId}:removed`))
+    mirror.subscribe((row, chatId) =>
+      notifications.push(row ? `${chatId}:${row.summary.title}` : `${chatId}:removed`)
+    )
 
     mirror.observe(projection('one', 1), 'witness-a')
     mirror.observe(projection('two', 2), 'witness-a')
