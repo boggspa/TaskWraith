@@ -356,7 +356,12 @@ describe('HostNodeOllamaProvider run path', () => {
       model.reasoning.some((option) => option.reasoningId === reasoningId)
     )!
     mockFetchCatalog.mockResolvedValue(mockCatalog([{ id: offered.modelId }]))
-    mockRunChatLoop.mockResolvedValue({ content: 'done', toolCalls: [], toolResults: [] })
+    mockRunChatLoop.mockResolvedValue({
+      content: 'done',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
     const runPort = new FakeRunPort()
     runPort.thread = threadFixture({ modelId: offered.modelId, reasoningId })
     await provider(resourcePort(), runPort).run({
@@ -373,6 +378,7 @@ describe('HostNodeOllamaProvider run path', () => {
       options.onContentDelta?.('Hello from Ollama', 'Hello from Ollama')
       return {
         content: 'Hello from Ollama',
+        thinking: '',
         toolCalls: [],
         toolResults: [],
         usage: { promptTokens: 10, completionTokens: 5 }
@@ -396,6 +402,41 @@ describe('HostNodeOllamaProvider run path', () => {
     expect(runPort.finish?.usage?.outputTokens).toBe(5)
   })
 
+  it('publishes unstreamed loop thinking as a single run.reasoning event', async () => {
+    mockRunChatLoop.mockImplementation(async () => ({
+      content: 'done',
+      thinking: 'quiet plan',
+      toolCalls: [],
+      toolResults: []
+    }))
+    const runPort = new FakeRunPort()
+    const result = await provider(resourcePort(), runPort).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: TARGET
+    })
+    expect(result.status).toBe('completed')
+    expect(runPort.events.filter((event) => event.type === 'run.reasoning')).toEqual([
+      expect.objectContaining({ text: 'quiet plan' })
+    ])
+  })
+
+  it('does not duplicate run.reasoning when thinking already streamed', async () => {
+    mockRunChatLoop.mockImplementation(async (options) => {
+      options.onThinkingDelta?.('quiet plan', 'quiet plan')
+      return { content: 'done', thinking: 'quiet plan', toolCalls: [], toolResults: [] }
+    })
+    const runPort = new FakeRunPort()
+    await provider(resourcePort(), runPort).run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: TARGET
+    })
+    expect(runPort.events.filter((event) => event.type === 'run.reasoning')).toHaveLength(1)
+  })
+
   it('preserves whitespace chunks without publishing invalid empty content events', async () => {
     mockRunChatLoop.mockImplementation(async (options) => {
       let full = ''
@@ -403,7 +444,7 @@ describe('HostNodeOllamaProvider run path', () => {
         full += delta
         options.onContentDelta?.(delta, full)
       }
-      return { content: full, toolCalls: [], toolResults: [] }
+      return { content: full, thinking: '', toolCalls: [], toolResults: [] }
     })
     const runPort = new FakeRunPort()
     const result = await provider(resourcePort(), runPort).run({
@@ -451,6 +492,7 @@ describe('HostNodeOllamaProvider run path', () => {
     )
     mockRunChatLoop.mockResolvedValue({
       content: 'cloud done',
+      thinking: '',
       toolCalls: [],
       toolResults: [],
       usage: {}
@@ -513,6 +555,7 @@ describe('HostNodeOllamaProvider run path', () => {
     )
     mockRunChatLoop.mockResolvedValue({
       content: 'daemon cloud done',
+      thinking: '',
       toolCalls: [],
       toolResults: [],
       usage: {}
@@ -575,6 +618,7 @@ describe('HostNodeOllamaProvider run path', () => {
     let resolveRun:
       | ((value: {
           content: string
+          thinking: string
           toolCalls: []
           toolResults: []
           usage: Record<string, never>
@@ -582,6 +626,7 @@ describe('HostNodeOllamaProvider run path', () => {
       | undefined
     const runPromise = new Promise<{
       content: string
+      thinking: string
       toolCalls: []
       toolResults: []
       usage: Record<string, never>
@@ -590,7 +635,7 @@ describe('HostNodeOllamaProvider run path', () => {
     })
     mockRunChatLoop.mockImplementation(async (options) => {
       options.signal.addEventListener('abort', () => {
-        resolveRun?.({ content: '', toolCalls: [], toolResults: [], usage: {} })
+        resolveRun?.({ content: '', thinking: '', toolCalls: [], toolResults: [], usage: {} })
       })
       return runPromise
     })
@@ -614,6 +659,7 @@ describe('HostNodeOllamaProvider run path', () => {
   it('shuts down cleanly and unloads the model after a run', async () => {
     mockRunChatLoop.mockResolvedValue({
       content: 'done',
+      thinking: '',
       toolCalls: [],
       toolResults: [],
       usage: {}
@@ -627,7 +673,7 @@ describe('HostNodeOllamaProvider run path', () => {
   it('thread-isolates session memory across runs', async () => {
     mockRunChatLoop.mockImplementation(async (options) => {
       options.onContentDelta?.('done', 'done')
-      return { content: 'done', toolCalls: [], toolResults: [], usage: {} }
+      return { content: 'done', thinking: '', toolCalls: [], toolResults: [], usage: {} }
     })
     const runPort1 = new FakeRunPort()
     const runPort2 = new FakeRunPort()
@@ -726,13 +772,23 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
   }
 
   it('advertises only the read tools to a plan-posture seat', async () => {
-    mockRunChatLoop.mockResolvedValue({ content: 'read only', toolCalls: [], toolResults: [] })
+    mockRunChatLoop.mockResolvedValue({
+      content: 'read only',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
     await runOnce(new FakeRunPort())
     expect(toolNamesFromCall(0)).toEqual(['read_file', 'list_dir'])
   })
 
   it('advertises the write tools to a seat whose posture permits edits', async () => {
-    mockRunChatLoop.mockResolvedValue({ content: 'can edit', toolCalls: [], toolResults: [] })
+    mockRunChatLoop.mockResolvedValue({
+      content: 'can edit',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
     const runPort = runPortAt(realWorkspace(), {
       postureId: 'posture-default',
       approvalMode: 'default',
@@ -744,7 +800,12 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
   })
 
   it('leaves the advertised set to a caller that injected its own tool port', async () => {
-    mockRunChatLoop.mockResolvedValue({ content: 'injected', toolCalls: [], toolResults: [] })
+    mockRunChatLoop.mockResolvedValue({
+      content: 'injected',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
     const executeTool = vi.fn(async () => ({ ok: true, result: 'from the gateway' }))
     await runOnce(new FakeRunPort(), { executeTool })
     expect(toolNamesFromCall(0)).toEqual([])
@@ -758,6 +819,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       if (call === 1) {
         return {
           content: 'let me look',
+          thinking: '',
           toolCalls: [{ name: 'read_file', arguments: { path: 'a.txt' } }],
           toolResults: [{ role: 'tool' as const, content: 'FILE BODY', tool_name: 'read_file' }],
           usage: { promptTokens: 1, completionTokens: 2 }
@@ -765,6 +827,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       }
       return {
         content: 'the file says FILE BODY',
+        thinking: '',
         toolCalls: [],
         toolResults: [],
         usage: { promptTokens: 3, completionTokens: 4 }
@@ -794,7 +857,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       if (options.executeTool) {
         seen.push(await options.executeTool({ name: 'read_file', arguments: { path: '../out' } }))
       }
-      return { content: 'done', toolCalls: [], toolResults: [] }
+      return { content: 'done', thinking: '', toolCalls: [], toolResults: [] }
     })
     await runOnce(new FakeRunPort())
     expect(seen[0]?.ok).toBe(false)
@@ -806,6 +869,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       await options.executeTool?.({ name: 'read_file', arguments: { path: '../out' } })
       return {
         content: '',
+        thinking: '',
         toolCalls: [{ name: 'read_file', arguments: { path: '../out' } }],
         toolResults: []
       }
@@ -851,6 +915,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       await options.executeTool?.({ name: 'read_file', arguments: { path: '../out' } })
       return {
         content: '',
+        thinking: '',
         toolCalls: [{ name: 'read_file', arguments: { path: '../out' } }],
         toolResults: []
       }
@@ -876,6 +941,7 @@ describe('HostNodeOllamaProvider Host-owned tool tier', () => {
       await options.executeTool?.({ name: 'list_dir', arguments: { path: '.' } })
       return {
         content: '',
+        thinking: '',
         toolCalls: [{ name: 'list_dir', arguments: { path: '.' } }],
         toolResults: []
       }
@@ -909,12 +975,13 @@ describe('HostNodeOllamaProvider tool trajectory memory', () => {
     mockRunChatLoop.mockImplementation(async (options) => {
       await options.executeTool?.({ name: 'list_dir', arguments: { path: '.' } })
       await options.executeTool?.({ name: 'read_file', arguments: { path: 'missing.txt' } })
-      return { content: 'looked around', toolCalls: [], toolResults: [] }
+      return { content: 'looked around', thinking: '', toolCalls: [], toolResults: [] }
     })
     await instance.run({ runId: 'run-a', threadId: 'thread-1', prompt: 'look', target: TARGET })
 
     mockRunChatLoop.mockImplementation(async () => ({
       content: 'second',
+      thinking: '',
       toolCalls: [],
       toolResults: []
     }))

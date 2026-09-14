@@ -15,14 +15,20 @@ import type { OllamaChatChunk, OllamaChatMessage, OllamaChatRequest } from './Ol
 import { ollamaChatTransport } from './OllamaDaemonClient'
 
 /**
- * Canonical reasoning-fence patterns (matches EnsembleThinkingEphemerality.ts).
+ * Canonical reasoning-fence pattern (same matches as EnsembleThinkingEphemerality.ts).
  * Matches <think>...</think>, <thinking>...</thinking>, <reasoning>...</reasoning>.
+ * Capture group 1 is the tag name (for the closing-tag backreference);
+ * group 2 is the inner block content for extraction.
  */
-const REASONING_FENCE = /<(think|thinking|reasoning)>[\s\S]*?<\/>/gi
+const REASONING_FENCE = /<(think|thinking|reasoning)>([\s\S]*?)<\/\1>/gi
 
 /**
  * Stateful parser for inline reasoning blocks that handles chunk-split tags.
  * Tracks partial <think>/<thinking>/<reasoning> blocks across chunk boundaries.
+ *
+ * `buffer` holds only a short unprocessed tail fragment (a split-tag
+ * candidate), never accumulated visible content, so closing a split block
+ * cannot pollute thinking with earlier stream text.
  */
 interface InlineReasoningParser {
   buffer: string
@@ -38,18 +44,28 @@ function createInlineReasoningParser(): InlineReasoningParser {
   }
 }
 
+/** True when `tail` (starting at '<', with no '>') could still grow into an open tag. */
+function isOpenTagPrefix(tail: string): boolean {
+  if (!tail.startsWith('<') || tail.includes('>')) return false
+  const lower = tail.toLowerCase()
+  return (
+    '<think>'.startsWith(lower) || '<thinking>'.startsWith(lower) || '<reasoning>'.startsWith(lower)
+  )
+}
+
 /**
  * Process a content chunk through the stateful parser.
- * Returns extracted reasoning blocks from this chunk.
+ * Returns extracted reasoning block contents from this chunk.
  */
 function processReasoningChunk(parser: InlineReasoningParser, chunk: string): string[] {
   const extracted: string[] = []
   let combined = parser.buffer + chunk
+  parser.buffer = ''
 
   // If we're inside an open tag, look for the closing tag
   if (parser.openTag !== null) {
     const closeTag = `</${parser.openTag}>`
-    const closeIndex = combined.indexOf(closeTag)
+    const closeIndex = combined.toLowerCase().indexOf(closeTag)
     if (closeIndex !== -1) {
       parser.currentBlock += combined.slice(0, closeIndex)
       extracted.push(parser.currentBlock)
@@ -57,37 +73,40 @@ function processReasoningChunk(parser: InlineReasoningParser, chunk: string): st
       parser.currentBlock = ''
       combined = combined.slice(closeIndex + closeTag.length)
     } else {
-      parser.currentBlock += combined
-      parser.buffer = ''
+      // No close yet: accumulate everything except a trailing fragment that
+      // could be a close tag split across the next chunk boundary.
+      const keep = Math.min(combined.length, closeTag.length - 1)
+      parser.currentBlock += combined.slice(0, combined.length - keep)
+      parser.buffer = combined.slice(combined.length - keep)
       return extracted
     }
   }
 
   // Look for new reasoning blocks in the remaining content
+  REASONING_FENCE.lastIndex = 0
   let match
   while ((match = REASONING_FENCE.exec(combined)) !== null) {
-    extracted.push(match[1])
+    extracted.push(match[2])
     combined = combined.slice(match.index + match[0].length)
     REASONING_FENCE.lastIndex = 0 // reset for next iteration
   }
 
-  // Check if we have a partial open tag at the end
-  const partialMatch = combined.match(/<(think|thinking|reasoning)>/i)
-  if (partialMatch) {
-    const tagName = partialMatch[1].toLowerCase()
-    const tagStart = partialMatch.index!
-    const afterTag = combined.slice(tagStart + partialMatch[0].length)
-
-    // Check if there's a closing tag in the remainder
-    const closeTag = `</${tagName}>`
-    if (!afterTag.includes(closeTag)) {
-      parser.openTag = tagName
-      parser.currentBlock = afterTag
-      combined = combined.slice(0, tagStart)
+  // Check for a trailing partial open tag or unclosed block. Only the tail
+  // from the last '<' can still become (or extend) a tag; earlier text is
+  // visible content and is dropped, keeping the buffer bounded.
+  const tagStart = combined.lastIndexOf('<')
+  if (tagStart !== -1) {
+    const tail = combined.slice(tagStart)
+    const openMatch = tail.match(/^<(think|thinking|reasoning)>/i)
+    if (openMatch) {
+      // Complete open tag with no close in this chunk: the block continues.
+      parser.openTag = openMatch[1].toLowerCase()
+      parser.currentBlock = tail.slice(openMatch[0].length)
+    } else if (isOpenTagPrefix(tail)) {
+      parser.buffer = tail
     }
   }
 
-  parser.buffer = combined
   return extracted
 }
 
@@ -309,10 +328,15 @@ export async function runOllamaChatLoop(
     options.onThinkingDelta?.(pendingThinking, thinking)
   }
 
-  // Handle any remaining partial reasoning block in the parser
-  if (inlineParser.openTag !== null && inlineParser.currentBlock) {
-    thinking += inlineParser.currentBlock
-    options.onThinkingDelta?.(inlineParser.currentBlock, thinking)
+  // Handle any remaining partial reasoning block in the parser. When a
+  // block is still open, the buffer holds its trailing fragment (a
+  // close-tag candidate), so it belongs to the flushed thought.
+  if (inlineParser.openTag !== null) {
+    const trailing = inlineParser.currentBlock + inlineParser.buffer
+    if (trailing) {
+      thinking += trailing
+      options.onThinkingDelta?.(trailing, thinking)
+    }
   }
 
   return { content, thinking, toolCalls, toolResults, usage }

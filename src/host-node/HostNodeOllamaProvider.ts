@@ -568,6 +568,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       for (let turnIndex = 0; turnIndex < HOST_OLLAMA_MAX_TOOL_TURNS; turnIndex += 1) {
         if (active.cancelled) break
         let productiveThisTurn = false
+        let thinkingStreamed = false
         const result = await runOllamaChatLoop({
           baseUrl: transportBaseUrl,
           ...(directCloud && this.cloudApiKey ? { apiKey: this.cloudApiKey } : {}),
@@ -621,7 +622,8 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
               at: new Date().toISOString()
             })
           },
-          onThinkingDelta: (delta, full) => {
+          onThinkingDelta: (delta) => {
+            thinkingStreamed = true
             pendingThinkingDelta += delta
             this.options.runPort.publishRunEvent(request.target, {
               type: 'run.reasoning',
@@ -637,7 +639,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
         if (result.content.trim()) assistantSegments.push(result.content)
         if (result.thinking?.trim()) {
           // Surface thinking as a reasoning event if not already streamed
-          if (!pendingThinkingDelta) {
+          if (!thinkingStreamed) {
             this.options.runPort.publishRunEvent(request.target, {
               type: 'run.reasoning',
               runId: request.runId,
