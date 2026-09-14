@@ -97,6 +97,31 @@ export interface MuseMspContextSnapshot {
   readonly pressure?: MuseMspContextPressureLevel
 }
 
+/**
+ * Per-kind wire counters, reported once at close. The distinction that matters
+ * after a blackout is WHERE frames vanished: `inboundUnparsable` and
+ * `inboundUnknownMethods` are client-side drops the host cannot see, while a
+ * run whose counters sit at zero despite an ACKed turn is a push blackout on
+ * the connection itself. Counts are payload-free — no transcript content.
+ */
+export interface MuseMspWireStats {
+  readonly inboundResponses: number
+  readonly inboundRequests: number
+  readonly inboundNotifications: number
+  /** Lines that failed JSON parse or shape classification. */
+  readonly inboundUnparsable: number
+  /** Notification frames whose method reached no handler arm. */
+  readonly inboundUnknownMethods: number
+  /** Distinct unknown methods seen (bounded, payload-free). */
+  readonly unknownMethods: readonly string[]
+}
+
+export type MuseMspWireObservation =
+  | { readonly type: 'unparsable'; readonly line: string }
+  | { readonly type: 'unknownMethod'; readonly method: string }
+  | { readonly type: 'tripwire'; readonly message: string }
+  | { readonly type: 'stats'; readonly stats: MuseMspWireStats }
+
 export interface MuseMspTurnOptions {
   /** Injected so the client never imports child_process and stays testable. */
   readonly spawnProcess: () => AcpChildProcess
@@ -158,6 +183,23 @@ export interface MuseMspTurnOptions {
    */
   readonly announceBeforeTools?: boolean
   readonly onRawFrame?: (direction: 'in' | 'out', frame: unknown) => void
+  /**
+   * Frame-lifecycle diagnostics that are NOT raw transcript frames: unparsable
+   * inbound lines, notification methods this build does not handle, the
+   * push-blackout tripwire firing, and a per-kind counter summary at close.
+   * Wired to the durable wire debug log (MuseMspWireLog); never required.
+   */
+  readonly onWireObservation?: (observation: MuseMspWireObservation) => void
+  /**
+   * Push-blackout tripwire, in milliseconds. `turn/start` is answered with an
+   * ACK, after which the server should push `turn/started` within this window;
+   * a connection that ACKs commands but black-holes every push (2026-09-14: 7
+   * tool batches ran to terminal while TaskWraith saw zero notifications)
+   * otherwise reads as merely "slow" until the user gives up. Warn-only — the
+   * turn may be working invisibly, so this NEVER cancels it. Zero or negative
+   * disables. Injectable so the suites can drive it in milliseconds.
+   */
+  readonly turnStartedTripwireMs?: number
   readonly endProcess?: (child: AcpChildProcess) => void
   readonly endProcessGraceMs?: number
   /**
@@ -186,6 +228,19 @@ export const MUSE_MSP_INACTIVITY_TIMEOUT_MS = 900_000
 
 /** Deadline extensions allowed while `session/contextUsage` reports compaction. */
 export const MUSE_MSP_INACTIVITY_COMPACTION_GRACE = 3
+
+/**
+ * Push-blackout tripwire default.
+ *
+ * 30s is long enough to absorb a slow first token after a queued turn launch
+ * (the server ACKs turn/start before the model begins) and far shorter than
+ * the 15-minute inactivity backstop — the 2026-09-14 blackout run would have
+ * flagged at +30s instead of dying silently at +6m.
+ */
+export const MUSE_MSP_TURN_STARTED_TRIPWIRE_MS = 30_000
+
+/** Bound on the distinct unknown-method names carried in the close-time stats. */
+const MUSE_MSP_WIRE_UNKNOWN_METHODS_MAX = 20
 
 /**
  * Item kinds that represent outstanding WORK, i.e. a legitimately silent gap.
@@ -320,6 +375,20 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   // openLongWorkItems: this set feeds the counted grace, never an unbounded
   // suspend.
   const openCompactionItems = new Set<string>()
+  // Wire diagnostics: per-kind inbound counters plus the distinct unknown
+  // methods seen. Diagnosing "server sent nothing" vs "client dropped
+  // everything" after the fact is impossible without these — the 2026-09-14
+  // blackout run recorded zero TaskWraith-side events while the host worked.
+  const wireStats = {
+    inboundResponses: 0,
+    inboundRequests: 0,
+    inboundNotifications: 0,
+    inboundUnparsable: 0,
+    inboundUnknownMethods: 0
+  }
+  const unknownMethodsSeen = new Set<string>()
+  let sawTurnStarted = false
+  let turnStartedTripwire: ReturnType<typeof setTimeout> | null = null
 
   const refreshCompactionQuiet = (): void => {
     compactionQuiet = occupancyCompactionQuiet || openCompactionItems.size > 0
@@ -347,6 +416,14 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       options.onWarning?.(message)
     } catch {
       /* a throwing consumer must never kill the transport */
+    }
+  }
+
+  const observe = (observation: MuseMspWireObservation): void => {
+    try {
+      options.onWireObservation?.(observation)
+    } catch {
+      /* diagnostics only */
     }
   }
 
@@ -484,10 +561,54 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     armInactivityWatchdog()
   }
 
+  /**
+   * Push-blackout tripwire — see `turnStartedTripwireMs` above.
+   *
+   * Armed ONLY after the turn/start ack has been processed (including the
+   * early-notification replay): turn/started may legitimately arrive BEFORE
+   * the ack on the same chunk, and that frame is buffered, not lost. Cleared
+   * by the matching turn/started, by endProcess (every terminal path funnels
+   * through it), and by close. One-shot — a stalled push stream must flag
+   * once, not every 30s.
+   */
+  const clearTurnStartedTripwire = (): void => {
+    if (turnStartedTripwire) {
+      clearTimeout(turnStartedTripwire)
+      turnStartedTripwire = null
+    }
+  }
+
+  const armTurnStartedTripwire = (): void => {
+    if (
+      turnStartedTripwire ||
+      !activeTurnId ||
+      sawTurnStarted ||
+      sawTurnCompleted ||
+      closed ||
+      terminationRequested
+    ) {
+      return
+    }
+    const tripwireMs = options.turnStartedTripwireMs ?? MUSE_MSP_TURN_STARTED_TRIPWIRE_MS
+    if (!Number.isFinite(tripwireMs) || tripwireMs <= 0) return
+    turnStartedTripwire = setTimeout(() => {
+      turnStartedTripwire = null
+      if (closed || terminationRequested || sawTurnStarted || sawTurnCompleted) return
+      const window = tripwireMs >= 1000 ? `${Math.round(tripwireMs / 1000)}s` : `${tripwireMs}ms`
+      const message =
+        `Muse acknowledged turn/start but sent no turn/started notification within ${window}. ` +
+        'Pushes from the session host appear stalled: the turn can be working invisibly, and ' +
+        'approvals or results may never surface. The turn is left running — stop it if nothing appears.'
+      warn(message)
+      observe({ type: 'tripwire', message })
+    }, tripwireMs)
+  }
+
   const endProcess = (): void => {
     if (terminationRequested) return
     terminationRequested = true
     clearInactivityWatchdog()
+    clearTurnStartedTripwire()
     try {
       if (options.endProcess) options.endProcess(child)
       else child.kill('SIGTERM')
@@ -782,6 +903,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
   }
 
   const handleNotification = (method: string, params: Record<string, unknown>): void => {
+    wireStats.inboundNotifications += 1
     if (method === 'turn/started' || method === 'turn/completed' || method === 'turn/unqueued') {
       if (sawTurnCompleted) return
       if (text(params.sessionId) && text(params.sessionId) !== sessionId) return
@@ -896,6 +1018,8 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         return
       }
       case 'turn/started': {
+        sawTurnStarted = true
+        clearTurnStartedTripwire()
         emit({
           type: 'run_started',
           payloadType: 'msp.turn.started',
@@ -1026,13 +1150,54 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
         warn('Muse dropped pushed session events for this turn; the transcript may be incomplete.')
         return
       }
-      default:
+      // Schema-published (1.2.1) but not adopted by this lane. Explicit arms
+      // keep them out of the unknown-method DRIFT counters below — they are
+      // known contract, not evolution; the wire log still records the raw
+      // frame in verbose mode, and each stays one observe() away if a future
+      // lane wants it.
+      case 'session/approvalModeChanged':
+      case 'session/branchChanged':
+      case 'session/modelChanged':
+      case 'session/modelRouteUnserved':
+      case 'session/nameChanged':
+      case 'session/reasoningEffortChanged':
+      case 'session/todoListChanged':
+      case 'turn/retryScheduled':
         return
+      case 'turn/retracted': {
+        // Retraction is a transcript-integrity SEMANTIC, not wire plumbing:
+        // applying it would change what the user can see of a turn they
+        // already saw. Observed, never applied — adopting it is a product
+        // decision (capability governance: propose, don't narrow).
+        return
+      }
+      default: {
+        // A method this build does not handle. The schema says unknown
+        // notifications must not fault the channel, but they used to vanish
+        // without a trace — which is part of how the 2026-09-14 push blackout
+        // became undiagnosable after the fact. Count every occurrence; report
+        // each DISTINCT method once so a chatty future build cannot spam the
+        // transcript while the counters still tell the whole story at close.
+        wireStats.inboundUnknownMethods += 1
+        if (!unknownMethodsSeen.has(method)) {
+          unknownMethodsSeen.add(method)
+          observe({ type: 'unknownMethod', method })
+        }
+        return
+      }
     }
   }
 
   const handleFrame = (frame: ReturnType<typeof decodeMuseMspFrames>['frames'][number]): void => {
-    if (frame.kind === 'unparsable') return
+    if (frame.kind === 'unparsable') {
+      // Counted but deliberately NOT proof of life: garbage must not keep a
+      // wedged connection alive by resetting the inactivity clock, and the
+      // wire log needs the bytes to distinguish "host went quiet" from "host
+      // sent bytes this build could not parse".
+      wireStats.inboundUnparsable += 1
+      observe({ type: 'unparsable', line: frame.line })
+      return
+    }
     // Every decoded frame is proof of life: responses, server-to-client
     // requests and all notifications (items, turn lifecycle, usage, context,
     // approvals). Reset before dispatch so a handler that throws still counts.
@@ -1043,6 +1208,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       /* diagnostics only */
     }
     if (frame.kind === 'response') {
+      wireStats.inboundResponses += 1
       const inFlight = pending.get(frame.id)
       if (!inFlight) return
       pending.delete(frame.id)
@@ -1057,6 +1223,7 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       return
     }
     if (frame.kind === 'request') {
+      wireStats.inboundRequests += 1
       // Server-to-client requests DO exist: `approval/request` and
       // `userInput/request` share their params with the notification spellings,
       // and the schema says the full payloads "arrive as re-issued
@@ -1118,6 +1285,14 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
     closed = true
     clearKillBackstop()
     clearInactivityWatchdog()
+    clearTurnStartedTripwire()
+    observe({
+      type: 'stats',
+      stats: {
+        ...wireStats,
+        unknownMethods: Array.from(unknownMethodsSeen).slice(0, MUSE_MSP_WIRE_UNKNOWN_METHODS_MAX)
+      }
+    })
     for (const [id, inFlight] of pending) {
       pending.delete(id)
       inFlight.reject(new Error(`${inFlight.method} did not complete before the Muse host exited`))
@@ -1224,6 +1399,10 @@ export function runMuseMspTurn(options: MuseMspTurnOptions): MuseMspTurnHandle {
       awaitingTurnStart = false
       earlyTurnNotifications.length = 0
     }
+    // Arm only now: the replay above may already have delivered turn/started
+    // from the early buffer, and arming before the ack would false-positive on
+    // a frame that was buffered, not lost.
+    armTurnStartedTripwire()
   }
 
   // Armed BEFORE the handshake, not after it: a host that spawns and never

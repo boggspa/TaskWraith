@@ -140,6 +140,13 @@ export interface MuseIpcBridgeDeps {
     chatId: string,
     participantId: string
   ) => { boundaryRoot: string; path: string } | null
+  /**
+   * Durable MSP wire-diagnostics directory — one JSONL file per run (see
+   * MuseMspWireLog). Lives in the composition root because it needs
+   * `app.getPath('userData')`. Absent means no wire log is written, which
+   * never changes turn behavior.
+   */
+  museWireLogDir?: string
   /** `muse serve` child for the MSP lane; defaults to the real child process. */
   spawnMsp?: (input: MuseMspSpawnInput) => AcpChildProcess
   /**
@@ -697,6 +704,7 @@ export async function runMuseProviderFromIpc(
           apiKey: credential.apiKey,
           authJsonText: credential.authJsonText,
           ...(mcpSettings ? { mcpSettings } : {}),
+          ...(deps.museWireLogDir ? { wireLogDir: deps.museWireLogDir } : {}),
           onEvent: emitMuseEvent,
           onWarning: emitMuseWarning,
           ...(deps.onContextCompaction && route.appChatId

@@ -48,6 +48,7 @@ import {
   type MuseMspSessionReadyInfo,
   type MuseMspUsageSnapshot
 } from './MuseMspClient'
+import { createMuseMspWireLog, type MuseMspWireLogSink } from './MuseMspWireLog'
 import type {
   MuseMspApprovalMode,
   MuseMspApprovalRequest,
@@ -125,6 +126,14 @@ export interface MuseMspRunInput {
   ) => MuseMspApprovalVerdict | Promise<MuseMspApprovalVerdict>
   readonly shouldCancel?: () => boolean
   readonly cancelPollIntervalMs?: number
+  /**
+   * Durable MSP wire-diagnostics directory (one `<runId>.jsonl` per run).
+   * Metadata events — unparsable lines, unknown notification methods,
+   * tripwire firings, close-time counters — are always recorded; raw frames
+   * only under TASKWRAITH_MUSE_MSP_DEBUG. Absent means no wire log, which
+   * never changes turn behavior.
+   */
+  readonly wireLogDir?: string
   readonly now?: () => number
   readonly createHome?: typeof createMuseIsolatedHome
   readonly loadImages?: typeof loadMainAuthorizedAcpImageContents
@@ -312,6 +321,10 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
   let terminal: string | null = null
   let exitCode: number | null = null
   let cancelled = false
+  // Hoisted above the try: the finally closes it, and a const declared inside
+  // the try body would sit in the temporal dead zone for any failure before
+  // its declaration line.
+  let wireLog: MuseMspWireLogSink | null = null
 
   const noteWarning = (message: string): void => {
     warnings.push(message)
@@ -341,6 +354,18 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       )
       turnInput = [{ type: 'text', text: launchPrompt }]
     }
+
+    // Durable wire diagnostics for this run. Redaction is load-bearing:
+    // Muse error text can quote its MCP server block (broker token included)
+    // back at us, so every serialized line passes through the same secret
+    // scrub the adopted-terminal path uses.
+    wireLog = input.wireLogDir
+      ? createMuseMspWireLog({
+          dir: input.wireLogDir,
+          runId,
+          redact: (text) => redactMuseMcpSecrets(text, input.mcpSettings)
+        })
+      : null
 
     const handle = runMuseMspTurn({
       spawnProcess: () => input.spawnMsp({ binaryPath, argv, cwd: workspacePath, env: lease.env }),
@@ -376,6 +401,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       },
       ...(input.onContextCompaction ? { onContextCompaction: input.onContextCompaction } : {}),
       onWarning: noteWarning,
+      ...(wireLog ? { onRawFrame: wireLog.onRawFrame, onWireObservation: wireLog.observe } : {}),
       // Same contract the launch steers keep: a native slash dispatch reaches
       // the provider untouched, so it is never steered mid-turn either.
       announceBeforeTools: museAnnounceSteerAppliesToPrompt(prompt),
@@ -459,6 +485,10 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
       }
     }
   } finally {
+    // Close the wire log first: the client's close handler has already
+    // emitted the final stats observation, and lease.cleanup() may scrub the
+    // seat home underneath us.
+    wireLog?.close()
     const cleanup = lease.cleanup()
     if (!cleanup.ok) noteWarning(cleanup.reason)
   }

@@ -38205,6 +38205,10 @@ const museIpcCancels = new Map<string, () => void>()
 const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   resolveBinary: async () => resolveCliProviderBinary('muse'),
   getTemporaryRoot: () => app.getPath('temp'),
+  // Durable MSP wire diagnostics: one JSONL per run beside the run-events
+  // ledger, always carrying counters/unparsable/unknown-method/tripwire
+  // events and full frames only under TASKWRAITH_MUSE_MSP_DEBUG.
+  museWireLogDir: join(app.getPath('userData'), 'muse-wire'),
   // Per-tool approval for the MSP lane. The exec lane has no wire-approval
   // plane at all, so this is what makes Muse app-managed rather than
   // sandbox-only. `appRunId` is threaded deliberately: the orchestrator

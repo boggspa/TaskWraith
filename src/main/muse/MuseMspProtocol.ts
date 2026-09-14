@@ -16,9 +16,16 @@
 // No Electron/node imports beyond `node:` primitives so the module stays unit
 // testable and inside the Host Node pure closure.
 
-/** Stable-surface schema fingerprint observed on Muse Code 1.1.1 (1.1.1-R2514.1). */
+/** Stable-surface schema fingerprint observed on Muse Code 1.2.1 (1.2.1-R2847.1),
+ * re-exported (`muse schema generate-json-schema`) after the drift this mismatch
+ * warning had been reporting since the binary moved off 1.1.1-R2514.1. Diff
+ * vs the prior translation: enums unchanged; `subagent/*` command family added
+ * (not adopted — this lane never sends them); ten notifications published that
+ * this lane does not act on (explicit no-op cases in MuseMspClient so they are
+ * not mis-counted as method drift); required provenance cursors
+ * (`sourceRange`/`viewCursor`, `Session.forkedFrom`) added below. */
 export const MUSE_MSP_SCHEMA_FINGERPRINT =
-  'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f'
+  'sha256:c7ff6c5d1e89cd42f803aea1f05b8e72082f2099685802473eb726903484713b'
 
 /** `clientInfo.name` is a MACHINE identifier: `^[a-z0-9_]+$` (SS1.4.1). A
  * hyphen is rejected with `-32602 invalidParams`, which reads like a transport
@@ -173,6 +180,28 @@ export interface MuseMspTurnError {
   retryable: boolean
 }
 
+/** `RecordPosition`/`StreamRef`/`SourceRange` (SS4.2) — durable-record
+ * provenance cursors, required on 1.2.1 approval/userInput requests and on
+ * every 1.2.1 notification. Opaque tokens to this lane: read nothing off
+ * them, pass nothing through. */
+export interface MuseMspRecordPosition {
+  id: string
+  sequence: number
+}
+
+export interface MuseMspStreamRef {
+  id: string
+  /** Free string, NOT an enum — the raw stream vocabulary is deliberately
+   * unfrozen upstream (#13929), so closing it here would be pure drift risk. */
+  kind: string
+}
+
+export interface MuseMspSourceRange {
+  first: MuseMspRecordPosition
+  last: MuseMspRecordPosition
+  stream: MuseMspStreamRef
+}
+
 /** One open `userInput/*` prompt. Unanswered, the gated tool call blocks and
  * the turn never terminates — `autoResolutionMs` is OPTIONAL, so there is no
  * guaranteed host-side timeout to rescue us. */
@@ -184,6 +213,9 @@ export interface MuseMspUserInputRequest {
   toolCallId: string
   toolName: string
   questions: unknown[]
+  /** 1.2.1-required transcript cursor; opaque to this lane. */
+  viewCursor: string
+  sourceRange?: MuseMspSourceRange
   autoResolutionMs?: number
 }
 
@@ -313,6 +345,9 @@ export interface MuseMspApprovalRequest {
   toolName: string
   /** Model-authored argument JSON, verbatim. Never eval or trust it. */
   rawArgs: string
+  /** 1.2.1-required provenance cursors; opaque to this lane. */
+  sourceRange: MuseMspSourceRange
+  viewCursor: string
   subject: MuseMspApprovalSubject
   availableChoices: MuseMspApprovalChoice[]
   /** CAS token: `approval/decide` is rejected `approvalRequirementStale` if the
@@ -320,6 +355,15 @@ export interface MuseMspApprovalRequest {
   currentRequirementId: MuseMspApprovalRequirementRef
   judgeEscalated: boolean
   protectedWrite: boolean
+}
+
+/** `ForkProvenance` (1.2.1) — where a forked session came from; null on
+ * sessions that were never forked. */
+export interface MuseMspForkProvenance {
+  sessionId: string
+  commandId: string
+  cutCursor: string
+  cutExplicit: boolean
 }
 
 export interface MuseMspSession {
@@ -333,6 +377,8 @@ export interface MuseMspSession {
   workspaceRoot: string | null
   createdAt: string
   updatedAt: string
+  /** 1.2.1-required fork provenance; null on non-forked sessions. */
+  forkedFrom: MuseMspForkProvenance | null
   approvalMode?: { mode?: MuseMspApprovalMode; source?: string; lastCommandId?: string | null }
 }
 
