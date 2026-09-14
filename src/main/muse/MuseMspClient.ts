@@ -182,7 +182,7 @@ export interface MuseMspTurnOptions {
  * budget. A legitimately silent in-progress tool call suspends this timer;
  * item/updated frames are not required to keep a healthy turn alive.
  */
-export const MUSE_MSP_INACTIVITY_TIMEOUT_MS = 180_000
+export const MUSE_MSP_INACTIVITY_TIMEOUT_MS = 900_000
 
 /** Deadline extensions allowed while `session/contextUsage` reports compaction. */
 export const MUSE_MSP_INACTIVITY_COMPACTION_GRACE = 3

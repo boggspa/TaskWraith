@@ -1759,6 +1759,11 @@ describe('runMuseMspTurn — inactivity watchdog', () => {
     }
   })
 
+  it('defaults the inactivity deadline to 900s', async () => {
+    const mod = await import('./MuseMspClient')
+    expect(mod.MUSE_MSP_INACTIVITY_TIMEOUT_MS).toBe(900_000)
+  })
+
   it('does not extend the watchdog for occupancy pressure blocked', async () => {
     // `blocked` is the 1.0.3 hard occupancy threshold, not "currently compacting".
     // Idle is 30ms; counted grace would still be alive at 45ms. Closing by 500ms
