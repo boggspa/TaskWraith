@@ -42,35 +42,6 @@ export function goalBecameTerminalDuringRound(input: {
 }
 
 /**
- * Candidate seat ids for Continuous auto-continue when assign_work was never
- * used: authority-directed expansion only (open fan-out targets, reserved
- * fan-out, pending yield-return frames). Prior speakers
- * (answered/yielded/sleeping) are NOT re-admitted from status harvest —
- * select_participants expands within the authority-only pass instead.
- * A configured closing synthesizer is deliberately excluded: it is not a
- * routing instruction on its own. Callers still place Boss/acting Captain
- * after these seats and fail open to the full roster when this admit set is
- * empty.
- */
-export function collectAuthorityOnlyContinuationCandidateIds(input: {
-  fannedOutParticipantIds?: Iterable<string>
-  fanoutReservedParticipantIds?: Iterable<string>
-  yieldReturnParticipantIds?: Iterable<string>
-}): string[] {
-  const admitted = new Set<string>()
-  for (const id of input.yieldReturnParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  for (const id of input.fannedOutParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  for (const id of input.fanoutReservedParticipantIds || []) {
-    if (id) admitted.add(id)
-  }
-  return [...admitted]
-}
-
-/**
  * Automatic continuation uses serial order unless structured assignments give
  * the host a current work plan. Prior fan-out output and a configured closing
  * synthesizer are not new routing instructions. Pending lanes and direct
