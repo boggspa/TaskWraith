@@ -286,6 +286,41 @@ describe('executeGitCommit slices', () => {
     })
   })
 
+  it('carries the seat lock owner into the pathspec commit so the pre-commit hook can match its claim', async () => {
+    const calls: Array<{ command: string[]; options: unknown }> = []
+    let headReads = 0
+    const deps = makeDeps(async (command, _cwd, options) => {
+      const argv = command as string[]
+      calls.push({ command: argv, options })
+      if (argv[1] === 'rev-parse' && argv[2] === 'HEAD') {
+        headReads += 1
+        return commandResult(headReads === 1 ? 'base-head\n' : 'slice-head\n')
+      }
+      if (argv[1] === 'rev-parse' && argv[2] === '--show-toplevel') {
+        return commandResult(`${workspace}\n`)
+      }
+      if (argv[1] === 'diff-tree') return commandResult('src/a.ts\0')
+      return commandResult('[main slice-head] commit\n')
+    })
+
+    // The private-index branch already hands git the owner id; the pathspec
+    // branch ran `git commit --only` with no environment at all, so the
+    // pre-commit hook could not match the seat's own runtime claim and
+    // blocked the commit (QA 2026-09-15, Muse Work 2).
+    const result = await executeGitCommit(
+      deps,
+      { message: 'feat: commit one file', mode: 'pathspec', paths: ['src/a.ts'] },
+      workspace,
+      { ...context, workspaceLockOwnerId: 'owner-seat-1' }
+    )
+
+    expect(result).toMatchObject({ ok: true, mode: 'pathspec' })
+    const commit = calls.find((call) => call.command[1] === 'commit')
+    expect(commit?.options).toMatchObject({
+      environment: { TASKWRAITH_LOCK_OWNER_ID: 'owner-seat-1' }
+    })
+  })
+
   it('builds selected hunks in a private index and advances shared staging by that patch', async () => {
     const calls: Array<{ command: string[]; options: unknown }> = []
     let headReads = 0

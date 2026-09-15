@@ -1400,13 +1400,25 @@ export async function executeGitCommit(
     declaredAbsolutePaths.map((path) => canonicalizeCommitSlicePath(path))
   )
 
+  // Both commit branches hand git the seat's exact lock-owner id: the
+  // pre-commit hook matches a runtime claim by TASKWRAITH_LOCK_OWNER_ID, and a
+  // commit that runs without it cannot prove the claim is its own, so the
+  // hook blocks the seat on its own marker. The private-index branch always
+  // carried it; the pathspec branch ran bare (QA 2026-09-15, Muse Work 2).
+  const lockOwnerId = context.workspaceLockOwnerId || currentSharedWorkspaceActor()?.lockOwnerId
+  const lockOwnerEnvironment: Readonly<Record<string, string>> = lockOwnerId
+    ? { TASKWRAITH_LOCK_OWNER_ID: lockOwnerId }
+    : {}
+
   if (request.mode === 'pathspec') {
     context.assertMutationStillLive?.()
     const result = await runCommandArgs(
       deps,
       ['git', 'commit', '--only', '-m', request.message, '--', ...declaredAbsolutePaths],
       cwd,
-      60_000
+      60_000,
+      undefined,
+      lockOwnerEnvironment
     )
     if (hostCommandFailed(result)) return failedGitCommitSlice(request.mode, 'commit', result)
     return successfulGitCommitSlice(
@@ -1422,10 +1434,9 @@ export async function executeGitCommit(
   const tempRoot = await fs.mkdtemp(join(deps.host.getTempDir(), 'taskwraith-git-commit-'))
   const privateIndexPath = join(tempRoot, 'index')
   const patchPath = join(tempRoot, 'slice.patch')
-  const lockOwnerId = context.workspaceLockOwnerId || currentSharedWorkspaceActor()?.lockOwnerId
   const environment = {
     GIT_INDEX_FILE: privateIndexPath,
-    ...(lockOwnerId ? { TASKWRAITH_LOCK_OWNER_ID: lockOwnerId } : {})
+    ...lockOwnerEnvironment
   }
   try {
     await fs.writeFile(patchPath, request.patch!, { encoding: 'utf8', mode: 0o600 })
