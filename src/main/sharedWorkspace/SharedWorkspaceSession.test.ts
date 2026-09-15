@@ -157,7 +157,10 @@ describe('shared workspace read-to-write protection', () => {
     // checked the RAW one, so a root that is not its own realpath (a symlinked
     // directory here; an 8.3 short name on Windows) bypassed the guard.
     const canonical = fixture()
-    const link = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-link-'))), 'repo')
+    const link = path.join(
+      fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-link-'))),
+      'repo'
+    )
     roots.push(path.dirname(link))
     fs.symlinkSync(canonical.rootPath, link, 'junction')
     const authority = { rootPath: link, targetPath: path.join(link, 'source.txt') }

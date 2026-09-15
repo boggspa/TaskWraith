@@ -1034,61 +1034,64 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   // `workspaceInspectionShellReason` through the gate, so the allowlisted
   // auto-allow and the surviving credential card are proven end to end rather
   // than mocked.
-  it.skipIf(!isPosixHost)('(d3b) auto-allows an allowlisted provider-state read but still cards a token file', async () => {
-    const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
-      '../WorkspaceInspectionShell'
-    )
-    const root = await mkdtemp(join(tmpdir(), 'taskwraith-approval-allowlist-'))
-    const originalHome = process.env.HOME
-    try {
-      const workspace = join(root, 'workspace')
-      const home = join(root, 'home')
-      const cli = join(home, '.gemini', 'antigravity-cli')
-      await mkdir(workspace, { recursive: true })
-      await mkdir(join(cli, 'brain', 'run-1'), { recursive: true })
-      await writeFile(join(cli, 'brain', 'run-1', 'output.txt'), 'step output')
-      await writeFile(join(cli, 'antigravity-oauth-token'), 'token')
-      await writeFile(join(home, 'notes.md'), 'an ordinary out-of-workspace file')
-      process.env.HOME = home
-      vi.mocked(workspaceInspectionShellReason).mockImplementation(
-        actual.workspaceInspectionShellReason
+  it.skipIf(!isPosixHost)(
+    '(d3b) auto-allows an allowlisted provider-state read but still cards a token file',
+    async () => {
+      const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
+        '../WorkspaceInspectionShell'
       )
-      vi.mocked(workspaceInspectionExecutionPlan).mockImplementation(
-        actual.workspaceInspectionExecutionPlan
-      )
-
-      for (const [command, expected] of [
-        [`cat ${join(cli, 'brain', 'run-1', 'output.txt')}`, true],
-        [`cat ${join(cli, 'antigravity-oauth-token')}`, false],
-        [`cat ${join(home, 'notes.md')}`, false]
-      ] as const) {
-        const order: string[] = []
-        const deps = makeDeps(order)
-        // `deny` is the read-only/plan posture the recon lane actually ran
-        // under: the fast path sits before the deny gate, so only a genuine
-        // proof can auto-allow here.
-        setResolution(deps, order, { policy: 'deny', decision: 'deny' })
-
-        void createApprovalOrchestration(deps)(
-          sender,
-          'codex',
-          'shellCommands',
-          workspace,
-          request({ preview: { command, cwd: workspace, params: { command } } })
+      const root = await mkdtemp(join(tmpdir(), 'taskwraith-approval-allowlist-'))
+      const originalHome = process.env.HOME
+      try {
+        const workspace = join(root, 'workspace')
+        const home = join(root, 'home')
+        const cli = join(home, '.gemini', 'antigravity-cli')
+        await mkdir(workspace, { recursive: true })
+        await mkdir(join(cli, 'brain', 'run-1'), { recursive: true })
+        await writeFile(join(cli, 'brain', 'run-1', 'output.txt'), 'step output')
+        await writeFile(join(cli, 'antigravity-oauth-token'), 'token')
+        await writeFile(join(home, 'notes.md'), 'an ordinary out-of-workspace file')
+        process.env.HOME = home
+        vi.mocked(workspaceInspectionShellReason).mockImplementation(
+          actual.workspaceInspectionShellReason
         )
-        await Promise.resolve()
-        expect(order.includes('audit:autoAllow:inspection_shell'), command).toBe(expected)
-        expect(order.includes('registerGeminiTool'), command).toBe(false)
-        // The token read must reach the ordinary posture gate, not slip
-        // through: under `deny` that is the auto-deny, not a silent allow.
-        if (!expected) expect(order).toContain('audit:autoDeny:policy')
+        vi.mocked(workspaceInspectionExecutionPlan).mockImplementation(
+          actual.workspaceInspectionExecutionPlan
+        )
+
+        for (const [command, expected] of [
+          [`cat ${join(cli, 'brain', 'run-1', 'output.txt')}`, true],
+          [`cat ${join(cli, 'antigravity-oauth-token')}`, false],
+          [`cat ${join(home, 'notes.md')}`, false]
+        ] as const) {
+          const order: string[] = []
+          const deps = makeDeps(order)
+          // `deny` is the read-only/plan posture the recon lane actually ran
+          // under: the fast path sits before the deny gate, so only a genuine
+          // proof can auto-allow here.
+          setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+          void createApprovalOrchestration(deps)(
+            sender,
+            'codex',
+            'shellCommands',
+            workspace,
+            request({ preview: { command, cwd: workspace, params: { command } } })
+          )
+          await Promise.resolve()
+          expect(order.includes('audit:autoAllow:inspection_shell'), command).toBe(expected)
+          expect(order.includes('registerGeminiTool'), command).toBe(false)
+          // The token read must reach the ordinary posture gate, not slip
+          // through: under `deny` that is the auto-deny, not a silent allow.
+          if (!expected) expect(order).toContain('audit:autoDeny:policy')
+        }
+      } finally {
+        if (originalHome === undefined) delete process.env.HOME
+        else process.env.HOME = originalHome
+        await rm(root, { recursive: true, force: true })
       }
-    } finally {
-      if (originalHome === undefined) delete process.env.HOME
-      else process.env.HOME = originalHome
-      await rm(root, { recursive: true, force: true })
     }
-  })
+  )
 
   // (d3c) MULTI-SEGMENT PIPELINES — owner decision 2026-09-07, also driven
   // through the REAL proof. A proven pipeline auto-allows, but no single
@@ -1096,62 +1099,65 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   // `brokered-direct-inspection` boundary or fire the executor's revalidation
   // signal — the executor throws when the gate promises a plan it cannot
   // rebuild. A pipeline segment that leaves the workspace still prompts.
-  it.skipIf(!isPosixHost)('(d3c) auto-allows a proven pipeline without promising a typed direct plan', async () => {
-    const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
-      '../WorkspaceInspectionShell'
-    )
-    const root = await mkdtemp(join(tmpdir(), 'taskwraith-approval-pipeline-'))
-    try {
-      const workspace = join(root, 'workspace')
-      await mkdir(join(workspace, 'src'), { recursive: true })
-      await writeFile(join(workspace, 'src', 'main.ts'), 'const start = async () => {}\n')
-      await writeFile(join(root, 'outside.txt'), 'outside')
-      vi.mocked(workspaceInspectionShellReason).mockImplementation(
-        actual.workspaceInspectionShellReason
+  it.skipIf(!isPosixHost)(
+    '(d3c) auto-allows a proven pipeline without promising a typed direct plan',
+    async () => {
+      const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
+        '../WorkspaceInspectionShell'
       )
-      vi.mocked(workspaceInspectionExecutionPlan).mockImplementation(
-        actual.workspaceInspectionExecutionPlan
-      )
-
-      for (const [command, autoAllowed, promisesDirectPlan] of [
-        // Single segment: proven AND typed, so the direct boundary is claimed.
-        ['cat -n src/main.ts', true, true],
-        // Pipeline: proven, auto-allowed, but no typed plan to promise.
-        ["cat -n src/main.ts | sed -n '1,2p'", true, false],
-        ['cat -n src/main.ts | grep -n "const start = async ()"', true, false],
-        // One segment leaving the workspace fails the whole pipeline.
-        [`cat -n src/main.ts | cat ${join(root, 'outside.txt')}`, false, false]
-      ] as const) {
-        const order: string[] = []
-        const deps = makeDeps(order)
-        setResolution(deps, order, { policy: 'deny', decision: 'deny' })
-        const onWorkspaceInspectionMatch = vi.fn()
-
-        void createApprovalOrchestration(deps)(
-          sender,
-          'codex',
-          'shellCommands',
-          workspace,
-          request({
-            preview: { command, cwd: workspace, params: { command } },
-            onWorkspaceInspectionMatch
-          })
+      const root = await mkdtemp(join(tmpdir(), 'taskwraith-approval-pipeline-'))
+      try {
+        const workspace = join(root, 'workspace')
+        await mkdir(join(workspace, 'src'), { recursive: true })
+        await writeFile(join(workspace, 'src', 'main.ts'), 'const start = async () => {}\n')
+        await writeFile(join(root, 'outside.txt'), 'outside')
+        vi.mocked(workspaceInspectionShellReason).mockImplementation(
+          actual.workspaceInspectionShellReason
         )
-        await Promise.resolve()
-        expect(order.includes('audit:autoAllow:inspection_shell'), command).toBe(autoAllowed)
-        expect(onWorkspaceInspectionMatch.mock.calls.length > 0, command).toBe(promisesDirectPlan)
-        const inspectionAudit = vi
-          .mocked(deps.auditService.recordAutomaticApprovalDecision)
-          .mock.calls.find((call) => call[6] === 'inspection_shell')
-        expect(
-          (inspectionAudit?.[8] as { executionBoundary?: string } | undefined)?.executionBoundary,
-          command
-        ).toBe(promisesDirectPlan ? 'brokered-direct-inspection' : undefined)
+        vi.mocked(workspaceInspectionExecutionPlan).mockImplementation(
+          actual.workspaceInspectionExecutionPlan
+        )
+
+        for (const [command, autoAllowed, promisesDirectPlan] of [
+          // Single segment: proven AND typed, so the direct boundary is claimed.
+          ['cat -n src/main.ts', true, true],
+          // Pipeline: proven, auto-allowed, but no typed plan to promise.
+          ["cat -n src/main.ts | sed -n '1,2p'", true, false],
+          ['cat -n src/main.ts | grep -n "const start = async ()"', true, false],
+          // One segment leaving the workspace fails the whole pipeline.
+          [`cat -n src/main.ts | cat ${join(root, 'outside.txt')}`, false, false]
+        ] as const) {
+          const order: string[] = []
+          const deps = makeDeps(order)
+          setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+          const onWorkspaceInspectionMatch = vi.fn()
+
+          void createApprovalOrchestration(deps)(
+            sender,
+            'codex',
+            'shellCommands',
+            workspace,
+            request({
+              preview: { command, cwd: workspace, params: { command } },
+              onWorkspaceInspectionMatch
+            })
+          )
+          await Promise.resolve()
+          expect(order.includes('audit:autoAllow:inspection_shell'), command).toBe(autoAllowed)
+          expect(onWorkspaceInspectionMatch.mock.calls.length > 0, command).toBe(promisesDirectPlan)
+          const inspectionAudit = vi
+            .mocked(deps.auditService.recordAutomaticApprovalDecision)
+            .mock.calls.find((call) => call[6] === 'inspection_shell')
+          expect(
+            (inspectionAudit?.[8] as { executionBoundary?: string } | undefined)?.executionBoundary,
+            command
+          ).toBe(promisesDirectPlan ? 'brokered-direct-inspection' : undefined)
+        }
+      } finally {
+        await rm(root, { recursive: true, force: true })
       }
-    } finally {
-      await rm(root, { recursive: true, force: true })
     }
-  })
+  )
 
   it('(d3) keeps destructive find and mixed mutations on the normal permission path', async () => {
     for (const command of [
