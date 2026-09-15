@@ -401,7 +401,12 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('returns at a real short deadline even when an adapter never resolves', async () => {
     const adapter = api()
     adapter.saveChat.mockImplementationOnce(() => new Promise(() => {}))
-    const result = await start({ api: adapter, windowMs: 5 })
+    // Real timers: the window must outlive the first dispatch, or the deadline
+    // fires on an EMPTY window, which is censored (schedule unfinished) and by
+    // design continues to a second repetition — the hosted Windows runner did
+    // exactly that at 5 ms (run 34992799794: two windows). 100 ms still ends
+    // the run at the deadline; the ~1 s the case takes is the drain budget.
+    const result = await start({ api: adapter, windowMs: 100 })
     expect(result.run.censored).toBe(true)
     expect(result.run.incomplete).toBe(true)
     expect(result.run.evidence.windows).toHaveLength(1)
