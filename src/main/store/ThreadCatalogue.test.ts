@@ -109,7 +109,7 @@ describe('durable thread catalogue publication', () => {
   it('settles an aborted begin without stranding an active writer forever', () => {
     const store = catalogue()
     beforeRename = (file) => {
-      if (file.endsWith('/desktop/chat.json')) throw new Error('head disk failure')
+      if (file.endsWith(join('desktop', 'chat.json'))) throw new Error('head disk failure')
     }
     expect(() => store.beginPublication('chat')).toThrow('head disk failure')
     expect(store.repairChatIds()).toEqual(['chat'])

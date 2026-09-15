@@ -13,12 +13,12 @@ vi.hoisted(() => {
 vi.mock('electron', () => ({ app: { getPath: () => profilePath } }))
 vi.mock('fs', async () => {
   const actual = await vi.importActual<typeof import('node:fs')>('node:fs')
+  const { join, sep } = await vi.importActual<typeof import('node:path')>('node:path')
+  // The store joins its chat paths with path.join, so on win32 they carry
+  // backslashes; match the native separator rather than a POSIX literal.
+  const chatsPrefix = join(profilePath, 'chats') + sep
   const readFileSync = (...args: Parameters<typeof actual.readFileSync>) => {
-    if (
-      ioProbe.enabled &&
-      typeof args[0] === 'string' &&
-      args[0].startsWith(`${profilePath}/chats/`)
-    ) {
+    if (ioProbe.enabled && typeof args[0] === 'string' && args[0].startsWith(chatsPrefix)) {
       ioProbe.files.push(args[0])
     }
     return Reflect.apply(actual.readFileSync, actual, args)

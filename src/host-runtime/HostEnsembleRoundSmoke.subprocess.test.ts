@@ -13,7 +13,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
@@ -27,6 +27,13 @@ import { HostProfileDomainStore } from './HostProfileDomainStore'
 
 const OLD_GENERAL_RESPONSE_LINE_BYTES = 256_000
 const LARGE_THREAD_COUNT = 220
+// The hosted Windows runner is several times slower than the POSIX legs, and
+// this test compiles the Host with tsc inside its own budget (~13 s locally).
+const WIN32 = process.platform === 'win32'
+const WAIT_BUDGET_MS = WIN32 ? 60_000 : 12_000
+const PROJECTION_BUDGET_MS = WIN32 ? 180_000 : 30_000
+const EXIT_BUDGET_MS = WIN32 ? 30_000 : 10_000
+vi.setConfig({ testTimeout: WIN32 ? 300_000 : 45_000 })
 const paths: string[] = []
 const children: ChildProcess[] = []
 
@@ -40,7 +47,7 @@ function outputOf(child: ChildProcess): { stdout: string; stderr: string } {
   )
 }
 
-function waitFor(check: () => boolean, label: string, timeoutMs = 12_000): Promise<void> {
+function waitFor(check: () => boolean, label: string, timeoutMs = WAIT_BUDGET_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     const deadline = Date.now() + timeoutMs
     const timer = setInterval(() => {
@@ -59,7 +66,7 @@ function waitFor(check: () => boolean, label: string, timeoutMs = 12_000): Promi
 async function waitForAsync<T>(
   check: () => Promise<T | null>,
   label: string,
-  timeoutMs = 30_000
+  timeoutMs = PROJECTION_BUDGET_MS
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -70,7 +77,15 @@ async function waitForAsync<T>(
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-function waitForExit(child: ChildProcess, timeoutMs = 10_000): Promise<void> {
+function terminate(child: ChildProcess): void {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  // @portability-ok Windows cannot deliver SIGTERM: child.kill() terminates the
+  // process outright, and the exit is asserted by waitForExit either way.
+  if (WIN32) child.kill()
+  else child.kill('SIGTERM')
+}
+
+function waitForExit(child: ChildProcess, timeoutMs = EXIT_BUDGET_MS): Promise<void> {
   return new Promise((resolve, reject) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve()
     const timer = setTimeout(() => {
@@ -284,16 +299,16 @@ function seedProfile(
 
 afterEach(async () => {
   const activeChildren = children.splice(0)
-  for (const child of activeChildren) {
-    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
-  }
+  for (const child of activeChildren) terminate(child)
   await Promise.all(activeChildren.map((child) => waitForExit(child).catch(() => undefined)))
   while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
 })
 
 describe('real production Host ensemble smoke', () => {
   it('serves a large quarantined ensemble roster and toggles a seat over the real socket', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'host-ensemble-smoke-subprocess-'))
+    // Canonicalize the fixture root: win32 temp roots carry 8.3 short-name
+    // segments that the Host and the client must agree on byte-for-byte.
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'host-ensemble-smoke-subprocess-')))
     paths.push(root)
     const profile = join(root, 'profile')
     const workspace = join(root, 'workspace')
@@ -438,13 +453,13 @@ describe('real production Host ensemble smoke', () => {
           cwd: process.cwd(),
           env: { ...process.env, PATH: '' },
           encoding: 'utf8',
-          timeout: 10_000
+          timeout: EXIT_BUDGET_MS
         }
       )
       if (graceful.status === 0) {
         await waitForExit(child)
-      } else if (child.exitCode === null && child.signalCode === null) {
-        child.kill('SIGTERM')
+      } else {
+        terminate(child)
         await waitForExit(child)
       }
       expect(
@@ -457,5 +472,5 @@ describe('real production Host ensemble smoke', () => {
     expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostSocketPath(profile))).toBe(false)
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
-  }, 45_000)
+  })
 })

@@ -3,7 +3,7 @@ import { encodeThreadJsonChunks } from './ThreadCatalogueJson'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ThreadCatalogueDatabase,
   THREAD_INDEX_CHUNK_BYTES,
@@ -214,6 +214,9 @@ describe('worker-owned thread query index', () => {
     ).toBe(false)
   })
 
+  // 3,000 fsynced sqlite frames: ~3 s on macOS, past 15 s on the hosted Windows
+  // runner. The budget is captured at collection, so it scopes to this one test.
+  vi.setConfig({ testTimeout: process.platform === 'win32' ? 120_000 : 15_000 })
   it('pages from a deep cursor without requiring earlier transcript objects', () => {
     const generation = begin()
     for (let first = 0; first < 1000; first += 100) {
@@ -235,7 +238,8 @@ describe('worker-owned thread query index', () => {
     expect(database.findOrdinal(generation, 'message', 'message-900')).toBe(900)
     const page = database.readObjects(generation, 'message', { before: 900, maxObjects: 3 })
     expect(page?.map((entry) => entry.ordinal)).toEqual([897, 898, 899])
-  }, 15_000)
+  })
+  vi.resetConfig()
 
   it('preserves duplicate historical message IDs by ordinal', () => {
     const generation = begin()
