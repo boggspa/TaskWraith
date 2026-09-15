@@ -104,10 +104,14 @@ function feed(input: FakeInput, text: string): void {
   input.write(Buffer.from(text, 'utf8'))
 }
 
+// 2 s covers every frame this file waits for on a workstation (the slowest
+// case renders in ~125 ms). The hosted macOS-Intel runner missed a provider
+// selection frame inside 2 s on run 34996580243 with its import phase at
+// 587 s, so hosted runners poll for longer; the frame is still asserted.
 async function waitFor(
   check: () => boolean,
   description: string,
-  timeoutMs = 2_000
+  timeoutMs = process.env.CI ? 20_000 : 2_000
 ): Promise<void> {
   const start = Date.now()
   while (Date.now() - start < timeoutMs) {
