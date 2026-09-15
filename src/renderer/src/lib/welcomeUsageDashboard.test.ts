@@ -1979,7 +1979,10 @@ describe('buildWelcomeUsageDashboardData <-> message-activity aggregate (B13)', 
         key
       ).toEqual(buildWelcomeUsageDashboardData(RECORDS, CHATS, range, NOW, WORKSPACES, reset))
     }
-  })
+    // Every range x reset case builds the dashboard twice over the full
+    // fixture: ~0.9 s locally, and the loaded macOS-Intel runner overran the
+    // 5 s default (run 34972722507). Equivalence, not speed, is the pin.
+  }, 60_000)
 
   it('sends a backend the same cutoffs the full-record walk applies', () => {
     expect(welcomeUsageMessageActivityRequest('30d', NOW, 0)).toEqual({
