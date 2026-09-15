@@ -26,6 +26,10 @@ import type { PreparedThreadMutation } from './ThreadCatalogueMutation'
 // fsync per frame) cost roughly 20x. This file-level budget covers only the
 // tests below that carry no literal timeout of their own.
 vi.setConfig({ testTimeout: process.platform === 'win32' ? 180_000 : 30_000 })
+// The config owns every budget here: an explicit third argument overrides
+// it, and six macOS-sized overrides (30 s, 15 s) capped the hosted Windows
+// runner at 30 s — run 34976881086 timed the control-projection case out
+// with the file at 184 s (sqlite fsync ~50x macOS).
 
 describe('real isolated history import', () => {
   let directory: string
@@ -188,7 +192,7 @@ describe('real isolated history import', () => {
     } finally {
       await service.dispose()
     }
-  }, 30_000)
+  })
 
   it('matches message activity boundaries from durable timestamp facts, with no decoder on repeated dashboard reads', async ({
     skip
@@ -374,7 +378,7 @@ describe('real isolated history import', () => {
       await mirror.dispose()
       await service.dispose()
     }
-  }, 30_000)
+  })
 
   it('pages exact introspection evidence without sending the corpus to its consumer', async () => {
     const profilePath = join(directory, 'introspection-profile')
@@ -440,7 +444,7 @@ describe('real isolated history import', () => {
     } finally {
       await service.dispose()
     }
-  }, 30_000)
+  })
 
   it('keeps fallback history readable while withholding recovery and negative proofs', async () => {
     const profilePath = join(directory, 'fallback-profile')
@@ -500,7 +504,7 @@ describe('real isolated history import', () => {
     } finally {
       await service.dispose()
     }
-  }, 30_000)
+  })
 
   it('prepares recovery off main, fences admission, and rejects adoption after cancellation', async () => {
     const profilePath = join(directory, 'recovery-profile')
@@ -602,7 +606,7 @@ describe('real isolated history import', () => {
       controller.dispose()
       await service.dispose()
     }
-  }, 30_000)
+  })
 
   it('recovers a prior standalone Host incarnation off main and retains an explanation', async () => {
     const profilePath = join(directory, 'host-restart')
@@ -688,5 +692,5 @@ describe('real isolated history import', () => {
       await mirror.dispose()
       await service.dispose()
     }
-  }, 15_000)
+  })
 })
