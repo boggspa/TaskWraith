@@ -35,6 +35,13 @@ import { CANVAS_EVAL_APPROVAL_WINDOW_DISCLOSURE } from '../canvas/CanvasEvalAppr
  * plus yolo (d), standing-grant (e), bossman (f).
  */
 
+// @portability-ok The real inspection proof resolves trusted executables only
+// from fixed POSIX directories (`WorkspaceInspectionShell.ts`
+// TRUSTED_EXECUTABLE_DIRECTORIES); on win32 nothing resolves and every plan
+// fails closed, so the (d3b)/(d3c) cases that drive the REAL proof are
+// inherently POSIX — the same gate `WorkspaceInspectionShell.test.ts` applies.
+const isPosixHost = process.platform !== 'win32'
+
 vi.mock('../NativeApprovalPolicy', () => ({
   effectiveAgenticSettings: vi.fn(() => ({ agenticServices: {} }))
 }))
@@ -1027,7 +1034,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   // `workspaceInspectionShellReason` through the gate, so the allowlisted
   // auto-allow and the surviving credential card are proven end to end rather
   // than mocked.
-  it('(d3b) auto-allows an allowlisted provider-state read but still cards a token file', async () => {
+  it.skipIf(!isPosixHost)('(d3b) auto-allows an allowlisted provider-state read but still cards a token file', async () => {
     const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
       '../WorkspaceInspectionShell'
     )
@@ -1089,7 +1096,7 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
   // `brokered-direct-inspection` boundary or fire the executor's revalidation
   // signal — the executor throws when the gate promises a plan it cannot
   // rebuild. A pipeline segment that leaves the workspace still prompts.
-  it('(d3c) auto-allows a proven pipeline without promising a typed direct plan', async () => {
+  it.skipIf(!isPosixHost)('(d3c) auto-allows a proven pipeline without promising a typed direct plan', async () => {
     const actual = await vi.importActual<typeof import('../WorkspaceInspectionShell')>(
       '../WorkspaceInspectionShell'
     )

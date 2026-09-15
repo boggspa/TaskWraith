@@ -30,7 +30,11 @@ afterEach(() => {
 })
 
 function temporary(prefix: string): string {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
+  // Native realpath: the product canonicalises the workspace with
+  // `fs.promises.realpath`, which on Windows expands 8.3 short names
+  // (`RUNNER~1`) where the JS `fs.realpathSync` does not, and the declared
+  // commit paths are resolved against this root.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
   roots.push(root)
   return root
 }

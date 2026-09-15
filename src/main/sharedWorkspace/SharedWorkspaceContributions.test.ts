@@ -29,11 +29,19 @@ afterEach(() => {
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
 })
 
+// The product canonicalises workspace paths with the native realpath
+// (`fs.promises.realpath`), which on Windows also expands 8.3 short names
+// (`RUNNER~1` -> `runneradmin`); the JS `fs.realpathSync` keeps the short
+// name. These tests derive the journal directory and declared commit paths
+// from their own root, so the fixture must use the product's flavour.
+function canonicalTemporary(prefix: string): string {
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
+  roots.push(root)
+  return root
+}
+
 async function actionDependencies() {
-  const authorityRoot = fs.realpathSync(
-    fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-authority-'))
-  )
-  roots.push(authorityRoot)
+  const authorityRoot = canonicalTemporary('tw-shared-authority-')
   // OS identity is injected; the actual WAL, scoped locks, projections and Git operations run on disk.
   const identity = {
     initialize: async () => 'test-process-birth',
@@ -59,9 +67,13 @@ function git(root: string, ...args: string[]): string {
 }
 
 function fixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-contribution-')))
-  roots.push(root)
+  const root = canonicalTemporary('tw-shared-contribution-')
   git(root, 'init', '-q', '-b', 'master')
+  // Undo and recover restore bytes through `git apply` on the working tree,
+  // which honours the runner's global `core.autocrlf` (true on the Windows
+  // CI image) and would rewrite this fixture's LF bytes as CRLF. The bytes
+  // are the subject here, so pin the repository's own EOL policy.
+  git(root, 'config', 'core.autocrlf', 'false')
   git(root, 'config', 'user.name', 'Shared workspace test')
   git(root, 'config', 'user.email', 'shared@example.invalid')
   fs.writeFileSync(

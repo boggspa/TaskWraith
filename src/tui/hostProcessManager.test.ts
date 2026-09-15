@@ -362,7 +362,12 @@ describe('TUI Host process manager', () => {
       probe,
       spawn,
       resolveLaunchCommand: async () => command(),
-      delay
+      delay,
+      // This test is about the launch race, not stderr capture. Without the
+      // seam the real opener runs: on POSIX `/profiles/race` is unwritable so
+      // it fails open to 'ignore', but on Windows it resolves to a writable
+      // `C:\profiles\race` and a real fd lands in stdio[2].
+      openHostStderrLog: () => null
     }
 
     const first = ensureTuiHostAvailable(input)
