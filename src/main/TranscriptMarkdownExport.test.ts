@@ -57,6 +57,29 @@ function activity(overrides: Partial<ToolActivity> = {}): ToolActivity {
 }
 
 describe('buildChatMarkdownTranscript', () => {
+  it('labels Mistral, Muse, and Devin seats by their canonical provider names', () => {
+    const seat = (id: string, provider: string, role: string, model: string): ChatMessage =>
+      message({
+        id,
+        role: 'assistant',
+        content: ` reporting`,
+        metadata: { ensembleProvider: provider, ensembleRole: role, ensembleModel: model }
+      })
+    const result = buildChatMarkdownTranscript(
+      chat([
+        seat('a1', 'devin', 'Whizz', 'swe-1-6-slow'),
+        seat('a2', 'mistral', 'Work', 'devstral-2'),
+        seat('a3', 'muse', 'Boss', 'muse-spark-1.3')
+      ]),
+      { copiedAt: '2026-06-16T12:00:00.000Z', homeDir: '/Users/dev' }
+    )
+
+    expect(result.markdown).toContain('## 0001 - Devin / Whizz (swe-1-6-slow)')
+    expect(result.markdown).toContain('## 0002 - Mistral / Work (devstral-2)')
+    expect(result.markdown).toContain('## 0003 - Muse / Boss (muse-spark-1.3)')
+    expect(result.markdown).not.toContain('Unknown provider')
+  })
+
   it('serializes visible user and assistant markdown with stable headings', () => {
     const result = buildChatMarkdownTranscript(
       chat([

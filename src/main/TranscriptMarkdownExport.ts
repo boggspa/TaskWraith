@@ -1,5 +1,6 @@
 import path from 'path'
 import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
+import { providerLabel as canonicalProviderLabel } from './ProviderAdapters'
 import type { ChatMessage, ChatRecord, ProviderId, ToolActivity, WorkspaceRecord } from './store/types'
 import {
   humanCollaboratorMetadata,
@@ -109,17 +110,33 @@ const SECRET_PATTERNS: Array<[RegExp, string]> = [
   ]
 ]
 
+// Exhaustive over ProviderId on purpose: a provider added to the union without
+// an entry here fails typecheck instead of exporting as "Unknown provider"
+// (Mistral, Muse, and Devin shipped that way until QA 2026-09-15).
+const EXPORTABLE_PROVIDER_IDS: Readonly<Record<ProviderId, true>> = Object.freeze({
+  gemini: true,
+  codex: true,
+  claude: true,
+  kimi: true,
+  grok: true,
+  cursor: true,
+  ollama: true,
+  antigravity: true,
+  pi: true,
+  mistral: true,
+  muse: true,
+  devin: true
+})
+
+function isExportableProviderId(value: string): value is ProviderId {
+  return Object.prototype.hasOwnProperty.call(EXPORTABLE_PROVIDER_IDS, value)
+}
+
 function providerLabel(provider?: ProviderId | string | null, fallbackGemini = false): string {
-  if (provider === 'codex') return 'Codex'
-  if (provider === 'claude') return 'Claude'
-  if (provider === 'kimi') return 'Kimi'
-  if (provider === 'grok') return 'Grok'
-  if (provider === 'cursor') return 'Cursor'
-  if (provider === 'ollama') return 'Ollama'
-  if (provider === 'antigravity') return 'Antigravity'
-  if (provider === 'pi') return 'Pi'
-  if (provider === 'gemini' || fallbackGemini) return 'Gemini'
-  return 'Unknown provider'
+  if (typeof provider === 'string' && isExportableProviderId(provider)) {
+    return canonicalProviderLabel(provider)
+  }
+  return fallbackGemini ? 'Gemini' : 'Unknown provider'
 }
 
 function asString(value: unknown): string {
