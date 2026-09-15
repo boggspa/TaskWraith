@@ -24,10 +24,14 @@ export default defineConfig({
     // suite takes ~505s there against ~150s elsewhere -- and tests that are
     // nowhere near the limit locally intermittently blow vitest's 5s default.
     // Six unrelated files timed out in a single run, all on timing rather than
-    // on any assertion, which is noise that reads as a red matrix. Raised for
-    // win32 only, so a genuine hang on the platforms we develop on still fails
-    // fast rather than being masked.
-    testTimeout: process.platform === 'win32' ? 30_000 : 5_000,
+    // on any assertion, which is noise that reads as a red matrix. The hosted
+    // macOS-Intel runner reached the same state on 2026-09-15 (import phase
+    // 357 s -> 656 s across four runs; runs 34984996288 and 34988795763 each
+    // timed out a different file that is nowhere near 5 s locally), so the
+    // raised default now covers every hosted runner (`CI`). Local runs keep
+    // 5 s, so a genuine hang on the platforms we develop on still fails fast
+    // rather than being masked.
+    testTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 5_000,
     // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
     // records a measured baseline without imposing a threshold or PR ratchet.
     coverage: {
