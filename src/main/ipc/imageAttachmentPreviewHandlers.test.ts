@@ -3,7 +3,8 @@ import { clipboard, dialog, nativeImage } from 'electron'
 import type { IpcMainEvent, IpcMainInvokeEvent, NativeImage } from 'electron'
 import { promises as fsPromises } from 'fs'
 import type { Stats } from 'fs'
-import { join } from 'path'
+import { join, resolve } from 'path'
+import { pathToFileURL } from 'url'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { saveClipboardImageFromTrustedPaste } from '../ClipboardImagePasteHandler'
 import {
@@ -424,8 +425,15 @@ describe('handleReadImagePreview', () => {
     const harness = createDeps()
     const image = makeImage({ dataUrl: 'data:image/png;base64,FILEURL' })
     vi.mocked(nativeImage.createFromPath).mockReturnValue(asNativeImage(image))
-    const result = await handleReadImagePreview(harness.deps, invokeEvent(), 'file:///tmp/x.png')
-    expect(fsPromises.realpath).toHaveBeenCalledWith('/tmp/x.png')
+    // Built from a host-shaped absolute path: fileURLToPath yields a drive
+    // letter and backslashes on win32, so a literal /tmp/x.png cannot match.
+    const filePath = resolve('/tmp/x.png')
+    const result = await handleReadImagePreview(
+      harness.deps,
+      invokeEvent(),
+      pathToFileURL(filePath).href
+    )
+    expect(fsPromises.realpath).toHaveBeenCalledWith(filePath)
     expect(result).toBe('data:image/png;base64,FILEURL')
   })
 
@@ -470,31 +478,63 @@ describe('handleReadImagePreview', () => {
     expect(harness.endRegenerableHistoryByteReservation).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to sips when native decoding fails and serves the result', async () => {
+  // The fallback is a macOS Image Services shell-out and the handler gates it
+  // on process.platform, so these two only mean something where /usr/bin/sips
+  // exists. The off-darwin branch is pinned by the last test in this group.
+  it.skipIf(process.platform !== 'darwin')(
+    'falls back to sips when native decoding fails and serves the result',
+    async () => {
+      const harness = createDeps()
+      succeedSips()
+      const outPath = join('/tmp/w9a-mkdtemp', 'preview.png')
+      const sipsImage = makeImage({ dataUrl: 'data:image/png;base64,SIPS' })
+      vi.mocked(nativeImage.createFromPath).mockImplementation((imagePath: string) =>
+        asNativeImage(imagePath === outPath ? sipsImage : makeImage({ empty: true }))
+      )
+      const result = await handleReadImagePreview(harness.deps, invokeEvent(), '/odd.heic')
+      expect(fsPromises.mkdtemp).toHaveBeenCalledWith(
+        join('/tmp/w9a-reservation', '.image-preview-')
+      )
+      expect(execFile).toHaveBeenCalledWith(
+        '/usr/bin/sips',
+        ['-s', 'format', 'png', '/real/default.png', '--out', outPath],
+        { timeout: 15000, maxBuffer: 1024 * 1024 },
+        expect.any(Function)
+      )
+      expect(fsPromises.rm).toHaveBeenCalledWith('/tmp/w9a-mkdtemp', {
+        recursive: true,
+        force: true
+      })
+      expect(result).toBe('data:image/png;base64,SIPS')
+    }
+  )
+
+  it.skipIf(process.platform !== 'darwin')(
+    'returns null when sips fails instead of throwing',
+    async () => {
+      const harness = createDeps()
+      failSips()
+      const result = await handleReadImagePreview(harness.deps, invokeEvent(), '/odd.heic')
+      expect(result).toBeNull()
+      expect(fsPromises.rm).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  // Runs everywhere: the platform is stubbed rather than skipped so the
+  // no-sips branch is proven on a Mac too, not only observed on Linux/Windows.
+  it('never shells out to sips off darwin', async () => {
     const harness = createDeps()
     succeedSips()
-    const outPath = join('/tmp/w9a-mkdtemp', 'preview.png')
-    const sipsImage = makeImage({ dataUrl: 'data:image/png;base64,SIPS' })
-    vi.mocked(nativeImage.createFromPath).mockImplementation((imagePath: string) =>
-      asNativeImage(imagePath === outPath ? sipsImage : makeImage({ empty: true }))
-    )
-    const result = await handleReadImagePreview(harness.deps, invokeEvent(), '/odd.heic')
-    expect(fsPromises.mkdtemp).toHaveBeenCalledWith(join('/tmp/w9a-reservation', '.image-preview-'))
-    expect(execFile).toHaveBeenCalledWith(
-      '/usr/bin/sips',
-      ['-s', 'format', 'png', '/real/default.png', '--out', outPath],
-      { timeout: 15000, maxBuffer: 1024 * 1024 },
-      expect.any(Function)
-    )
-    expect(fsPromises.rm).toHaveBeenCalledWith('/tmp/w9a-mkdtemp', { recursive: true, force: true })
-    expect(result).toBe('data:image/png;base64,SIPS')
-  })
-
-  it('returns null when sips fails instead of throwing', async () => {
-    const harness = createDeps()
-    failSips()
-    const result = await handleReadImagePreview(harness.deps, invokeEvent(), '/odd.heic')
-    expect(result).toBeNull()
-    expect(fsPromises.rm).toHaveBeenCalledTimes(1)
+    const platform = Object.getOwnPropertyDescriptor(process, 'platform')
+    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true })
+    try {
+      const result = await handleReadImagePreview(harness.deps, invokeEvent(), '/odd.heic')
+      expect(result).toBeNull()
+      expect(execFile).not.toHaveBeenCalled()
+      expect(fsPromises.mkdtemp).not.toHaveBeenCalled()
+      expect(fsPromises.rm).not.toHaveBeenCalled()
+    } finally {
+      if (platform) Object.defineProperty(process, 'platform', platform)
+    }
   })
 })

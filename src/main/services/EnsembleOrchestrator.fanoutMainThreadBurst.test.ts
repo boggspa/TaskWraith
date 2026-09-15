@@ -626,10 +626,16 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // --- Budget assertions -------------------------------------------
       // No single synchronous block may dominate the fully drained wave.
       expect(maxEventLoopDelayMs).toBeLessThan(0.5 * waveMs)
-      // Absolute CI guard: generous enough for 2–3× slower CI runners.
+      // Absolute guard, runner-aware. Apple Silicon measures ~35–45 ms; on the
+      // same commit GitHub's hosted runners measured 128 ms (windows-latest)
+      // and 145 ms (macOS Intel), so CI gets 250 ms. That still sits under
+      // what the pre-fix synchronous mapper would cost there (85 ms local for
+      // 20 seats ≈ 300 ms+ for 30 on a 3× slower box); the probe-tick and
+      // 0.5×waveMs assertions above remain the machine-independent guards.
       // Lazy host admission above is the structural proof; this remains a
       // safety net for pathological work inside the admitted prefix.
-      expect(maxEventLoopDelayMs).toBeLessThan(100)
+      const absoluteBudgetMs = process.env.CI ? 250 : 100
+      expect(maxEventLoopDelayMs).toBeLessThan(absoluteBudgetMs)
     }
   )
 })

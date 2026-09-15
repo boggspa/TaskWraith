@@ -20,6 +20,12 @@ const identityRealpath = (value: string): string => value
 // os.tmpdir()/TMPDIR happen to be on the host running the suite.
 const FAKE_TMPDIR = '/var/folders/zz/T'
 
+// The binary probe defaults to a real existsSync on /usr/bin/sandbox-exec, so
+// an un-pinned plan reports `sandbox_binary_unavailable` on every non-mac host
+// before it reaches the logic under test. Pinned here; the fail-closed group
+// below overrides it to prove the missing-binary refusal.
+const sandboxBinaryPresent = (): boolean => true
+
 function plan(overrides: Record<string, unknown> = {}) {
   return resolveShellSandboxPlan({
     platform: 'darwin',
@@ -30,9 +36,18 @@ function plan(overrides: Record<string, unknown> = {}) {
     realpath: identityRealpath,
     tmpdir: () => FAKE_TMPDIR,
     env: {},
+    sandboxBinaryAvailable: sandboxBinaryPresent,
     ...overrides
   })
 }
+
+// The fixtures are POSIX paths because the Seatbelt only ever runs on darwin.
+// The module resolves every root through `path.resolve`, which on a win32 HOST
+// rewrites `/Users/dev` to `C:\Users\dev` — one `/`-segment, so the workspace
+// reads as an unsafe root and no contained plan can exist. Those groups skip on
+// Windows; everything that is pure string work or refuses before path
+// resolution still runs there.
+const describePosixPaths = process.platform === 'win32' ? describe.skip : describe
 
 describe('resolveShellSandboxPlan — when a Seatbelt is refused', () => {
   it('never sandboxes off darwin, so Windows and Linux keep working', () => {
@@ -138,7 +153,7 @@ describe('sbplQuote — profile injection', () => {
   })
 })
 
-describe('resolveShellSandboxPlan — the contained plan', () => {
+describePosixPaths('resolveShellSandboxPlan — the contained plan', () => {
   it('resolves symlinked roots because Seatbelt matches the real path', () => {
     const result = plan({
       workspacePath: '/tmp/ws',
@@ -204,7 +219,7 @@ describe('resolveShellSandboxPlan — the contained plan', () => {
 // reassign TMPDIR first. A profile that allows only the main process's view
 // denies the directory the child actually writes to, and the build tool that
 // honours $TMPDIR fails with an error naming neither the sandbox nor TMPDIR.
-describe('resolveShellSandboxPlan — temp roots the login shell may actually use', () => {
+describePosixPaths('resolveShellSandboxPlan — temp roots the login shell may actually use', () => {
   it('allows the process temp root even when the caller passes none', () => {
     const result = plan({ writableRoots: [] })
     if (!result.sandboxed) throw new Error('expected a contained plan')
@@ -260,8 +275,9 @@ describe('resolveShellSandboxPlan — temp roots the login shell may actually us
     expect(allows).toHaveLength(1)
   })
 
-  // The seams above are test-only. This one omits them so the DEFAULTS —
-  // os.tmpdir() and process.env — are proven wired rather than assumed.
+  // The temp seams above are test-only. This one omits them so the DEFAULTS —
+  // os.tmpdir() and process.env — are proven wired rather than assumed. The
+  // binary seam stays pinned: it is a host fact, not the wiring under test.
   it('reads the real process temp root when no seam is injected', () => {
     const result = resolveShellSandboxPlan({
       platform: 'darwin',
@@ -269,6 +285,7 @@ describe('resolveShellSandboxPlan — temp roots the login shell may actually us
       fullAccessGranted: false,
       workspacePath: '/Users/dev/projects/app',
       homePath: '/Users/dev',
+      sandboxBinaryAvailable: sandboxBinaryPresent,
       // Only /tmp is rewritten, so the expectation below names the root the
       // funnel emits on any host this suite runs on, macOS or Linux CI.
       realpath: (value: string) => (value === '/tmp' ? '/private/tmp' : value)
@@ -422,7 +439,7 @@ describe('resolveShellSandboxPlan — fail closed, never degrade open', () => {
   })
 })
 
-describe('resolveShellSandboxPlan — denylist must not deny the workspace', () => {
+describePosixPaths('resolveShellSandboxPlan — denylist must not deny the workspace', () => {
   // A workspace nested under a denied directory would otherwise be denied to
   // ITSELF: `(deny file-read* (subpath "~/.config/gh"))` covers
   // `~/.config/gh/mytool`, so every read in the agent's own workspace fails.
@@ -497,7 +514,7 @@ describe('index.ts containment wiring', () => {
   })
 })
 
-describe('resolveShellSandboxPlan — external path grants', () => {
+describePosixPaths('resolveShellSandboxPlan — external path grants', () => {
   // The Seatbelt is a second permission system under TaskWraith's own. An
   // external grant is an explicit user decision; if the profile does not
   // re-grant it, enabling containment silently revokes a capability the user
@@ -555,7 +572,7 @@ describe('contributed temp roots — disclosed widening', () => {
   })
 })
 
-describe('resolveShellSandboxPlan — an unquotable path must not throw', () => {
+describePosixPaths('resolveShellSandboxPlan — an unquotable path must not throw', () => {
   // Callers resolve a plan while BUILDING the host-command projection scope,
   // which every brokered MCP tool passes through. A throw there would fail
   // read_file and list_directory — tools that spawn nothing — for a shell

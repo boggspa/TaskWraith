@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { resolveClaudeContextPreference } from './ClaudeContextPreference'
 
@@ -13,7 +14,9 @@ describe('Claude compaction preference forwarding', () => {
     )
     const original = { HOME: '/test/home', TASKWRAITH_RUN_ID: 'run-1' }
     const result = resolveClaudeContextPreference(original, { readSettings })
-    expect(readSettings).toHaveBeenCalledWith('/test/home/.claude/settings.json')
+    // Built with join: the module joins with the host path module, so a POSIX
+    // literal cannot match the backslashes win32 emits.
+    expect(readSettings).toHaveBeenCalledWith(join('/test/home', '.claude', 'settings.json'))
     expect(result.env).toEqual({ ...original, CLAUDE_CODE_AUTO_COMPACT_WINDOW: '650000' })
     expect(result.preference).toEqual({ source: 'user-settings', windowTokens: 650_000 })
     expect(original).not.toHaveProperty('CLAUDE_CODE_AUTO_COMPACT_WINDOW')
@@ -25,7 +28,7 @@ describe('Claude compaction preference forwarding', () => {
       { CLAUDE_CONFIG_DIR: '/selected/claude' },
       { readSettings }
     )
-    expect(readSettings).toHaveBeenCalledWith('/selected/claude/settings.json')
+    expect(readSettings).toHaveBeenCalledWith(join('/selected/claude', 'settings.json'))
     expect(result.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe('750000')
   })
 
