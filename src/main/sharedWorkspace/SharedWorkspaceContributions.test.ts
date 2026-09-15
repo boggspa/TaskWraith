@@ -403,6 +403,29 @@ describe('shared workspace contribution workflow', () => {
     ).toBe(false)
   })
 
+  it('commits a contribution when the workspace root is reached through a symlink', async () => {
+    // The journal root is canonical; declared paths used to be related to it
+    // directly, so a symlinked (or 8.3 short-named) workspace root was
+    // rejected as "Contribution path escapes its workspace."
+    const canonical = fixture()
+    const link = path.join(canonicalTemporary('tw-shared-link-'), 'repo')
+    fs.symlinkSync(canonical, link, 'junction')
+    expect(fs.realpathSync.native(link)).not.toBe(link)
+    const chat = randomUUID()
+    await edit(link, chat, 'source.txt', 'through the link\n')
+    const result = await call(chat, 'git_commit', () =>
+      executeGitCommit(
+        executorDependencies(),
+        { mode: 'contribution', message: 'linked contribution', paths: ['source.txt'] },
+        link,
+        { scope: 'workspace', cwd: link, workspacePath: link, appChatId: chat }
+      )
+    )
+    expect(result).toMatchObject({ ok: true })
+    expect(git(canonical, 'show', 'HEAD:source.txt')).toBe('through the link')
+    expect((await listSharedWorkspaceContributions(link)).contributions).toHaveLength(0)
+  })
+
   it('captures new files with spaces and commits them without staging another task’s new file', async () => {
     const root = fixture()
     const chat = randomUUID()

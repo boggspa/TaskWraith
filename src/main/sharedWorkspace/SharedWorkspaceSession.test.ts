@@ -152,6 +152,30 @@ describe('shared workspace read-to-write protection', () => {
     expect(fs.readFileSync(authority.targetPath, 'utf8')).toBe('intentional recreation')
   })
 
+  it('requires observing a deletion even when the workspace root is reached through a symlink', async () => {
+    // Reads remember the CANONICAL target while the recreate branch once
+    // checked the RAW one, so a root that is not its own realpath (a symlinked
+    // directory here; an 8.3 short name on Windows) bypassed the guard.
+    const canonical = fixture()
+    const link = path.join(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tw-shared-link-'))), 'repo')
+    roots.push(path.dirname(link))
+    fs.symlinkSync(canonical.rootPath, link, 'junction')
+    const authority = { rootPath: link, targetPath: path.join(link, 'source.txt') }
+    expect(fs.realpathSync.native(authority.rootPath)).not.toBe(authority.rootPath)
+    const chat = randomUUID()
+    await seat(chat, () => readScopedRegularFile(authority, { maxBytes: 1000 }))
+    fs.unlinkSync(canonical.targetPath)
+    await expect(
+      seat(chat, () =>
+        writeScopedUtf8FileWithLegacyCreate(authority, {
+          maxBytes: 1000,
+          content: 'stale recreation'
+        })
+      )
+    ).rejects.toThrow('WORKSPACE_STALE_READ')
+    expect(fs.existsSync(canonical.targetPath)).toBe(false)
+  })
+
   it('does not impose a read prerequisite on an unobserved write', async () => {
     const authority = fixture()
     await seat(randomUUID(), () =>

@@ -99,7 +99,10 @@ async function prepareEdit(
   try {
     const journal = await journalRoot(authority.rootPath)
     if (!journal || controller.signal.aborted) return null
-    const path = relativePath(journal.root, authority.targetPath)
+    // journal.root is canonical while the authority paths are raw: relate the
+    // target to its own raw root, or a symlinked / short-named root reads as
+    // an escape.
+    const path = relativePath(resolve(authority.rootPath), authority.targetPath)
     try {
       await journalGit(
         journal.root,
@@ -266,7 +269,7 @@ export async function prepareCurrentContribution(
   await refreshMarker(journal, digest(actor.key), actor)
   const result = await previewSharedWorkspaceContribution(root, digest(actor.key))
   const declared = [
-    ...new Set(paths.map((p) => relativePath(journal.root, resolve(root, p))))
+    ...new Set(paths.map((p) => relativePath(resolve(root), resolve(root, p))))
   ].sort()
   if (JSON.stringify(declared) !== JSON.stringify([...result.paths].sort())) {
     throw new Error(

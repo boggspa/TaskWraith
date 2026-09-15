@@ -345,9 +345,11 @@ export async function writeScopedUtf8FileWithLegacyCreate(
     if (!(error instanceof ScopedPathTargetMissingError)) throw error
   }
 
-  assertSharedWorkspaceReadCurrent(authority.targetPath, null)
-
+  // Reads remember the CANONICAL target, so the currency check must run on
+  // the normalised path too; against the raw target it silently passes
+  // whenever root != realpath(root) (8.3 short names, symlinked roots).
   const { rootPath, targetPath } = await normalizePlannedAuthority(authority)
+  assertSharedWorkspaceReadCurrent(targetPath, null)
   const targetDirectory = dirname(targetPath)
   const mutationAuthorized = await ensurePlannedDirectoryChain(
     rootPath,

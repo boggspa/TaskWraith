@@ -1145,13 +1145,27 @@ export class HostDeltaStore {
     } catch (error) {
       let rolledBack = descriptor === null
       if (descriptor !== null && previousLength !== null) {
+        // libuv opens O_APPEND handles with FILE_APPEND_DATA and without
+        // FILE_WRITE_DATA, so truncating the 'a+' descriptor is refused on
+        // Windows (EPERM) and every short write would report an uncertain
+        // rollback. Roll back through a separate read/write descriptor.
+        let rollbackDescriptor: number | null = null
         try {
-          this.batchTruncate(descriptor, previousLength)
-          this.batchFsync(descriptor)
+          rollbackDescriptor = openSync(this.journalPath, 'r+')
+          this.batchTruncate(rollbackDescriptor, previousLength)
+          this.batchFsync(rollbackDescriptor)
           if (!existed && process.platform !== 'win32') this.syncDataDirectory()
           rolledBack = true
         } catch {
           rolledBack = false
+        } finally {
+          if (rollbackDescriptor !== null) {
+            try {
+              closeSync(rollbackDescriptor)
+            } catch {
+              // The truncate/fsync above already decided the rollback verdict.
+            }
+          }
         }
       }
       return {

@@ -1,6 +1,8 @@
 import {
   existsSync,
+  fstatSync,
   fsyncSync,
+  ftruncateSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -194,6 +196,48 @@ describe('HostDeltaStore', () => {
       ])
     ).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 2 } })
     expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 2 })
+  })
+
+  it('rolls a short write back through a separate read/write descriptor, never the append handle', () => {
+    // libuv opens O_APPEND handles without FILE_WRITE_DATA, so an ftruncate on
+    // the 'a+' append descriptor is refused on Windows. Pin that the rollback
+    // truncate and its fsync run on a distinct descriptor that is closed after.
+    let writes = 0
+    let appendDescriptor: number | null = null
+    const truncated: number[] = []
+    const fsynced: number[] = []
+    const store = openStore({
+      batchWrite: (descriptor, bytes, offset, length) => {
+        writes += 1
+        appendDescriptor = descriptor
+        if (writes === 1) return writeSync(descriptor, bytes, offset, Math.min(17, length), null)
+        throw new Error('injected batch write failure')
+      },
+      batchTruncate: (descriptor, length) => {
+        truncated.push(descriptor)
+        ftruncateSync(descriptor, length)
+      },
+      batchFsync: (descriptor) => {
+        fsynced.push(descriptor)
+        fsyncSync(descriptor)
+      }
+    })
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'seed', payload: { id: 'seed' } })
+    const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    const beforeBytes = statSync(journal).size
+
+    expect(
+      store.appendBatch([
+        { kind: 'upsert', family: 'thread', entityId: 'one', payload: { id: 'one' } }
+      ])
+    ).toMatchObject({ kind: 'write-failed', rollback: 'proven' })
+    expect(appendDescriptor).not.toBeNull()
+    expect(truncated).toHaveLength(1)
+    expect(truncated[0]).not.toBe(appendDescriptor)
+    expect(fsynced).toEqual([truncated[0]])
+    expect(() => fstatSync(truncated[0])).toThrow()
+    expect(statSync(journal).size).toBe(beforeBytes)
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 1 })
   })
 
   it('poisons append, reset, compact, and reopen after an unprovable batch rollback', () => {
