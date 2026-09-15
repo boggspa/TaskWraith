@@ -320,6 +320,11 @@ export function getParticipantAliases(p: EnsembleParticipant): string[] {
   push(p.id)
   push(p.provider)
   push(p.role)
+  // The roster spelling every seat sees ("Muse / Work 2" in participant-health,
+  // roster cards, transcript headings) is provider + role. Claim the pair so a
+  // yield or mention written that way lands on the one seat it names instead
+  // of stopping at the shared provider token as "every Muse seat".
+  if (p.provider && p.role) push(`${p.provider} ${p.role}`)
   if (p.stageRole === 'background') {
     push('bg')
     push('background')
@@ -917,7 +922,13 @@ export function resolveYieldTargetDetail(
   participants: EnsembleParticipant[],
   excludeIds?: ReadonlySet<string>
 ): YieldTargetResolutionDetail {
-  const trimmed = target.trim().replace(/^@+/, '').trim()
+  // "Muse / Work 2" is how the roster spells a seat; the slash is a separator,
+  // not a word, so it must not split the provider from the role alias.
+  const trimmed = target
+    .trim()
+    .replace(/^@+/, '')
+    .replace(/\s*\/\s*/g, ' ')
+    .trim()
   if (!trimmed || participants.length === 0) return { kind: 'unresolved' }
   const lc = trimmed.toLowerCase()
   if (lc === 'me' || lc === 'self') return { kind: 'self' }

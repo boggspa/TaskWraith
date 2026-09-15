@@ -951,3 +951,56 @@ describe('DM routing across a punctuation-adjacent mention', () => {
     ).toEqual({ kind: 'multiple' })
   })
 })
+
+describe('resolveYieldTargetDetail provider / role targets', () => {
+  // The roster the seats see (participant-health, roster cards, transcript
+  // headings) spells a seat "Muse / Work 2". A Boss that yields with that
+  // exact spelling must land on that one seat, not on "every Muse seat".
+  const boss = participant({
+    id: 'participant-1',
+    provider: 'muse',
+    role: 'Boss',
+    model: 'muse-spark-1.3'
+  })
+  const work = participant({
+    id: 'participant-5',
+    provider: 'mistral',
+    role: 'Work',
+    model: 'devstral-2'
+  })
+  const work2 = participant({
+    id: 'participant-6',
+    provider: 'muse',
+    role: 'Work 2',
+    model: 'muse-spark-1.3'
+  })
+  const review3 = participant({
+    id: 'participant-9',
+    provider: 'muse',
+    role: 'Review3',
+    model: 'muse-spark-1.3'
+  })
+  const roster = [boss, work, work2, review3]
+
+  it('resolves the roster spelling "Muse / Work 2" to the one seat it names', () => {
+    expect(resolveYieldTargetDetail('Muse / Work 2', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work2
+    })
+  })
+
+  it('resolves the provider + role pair without the slash', () => {
+    expect(resolveYieldTargetDetail('muse work 2', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work2
+    })
+    expect(resolveYieldTargetDetail('@Mistral/Work', roster, new Set([boss.id]))).toEqual({
+      kind: 'resolved',
+      participant: work
+    })
+  })
+
+  it('still reports a bare shared provider as ambiguous', () => {
+    expect(resolveYieldTargetDetail('Muse', roster, new Set([boss.id])).kind).toBe('ambiguous')
+  })
+})
