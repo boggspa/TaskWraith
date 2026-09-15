@@ -57,6 +57,19 @@ export interface SharedWorkspaceEditReceipt {
   abort(): Promise<void>
 }
 
+/**
+ * Upper bound on how long a brokered write_file / replace waits for its
+ * contribution to be journalled (prepare, settle) before giving the mutation
+ * back to the seat without a record. The bound exists so a mutation lock is
+ * never held indefinitely on audit I/O; it is NOT a performance target. The
+ * original 1.5 s was tuned on a quiet SSD and was breached under a full
+ * ensemble round (QA 2026-09-15: "This contribution has already settled or has
+ * no captured edits" on a seat whose edits had landed), which silently turned
+ * a reviewable contribution into an unrecorded write. A journal that takes
+ * longer than this is broken, not slow.
+ */
+export const SHARED_WORKSPACE_CAPTURE_BUDGET_MS = 15_000
+
 export async function touchSharedWorkspaceIntent(root: string): Promise<void> {
   const actor = currentSharedWorkspaceActor()
   if (!actor?.lockOwnerId) return
@@ -94,7 +107,7 @@ async function prepareEdit(
     return null
   // Bookkeeping never keeps a mutation lock while waiting indefinitely for audit I/O.
   const controller = new AbortController()
-  const timeout = setTimeout(() => controller.abort(), 1500)
+  const timeout = setTimeout(() => controller.abort(), SHARED_WORKSPACE_CAPTURE_BUDGET_MS)
   timeout.unref?.()
   try {
     const journal = await journalRoot(authority.rootPath)
@@ -739,7 +752,7 @@ async function boundedCapture<T>(pending: Promise<T>): Promise<T | null> {
     return await Promise.race([
       pending.catch(() => null),
       new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), 1500)
+        timer = setTimeout(() => resolve(null), SHARED_WORKSPACE_CAPTURE_BUDGET_MS)
         timer.unref?.()
       })
     ])

@@ -18,7 +18,8 @@ import { bindSharedWorkspaceActor, withSharedWorkspaceOperation } from './Shared
 import {
   listSharedWorkspaceContributions,
   prepareSharedWorkspaceEdit,
-  previewSharedWorkspaceContribution
+  previewSharedWorkspaceContribution,
+  SHARED_WORKSPACE_CAPTURE_BUDGET_MS
 } from './SharedWorkspaceContributions'
 
 const roots: string[] = []
@@ -272,8 +273,9 @@ describe('shared workspace contribution workflow', () => {
     expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toContain('peer raced')
   })
 
-  // Capture is bounded at 1.5 s by design (a mutation lock never waits on
-  // audit I/O), and the hosted Windows runner breaches it nondeterministically
+  // Capture is bounded by SHARED_WORKSPACE_CAPTURE_BUDGET_MS by design (a
+  // mutation lock never waits on audit I/O); the hosted Windows runner breached
+  // the original 1.5 s nondeterministically
   // (~50x macOS on fsync; run 34972722507 listed no prepared record). The
   // budget itself is the product behaviour; this case needs capture to land.
   it.skipIf(process.platform === 'win32')(
@@ -501,5 +503,22 @@ describe('shared workspace contribution workflow', () => {
     ).rejects.toThrow('after this contribution')
     expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toContain('later peer')
     expect(git(root, 'log', '-1', '--format=%s')).toBe('initial')
+  })
+})
+
+describe('capture budget', () => {
+  // The 1.5 s bound was tuned on a quiet SSD and breached under a full round
+  // (QA 2026-09-15: a seat whose edits had landed was told "This contribution
+  // has already settled or has no captured edits"). The bound stays finite so a
+  // mutation lock never waits on audit I/O forever, but it is one shared,
+  // exported constant now — never a literal on a setTimeout.
+  it('bounds every capture wait by one exported 15 s budget', () => {
+    expect(SHARED_WORKSPACE_CAPTURE_BUDGET_MS).toBe(15_000)
+    const source = fs.readFileSync(path.join(__dirname, 'SharedWorkspaceContributions.ts'), 'utf8')
+    const timeouts = [...source.matchAll(/setTimeout\(/g)].map((match) =>
+      source.slice(match.index, match.index + 160)
+    )
+    expect(timeouts.length).toBeGreaterThanOrEqual(2)
+    for (const call of timeouts) expect(call).toContain('SHARED_WORKSPACE_CAPTURE_BUDGET_MS')
   })
 })
