@@ -161,7 +161,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-av-endurance-runner.cjs':
     '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
   'scripts/perf/electronChildSession.cjs':
-    'dbd48428ce079b99c6f239200ed850c4fc320eff435d87cba7ee796424394264',
+    'b7cb57ed1ada3cd9fd00817b96bd0c033b33080b87706beb051c4a4478f8c4e9',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
