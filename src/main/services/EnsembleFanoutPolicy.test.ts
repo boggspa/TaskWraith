@@ -5,6 +5,8 @@ import {
   clampLaneResultMaxChars,
   ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS,
   ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS,
+  ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS,
+  ensembleAwaitTimeoutCeilingSeconds,
   ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS,
   ENSEMBLE_LANE_RESULT_MAX_CHARS,
   fanoutPolicyAllowsRead,
@@ -278,5 +280,37 @@ describe('resolveRequestedEnsembleFanoutPolicy', () => {
         concurrentMode: true
       })
     ).toBe('off')
+  })
+})
+
+describe('ensembleAwaitTimeoutCeilingSeconds', () => {
+  // Muse's MCP client drops the stdio server when one tool call outlives its
+  // own budget (QA 2026-09-15: a 300 s ensemble_await from the Muse Boss came
+  // back "timeout" and every later brokered call failed with "MCP stdio
+  // connection is closed"). A Muse caller therefore gets a lower per-call
+  // ceiling and re-invokes; everyone else keeps the 10-minute ceiling.
+  it('caps a Muse caller below its MCP client budget and leaves others at the max', () => {
+    expect(ensembleAwaitTimeoutCeilingSeconds('muse')).toBe(
+      ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS
+    )
+    expect(ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS).toBeLessThan(300)
+    expect(ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS).toBeGreaterThan(
+      ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS
+    )
+    expect(ensembleAwaitTimeoutCeilingSeconds('codex')).toBe(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS)
+    expect(ensembleAwaitTimeoutCeilingSeconds(undefined)).toBe(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS)
+    expect(ensembleAwaitTimeoutCeilingSeconds(null)).toBe(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS)
+  })
+
+  it('clamps an explicit request and the default to the caller ceiling without ever widening', () => {
+    expect(clampAwaitTimeoutSeconds(300, 240)).toBe(240)
+    expect(clampAwaitTimeoutSeconds(600, ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS)).toBe(
+      ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS
+    )
+    expect(clampAwaitTimeoutSeconds(120, 240)).toBe(120)
+    expect(clampAwaitTimeoutSeconds(undefined, 30)).toBe(30)
+    expect(clampAwaitTimeoutSeconds(undefined, 240)).toBe(ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS)
+    expect(clampAwaitTimeoutSeconds(6000, 6000)).toBe(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS)
+    expect(clampAwaitTimeoutSeconds(1, 240)).toBe(5)
   })
 })

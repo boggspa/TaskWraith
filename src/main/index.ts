@@ -853,6 +853,7 @@ import {
   EnsembleOrchestrator,
   type ParticipantProbeResult
 } from './services/EnsembleOrchestrator'
+import { ensembleAwaitTimeoutCeilingSeconds } from './services/EnsembleFanoutPolicy'
 import { EnsembleHostAdmissionRuntime } from './services/EnsembleHostAdmissionRuntime'
 import {
   EnsembleDelegatedRunAdmission,
@@ -42486,6 +42487,9 @@ async function executeUnscopedGeminiMcpTool(
       text = mcpEnsembleJson(result)
     } else if (toolName === 'ensemble_await') {
       markDispatchHandled('ensemble-control')
+      // Per-call ceiling for the CALLING transport (Muse drops its MCP server
+      // past its own tool budget); main-derived, never from the arguments.
+      const ensembleAwaitCeilingSeconds = ensembleAwaitTimeoutCeilingSeconds(parentProvider)
       const ensembleAwaitOrigin = context.appRunId
         ? ensembleOrchestratorRef?.resolveHostAdmissionRunOrigin(
             context.appRunId,
@@ -42503,6 +42507,7 @@ async function executeUnscopedGeminiMcpTool(
             ensembleAwaitParentChat?.chatKind === 'ensemble' ||
             ensembleAwaitParentChat?.ensemble
           ),
+          timeoutCeilingSeconds: ensembleAwaitCeilingSeconds,
           args
         },
         {
@@ -42535,7 +42540,8 @@ async function executeUnscopedGeminiMcpTool(
               topology: projection.topology,
               activations: projection.activations
             })),
-          clampTimeoutSeconds: clampAwaitTimeoutSeconds
+          clampTimeoutSeconds: (value) =>
+            clampAwaitTimeoutSeconds(value, ensembleAwaitCeilingSeconds)
         }
       )
       toolIsError = result.ok === false

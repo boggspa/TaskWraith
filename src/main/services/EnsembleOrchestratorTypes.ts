@@ -616,6 +616,12 @@ export interface EnsembleAwaitInput {
   /** Durable execution graphs owned by this thread (e.g. an UltraTask). */
   executionIds?: string[]
   timeoutSeconds?: number
+  /**
+   * Per-call ceiling for the calling provider's transport (main-derived from
+   * the broker parent provider, never read from tool arguments). Can only
+   * narrow ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS.
+   */
+  timeoutCeilingSeconds?: number
 }
 
 export interface EnsembleAwaitLaneStatus {

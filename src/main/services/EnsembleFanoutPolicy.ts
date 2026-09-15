@@ -4,7 +4,8 @@ import type {
   EnsembleFanoutIsolation,
   EnsembleFanoutPolicy,
   EnsembleParticipant,
-  EnsembleRoundState
+  EnsembleRoundState,
+  ProviderId
 } from '../store/types'
 import type { EnsembleFanoutMode, EnsembleFanoutTargetStage } from './EnsembleOrchestratorTypes'
 
@@ -49,6 +50,25 @@ export const ENSEMBLE_AWAIT_POLL_INTERVAL_MS = 500
  */
 export const ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS = 600
 export const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 45
+/**
+ * Muse's MCP client abandons the stdio server when a single tool call outlives
+ * its own budget: a 300 s `ensemble_await` from a Muse Boss came back
+ * "timeout" and every later brokered call on that seat failed with "MCP stdio
+ * connection is closed" (QA 2026-09-15). A Muse caller is therefore clamped
+ * below that budget per call and told to re-invoke; the wait is bounded per
+ * call, not shortened overall. Muse's own `subagent_wait` tops out at 300 s,
+ * which is the best available reading of that budget.
+ */
+export const ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS = 240
+
+/** Per-call `ensemble_await` ceiling for the provider that is calling. */
+export function ensembleAwaitTimeoutCeilingSeconds(
+  provider: ProviderId | null | undefined
+): number {
+  return provider === 'muse'
+    ? ENSEMBLE_AWAIT_MUSE_TIMEOUT_CEILING_SECONDS
+    : ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS
+}
 export const ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS = 20_000
 export const ENSEMBLE_LANE_RESULT_MAX_CHARS = 60_000
 
@@ -63,10 +83,17 @@ export function normalizeLaneIdList(value: unknown): string[] | null | undefined
   return [...new Set(laneIds)]
 }
 
-export function clampAwaitTimeoutSeconds(value: unknown): number {
+export function clampAwaitTimeoutSeconds(
+  value: unknown,
+  ceilingSeconds: number = ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS
+): number {
+  // A caller ceiling can only narrow the global one, never widen it.
+  const ceiling = Number.isFinite(ceilingSeconds)
+    ? Math.max(5, Math.min(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS, Math.round(ceilingSeconds)))
+    : ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS
   const requested = typeof value === 'number' && Number.isFinite(value) ? value : NaN
-  if (!Number.isFinite(requested)) return ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS
-  return Math.max(5, Math.min(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS, Math.round(requested)))
+  if (!Number.isFinite(requested)) return Math.min(ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS, ceiling)
+  return Math.max(5, Math.min(ceiling, Math.round(requested)))
 }
 
 export function clampLaneResultMaxChars(value: unknown): number {

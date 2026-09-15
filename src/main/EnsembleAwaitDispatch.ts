@@ -69,6 +69,8 @@ export interface DispatchEnsembleAwaitToolInput {
   parentChatId?: string
   /** Main-derived caller identity; never accepted from tool arguments. */
   ensembleParent?: boolean
+  /** Main-derived per-call ceiling for the caller's transport; never from tool arguments. */
+  timeoutCeilingSeconds?: number
   args: Record<string, unknown>
 }
 
@@ -498,7 +500,10 @@ export async function dispatchEnsembleAwaitTool(
     laneIds,
     subThreadIds,
     waveIds,
-    timeoutSeconds
+    timeoutSeconds,
+    ...(input.timeoutCeilingSeconds !== undefined
+      ? { timeoutCeilingSeconds: input.timeoutCeilingSeconds }
+      : {})
   } as EnsembleAwaitInput
   return deps.orchestrator?.awaitLanesForRun(input.runId, awaitInput) || noOrchestratorResult()
 }

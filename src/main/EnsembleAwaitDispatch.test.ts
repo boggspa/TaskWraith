@@ -491,6 +491,37 @@ describe('dispatchEnsembleAwaitTool', () => {
     expect(harness.delay).not.toHaveBeenCalled()
   })
 
+  it('forwards the caller transport ceiling to the lane await without touching the arguments', async () => {
+    const result = {
+      ok: true,
+      tool: 'ensemble_await' as const,
+      status: 'timeout' as const,
+      message: 'timeout'
+    }
+    const awaitLanesForRun = vi.fn(async () => result)
+    const harness = deps({ orchestrator: { awaitLanesForRun } })
+
+    await expect(
+      dispatchEnsembleAwaitTool(
+        {
+          runId: 'ensemble-run',
+          parentChatId: 'parent-chat',
+          ensembleParent: true,
+          timeoutCeilingSeconds: 240,
+          args: { laneIds: ['lane-1'], timeoutSeconds: 300 }
+        },
+        harness
+      )
+    ).resolves.toBe(result)
+    expect(awaitLanesForRun).toHaveBeenCalledWith('ensemble-run', {
+      laneIds: ['lane-1'],
+      subThreadIds: undefined,
+      waveIds: undefined,
+      timeoutSeconds: 300,
+      timeoutCeilingSeconds: 240
+    })
+  })
+
   it('polls until the wave mailbox results arrive', async () => {
     let currentMailbox = mailbox()
     const harness = deps({

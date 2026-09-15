@@ -10581,7 +10581,10 @@ export class EnsembleOrchestrator {
       )
     }
 
-    const timeoutSeconds = clampAwaitTimeoutSeconds(input.timeoutSeconds)
+    const timeoutSeconds = clampAwaitTimeoutSeconds(
+      input.timeoutSeconds,
+      input.timeoutCeilingSeconds
+    )
     const deadline = this.deps.now() + timeoutSeconds * 1_000
     let lanes = laneSnapshot()
     let mailboxEvents = this.deps.getSubThreadMailbox?.(run.chatId)?.events || []
