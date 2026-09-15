@@ -1959,7 +1959,9 @@ describe('buildWelcomeUsageDashboardData <-> message-activity aggregate (B13)', 
       const data = buildWelcomeUsageDashboardData(RECORDS, CHATS, range, NOW, WORKSPACES, reset)
       expect(pick(data), key).toEqual(GOLDEN[key])
     }
-  })
+    // Same full-fixture walk as the aggregate case below (~0.4 s locally);
+    // the loaded macOS-Intel runner overran 5 s on run 34984996288.
+  }, 60_000)
 
   it('builds the identical dashboard from a pre-computed aggregate', () => {
     for (const [range, reset, key] of CASES) {

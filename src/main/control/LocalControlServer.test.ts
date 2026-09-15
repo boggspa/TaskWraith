@@ -659,7 +659,11 @@ describe('LocalControlServer subscriber gating and push backpressure', () => {
         const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
         expect(Math.max(...delivered)).toBeGreaterThanOrEqual(callsAtResume)
       },
-      { timeout: 2_000 }
+      // Each delivery is ~900 KB through a socket the reader just resumed;
+      // 355 ms locally, but the loaded macOS-Intel runner had delivered one
+      // frame after 2 s (run 34984996288). The pin is delivery-in-order
+      // after resume, not delivery speed, so it polls for up to 20 s.
+      { timeout: 20_000 }
     )
     const delivered = eventsOf(frames, 'snapshot.changed').map(sequenceOf)
     // Dozens of snapshots were produced while the reader was paused, yet the

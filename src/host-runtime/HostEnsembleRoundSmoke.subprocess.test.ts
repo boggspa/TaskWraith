@@ -30,10 +30,16 @@ const LARGE_THREAD_COUNT = 220
 // The hosted Windows runner is several times slower than the POSIX legs, and
 // this test compiles the Host with tsc inside its own budget (~13 s locally).
 const WIN32 = process.platform === 'win32'
-const WAIT_BUDGET_MS = WIN32 ? 60_000 : 12_000
-const PROJECTION_BUDGET_MS = WIN32 ? 180_000 : 30_000
-const EXIT_BUDGET_MS = WIN32 ? 30_000 : 10_000
-vi.setConfig({ testTimeout: WIN32 ? 300_000 : 45_000 })
+// Hosted runners are the slow class, not only Windows: macOS-Intel measured
+// this smoke at 24 s, 27 s, then twice past 45 s as its import phase went
+// 357 s -> 656 s across one afternoon (runs 34972614114, 34984996288);
+// 13 s locally. Budgets scale for any hosted runner; the win32 skip below is
+// about the cold catalogue's fsync cost and stays separate.
+const HOSTED = WIN32 || Boolean(process.env.CI)
+const WAIT_BUDGET_MS = HOSTED ? 60_000 : 12_000
+const PROJECTION_BUDGET_MS = HOSTED ? 180_000 : 30_000
+const EXIT_BUDGET_MS = HOSTED ? 30_000 : 10_000
+vi.setConfig({ testTimeout: HOSTED ? 300_000 : 45_000 })
 const paths: string[] = []
 const children: ChildProcess[] = []
 
