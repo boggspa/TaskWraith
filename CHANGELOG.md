@@ -6,15 +6,8 @@ TaskWraith's orchestration, local history, and workspace authority stay on your
 machine, while selected cloud providers still receive the prompt and run
 context needed to answer.
 
-## 1.9.8 - Unreleased
+## 1.9.8 - 2026-09-15
 
-### Added
-- **Performance**: Bounded pre-window sweeps, deferred full sweeps past first paint, and added recency budgets for boot sweeps.
-- **Transcripts**: Oversized chats now snapshot as a transcript page to prevent memory bloat.
-- **UI Responsiveness**: CLI stream turns yield past the G-lag budget to maintain interactivity.
-
-> **Source-ahead — 2026-09-07.** The highlights below describe work landed after
-> the shipped v1.9.7 boundary; they are not a release or artifact claim.
 
 ### New Models and Provider Seats
 
@@ -80,6 +73,168 @@ context needed to answer.
   K3, and MiniMax M2.7 / M3 no longer get finalized with "deferring to the
   panel" after a handful of reasoning-only turns. Local models and other
   Cloud rows keep the breaker.
+
+### Muse
+
+- **The MSP lane is the default Muse transport.** Muse seats now run over
+  `muse serve` with app-managed approvals, resume, images, a live window, and
+  a durable per-chat seat home so a session actually resumes where it left
+  off. An acknowledgment arrives before the working phase, provider reasoning
+  shows in the shared Thinking transcript, and working turns survive a native
+  session resume.
+- **Silent connections explain themselves.** A connection that acknowledges
+  but never speaks now surfaces diagnostics instead of a blank wait; the
+  inactivity deadline widened from 3 to 15 minutes so long tool turns are
+  not cut off. A turn that reaches for a tool unannounced is asked for an
+  opening, an approval decision that failed on a transient fault is retried,
+  the doubled TaskWraith MCP rows on the MSP lane are collapsed, and Max is
+  no longer upgraded to Ultra on MSP.
+
+### Models and provider seats
+
+- **Kimi K2.8 Preview, Ollama DeepSeek V4.1 Flash, and the Sakana Fugu pair**
+  join the pickers; fresh Kimi setups follow the current catalogue, Ensemble
+  panels seed Kimi with K2.8, and a recorded Kimi identity is preserved across
+  model migration.
+- **Devin SWE-2 family.** The Devin seat gains the SWE-2 models on the effort
+  slider alongside SWE-1.6.
+- **Cerebras Gemma 4 and Qwen 3.8** on the Pi lane, priced from the published
+  Developer Tier table; the unserved Gemma 4 31B preview route is dropped
+  (mirrored in the iOS catalogue).
+- **Mercury 2.5 and the Nex-N2.5 Mini/Pro pair** via OpenRouter, admitted at
+  the policy wall and leading New Additions.
+- **Saved custom model IDs.** Settings keeps a per-provider list of custom
+  model IDs, the composer lists them in the model picker, and the custom-ID
+  field is visible in every composer shell.
+- **Ollama thinking.** Qwen 3.8 27B MLX's `thinking` field and inline
+  `<think>` blocks render as reasoning; inline reasoning content is extracted
+  from the answer instead of leaking into it.
+- **Mistral** negotiates guarded HTTP MCP without depending on an app
+  executable, separates the acknowledgment from the working ACP turn, keeps
+  native permission identity correlated, and audits host refusals separately
+  from human decisions.
+- **Kimi** verifies the served tools before ACP work starts and reports the
+  exact run tools it was given; **AntiGravity** records which native `agy`
+  tools actually ran, evidences every denial, restores its permission overlay
+  even when the drain fails, and no longer routes publish commands through
+  `externalPublish`; **Cursor** stops describing TaskWraith's own retired
+  server ids as someone else's.
+- **Rates**: `gpt-6-astra` is priced from the published OpenAI table,
+  DeepSeek from the vendor page (dropping V4 Pro's phantom Low stop), and the
+  fallback rate row is flagged instead of relying on table order.
+
+### Composer and pickers
+
+- **One send, one run.** A send is idempotent and carries a draft revision
+  with a one-shot submit ledger, so a held Enter no longer dispatches a burst
+  of runs into a chat; the latch queues instead of dropping.
+- **Selections stick.** A model, seat, or permission pick is held until its
+  durable write answers, is routed to the slice the picker reads, no longer
+  forces a whole-record save, and an unhydrated catalogue is not treated as
+  evidence against it. A stored reasoning effort is judged by its own
+  provider's ladder, and every rung the pickers offer is accepted.
+- **Seat-navigator rail** in the model and permission pickers; Ensemble rows
+  minimise after the first prompt; the extended-selection overlay is readable
+  again, and the Codex context donut is back in the composer preview.
+
+### Ensemble
+
+- **Panel edits no longer revert.** Canonical state stops dropping panel
+  edits, a queued preset or unclaimed lanes cannot undo user changes, and a
+  roster Save that fails says so instead of failing silently.
+- **Each fan-out lane gets its own brief** instead of one broadcast; Scout
+  briefs and Blackboard update bursts render as grouped stacks.
+- **Honest mode switching.** A refused mode switch says why, a lost one no
+  longer wedges the toggle, serial order is followed when no explicit handoff
+  resolves, directed-seat admission is restored in auto-continue, and phantom
+  undeletable queued rows are gone.
+
+### Host, persistence, and reliability
+
+- **Edits that came back are fixed at the source.** Chat-update patches are
+  built from the acknowledged baseline, same-revision invalidations collapse,
+  large checkpoints defer off the save path, a stale save or revision-only
+  reconcile can no longer regress the transcript, and a revision-stale
+  whole-record save no longer deletes a durable goal.
+- **Host-owned runs are first-class.** They appear in Active Runs with a
+  round stop, stay live through the merge gate, keep their lane tool rows,
+  and the live Ensemble state survives the Host and renderer boundary.
+- **Threads recover instead of waiting forever.** A lost recovery reply is
+  reclaimed or expired, an unacknowledged cancel no longer holds a thread's
+  gate, a failed listing resumes, APFS directory-loss and publication
+  retirement races are recovered, and refused sends, blank opens, or stale
+  chips no longer read as success. The Host loop is not wedged by large
+  record persists, and the durable-start poll stops re-reading whole threads.
+- Shared-identity clients no longer narrow the Desktop session for everyone;
+  run-queue changes reach chat pop-outs; the shared-workspace contribution
+  channels are registered in both IPC registries.
+
+### Performance
+
+- **Boot**: pre-window sweeps are bounded by recency, full sweeps defer past
+  first paint, the history recovery drain runs in the worker's background
+  lane, launch-history indexing moved out of the main process, chat journals
+  open lazily, and the parsed chat-record cache is bounded by bytes.
+- **Transcript**: appended rows are pushed rather than pulled, only rows that
+  change are sent, the delivered window is anchored so big threads patch
+  instead of snapshot, the tail lane is routed by interest, and a stall is
+  visible instead of silent. Oversized chats snapshot as a transcript page.
+- **Renderer**: live timecodes advance without re-rendering, the scheduled
+  and goal clocks are extracted leaves, live timers revive on paged threads
+  and summary rows, approval overlays no longer sample the transcript through
+  blur, and CLI stream turns yield past the lag budget.
+- Host loop lag is reported per capture interval, and inventory broadcasts,
+  the welcome dashboard, and first-launch counts are served from projections
+  without reading chat records.
+
+### Transcript and review
+
+- **Tool rows brand themselves.** The run model is stamped on solo,
+  bridge-lane, and execution-graph tool rows, and activity rows are branded
+  from store-backed runs rather than the retained chat.
+- Provider mirrors coalesce inside a single tool message, the compat wire's
+  error flag is honoured in the legacy tool lane, the dual-lane skip no longer
+  deletes the assistant answer, a preserved first prompt returns to the head,
+  preserved live rows return to their position, and the inline prompt editor
+  matches the prompt bubble width.
+- **Execution map** gets a theme-true surface with vertical stages and
+  wave-style cards; the provider-failure card survives a stale delivery.
+
+### Outside agents, TUI, and windows
+
+- **`tw threads`, `tw send`, and `tw read`.** An outside agent can list,
+  message, and read threads back through the CLI, and the same verbs are
+  served as MCP tools over `tw mcp`. Prompts arriving over the local-control
+  socket carry a host-authored origin, the transcript names the sender
+  **External Agent** with the tool as a badge, and inter-seat notes name both
+  ends instead of burying the route in prose.
+- TUI usage errors exit 2, control bytes are rejected in profile paths, the
+  root bin wrapper selects the CLI package profile, and the Node runtime
+  policy allows a 60-day-old runtime.
+- **Multiple app windows** with focused native menu actions, contextual chat
+  actions routed from the menu, and a standalone updater page.
+
+### Security and sandbox
+
+- The workspace shell sandbox no longer denies keychain reads, and macOS
+  keychain access is grafted into isolated terminal homes.
+- Renderer attachment authorization filters and continues instead of failing
+  the whole batch; a release-authorization lease no longer blocks notarize
+  and push commands; a new tool generation cannot erase broker wiring it never
+  re-proved, and receipts no longer claim closure they never established.
+- Dependency audit findings in Hono, YAML, and Vitest are resolved.
+
+### iOS companion (build 99)
+
+- **Reconnect storms are fixed at the root.** Opening the app from the Home
+  Screen or a notification no longer tears a healthy session down while the
+  Mac is still streaming: the transport credits any authenticated inbound
+  frame as proof of life, and a silent Mac behind a live socket holds the
+  session instead of re-dialling.
+- **Connection log.** Settings → Remote records every reconnect decision,
+  dial, establish, and liveness probe on the device, with Copy for bug
+  reports. Catalogue mirrors track the desktop (K3 route labels, Gemma 4 31B
+  removal).
 
 ## 1.9.7 - 2026-09-02
 
