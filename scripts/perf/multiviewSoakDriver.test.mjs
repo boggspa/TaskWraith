@@ -135,8 +135,11 @@ test('spawn plan uses exact fresh entry, distinct debug ports, isolated HOME and
     adapters: { resolveElectronPath: () => '/repo/node_modules/Electron' }
   })
   assert.equal(plan.argv.includes('.'), false)
-  assert.ok(plan.argv.includes('/repo/perf-homes/fresh/artifacts/build/main/index.js'))
-  assert.equal(plan.env.HOME, '/repo/perf-homes/fresh')
+  // path.resolve: the plan is platform-shaped (drive letter + backslashes on win32).
+  assert.ok(
+    plan.argv.includes(path.resolve('/repo/perf-homes/fresh/artifacts/build/main/index.js'))
+  )
+  assert.equal(plan.env.HOME, path.resolve('/repo/perf-homes/fresh'))
   assert.equal(plan.fxPosture, 'cinematic_default')
   assert.equal(
     plan.argv.some((arg) => /disable-gpu|no-sandbox|user-data-dir/.test(arg)),
@@ -175,7 +178,7 @@ test('identity accepts Electron switches before the exact entry, with artifact a
     })
   }
   const result = await verifyLaunchedBuildIdentity(inspector, '/fresh')
-  assert.equal(result.entry, '/fresh/main/index.js')
+  assert.equal(result.entry, path.resolve('/fresh/main/index.js'))
   assert.equal(result.verified, true)
 })
 

@@ -37,7 +37,8 @@ const { resolveUnpackagedDevUserDataPath, sanitizeDevInstanceId } = require('./d
 const {
   resolveT2Home,
   assertFilesystemIsolatedHomeContainment,
-  verifyIsolatedHomeAndUserDataViaMainInspector
+  verifyIsolatedHomeAndUserDataViaMainInspector,
+  isolatedHomeEnvironment
 } = require('./isolatedHome.cjs')
 const { assertLaunchPortsFree } = require('./portGuard.cjs')
 const {
@@ -214,8 +215,13 @@ const HOST_PERF_SNAPSHOT_FILE_NAME = 'host-perf-snapshot.json'
  *             bundleMtimeMs: number|null, newestSourceMtimeMs: number|null,
  *             newestSourcePath: string|null, checkedFileCount: number }}
  */
-function checkHostBundleFreshness(repoRoot, adapters = {}) {
+function checkHostBundleFreshness(repoRootInput, adapters = {}) {
   const fsImpl = adapters.fs === undefined ? fs : adapters.fs
+  // Anchor every derived path on ONE absolute form. `path.join` keeps a
+  // root-relative input rootless (`\repo\out`) while `path.resolve` below
+  // drive-qualifies mapped sources (`D:\repo\src`), so on win32 the source
+  // prefix never matched and a valid bundle read as missing/no_sources.
+  const repoRoot = path.resolve(repoRootInput)
   const bundlePath = path.join(repoRoot, ...HOST_BUNDLE_PATH_SEGMENTS)
   const base = { bundlePath, rebuildCommand: HOST_BUNDLE_REBUILD_COMMAND }
   if (
@@ -1349,11 +1355,17 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     fs: options.fs
   })
   const home = homeResolved.home
+  const launchPlatform = options.platform || process.platform
   const userDataResolved = resolveUnpackagedDevUserDataPath({
     instanceId: String(rawInstanceId),
     home,
-    platform: options.platform || process.platform,
-    env: options.env || process.env
+    platform: launchPlatform,
+    // Same overlay the spawn plan layers over the parent env: an inherited
+    // XDG_CONFIG_HOME / APPDATA must not steer the expected userData off HOME.
+    env: {
+      ...(options.env || process.env),
+      ...isolatedHomeEnvironment({ home, platform: launchPlatform })
+    }
   })
 
   /** @type {object|null} */

@@ -1,10 +1,11 @@
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import * as nodeFs from 'node:fs'
 import { createServer, type Server, type Socket } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { createRequire } from 'module'
 import { afterEach, describe, expect, it } from 'vitest'
+import { taskWraithHostSocketPath } from '../../src/shared/taskWraithHostPaths.node'
 
 /**
  * Host welcome probe (M1 harness binding) — the out-of-band live pin the
@@ -53,6 +54,23 @@ afterEach(() => {
   }
 })
 
+/**
+ * A listenable Host endpoint for `dir`, in the exact shape the product uses:
+ * a named pipe on win32 (a filesystem path under %TEMP% fails `listen` with
+ * EACCES there — matrix run 34957150379), a short unix socket path elsewhere.
+ * The POSIX form lives under tmpdir(), not `dir`, so its directory is created
+ * here and registered for the same cleanup; a pipe has no parent directory.
+ */
+function scratchSocketPath(dir: string): string {
+  const socketPath = taskWraithHostSocketPath(dir)
+  if (process.platform !== 'win32') {
+    const socketDir = dirname(socketPath)
+    mkdirSync(socketDir, { recursive: true, mode: 0o700 })
+    scratchDirs.push(socketDir)
+  }
+  return socketPath
+}
+
 const VALID_DISCOVERY = Object.freeze({
   protocolVersion: 2,
   socketPath: '/tmp/twh2-501-abc123/taskwraith-host-v2.sock',
@@ -78,7 +96,7 @@ function startWelcomeServer(
   respond: (helloLine: string | null, socket: Socket) => void
 ): Promise<{ server: Server; socketPath: string; hellos: string[]; close: () => Promise<void> }> {
   const dir = scratchDir()
-  const socketPath = join(dir, 'host.sock')
+  const socketPath = scratchSocketPath(dir)
   const hellos: string[] = []
   return new Promise((resolve, reject) => {
     const server = createServer((socket) => {
@@ -386,8 +404,13 @@ describe('hostWelcomeProbe — real socket handshake and token containment', () 
     expect(emptyToken).toEqual({ ok: false, reason: 'host_token_empty' })
 
     // (e) dead socket → connect failure or immediate close, both bounded
+    // Same product shape as the live endpoint (pipe on win32), never created.
     const dead = await requestHostWelcome({
-      discovery: { ...VALID_DISCOVERY, socketPath: join(dir, 'nothing.sock'), tokenPath },
+      discovery: {
+        ...VALID_DISCOVERY,
+        socketPath: taskWraithHostSocketPath(join(dir, 'nothing')),
+        tokenPath
+      },
       timeoutMs: 500
     })
     expect(dead.ok).toBe(false)

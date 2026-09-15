@@ -75,7 +75,8 @@ function fixture() {
     endpoint: {
       ...manifest.endpoint,
       instanceEpoch: 'b'.repeat(32),
-      socketPath: '/second/app/broker.sock'
+      // Host-canonical shape: the route reader requires resolve(value) === value.
+      socketPath: path.resolve('/second/app/broker.sock')
     }
   }
   manifest.routePostures = {}

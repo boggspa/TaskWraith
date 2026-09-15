@@ -489,7 +489,16 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
     expect(calls).toBe(0)
   })
 
-  it.each(['before open', 'during read'] as const)(
+  // 'during read' renames over a path this reader holds OPEN. Windows refuses
+  // that rename (EPERM: the target is open without FILE_SHARE_DELETE), so the
+  // OS never lets the race the case models occur there; the reader then
+  // reports the rename failure as unreadable, which is the honest outcome.
+  // Only the before-open replacement is exercisable on win32.
+  const replacementMoments =
+    process.platform === 'win32'
+      ? (['before open'] as const)
+      : (['before open', 'during read'] as const)
+  it.each(replacementMoments)(
     'detects atomic path replacement %s and closes its descriptor',
     (when) => {
       const { path } = writeRealSnapshot()

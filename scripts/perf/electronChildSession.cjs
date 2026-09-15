@@ -106,7 +106,8 @@ function buildElectronSpawnPlan(options) {
     workload: options.workload,
     fxPosture: options.fxPosture,
     repoRoot: options.repoRoot,
-    home: options.home
+    home: options.home,
+    platform: options.platform
   })
   const mainInspectorPort = base.mainInspectorPort
   if (

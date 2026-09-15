@@ -4061,9 +4061,13 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
   }
 
   function memFs(root: Record<string, FsNode>, repoRoot = '/repo') {
-    const prefix = `${repoRoot}${path.sep}`
-    const resolveNode = (target: string): FsNode | null => {
-      if (target === repoRoot) return { children: root }
+    // Anchor on the resolved form: the preflight resolves its repo root, so a
+    // '/repo' fixture root is 'D:\\repo' on win32 and the lookups must agree.
+    const absoluteRoot = path.resolve(repoRoot)
+    const prefix = `${absoluteRoot}${path.sep}`
+    const resolveNode = (rawTarget: string): FsNode | null => {
+      const target = path.resolve(rawTarget)
+      if (target === absoluteRoot) return { children: root }
       if (!target.startsWith(prefix)) return null
       let node: FsNode = { children: root }
       for (const seg of target.slice(prefix.length).split(path.sep)) {
@@ -4827,15 +4831,17 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       seen.push(at)
       return true
     }
+    // The resolver returns path.resolve'd executables, which are
+    // drive-qualified on win32; compare against the same shape.
     expect(
       checkExternalHostNodeExecutable('/repo', { env: { NODE: '/usr/bin/node' }, exists })
-    ).toMatchObject({ ok: true, source: 'NODE', nodeExecutable: '/usr/bin/node' })
+    ).toMatchObject({ ok: true, source: 'NODE', nodeExecutable: path.resolve('/usr/bin/node') })
     expect(
       checkExternalHostNodeExecutable('/repo', {
         env: { npm_node_execpath: '/n/bin/node', NODE: '/usr/bin/node' },
         exists
       })
-    ).toMatchObject({ source: 'npm_node_execpath', nodeExecutable: '/n/bin/node' })
+    ).toMatchObject({ source: 'npm_node_execpath', nodeExecutable: path.resolve('/n/bin/node') })
     // A relative value is not a resolution; fall through to the vendored copy.
     expect(
       checkExternalHostNodeExecutable('/repo', {
@@ -4846,7 +4852,7 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       })
     ).toMatchObject({
       source: 'vendored',
-      nodeExecutable: '/repo/build/tui-runtime/darwin-arm64/node'
+      nodeExecutable: path.resolve('/repo', 'build', 'tui-runtime', 'darwin-arm64', 'node')
     })
   })
 

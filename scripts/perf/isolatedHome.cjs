@@ -47,6 +47,51 @@ function perfHomesBoundary(repoRoot) {
 }
 
 /**
+ * Environment overlay that makes `home` the only home the child can see.
+ *
+ * HOME alone is not isolation. The child is spawned with
+ * `{ ...process.env, ...plan.env }`, so whatever config root the parent
+ * inherited reaches Electron unless it is overridden here — and Electron's
+ * `app.getPath('appData')` does not read HOME on any platform:
+ *   - linux: `$XDG_CONFIG_HOME`, else `$HOME/.config`. GitHub's Ubuntu runners
+ *     export XDG_CONFIG_HOME=/home/runner/.config, so a HOME-only override
+ *     derived userData under the REAL profile (matrix run 34957150379).
+ *   - win32: `%APPDATA%`, always set and never derived from HOME/USERPROFILE.
+ *   - darwin: CoreFoundation (CFFIXED_USER_HOME, set by buildElectronSpawnPlan).
+ * The expected-userData derivation (devUserDataPath.cjs) reads the same keys,
+ * so it MUST be handed this overlay too: deriving from the parent env while
+ * launching with the overlay is exactly the mismatch the containment gate
+ * refuses ("userData ... is not under isolated HOME").
+ *
+ * This is the lexical contract only. Whether the launched Electron honoured it
+ * is proven per run by verifyIsolatedHomeAndUserDataViaMainInspector; on win32
+ * the shell folder API may ignore the env, and the proof then fails closed.
+ *
+ * @param {{ home: string, platform?: string }} options
+ * @returns {Record<string, string>}
+ */
+function isolatedHomeEnvironment(options = {}) {
+  const raw = options.home
+  if (raw == null || String(raw).trim() === '') {
+    throw new Error('isolatedHomeEnvironment requires an absolute isolated home')
+  }
+  const home = path.resolve(String(raw).trim())
+  const platform = options.platform || process.platform
+  const env = { HOME: home }
+  if (platform === 'win32') {
+    env.USERPROFILE = home
+    env.APPDATA = path.join(home, 'AppData', 'Roaming')
+    env.LOCALAPPDATA = path.join(home, 'AppData', 'Local')
+  } else if (platform !== 'darwin') {
+    env.XDG_CONFIG_HOME = path.join(home, '.config')
+    env.XDG_DATA_HOME = path.join(home, '.local', 'share')
+    env.XDG_STATE_HOME = path.join(home, '.local', 'state')
+    env.XDG_CACHE_HOME = path.join(home, '.cache')
+  }
+  return env
+}
+
+/**
  * @param {object} [options]
  * @returns {typeof fs}
  */
@@ -554,6 +599,7 @@ module.exports = {
   PERF_HOMES_DIRNAME,
   ISOLATED_HOME_USERDATA_PROBE_EXPRESSION,
   perfHomesBoundary,
+  isolatedHomeEnvironment,
   pathPrefixes,
   isPathEqualOrBeneath,
   isolatedPathsReferToSameLocation,

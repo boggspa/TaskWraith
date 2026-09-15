@@ -21,6 +21,10 @@ describe('terminateExactChild stray reap', () => {
     const result = await terminateExactChild(fake, {
       waitMs: 20,
       sleep: async () => undefined,
+      // The reap is the POSIX (lsof/ps) lane; the harness reports it
+      // unsupported on win32 by design (see the 'probes cannot run' block
+      // below), so pin the lane under test rather than the runner's OS.
+      platform: 'darwin',
       killPid: (pid: number, sig: string) => {
         kills.push({ pid, sig })
       },

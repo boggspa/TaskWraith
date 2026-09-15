@@ -44,7 +44,8 @@ const { resolveUnpackagedDevUserDataPath } = require('./devUserDataPath.cjs')
 const {
   resolveT2Home,
   assertFilesystemIsolatedHomeContainment,
-  verifyIsolatedHomeAndUserDataViaMainInspector
+  verifyIsolatedHomeAndUserDataViaMainInspector,
+  isolatedHomeEnvironment
 } = require('./isolatedHome.cjs')
 const { assertLaunchPortsFree } = require('./portGuard.cjs')
 const {
@@ -474,14 +475,45 @@ async function verifyLaunchedBuildIdentity(mainInspector, buildOutDir) {
       `Refuse soak: could not verify launched build identity (${observed && observed.error ? observed.error : 'no result'})`
     )
   }
-  const resolvedOut = path.resolve(buildOutDir)
-  const argv1 = observed.argv1 ? path.resolve(String(observed.argv1)) : ''
-  const appPath = observed.appPath ? path.resolve(String(observed.appPath)) : ''
+  // Compare canonical, platform-shaped paths. Electron reports argv/appPath
+  // in the OS's own form (drive letter, backslashes, and on win32 a
+  // case-insensitive filesystem where the tmpdir may be an 8.3 alias such as
+  // RUNNER~1), while the caller may have named the artifact with forward
+  // slashes. A raw string `includes` refused a genuinely fresh build on the
+  // Windows matrix leg for that reason alone. The native realpath flavour
+  // expands 8.3 aliases and the macOS /tmp alias (the JS one does not); it is
+  // applied to BOTH sides so they agree. It canonicalises the deepest EXISTING
+  // ancestor and re-appends the rest, so a leaf that is absent (unit fixtures,
+  // or an entry not yet written) still lands in the same form as its siblings
+  // instead of silently staying lexical on one side only.
+  const canonical = (candidate) => {
+    const resolved = path.resolve(String(candidate))
+    let existing = resolved
+    const tail = []
+    for (;;) {
+      try {
+        return path.join(fs.realpathSync.native(existing), ...tail)
+      } catch {
+        const parent = path.dirname(existing)
+        if (parent === existing) return resolved
+        tail.unshift(path.basename(existing))
+        existing = parent
+      }
+    }
+  }
+  const resolvedOut = canonical(buildOutDir)
+  const argv1 = observed.argv1 ? canonical(observed.argv1) : ''
+  const appPath = observed.appPath ? canonical(observed.appPath) : ''
+  const fold = (value) => (process.platform === 'win32' ? value.toLowerCase() : value)
+  const samePath = (a, b) => fold(a) === fold(b)
   const inside = (candidate) =>
-    candidate === resolvedOut || candidate.startsWith(`${resolvedOut}${path.sep}`)
+    samePath(candidate, resolvedOut) ||
+    fold(candidate).startsWith(fold(`${resolvedOut}${path.sep}`))
   const expectedEntry = path.join(resolvedOut, 'main', 'index.js')
-  const argv = Array.isArray(observed.argv) ? observed.argv : [observed.argv1]
-  if (!argv.includes(expectedEntry) || !inside(appPath)) {
+  const argv = (Array.isArray(observed.argv) ? observed.argv : [observed.argv1])
+    .filter((arg) => typeof arg === 'string' && arg !== '')
+    .map(canonical)
+  if (!argv.some((arg) => samePath(arg, expectedEntry)) || !inside(appPath)) {
     throw new Error(
       `Refuse soak: launched child is NOT the fresh diagnostic build (argv1=${argv1 || 'none'}, appPath=${appPath || 'none'}, expected under ${resolvedOut})`
     )
@@ -1028,11 +1060,15 @@ async function runMultiviewSoak(options = {}) {
     fs: options.fsForHome
   })
   const home = homeResolved.home
+  const platform = options.platform || process.platform
   const userDataResolved = resolveUnpackagedDevUserDataPath({
     instanceId,
     home,
-    platform: options.platform || process.platform,
-    env: options.env || process.env
+    platform,
+    // The child launches with this overlay layered over the parent env
+    // (buildIsolatedLaunchPlan). Derive from the same view, or the containment
+    // gate compares against a config root the child will never use.
+    env: { ...(options.env || process.env), ...isolatedHomeEnvironment({ home, platform }) }
   })
   const artifactDir = path.resolve(
     String(options.artifactDir || path.join(home, `soak-artifacts-${instanceId}`))

@@ -205,7 +205,10 @@ function defaults(input = {}) {
     workspace: '/PROOF/workspace',
     bridgeCommand: '/PROOF/TaskWraith',
     endpoint: {
-      socketPath: '/PROOF/broker.sock',
+      // McpBridgeRoute.readSocketPath accepts only a fully normalised absolute
+      // path (`resolve(value) === value`); a rootless POSIX literal is not one
+      // on win32, where resolve drive-qualifies it. Same fixture, host shape.
+      socketPath: path.resolve('/PROOF/broker.sock'),
       brokerToken: 'f'.repeat(64),
       instanceEpoch: '0123456789abcdef0123456789abcdef',
       bridgeLogEpoch: 1

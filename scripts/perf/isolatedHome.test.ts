@@ -1,4 +1,5 @@
 import { createRequire } from 'node:module'
+import path from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
@@ -77,9 +78,12 @@ describe('verifyIsolatedHomeAndUserDataViaMainInspector macOS tmp alias', () => 
       }
     )
     expect(probe.ok).toBe(true)
-    expect(probe.observedUserDataPath).toBe(TMP_USERDATA)
-    expect(probe.expectedUserDataPath).toBe(PRIVATE_USERDATA)
-    expect(probe.observedUserDataRealpath).toBe(PRIVATE_USERDATA)
+    // The probe reports path.resolve'd forms; on win32 that is drive-qualified
+    // and backslashed, so compare against the same shape. The alias semantics
+    // under test (lexical /tmp vs /private/tmp, equal realpaths) are unchanged.
+    expect(probe.observedUserDataPath).toBe(path.resolve(TMP_USERDATA))
+    expect(probe.expectedUserDataPath).toBe(path.resolve(PRIVATE_USERDATA))
+    expect(probe.observedUserDataRealpath).toBe(path.resolve(PRIVATE_USERDATA))
   })
 
   it('verifies --home given as /tmp when expected and observed stay /tmp', async () => {
