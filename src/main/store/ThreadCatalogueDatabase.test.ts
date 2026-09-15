@@ -220,7 +220,12 @@ describe('worker-owned thread query index', () => {
   // 200 objects; the budget is captured at collection and scopes to this test.
   // Run 34976881086 spent 229 s on this file's two budgeted cases against
   // 120 s each, so both carry 300 s on win32.
-  vi.setConfig({ testTimeout: process.platform === 'win32' ? 300_000 : 15_000 })
+  // Hosted runners are the slow class, not only Windows: the loaded Linux
+  // runner took 42 s here against the 15 s budget on run 35021075574 (6.5 s
+  // on the green run before it), so every hosted runner gets 120 s.
+  vi.setConfig({
+    testTimeout: process.platform === 'win32' ? 300_000 : process.env.CI ? 120_000 : 15_000
+  })
   it('pages from a deep cursor without requiring earlier transcript objects', () => {
     const total = process.platform === 'win32' ? 200 : 1000
     const deep = total - 100
@@ -299,7 +304,7 @@ describe('worker-owned thread query index', () => {
       }
       expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(value)
     },
-    process.platform === 'win32' ? 300_000 : 5_000
+    process.platform === 'win32' ? 300_000 : process.env.CI ? 60_000 : 5_000
   )
 
   it('does not let a nonfinite limit remove the byte bound', () => {

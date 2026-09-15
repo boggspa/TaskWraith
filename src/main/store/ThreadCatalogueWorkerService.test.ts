@@ -25,7 +25,12 @@ import type { PreparedThreadMutation } from './ThreadCatalogueMutation'
 // there, so the sqlite generation commits (one journal-file create/delete plus
 // fsync per frame) cost roughly 20x. This file-level budget covers only the
 // tests below that carry no literal timeout of their own.
-vi.setConfig({ testTimeout: process.platform === 'win32' ? 180_000 : 30_000 })
+// Hosted runners are the slow class, not only Windows (run 35021075574: the
+// loaded Linux runner ran the fsync-bound cases 4-7x slower than its green
+// run the hour before), so every hosted runner gets a wider budget.
+vi.setConfig({
+  testTimeout: process.platform === 'win32' ? 180_000 : process.env.CI ? 120_000 : 30_000
+})
 // The config owns every budget here: an explicit third argument overrides
 // it, and six macOS-sized overrides (30 s, 15 s) capped the hosted Windows
 // runner at 30 s — run 34976881086 timed the control-projection case out
@@ -269,7 +274,7 @@ describe('real isolated history import', () => {
     }
     // This functional pagination case fsyncs 1,005 chat generations. Parallel
     // compiler/subprocess suites may contend for disk; latency is measured separately.
-  }, 120_000)
+  }, process.env.CI ? 300_000 : 120_000)
 
   it('serves remote and large control projections through real decoder modes and invalidates same-revision overlays', async () => {
     const profilePath = join(directory, 'control-remote')
