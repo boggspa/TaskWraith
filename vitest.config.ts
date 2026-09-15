@@ -32,6 +32,10 @@ export default defineConfig({
     // 5 s, so a genuine hang on the platforms we develop on still fails fast
     // rather than being masked.
     testTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 5_000,
+    // Hooks get the same hosted-runner headroom: a `beforeEach` that opens a
+    // SQLite database in a fresh temp dir overran vitest's 10 s hook default on
+    // the loaded Windows runner (ThreadCatalogueDatabase, run 35018002768).
+    hookTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 10_000,
     // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
     // records a measured baseline without imposing a threshold or PR ratchet.
     coverage: {
