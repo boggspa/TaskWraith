@@ -214,12 +214,16 @@ describe('worker-owned thread query index', () => {
     ).toBe(false)
   })
 
-  // 3,000 fsynced sqlite frames: ~3 s on macOS, past 15 s on the hosted Windows
-  // runner. The budget is captured at collection, so it scopes to this one test.
+  // Three fsynced sqlite frames per object: 1,000 objects take ~3 s on macOS
+  // and blew 120 s on the hosted Windows runner. Deep-cursor paging needs a
+  // cursor well past the first page, not a specific depth, so win32 seeds
+  // 200 objects; the budget is captured at collection and scopes to this test.
   vi.setConfig({ testTimeout: process.platform === 'win32' ? 120_000 : 15_000 })
   it('pages from a deep cursor without requiring earlier transcript objects', () => {
+    const total = process.platform === 'win32' ? 200 : 1000
+    const deep = total - 100
     const generation = begin()
-    for (let first = 0; first < 1000; first += 100) {
+    for (let first = 0; first < total; first += 100) {
       writeObjects(
         generation,
         Array.from({ length: 100 }, (_, index) => {
@@ -234,10 +238,10 @@ describe('worker-owned thread query index', () => {
         })
       )
     }
-    publish(generation, 1, { messages: 1000 })
-    expect(database.findOrdinal(generation, 'message', 'message-900')).toBe(900)
-    const page = database.readObjects(generation, 'message', { before: 900, maxObjects: 3 })
-    expect(page?.map((entry) => entry.ordinal)).toEqual([897, 898, 899])
+    publish(generation, 1, { messages: total })
+    expect(database.findOrdinal(generation, 'message', `message-${deep}`)).toBe(deep)
+    const page = database.readObjects(generation, 'message', { before: deep, maxObjects: 3 })
+    expect(page?.map((entry) => entry.ordinal)).toEqual([deep - 3, deep - 2, deep - 1])
   })
   vi.resetConfig()
 

@@ -80,7 +80,14 @@ describe('shared master model-free concurrency acceptance', () => {
         getTempDir: () => os.tmpdir(),
         runHostCommand: (command, cwd, options) =>
           new Promise((resolve) => {
-            const [binary, ...args] = command as string[]
+            const [requested, ...args] = command as string[]
+            // The real host runner launches argv through its own wrapper
+            // shell, which resolves `npm` to `npm.cmd` on Windows. This fake
+            // spawns directly, so mirror that: a bare `npm` is ENOENT on
+            // win32 and Node refuses to spawn a `.cmd` without a shell.
+            // @portability-ok Windows resolves the npm launcher as npm.cmd.
+            const binary =
+              requested === 'npm' && process.platform === 'win32' ? 'npm.cmd' : requested
             const environment =
               typeof options === 'object'
                 ? (options as HostCommandRunOptions).environment
@@ -91,6 +98,7 @@ describe('shared master model-free concurrency acceptance', () => {
               {
                 cwd,
                 encoding: 'utf8',
+                shell: binary.endsWith('.cmd'),
                 env: { ...process.env, npm_config_update_notifier: 'false', ...environment }
               },
               (error, stdout, stderr) =>
@@ -223,7 +231,10 @@ describe('shared master model-free concurrency acceptance', () => {
       })
     )
     const check = await executeRunTask(deps, { task: 'test' }, root)
-    expect(check.exitCode).toBe(0)
+    expect(
+      check.exitCode,
+      `run_task test exited ${check.exitCode}\nstdout:\n${check.stdout}\nstderr:\n${check.stderr}`
+    ).toBe(0)
     expect('verification' in check && check.verification?.state).toBe('passed')
     expect(commits).toHaveLength(count)
     expect(git('rev-list', '--count', 'HEAD')).toBe(String(count + 1))

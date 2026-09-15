@@ -5,7 +5,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AppStore } from '../store'
 import type { ChatRecord } from './types'
 
-const profilePath = vi.hoisted(() => `/tmp/taskwraith-startup-history-reads-${process.pid}`)
+// Absolute on every platform: a rootless `/tmp/...` literal is drive-relative
+// on win32 (`\\tmp\\...`) while the store resolves it drive-qualified, so the
+// read probe below would never match. The mock factories run before imports,
+// hence the dynamic imports.
+const profilePath = await vi.hoisted(async () => {
+  const { tmpdir } = await import('node:os')
+  const { join } = await import('node:path')
+  return join(tmpdir(), `taskwraith-startup-history-reads-${process.pid}`)
+})
 const ioProbe = vi.hoisted(() => ({ enabled: false, files: [] as string[] }))
 vi.hoisted(() => {
   process.env.TASKWRAITH_SAVE_COALESCE_MS = '-1'
