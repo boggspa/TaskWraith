@@ -76,6 +76,11 @@ context needed to answer.
 
 ### Muse
 
+- **No more `xcrun` cache warnings from Muse shells.** macOS resolves
+  `/usr/bin/git` through an `xcrun` stub whose lookup cache lives in the
+  per-user temp dir, which Muse's shell sandbox does not allow; Muse seats now
+  get the active developer tools bin first on `PATH`, so `git` resolves to the
+  same binary without the stub or its warning on every call.
 - **The MSP lane is the default Muse transport.** Muse seats now run over
   `muse serve` with app-managed approvals, resume, images, a live window, and
   a durable per-chat seat home so a session actually resumes where it left
@@ -139,6 +144,18 @@ context needed to answer.
 
 ### Ensemble
 
+- **Muse awaits stay inside Muse's MCP budget.** A Muse seat's `ensemble_await`
+  is capped at 240 s per call (every other provider keeps the 10-minute
+  ceiling) because Muse drops its MCP stdio server when one tool call outlives
+  its own budget; the seat is told to re-invoke instead of losing every later
+  brokered call to "MCP stdio connection is closed".
+- **Yield to the roster spelling.** `ensemble_yield("Muse / Work 2")` lands on
+  that one seat: provider + role is now a mention alias and the slash is a
+  separator, so a shared provider no longer reads as ambiguous.
+- **`ensemble_fanout_all` is described as what it is.** The Boss prompt now says
+  it is discovered through `capability_search` and called through
+  `capability_invoke` rather than "listed", so a seat no longer reports it
+  missing from its tool surface.
 - **Panel edits no longer revert.** Canonical state stops dropping panel
   edits, a queued preset or unclaimed lanes cannot undo user changes, and a
   roster Save that fails says so instead of failing silently.
@@ -151,6 +168,14 @@ context needed to answer.
 
 ### Host, persistence, and reliability
 
+- **Pathspec commits carry the seat's lock owner.** `git_commit(mode="pathspec")`
+  now hands git `TASKWRAITH_LOCK_OWNER_ID` exactly as the private-index path
+  already did, so the pre-commit hook matches the seat's own runtime claim
+  instead of blocking the seat on its own marker.
+- **Contribution capture budget raised to 15 s.** The bound on journalling a
+  brokered `write_file` / `replace` was 1.5 s, which a busy round breached and
+  silently turned a reviewable contribution into an unrecorded write; the
+  bound is now one shared constant and still bounded.
 - **Edits that came back are fixed at the source.** Chat-update patches are
   built from the acknowledged baseline, same-revision invalidations collapse,
   large checkpoints defer off the save path, a stale save or revision-only
@@ -189,6 +214,10 @@ context needed to answer.
 
 ### Transcript and review
 
+- **Exports name Mistral, Muse, and Devin seats.** Markdown transcript exports
+  used a private provider table that predated those seats and printed
+  "Unknown provider / Whizz"; the export now uses the canonical provider labels
+  and fails typecheck if a future provider is left out.
 - **Tool rows brand themselves.** The run model is stamped on solo,
   bridge-lane, and execution-graph tool rows, and activity rows are branded
   from store-backed runs rather than the retained chat.
@@ -216,6 +245,11 @@ context needed to answer.
 
 ### Security and sandbox
 
+- **AntiGravity read tools run on read lanes.** Native `view_file`,
+  `find_by_name`, and the other read-class tools were refused as "denied by a
+  pre-tool hook" because the approval bridge answered them with an empty
+  no-decision reply; it now answers an explicit allow while agy's own settings
+  layer keeps bounding what those tools may touch.
 - The workspace shell sandbox no longer denies keychain reads, and macOS
   keychain access is grafted into isolated terminal homes.
 - Renderer attachment authorization filters and continues instead of failing
