@@ -116,6 +116,8 @@ export interface MuseMspRunInput {
   readonly authJsonText?: string | null
   readonly mcpSettings?: MuseMcpSettings
   readonly sourceEnvironment?: NodeJS.ProcessEnv
+  /** Directory placed first on the Muse launch PATH; see MuseIsolatedHome. */
+  readonly developerToolsBinPath?: string
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
   readonly onWarning?: (message: string) => void
   readonly onSessionReady?: (info: MuseMspSessionReadyInfo) => void
@@ -305,6 +307,7 @@ export async function runMuseMspProvider(input: MuseMspRunInput): Promise<MuseRu
     skillPinSettings: buildMuseSkillPinSettings('off', {
       ultraTaskDelegationAutoAllow: input.ultraTaskDelegationAutoAllow === true
     }),
+    ...(input.developerToolsBinPath ? { developerToolsBinPath: input.developerToolsBinPath } : {}),
     ...(input.mcpSettings ? { mcpSettings: input.mcpSettings } : {}),
     ...(input.durableSeat ? { durableSeat: input.durableSeat } : {})
   })

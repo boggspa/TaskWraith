@@ -85,6 +85,8 @@ export interface MuseIpcSetupFailure {
 export interface MuseIpcBridgeDeps {
   resolveBinary: () => Promise<MuseProbeBinary>
   getTemporaryRoot: () => string
+  /** Directory placed first on the Muse launch PATH (macOS developer tools bin); see MuseIsolatedHome. */
+  resolveDeveloperToolsBinPath?: () => string | undefined
   spawn: MuseRunSpawn
   sendCompatLine: (
     sender: unknown,
@@ -659,6 +661,7 @@ export async function runMuseProviderFromIpc(
         ? deps.getSeatHome(route.appChatId, payload.ensembleRun?.participantId || 'solo')
         : null
 
+    const developerToolsBinPath = deps.resolveDeveloperToolsBinPath?.()
     const execRun = (): Promise<MuseRunOutcome> =>
       run({
         binaryPath,
@@ -666,6 +669,7 @@ export async function runMuseProviderFromIpc(
         prompt,
         runId,
         temporaryRoot: deps.getTemporaryRoot(),
+        ...(developerToolsBinPath ? { developerToolsBinPath } : {}),
         sessionId: museSessionId,
         model: payload.model,
         reasoningEffort: payload.reasoningEffort,
@@ -689,6 +693,7 @@ export async function runMuseProviderFromIpc(
           spawnMsp: deps.spawnMsp ?? createChildProcessMuseMspSpawn(),
           ...(seat ? { durableSeat: seat } : {}),
           temporaryRoot: deps.getTemporaryRoot(),
+          ...(developerToolsBinPath ? { developerToolsBinPath } : {}),
           // A seat we cannot resume into must not claim a stored session: MSP
           // rejects a resume whose log is not in THIS home, and a fresh
           // disposable home never has one.

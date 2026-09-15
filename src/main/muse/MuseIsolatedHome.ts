@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process'
 import { createHash, randomBytes } from 'node:crypto'
 import {
   chmodSync,
+  existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
@@ -14,7 +16,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { homedir } from 'node:os'
-import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { delimiter, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { museAuthJsonUsesKeychainStorage, parseMuseAuthJsonCredential } from './MuseProbe'
 import { type MuseSkillPinSettings, buildMuseSkillPinSettings } from './MuseSkillPin'
 import { mergeMuseMcpSettings, serializeMuseSettings, type MuseMcpSettings } from './MuseMcpConfig'
@@ -84,6 +86,8 @@ export interface CreateMuseIsolatedHomeInput {
    * to the spawned muse process. Opt-in only — never enabled by default.
    */
   readonly museLogLevel?: string
+  /** Directory placed first on the launch PATH; see `buildMuseIsolatedHomeEnvironment`. */
+  readonly developerToolsBinPath?: string
   /**
    * When true (default), write empty `trust.json` with `projects: {}`.
    * Never copies the user's real trust file.
@@ -290,7 +294,8 @@ export function createMuseIsolatedHome(input: CreateMuseIsolatedHomeInput): Muse
       xdgRuntimeDir,
       tmpDir,
       sourceEnvironment: input.sourceEnvironment ?? process.env,
-      museLogLevel: input.museLogLevel
+      museLogLevel: input.museLogLevel,
+      developerToolsBinPath: input.developerToolsBinPath
     })
 
     const authority = inspectMuseIsolatedHome(canonicalPath, posture)
@@ -532,6 +537,12 @@ export interface BuildMuseIsolatedHomeEnvironmentInput {
   readonly tmpDir: string
   readonly sourceEnvironment?: NodeJS.ProcessEnv
   readonly museLogLevel?: string
+  /**
+   * Directory placed FIRST on the launch PATH (see the PATH note in
+   * `buildMuseIsolatedHomeEnvironment`). Production passes the active macOS
+   * developer tools bin from `resolveMacDeveloperToolsBinPath`.
+   */
+  readonly developerToolsBinPath?: string
 }
 
 /**
@@ -564,6 +575,22 @@ export function buildMuseIsolatedHomeEnvironment(
   for (const key of MUSE_PROBE_ENV_ALLOWLIST) {
     const value = source[key]
     if (typeof value === 'string') env[key] = value
+  }
+  // macOS resolves `/usr/bin/git` (and every other command-line-tools shim)
+  // through an `xcrun` stub whose lookup cache lives in the per-user temp dir
+  // (confstr DARWIN_USER_TEMP_DIR — NOT $TMPDIR, which xcrun ignores). Muse's
+  // shell sandbox allows the workspace and this lease's TMPDIR but not that
+  // dir, so every `git` call from a Muse seat printed "xcrun: error: couldn't
+  // create cache file .../xcrun_db-XXXX (errno=Operation not permitted)"
+  // (QA 2026-09-15). With the developer tools bin first, `git` resolves to the
+  // same binary xcrun would have picked, without the stub or its cache.
+  const developerToolsBinPath = input.developerToolsBinPath?.trim()
+  if (developerToolsBinPath) {
+    const entries = (env.PATH ?? '').split(delimiter).filter(Boolean)
+    env.PATH = [
+      developerToolsBinPath,
+      ...entries.filter((entry) => entry !== developerToolsBinPath)
+    ].join(delimiter)
   }
 
   return Object.freeze({
@@ -1075,4 +1102,31 @@ function isMissingPathError(error: unknown): boolean {
     'code' in error &&
     (error as { code?: unknown }).code === 'ENOENT'
   )
+}
+
+let cachedMacDeveloperToolsBinPath: string | undefined | null = null
+
+/**
+ * The active macOS developer tools `usr/bin` (from `xcode-select -p`), or
+ * undefined off macOS / when nothing is selected / when it carries no `git`.
+ * Resolved once per process; the selection does not change under a running
+ * app.
+ */
+export function resolveMacDeveloperToolsBinPath(): string | undefined {
+  if (process.platform !== 'darwin') return undefined
+  if (cachedMacDeveloperToolsBinPath !== null) return cachedMacDeveloperToolsBinPath
+  let resolved: string | undefined
+  try {
+    const developerDir = execFileSync('xcode-select', ['-p'], {
+      encoding: 'utf8',
+      timeout: 5_000,
+      stdio: ['ignore', 'pipe', 'ignore']
+    }).trim()
+    const bin = join(developerDir, 'usr', 'bin')
+    if (developerDir && isAbsolute(developerDir) && existsSync(join(bin, 'git'))) resolved = bin
+  } catch {
+    resolved = undefined
+  }
+  cachedMacDeveloperToolsBinPath = resolved
+  return resolved
 }

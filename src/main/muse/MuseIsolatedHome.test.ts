@@ -13,7 +13,7 @@ import {
 } from 'node:fs'
 import { linkSync, realpathSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import {
   MUSE_EMPTY_TRUST_DOCUMENT,
@@ -823,5 +823,44 @@ describe('Muse durable per-chat seat home', () => {
 
     expect(existsSync(target.path)).toBe(true)
     expect(existsSync(join(first.museDataDir, 'session-index.db'))).toBe(true)
+  })
+})
+
+describe('developer tools bin on PATH', () => {
+  // macOS `/usr/bin/git` is an xcrun stub whose cache dir Muse's sandbox does
+  // not allow; putting the developer tools bin first resolves git without it.
+  const devBin = ['', 'Applications', 'Xcode.app', 'Contents', 'Developer', 'usr', 'bin'].join('/')
+
+  it('puts the developer tools bin first on the launch PATH', () => {
+    // @portability-ok: opaque caller-supplied PATH entries, joined with the platform delimiter.
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin',
+      sourceEnvironment: { PATH: ['/usr/bin', '/bin'].join(delimiter) },
+      developerToolsBinPath: devBin
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe([devBin, '/usr/bin', '/bin'].join(delimiter))
+  })
+
+  it('moves an already-present entry to the front instead of duplicating it', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin-dup',
+      sourceEnvironment: { PATH: ['/usr/bin', devBin, '/bin'].join(delimiter) },
+      developerToolsBinPath: devBin
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe([devBin, '/usr/bin', '/bin'].join(delimiter))
+  })
+
+  it('leaves PATH alone when no developer tools bin is given', () => {
+    const lease = createMuseIsolatedHome({
+      temporaryRoot: TEMP_ROOT,
+      runId: 'dev-bin-none',
+      sourceEnvironment: { PATH: ['/usr/bin', '/bin'].join(delimiter) }
+    })
+    leases.push(lease)
+    expect(lease.env.PATH).toBe(['/usr/bin', '/bin'].join(delimiter))
   })
 })

@@ -1814,6 +1814,7 @@ import {
 } from './muse/MuseIpcBridge'
 import { isMuseCredentialPresent } from './muse/MuseProbe'
 import { prepareMuseTaskWraithMcpInvocation } from './muse/MuseTaskWraithMcpBridge'
+import { resolveMacDeveloperToolsBinPath } from './muse/MuseIsolatedHome'
 import { deliverMuseContextCompactionCard } from './muse/MuseContextCompactionChatCard'
 import {
   configureMistralQuotaStore,
@@ -38219,6 +38220,7 @@ const museIpcCancels = new Map<string, () => void>()
 const museIpcBridgeDeps: MuseIpcBridgeDeps = {
   resolveBinary: async () => resolveCliProviderBinary('muse'),
   getTemporaryRoot: () => app.getPath('temp'),
+  resolveDeveloperToolsBinPath: resolveMacDeveloperToolsBinPath,
   // Durable MSP wire diagnostics: one JSONL per run beside the run-events
   // ledger, always carrying counters/unparsable/unknown-method/tripwire
   // events and full frames only under TASKWRAITH_MUSE_MSP_DEBUG.

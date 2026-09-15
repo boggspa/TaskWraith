@@ -98,6 +98,8 @@ export interface MuseRunInput {
   /** App-owned, route-bound MCP entries for this one isolated Muse run. */
   readonly mcpSettings?: MuseMcpSettings
   readonly sourceEnvironment?: NodeJS.ProcessEnv
+  /** Directory placed first on the Muse launch PATH; see MuseIsolatedHome. */
+  readonly developerToolsBinPath?: string
   readonly spawn: MuseRunSpawn
   readonly onEvent?: (event: MuseExecNormalizedEvent) => void
   readonly shouldCancel?: () => boolean
@@ -120,6 +122,7 @@ export interface MuseRunInput {
     readonly temporaryRoot: string
     readonly runId: string
     readonly sourceEnvironment?: NodeJS.ProcessEnv
+    readonly developerToolsBinPath?: string
     readonly skillPinSettings?: MuseSkillPinSettings
     readonly mcpSettings?: MuseMcpSettings
   }) => MuseIsolatedHomeLease
@@ -208,6 +211,7 @@ export async function runMuseProvider(input: MuseRunInput): Promise<MuseRunOutco
     temporaryRoot,
     runId,
     sourceEnvironment: input.sourceEnvironment,
+    ...(input.developerToolsBinPath ? { developerToolsBinPath: input.developerToolsBinPath } : {}),
     ...(ultraTaskDelegationAutoAllow
       ? {
           skillPinSettings: buildMuseSkillPinSettings('off', {
