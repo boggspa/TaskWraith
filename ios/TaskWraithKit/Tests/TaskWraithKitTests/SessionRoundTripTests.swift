@@ -77,6 +77,32 @@ struct SessionRoundTripTests {
         #expect(iphoneCode == macCode, "Both sides should establish with the same confirm code")
     }
 
+    /// Round 6 of the reconnect storm: an authenticated inbound frame is proof
+    /// of a live peer, so the transport's liveness probe credits it alongside a
+    /// pong. The counter must move on every frame that passes GCM and must NOT
+    /// move on a replayed one.
+    @Test("authenticated inbound frames are counted, replays are not")
+    func authenticatedFrameCounter() {
+        let (wire, _) = makeWire()
+        wire.mac.start()
+        wire.iphone.start()
+        wire.pump()
+        let afterHandshake = wire.iphone.peerAuthenticatedFrameCount
+        #expect(afterHandshake >= 1, "the Mac's post-handshake resume is itself an authenticated frame")
+
+        try? wire.mac.sendApp("bridge.broadcastThreadList", params: paramsData(["n": 1]))
+        let frames = wire.mac.drainOutbox()
+        #expect(frames.count == 1)
+        for f in frames { wire.iphone.handleFrame(f) }
+        #expect(wire.iphone.peerAuthenticatedFrameCount == afterHandshake + 1)
+        #expect(wire.iphone.drainMessages().count == 1)
+
+        // Replay: same frame again is rejected on seq before it can count.
+        for f in frames { wire.iphone.handleFrame(f) }
+        #expect(wire.iphone.peerAuthenticatedFrameCount == afterHandshake + 1)
+        #expect(wire.iphone.drainMessages().isEmpty)
+    }
+
     @Test("app messages round-trip both directions")
     func appChannel() {
         let (wire, _) = makeWire()

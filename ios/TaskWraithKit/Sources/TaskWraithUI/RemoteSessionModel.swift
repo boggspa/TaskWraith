@@ -671,6 +671,28 @@ public final class RemoteSessionModel: ObservableObject {
     /// (nil / empty = no name; the greeting then shows just the time-of-day).
     public var projectedUserName: String? { projectedShellAppearance?.userName }
     @Published public private(set) var lastActionMessage: String?
+    /// On-device record of every reconnect decision, dial, establish, probe
+    /// verdict and teardown. Exported from Settings → Remote so a storm can be
+    /// diagnosed from the phone that saw it rather than reconstructed by hand.
+    public let connectionDiagnostics = ConnectionLogStore()
+
+    func logConnection(_ kind: String, _ detail: String = "") {
+        connectionDiagnostics.append(kind, detail)
+    }
+
+    nonisolated static func phaseLabel(_ phase: SessionPhase) -> String {
+        switch phase {
+        case .idle: return "idle"
+        case .connecting: return "connecting"
+        case .awaitingMacConfirm: return "awaitingMacConfirm"
+        case .connected: return "connected"
+        case .error: return "error"
+        }
+    }
+
+    nonisolated static func relayHostLabel(_ url: String) -> String {
+        URL(string: url)?.host ?? url
+    }
     nonisolated static let hostUnavailableActionMessage =
         "Your Mac isn't responding. Wake it, then retry; your synced threads are still available."
     /// Set after createThread succeeds — HomeView navigates to the new chat.
@@ -1068,6 +1090,7 @@ public final class RemoteSessionModel: ObservableObject {
 
     public func handleRemoteWake(reason: String, timeoutMs: Int = 10_000) async -> Bool {
         guard hasStoredPairing else { return false }
+        logConnection("remote-wake", "\(reason) phase=\(Self.phaseLabel(phase))")
         if Self.shouldRehydrateAfterWake(reason: reason) {
             pendingWakeRehydrate = true
         }
@@ -1914,6 +1937,10 @@ public final class RemoteSessionModel: ObservableObject {
             preferRemoteFirst: remoteFirst,
             preferredFirst: preferredRelay)
         cancelSocketHealthCheck()
+        logConnection(
+            "dial",
+            "from=\(Self.phaseLabel(phase)) doors=\(candidates.map(Self.relayHostLabel).joined(separator: ","))"
+                + " budget=\(RelayCandidates.walkBudgetMs(for: candidates) / 1000)s")
         teardown()
         macDisplayName = Self.sanitizedMacName(record.macDisplayName)
         pinnedMacIdentityB64 = record.macIdentityPubKey
@@ -1975,6 +2002,7 @@ public final class RemoteSessionModel: ObservableObject {
                     // stamp under the new host's identity. Matches the guard the
                     // rest of the walk already enforces per candidate.
                     guard self.connectAttempt == attempt else { return }
+                    self.logConnection("door-ok", Self.relayHostLabel(candidate))
                     self.relayUrl = candidate
                     self.trustedReconnectAttempt = nil
                     // Refresh the record so the v1 field tracks the
@@ -1984,9 +2012,12 @@ public final class RemoteSessionModel: ObservableObject {
                 } catch {
                     lastFailure = TransportErrorCopy.friendlyMessage(
                         for: error, relayUrl: candidate)
+                    self.logConnection(
+                        "door-failed", "\(Self.relayHostLabel(candidate)): \(lastFailure ?? "")")
                 }
             }
             guard self.connectAttempt == attempt else { return }
+            self.logConnection("walk-failed", lastFailure ?? "no door reachable")
             self.teardown()
             self.trustedReconnectAttempt = nil
             var detail =
@@ -2042,6 +2073,10 @@ public final class RemoteSessionModel: ObservableObject {
             reason: reason,
             phase: phase,
             socketAlive: socketAlive)
+        logConnection(
+            "wake",
+            "\(reason.rawValue) phase=\(Self.phaseLabel(phase))"
+                + (socketAlive.map { " socketAlive=\($0)" } ?? "") + " → \(action.rawValue)")
         switch action {
         case .ignore:
             return
@@ -2378,7 +2413,26 @@ public final class RemoteSessionModel: ObservableObject {
         // adds no traffic. Wiring this to a send timeout instead would make
         // `.asleep` a guess again — see the ledger's evidence rule.
         hostLivenessProbeLedger.record(alive: result.alive, peer: result.peer, at: Date())
+        logConnection("probe", "\(result.peer ? "peer" : "socket") alive=\(result.alive)")
         return result
+    }
+
+    /// Socket-only verdict for the action path's peer-silent branch. Deliberately
+    /// NOT routed through the shared probe: a sibling action's in-flight PEER
+    /// probe would be joined and its `alive:false` misread as a dead socket.
+    private func probeSocketOnly(client: RelayTransportClient) async -> Bool {
+        #if DEBUG
+            if let override = socketProbeOverrideForTesting {
+                let alive = await override()
+                hostLivenessProbeLedger.record(alive: alive, peer: false, at: Date())
+                logConnection("probe", "socket alive=\(alive) (peer-silent check)")
+                return alive
+            }
+        #endif
+        let alive = await client.checkSocketAlive()
+        hostLivenessProbeLedger.record(alive: alive, peer: false, at: Date())
+        logConnection("probe", "socket alive=\(alive) (peer-silent check)")
+        return alive
     }
 
     /// Single-flight latch for `requestFullProjection`. Reset via `defer` when the
@@ -3557,6 +3611,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func handleSocketClosed() {
         // Intentional teardown nils the client BEFORE closing — ignore.
         guard client != nil else { return }
+        logConnection("socket-closed", "phase=\(Self.phaseLabel(phase))")
         hostProjection.markTransportClosed()
         scheduleReconnectAfterUnexpectedClose()
     }
@@ -3661,6 +3716,7 @@ public final class RemoteSessionModel: ObservableObject {
         cancelAutoReconnect(resetAttempts: true)
         phase = .connected
         reconnectCoordinator.markAttemptFinished()
+        logConnection("established", relayUrl.map(Self.relayHostLabel) ?? "")
         wasEverConnected = true
         persistWasEverConnectedFlag()
         persistCurrentPairing()
@@ -3754,6 +3810,8 @@ public final class RemoteSessionModel: ObservableObject {
                 case .error(let message):
                     await MainActor.run {
                         guard self.client === client else { return }
+                        self.logConnection(
+                            "transport-error", "phase=\(Self.phaseLabel(self.phase)) \(message)")
                         if case .connected = self.phase {
                             // A transport-level timeout while the session is still .connected is a
                             // transient network blip, NOT a sleeping Mac. twFriendlyMessage re-maps
@@ -8492,6 +8550,40 @@ public final class RemoteSessionModel: ObservableObject {
                 } catch {
                     throw error
                 }
+            } else if probe.peer, client === activeClient, case .connected = phase {
+                // The Mac did not answer the encrypted ping. That is two very
+                // different situations, and only one of them is worth a dial:
+                //   - the SOCKET is dead (background kill, relay reap) → re-dial;
+                //   - the socket is live and the Mac is merely busy or asleep →
+                //     a re-dial lands on the same silent Mac, and tearing this
+                //     session down to get there was the reconnect storm: every
+                //     establish restarts the Mac's post-establish sweep, whose
+                //     starved pong fails the next preflight, which dialled again.
+                // Hold the session, give the Mac one more probe window, then
+                // fail honestly. The liveness banner already reads "connection
+                // up, Mac hasn't replied" with Retry for exactly this state.
+                if await probeSocketOnly(client: activeClient) {
+                    let retry = await probeConnectedHealth(peer: true)
+                    if retry.alive, client === activeClient {
+                        do {
+                            return try await activeClient.requestSerialized(
+                                "bridge.requestActionAck",
+                                paramsData: paramsData,
+                                timeoutMs: timeoutMs,
+                                skipPeerPreflight: retry.peer)
+                        } catch TransportError.hostUnavailable {
+                            // Socket gone between the probes — dial below.
+                        } catch {
+                            throw error
+                        }
+                    } else {
+                        logConnection("peer-silent", "link up — holding session, no dial")
+                        #if DEBUG
+                            peerSilentHoldsForTesting += 1
+                        #endif
+                        throw TransportError.hostUnavailable
+                    }
+                }
             }
         }
 
@@ -8541,6 +8633,24 @@ public final class RemoteSessionModel: ObservableObject {
         /// must produce exactly ONE trusted dial.
         func recoverFromUnavailableHostForActionForTesting() {
             recoverFromUnavailableHostForAction()
+        }
+
+        /// Round 6: how many times a peer-silent-but-link-up verdict held the
+        /// session instead of dialling.
+        private(set) var peerSilentHoldsForTesting = 0
+        /// Overrides the socket-only check in the peer-silent branch.
+        var socketProbeOverrideForTesting: (@Sendable () async -> Bool)?
+
+        /// A client with no socket, so `phase == .connected && client != nil`
+        /// holds and the action path reaches its probes (which tests override).
+        func installBareClientForTesting() {
+            client = try? RelayTransportClient(identitySeed: identitySeed)
+        }
+
+        func requestActionAckWithWakeForTesting(
+            _ params: [String: Any], timeoutMs: Int = 1_000
+        ) async throws -> AckResult {
+            try await requestActionAckWithWake(params, timeoutMs: timeoutMs)
         }
     #endif
 

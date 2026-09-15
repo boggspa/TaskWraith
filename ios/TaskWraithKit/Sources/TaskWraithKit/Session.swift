@@ -62,6 +62,7 @@ public final class E2eeSession {
     /// Relay WebSocket pings only prove the relay is awake; this counter proves
     /// the Mac endpoint itself decrypted our ping and returned a pong.
     private var receivedPongCount: UInt64 = 0
+    private var authenticatedInboundCount: UInt64 = 0
 
     // Per-connection handshake state.
     private var ephemeral: Curve25519.KeyAgreement.PrivateKey?
@@ -120,6 +121,11 @@ public final class E2eeSession {
     public func takeEstablishedEdge() -> Bool { defer { establishedEdge = false }; return establishedEdge }
     public func takeError() -> Error? { defer { pendingError = nil }; return pendingError }
     public var peerPongCount: UInt64 { receivedPongCount }
+    /// Inbound frames that passed AES-GCM authentication. Only the peer holds
+    /// the key, so every one is proof the peer is live right now — evidence a
+    /// liveness probe can accept when the peer's pong is queued behind a large
+    /// push it is still streaming to us.
+    public var peerAuthenticatedFrameCount: UInt64 { authenticatedInboundCount }
 
     /// Begin (or restart, after reconnect) the handshake.
     public func start() {
@@ -391,6 +397,7 @@ public final class E2eeSession {
                 nonce: Base64.decode(frame.nonce) ?? Data(), ct: Base64.decode(frame.ct) ?? Data(),
                 tag: Base64.decode(frame.tag) ?? Data()))
         lastRecvSeq = frame.seq
+        authenticatedInboundCount &+= 1
         if let ack = frame.ack { trimReplayBuffer(ack) }
 
         // The ONLY site in the transport that can throw Foundation's

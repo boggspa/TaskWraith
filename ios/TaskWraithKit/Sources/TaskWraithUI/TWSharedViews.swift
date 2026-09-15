@@ -7601,6 +7601,8 @@ public struct AppSettingsSheet: View {
     @State private var searchText = ""
     /// Non-nil presents the read-only approval ledger for that workspace.
     @State private var approvalLedgerWorkspaceId: String? = nil
+    @State private var connectionLogPresented = false
+    @ObservedObject private var connectionDiagnostics: ConnectionLogStore
     /// Per-device master switch for the workspace terminal (same key the
     /// GitWorkspaceSurface entry reads).
     @AppStorage("tw.terminal.enabled") private var terminalEnabledOnDevice = false
@@ -7612,6 +7614,7 @@ public struct AppSettingsSheet: View {
 
     public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
         self.model = model
+        self.connectionDiagnostics = model.connectionDiagnostics
         self.onOpenFirstLaunchGuide = onOpenFirstLaunchGuide
     }
 
@@ -8201,6 +8204,23 @@ public struct AppSettingsSheet: View {
                     }
                     .buttonStyle(.bordered)
                 }
+            }
+            SettingsCard(title: "Connection log", systemImage: "waveform.path.ecg") {
+                SettingsValueRow(title: "Events recorded", value: "\(connectionDiagnostics.log.entries.count)")
+                SettingsInfoRow(
+                    icon: "doc.on.doc",
+                    title: "Copy it into a bug report",
+                    detail: "Every reconnect decision, dial, establish and liveness probe on this device, newest at the bottom. Nothing leaves the phone unless you copy it."
+                )
+                Button("View log") {
+                    connectionLogPresented = true
+                }
+                .buttonStyle(.bordered)
+                EmptyView()
+                    .sheet(isPresented: $connectionLogPresented) {
+                        ConnectionLogView(store: connectionDiagnostics)
+                            .twSheetLiquidGlass(detents: [.large])
+                    }
             }
             SettingsCard(title: "Paired devices", systemImage: "iphone.and.arrow.forward") {
                 if model.pairedHosts.isEmpty {

@@ -12,19 +12,22 @@
 import Foundation
 import CryptoKit
 
-private final class PingContinuationGate: @unchecked Sendable {
+/// Result slot for a WebSocket ping whose completion lands on a URLSession
+/// queue while the probe polls from the actor.
+private final class PingOutcome: @unchecked Sendable {
     private let lock = NSLock()
-    private var didResume = false
+    private var stored: Bool?
 
-    func resume(_ continuation: CheckedContinuation<Bool, Never>, returning value: Bool) {
+    var value: Bool? {
         lock.lock()
-        guard !didResume else {
-            lock.unlock()
-            return
-        }
-        didResume = true
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func set(_ value: Bool) {
+        lock.lock()
+        if stored == nil { stored = value }
         lock.unlock()
-        continuation.resume(returning: value)
     }
 }
 
@@ -91,6 +94,9 @@ public actor RelayTransportClient {
     private let urlSession: URLSession
 
     private var established = false
+    /// Every WebSocket frame received on the live socket, authenticated or not —
+    /// proof the relay socket itself is up.
+    private var inboundFrameCount: UInt64 = 0
     private var establishedWaiters: [CheckedContinuation<Void, Never>] = []
     private var ackWaiters: [String: CheckedContinuation<AckResult, Never>] = [:]
     private var requestCounter = 0
@@ -287,27 +293,44 @@ public actor RelayTransportClient {
         eventContinuation.yield(.closed)
     }
 
+    /// Prove the relay socket. A WebSocket pong is one proof; ANY inbound frame
+    /// is another, and the second matters: while a large push is streaming in,
+    /// the pong (a control frame) sits behind the data already in flight on the
+    /// same TCP stream and can miss a short deadline on a perfectly healthy
+    /// link. Reading that miss as "dead" tore down live sessions mid-sync, so
+    /// traffic observed during the wait counts as alive.
     public func checkSocketAlive(timeoutMs: Int = 2_500) async -> Bool {
         guard let task = wsTask else { return false }
-        let gate = PingContinuationGate()
-        return await withCheckedContinuation { continuation in
-            task.sendPing { error in
-                gate.resume(continuation, returning: error == nil)
-            }
-            Task {
-                try? await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                gate.resume(continuation, returning: false)
-            }
+        let baseline = inboundFrameCount
+        let outcome = PingOutcome()
+        task.sendPing { error in outcome.set(error == nil) }
+        let pollMs = 100
+        var waitedMs = 0
+        while waitedMs < timeoutMs {
+            if inboundFrameCount > baseline { return true }
+            if let ponged = outcome.value { return ponged }
+            guard !Task.isCancelled else { return false }
+            let sleepMs = min(pollMs, timeoutMs - waitedMs)
+            try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
+            waitedMs += sleepMs
         }
+        return inboundFrameCount > baseline
     }
 
     /// Prove the authenticated computer endpoint is awake, not merely the
     /// phone's WebSocket connection to the relay. Repeated encrypted pings make
     /// this a small best-effort wake window on Macs configured for network wake;
     /// a screen-locked but awake Mac answers immediately.
+    ///
+    /// A pong is not the only proof. Any frame that passes the session's GCM
+    /// check was sealed by the peer, so it is equally live evidence — and right
+    /// after an establish the Mac streams a projection snapshot large enough
+    /// that its pong queues behind it past this deadline. Counting those frames
+    /// is what stops a busy-but-healthy Mac from being declared unreachable.
     public func checkPeerAlive(timeoutMs: Int = 6_000) async -> Bool {
         guard established, let session, wsTask != nil else { return false }
         let baseline = session.peerPongCount
+        let frameBaseline = session.peerAuthenticatedFrameCount
         let pollMs = 100
         let pingEveryMs = 1_000
         var waitedMs = 0
@@ -315,7 +338,11 @@ public actor RelayTransportClient {
 
         while waitedMs < timeoutMs {
             guard established, self.session === session, wsTask != nil else { return false }
-            if session.peerPongCount > baseline { return true }
+            if session.peerPongCount > baseline
+                || session.peerAuthenticatedFrameCount > frameBaseline
+            {
+                return true
+            }
             if waitedMs >= nextPingAtMs {
                 session.ping()
                 await drainAndTransmit()
@@ -326,7 +353,9 @@ public actor RelayTransportClient {
             try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
             waitedMs += sleepMs
         }
-        return established && session.peerPongCount > baseline
+        return established
+            && (session.peerPongCount > baseline
+                || session.peerAuthenticatedFrameCount > frameBaseline)
     }
 
     // ── App messages ────────────────────────────────────────────────────────────
@@ -413,6 +442,7 @@ public actor RelayTransportClient {
                 case .data(let raw): data = raw
                 @unknown default: data = nil
                 }
+                inboundFrameCount &+= 1
                 if let data {
                     dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
                     if let frame = try? TWCoders.decoder.decode(E2eeFrame.self, from: data) {

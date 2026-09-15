@@ -752,3 +752,97 @@ struct ReconnectCachedRecoveryTests {
         func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
     }
 }
+
+/// Round 6 (2026-09-15, user-reported on device: Home Screen AND notification
+/// opens both storm): every earlier round bounded how many dials a burst of
+/// WAKES could buy. None touched what happens after a successful establish —
+/// the phone fires its establish-time actions, each demands an encrypted pong
+/// within 6s, and the Mac's pong is queued behind the projection snapshot it
+/// is streaming (and behind its post-establish chat-store sweep). The missed
+/// pong was read as "host unavailable" → `.health socketAlive:false` from
+/// `.connected` → teardown of a healthy session → walk → establish → sweep →
+/// missed pong → … A re-dial can never help against a busy Mac; only a dead
+/// SOCKET is worth one.
+@Suite("Reconnect storm — peer-silent hold")
+@MainActor
+struct ReconnectStormPeerSilentTests {
+    private static let unroutableRelay = "ws://reconnect-storm-peer.invalid:9"
+
+    @Test("a silent Mac behind a live socket holds the session instead of dialling")
+    func peerSilentOnLiveSocketDoesNotDial() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 1)))
+        model.installBareClientForTesting()
+        model.healthProbeOverrideForTesting = { false }  // no pong, twice
+        model.socketProbeOverrideForTesting = { true }  // but the link is up
+
+        var threw = false
+        do {
+            _ = try await model.requestActionAckWithWakeForTesting(["method": "setWatchedThread"])
+        } catch TransportError.hostUnavailable {
+            threw = true
+        } catch {
+            Issue.record("unexpected error \(error)")
+        }
+
+        #expect(threw, "the action must still fail honestly")
+        #expect(model.peerSilentHoldsForTesting == 1)
+        #expect(
+            model.trustedReconnectDialsForTesting == 0,
+            "a busy Mac behind a live socket bought a fresh relay-door walk — the storm")
+        if case .connected = model.phase {
+            // expected: the session survives
+        } else {
+            Issue.record("phase became \(String(describing: model.phase)) instead of staying connected")
+        }
+        model.forgetAllHosts()
+    }
+
+    /// Teeth: the SAME silent peer over a DEAD socket is the case a dial fixes.
+    @Test("a silent Mac behind a dead socket still dials")
+    func peerSilentOnDeadSocketDials() async {
+        let model = makePairedModel()
+        model.markJustEstablishedForTesting(
+            at: Date().addingTimeInterval(-(ReconnectCoordinator.defaultPostEstablishGrace + 1)))
+        model.installBareClientForTesting()
+        model.healthProbeOverrideForTesting = { false }
+        model.socketProbeOverrideForTesting = { false }
+
+        // The dial path then waits up to 12s for the walk (ATS-rejected, so it
+        // fails at once); poll for the dial rather than racing a fixed sleep
+        // against the rest of the suite sharing the MainActor.
+        let action = Task { try await model.requestActionAckWithWakeForTesting(["method": "x"]) }
+        for _ in 0..<40 where model.trustedReconnectDialsForTesting == 0 {
+            try? await Task.sleep(nanoseconds: 50_000_000)
+        }
+
+        #expect(model.peerSilentHoldsForTesting == 0)
+        #expect(model.trustedReconnectDialsForTesting == 1, "a dead socket must still earn a dial")
+        action.cancel()
+        _ = await action.result
+        model.forgetAllHosts()
+    }
+
+    private func makePairedModel() -> RemoteSessionModel {
+        let defaults = UserDefaults(suiteName: "ReconnectStormPeer.\(UUID().uuidString)")!
+        let store = UserDefaultsPairedHostStore(defaults: defaults)
+        let macKey = Base64.encode(Data(repeating: 9, count: 32))
+        store.upsert(
+            PairedHostRecord(
+                relayUrl: Self.unroutableRelay,
+                macIdentityPubKey: macKey,
+                macDisplayName: "Storm Host",
+                relayUrls: [Self.unroutableRelay],
+                hostPlatform: "mac",
+                pairedAt: "2026-09-15T00:00:00Z",
+                macAgreePub: nil))
+        store.setSelectedHostId(macKey)
+        return RemoteSessionModel(
+            identityStore: PeerSeedStore(), pairingStore: store)
+    }
+
+    private struct PeerSeedStore: IdentitySeedStore {
+        func loadOrCreateSeed() throws -> Data { Data(repeating: 7, count: 32) }
+    }
+}
