@@ -264,34 +264,41 @@ describe('worker-owned thread query index', () => {
     ])
   })
 
-  it('returns a bounded reference for one giant message and preserves all content in chunks', () => {
-    const generation = begin()
-    const value = { id: 'giant', content: '😀'.repeat(THREAD_INDEX_MAX_REPLY_BYTES) }
-    writeObjects(generation, [
-      {
-        kind: 'message',
-        ordinal: 0,
-        recordId: 'giant',
-        value,
-        preview: { id: 'giant', content: 'Preview' }
+  // One giant message is written as fsynced chunks: 270 ms on macOS, and the
+  // hosted Windows runner (~50x on fsync, see the deep-cursor test above)
+  // overran the 30 s default on run 34969646465. Same win32 budget as paging.
+  it(
+    'returns a bounded reference for one giant message and preserves all content in chunks',
+    () => {
+      const generation = begin()
+      const value = { id: 'giant', content: '😀'.repeat(THREAD_INDEX_MAX_REPLY_BYTES) }
+      writeObjects(generation, [
+        {
+          kind: 'message',
+          ordinal: 0,
+          recordId: 'giant',
+          value,
+          preview: { id: 'giant', content: 'Preview' }
+        }
+      ])
+      publish(generation, 1, { messages: 1 })
+      const page = database.readObjects(generation, 'message', { maxBytes: 1024 })!
+      expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(1024)
+      expect(page[0].kind).toBe('chunked')
+      if (page[0].kind !== 'chunked') throw new Error('Expected chunk reference')
+      const chunks: Buffer[] = []
+      let offset = 0
+      while (offset < page[0].reference.byteLength) {
+        const chunk = database.readChunk(generation, page[0].reference, offset)!
+        expect(chunk.byteLength).toBeGreaterThan(0)
+        expect(chunk.byteLength).toBeLessThanOrEqual(THREAD_INDEX_CHUNK_BYTES)
+        chunks.push(Buffer.from(chunk))
+        offset += chunk.byteLength
       }
-    ])
-    publish(generation, 1, { messages: 1 })
-    const page = database.readObjects(generation, 'message', { maxBytes: 1024 })!
-    expect(Buffer.byteLength(JSON.stringify(page))).toBeLessThanOrEqual(1024)
-    expect(page[0].kind).toBe('chunked')
-    if (page[0].kind !== 'chunked') throw new Error('Expected chunk reference')
-    const chunks: Buffer[] = []
-    let offset = 0
-    while (offset < page[0].reference.byteLength) {
-      const chunk = database.readChunk(generation, page[0].reference, offset)!
-      expect(chunk.byteLength).toBeGreaterThan(0)
-      expect(chunk.byteLength).toBeLessThanOrEqual(THREAD_INDEX_CHUNK_BYTES)
-      chunks.push(Buffer.from(chunk))
-      offset += chunk.byteLength
-    }
-    expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(value)
-  })
+      expect(JSON.parse(Buffer.concat(chunks).toString('utf8'))).toEqual(value)
+    },
+    process.platform === 'win32' ? 120_000 : 5_000
+  )
 
   it('does not let a nonfinite limit remove the byte bound', () => {
     const generation = begin()
