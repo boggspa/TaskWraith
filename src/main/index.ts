@@ -37676,7 +37676,20 @@ async function runAntigravityAgyProvider(
           )
           return decision
         }
-        if (kind !== 'write') return { decision: 'none' }
+        if (kind !== 'write') {
+          // Read-class and unclassified native tools (view_file, find_by_name,
+          // list_dir, grep_search, ...) carry no TaskWraith veto: agy's own
+          // settings layer still bounds them (read_file(workspace) and the
+          // headless auto-deny for anything without a rule), and a hook allow
+          // cannot widen that layer (measured: an allow-returning hook still
+          // hit the write_file auto-denial). The bridge used to answer these
+          // with an empty `{}` "no decision" reply; on agy 1.2.3 headless the
+          // seat saw view_file and find_by_name refused as "denied by a
+          // pre-tool hook" while every explicit allow ran (QA 2026-09-15,
+          // Antigravity read lane). Answer explicitly so the read path does
+          // not depend on how a given agy build reads silence.
+          return { decision: 'allow' }
+        }
         // A plan-mode run must not gain write capability through the bridge —
         // but it must say so. agy's headless soft-deny is silent, which is how
         // a refused edit became "produced no assistant output"; an explicit
