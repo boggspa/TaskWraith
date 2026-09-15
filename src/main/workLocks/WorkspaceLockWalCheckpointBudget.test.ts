@@ -143,15 +143,19 @@ function synthesizeHistory(cycles: number): { raw: string; state: WorkspaceLockW
   return { raw, state }
 }
 
-function medianMs(run: () => unknown, iterations = 3): number {
-  const times: number[] = []
+function bestOfMs(run: () => unknown, iterations = 5): number {
+  // Minimum of N, not median of 3: on a shared 4-core CI runner a single GC
+  // pause or scheduler preemption landing inside one checkpointed decode
+  // shrinks the denominator enough to read as a 2.3x "speedup" (macOS-Intel,
+  // run 34966702883). The best sample of each side is the one least polluted
+  // by the host; a defended regression (full replay) is ~1x on every sample.
+  let best = Number.POSITIVE_INFINITY
   for (let index = 0; index < iterations; index += 1) {
     const start = process.hrtime.bigint()
     run()
-    times.push(Number(process.hrtime.bigint() - start) / 1e6)
+    best = Math.min(best, Number(process.hrtime.bigint() - start) / 1e6)
   }
-  times.sort((left, right) => left - right)
-  return times[(times.length - 1) >> 1]
+  return best
 }
 
 /** Key-sorted: a checkpointed lease round-trips through canonical JSON. */
@@ -200,8 +204,8 @@ describe('workspace-lock startup decode budget', () => {
     expect(plan).not.toBeNull()
     if (!plan) throw new Error('expected a compaction plan')
 
-    const legacyMs = medianMs(() => decodeWorkspaceLockWal(history.raw))
-    const checkpointedMs = medianMs(() =>
+    const legacyMs = bestOfMs(() => decodeWorkspaceLockWal(history.raw))
+    const checkpointedMs = bestOfMs(() =>
       resolveWorkspaceLockWalState(
         plan.retainedFrames,
         decodeWorkspaceLockWalCheckpoint(plan.serializedCheckpoint)

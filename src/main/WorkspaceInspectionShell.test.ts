@@ -833,6 +833,9 @@ describe('WorkspaceInspectionShell', () => {
       Object.assign(env, git.environment || {})
       expect(spawnSync(git.executableRealPath, git.argv, { cwd: git.cwd, env }).status).toBe(0)
       expect(existsSync(marker)).toBe(false)
-    }
+    },
+    // Three synchronous git spawns plus a fixture: the loaded macOS-Intel
+    // runner overran vitest's 5 s default (run 34966702883); 60 ms locally.
+    60_000
   )
 })
