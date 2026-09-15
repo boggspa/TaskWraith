@@ -51,8 +51,24 @@ describe('shared workspace check freshness', () => {
   it('observes a tracked file changing and changing back between the two snapshots', async () => {
     const root = fixture()
     const check = await beginSharedWorkspaceVerification(root, ['npm', 'test'])
+    // The content round-trips, so only the change observation can say
+    // "changed". A fixed 30 ms let a late FSEvents delivery on a loaded runner
+    // read as `passed` (macOS Apple Silicon, run 34969646465); wait for the
+    // kernel to deliver the edit to a sentinel watcher registered alongside
+    // the observation, then give the observation's own callback a turn.
+    const delivered = new Promise<void>((resolve) => {
+      const sentinel = fs.watch(root, { recursive: true }, () => {
+        sentinel.close()
+        resolve()
+      })
+      setTimeout(() => {
+        sentinel.close()
+        resolve()
+      }, 5_000).unref()
+    })
     fs.writeFileSync(path.join(root, 'input.txt'), 'temporary\n')
     fs.writeFileSync(path.join(root, 'input.txt'), 'one\n')
+    await delivered
     await new Promise((resolve) => setTimeout(resolve, 30))
     expect((await check!.finish({ exitCode: 0 }))?.state).toBe('changed')
   })
