@@ -2057,7 +2057,18 @@ describe('T2 runner (no Electron launch)', () => {
               },
               timeoutMs: 0
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/staged attach failure/)
@@ -2261,7 +2272,18 @@ describe('T2 runner (no Electron launch)', () => {
                 }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/not in owned Electron tree|Refuse attach/i)
@@ -2753,7 +2775,18 @@ describe('T2 runner (no Electron launch)', () => {
                 return { ok: true }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/userData.*mismatch|Refuse replay/i)
@@ -3067,7 +3100,18 @@ describe('T2 runner (no Electron launch)', () => {
                 return { ok: true }
               }
             },
-            terminateOptions: { waitMs: 20, sleep: async () => {} }
+            terminateOptions: {
+              waitMs: 20,
+              sleep: async () => {},
+              // The fake child's pid doubles as its process-group id. Without
+              // this seam the runner tries `process.kill(-pid)` first, and on a
+              // hosted runner where a real group with that id exists the
+              // signal lands on a stranger and the fake never records a kill
+              // (Apple Silicon, run 35018002768).
+              killProcessGroup: (_pgid, sig) => {
+                kills.push(sig)
+              }
+            }
           }
         )
       ).rejects.toThrow(/HOME realpath mismatch|Refuse replay/i)
