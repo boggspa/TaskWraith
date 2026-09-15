@@ -148,6 +148,7 @@ import {
 } from './EnsembleMentionAlias'
 import {
   applyQueuedAuthorityRosterSelection,
+  collectAuthorityOnlyContinuationCandidateIds,
   goalBecameTerminalDuringRound,
   resolveAuthoritySelection,
   resolveAutomaticContinuationRoster,
@@ -19393,9 +19394,15 @@ export class EnsembleOrchestrator {
    *    acting Captain when the Boss is unavailable (standby Captain
    *    confirmation turns were a measured waste pattern).
    *
-   * When assign_work was never used, the next automatic pass keeps the full
-   * eligible serial roster. Settled fan-out history, prior speakers, and a
-   * configured final synthesizer do not imply a new routing instruction.
+   * When assign_work was never used, a seat with a live directed routing
+   * reason — an unresolved yield handoff, an owned fan-out target awaiting
+   * its foreground continuation turn, or a lane reservation — is dispatched
+   * FIRST, in that priority order, with the Boss/acting Captain riding LAST
+   * (it must not requeue itself ahead of pending directed work). With no
+   * directed seat pending, the next automatic pass keeps the full eligible
+   * serial roster: prior speakers and a configured final synthesizer do not
+   * imply a routing instruction, and a quiet authority seat consuming whole
+   * passes alone is the measured waste pattern that ordering prevents.
    *
    * Fail-open: an empty assignment-aware admit set keeps the full roster;
    * an open poll keeps the full roster (voting is the whole
@@ -19432,6 +19439,24 @@ export class EnsembleOrchestrator {
       }
     }
 
+    // Directed seats pending at the drain boundary (no assign_work in play):
+    // an unresolved yield handoff outranks an owned fan-out target, which
+    // outranks a lane reservation. These are the only seats with a live
+    // routing reason; every other prior speaker is 'answered', not 'open'.
+    const directedSeatIds =
+      assignments.length === 0 && runtime
+        ? collectAuthorityOnlyContinuationCandidateIds({
+            fannedOutParticipantIds: runtime.fannedOutParticipantIds,
+            fanoutReservedParticipantIds: runtime.fanoutReservedParticipantIds,
+            // Dispatch the handoff TARGET before the yielder it returns to —
+            // never revert back to the authority seat ahead of either.
+            yieldReturnParticipantIds: (runtime.yieldReturnStack || []).flatMap((frame) => [
+              frame.targetParticipantId,
+              frame.returnParticipantId
+            ])
+          })
+        : []
+
     const bossId = chat.ensemble?.bossmanParticipantId
     const bossEligible = runtime
       ? !this.primaryBossUnavailable(chat, runtime, bossId).unavailable &&
@@ -19450,6 +19475,40 @@ export class EnsembleOrchestrator {
           })
         })
     if (captainId && !bossEligible) admitted.add(captainId)
+
+    if (assignments.length === 0 && runtime) {
+      // No structured work plan: with directed seats pending, the focused
+      // continuation pass is exactly those seats, with the authority seat
+      // (Boss/acting Captain) LAST — it must not requeue itself ahead of
+      // pending directed work and consume the pass alone. With no directed
+      // seats, the full serial roster IS the continuation: a quiet Boss
+      // re-dispatching itself every pass is the measured waste pattern this
+      // guards against.
+      if (directedSeatIds.length === 0) return fullRoster
+      const authorityIds = new Set(
+        [bossId && bossEligible ? bossId : undefined, captainId && !bossEligible ? captainId : undefined]
+          .filter((id): id is string => Boolean(id))
+      )
+      const inRoster = new Set(fullRoster.map((participant) => participant.id))
+      const byId = new Map(fullRoster.map((participant) => [participant.id, participant]))
+      // Priority order: yield handoff target, then the rest of the directed
+      // set, then any other admitted non-authority seat in serial roster
+      // order; the authority seat rides last in every case.
+      const directedOrdered = directedSeatIds.filter((id) => inRoster.has(id) && !authorityIds.has(id))
+      const remainder = fullRoster.filter(
+        (participant) =>
+          admitted.has(participant.id) &&
+          !authorityIds.has(participant.id) &&
+          !directedOrdered.includes(participant.id)
+      )
+      if (directedOrdered.length === 0 && remainder.length === 0) return fullRoster
+      const ordered = [
+        ...directedOrdered.map((id) => byId.get(id)!),
+        ...remainder,
+        ...fullRoster.filter((p) => authorityIds.has(p.id))
+      ]
+      return ordered
+    }
     return resolveAutomaticContinuationRoster({
       fullRoster,
       hasStructuredAssignments: assignments.length > 0,

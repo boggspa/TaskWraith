@@ -139,16 +139,18 @@ describe('Muse MSP context pressure vs compaction vocabulary', () => {
 
 describe('MUSE_MSP_SCHEMA_FINGERPRINT', () => {
   it('pins the fingerprint the installed binary actually serves', () => {
-    // `muse schema generate-json-schema --out DIR` on 1.1.1-R2514.1; the same
+    // `muse schema generate-json-schema --out DIR` on 1.2.1-R2847.1; the same
     // value the manifest publishes and the host echoes from `initialize`.
+    // Bumped alongside the 1.2.1 schema absorption (required provenance
+    // cursors, ten no-op notifications) — see MuseMspProtocol.ts.
     expect(MUSE_MSP_SCHEMA_FINGERPRINT).toBe(
-      'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f'
+      'sha256:c7ff6c5d1e89cd42f803aea1f05b8e72082f2099685802473eb726903484713b'
     )
-    // The 1.0.3-R2198.1 value it replaced. A pin left behind a shipped binary
+    // The 1.1.1-R2514.1 value it replaced. A pin left behind a shipped binary
     // makes the client warn on every healthy run, which is how the warning
     // that matters gets read as noise.
     expect(MUSE_MSP_SCHEMA_FINGERPRINT).not.toBe(
-      'sha256:03312c213efd14277a0e0a102f70adeae497a469ca4edf7242f479953ed758b7'
+      'sha256:c669a30c2ee17d63192b227865b424d1d78b5d6c04d9f1c9e9b77b9cf03e6a4f'
     )
   })
 })

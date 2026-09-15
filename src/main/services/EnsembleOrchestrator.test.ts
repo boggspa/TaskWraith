@@ -26987,7 +26987,7 @@ describe('assignment-aware continuation roster narrowing', () => {
     expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
   })
 
-  it('keeps the serial roster despite settled fan-out history and a configured synthesizer', async () => {
+  it('admits a pending fan-out target ahead of the authority seat despite a configured synthesizer', async () => {
     const harness = makeHarness()
     const roster = [...fullRoster]
     harness.chat.ensemble!.participants = roster
@@ -27025,9 +27025,11 @@ describe('assignment-aware continuation roster narrowing', () => {
       roster,
       runtime
     )
-    expect(narrowed.map((participant) => participant.id)).toEqual(
-      fullRoster.map((participant) => participant.id)
-    )
+    // Option B: a fan-out target still awaiting its foreground continuation
+    // turn is directed work — the focused pass is exactly that seat, with the
+    // Boss riding last. A configured closing synthesizer is not a routing
+    // instruction and never enters the pass on its own.
+    expect(narrowed.map((participant) => participant.id)).toEqual(['worker1', 'boss'])
   })
 
   it('keeps answered participants in serial fallback when no structured assignments exist', async () => {
