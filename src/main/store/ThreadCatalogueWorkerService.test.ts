@@ -199,82 +199,84 @@ describe('real isolated history import', () => {
     }
   })
 
-  it('matches message activity boundaries from durable timestamp facts, with no decoder on repeated dashboard reads', async ({
-    skip
-  }) => {
-    // 1,005 fsynced generations: ~23 s on macOS and past 120 s on the hosted
-    // Windows runner at the ratio above. The boundary logic is platform-
-    // independent and stays proven on the POSIX legs.
-    if (process.platform === 'win32') skip('sqlite fsync cost on the hosted Windows runner')
-    const profilePath = join(directory, 'activity-profile')
-    fs.mkdirSync(join(profilePath, 'chats'), { recursive: true })
-    const reset = Date.parse('2026-09-01T12:34:56Z')
-    const chats = Array.from({ length: 1005 }, (_, index) => ({
-      appChatId: `activity-${String(index).padStart(4, '0')}`,
-      title: 'Activity',
-      provider: 'claude',
-      scope: 'global',
-      createdAt: 1,
-      updatedAt: 2,
-      persistenceRevision: 1,
-      messages: [reset - 1, reset, reset + 1, reset + 86_400_000]
-        .map((at, i) => ({
-          id: `m-${i}`,
-          role: 'user',
-          content: 'Not sent to the aggregate consumer',
-          timestamp: new Date(at).toISOString()
-        }))
-        .concat([
-          { id: 'invalid', role: 'user', content: 'invalid timestamp', timestamp: 'invalid' }
-        ]),
-      runs: []
-    }))
-    for (const chat of chats)
-      fs.writeFileSync(join(profilePath, 'chats', `${chat.appChatId}.json`), JSON.stringify(chat))
-    const service = new ThreadCatalogueWorkerService({
-      reader: { profilePath, runtimeInstanceId: 'activity', segmented: false },
-      decoderPath,
-      writer: 'desktop',
-      writerId: 'activity',
-      writerLifecycle: () => 'active',
-      assertSourceAuthority: () => {}
-    })
-    let pages = 0
-    const aggregate = createThreadCatalogueMessageActivity({
-      query: async <T>(query: ThreadCatalogueQuery) => {
-        expect(query.method).toBe('message-activity')
-        const reply = await service.query(query)
-        expect(Buffer.byteLength(JSON.stringify(reply))).toBeLessThan(2 * 1024 * 1024)
-        pages += 1
-        return reply as T
+  it(
+    'matches message activity boundaries from durable timestamp facts, with no decoder on repeated dashboard reads',
+    async ({ skip }) => {
+      // 1,005 fsynced generations: ~23 s on macOS and past 120 s on the hosted
+      // Windows runner at the ratio above. The boundary logic is platform-
+      // independent and stays proven on the POSIX legs.
+      if (process.platform === 'win32') skip('sqlite fsync cost on the hosted Windows runner')
+      const profilePath = join(directory, 'activity-profile')
+      fs.mkdirSync(join(profilePath, 'chats'), { recursive: true })
+      const reset = Date.parse('2026-09-01T12:34:56Z')
+      const chats = Array.from({ length: 1005 }, (_, index) => ({
+        appChatId: `activity-${String(index).padStart(4, '0')}`,
+        title: 'Activity',
+        provider: 'claude',
+        scope: 'global',
+        createdAt: 1,
+        updatedAt: 2,
+        persistenceRevision: 1,
+        messages: [reset - 1, reset, reset + 1, reset + 86_400_000]
+          .map((at, i) => ({
+            id: `m-${i}`,
+            role: 'user',
+            content: 'Not sent to the aggregate consumer',
+            timestamp: new Date(at).toISOString()
+          }))
+          .concat([
+            { id: 'invalid', role: 'user', content: 'invalid timestamp', timestamp: 'invalid' }
+          ]),
+        runs: []
+      }))
+      for (const chat of chats)
+        fs.writeFileSync(join(profilePath, 'chats', `${chat.appChatId}.json`), JSON.stringify(chat))
+      const service = new ThreadCatalogueWorkerService({
+        reader: { profilePath, runtimeInstanceId: 'activity', segmented: false },
+        decoderPath,
+        writer: 'desktop',
+        writerId: 'activity',
+        writerLifecycle: () => 'active',
+        assertSourceAuthority: () => {}
+      })
+      let pages = 0
+      const aggregate = createThreadCatalogueMessageActivity({
+        query: async <T>(query: ThreadCatalogueQuery) => {
+          expect(query.method).toBe('message-activity')
+          const reply = await service.query(query)
+          expect(Buffer.byteLength(JSON.stringify(reply))).toBeLessThan(2 * 1024 * 1024)
+          pages += 1
+          return reply as T
+        }
+      })
+      try {
+        await service.refreshInventory()
+        await Promise.all(chats.map((chat) => service.ensureIndexed(chat.appChatId, 'metadata')))
+        for (const request of [
+          { resetAt: 0, rangeStart: 0 },
+          { resetAt: reset, rangeStart: reset + 1 },
+          { resetAt: reset + 86_400_001, rangeStart: reset }
+        ])
+          expect(await aggregate(request)).toEqual(messageActivityFromChats(chats, request))
+        expect(pages).toBeGreaterThan(3)
+        const generation = service.database.current(chats[0].appChatId)!.generation
+        expect(await aggregate({ resetAt: 0, rangeStart: reset })).toEqual(
+          messageActivityFromChats(chats, { resetAt: 0, rangeStart: reset })
+        )
+        expect(service.database.current(chats[0].appChatId)!.generation).toBe(generation)
+        fs.writeFileSync(
+          join(profilePath, 'chats', `${chats[0].appChatId}.json`),
+          JSON.stringify({ ...chats[0], persistenceRevision: 2, messages: [] })
+        )
+        await expect(aggregate({ resetAt: 0, rangeStart: 0 })).rejects.toThrow('still indexing')
+      } finally {
+        await service.dispose()
       }
-    })
-    try {
-      await service.refreshInventory()
-      await Promise.all(chats.map((chat) => service.ensureIndexed(chat.appChatId, 'metadata')))
-      for (const request of [
-        { resetAt: 0, rangeStart: 0 },
-        { resetAt: reset, rangeStart: reset + 1 },
-        { resetAt: reset + 86_400_001, rangeStart: reset }
-      ])
-        expect(await aggregate(request)).toEqual(messageActivityFromChats(chats, request))
-      expect(pages).toBeGreaterThan(3)
-      const generation = service.database.current(chats[0].appChatId)!.generation
-      expect(await aggregate({ resetAt: 0, rangeStart: reset })).toEqual(
-        messageActivityFromChats(chats, { resetAt: 0, rangeStart: reset })
-      )
-      expect(service.database.current(chats[0].appChatId)!.generation).toBe(generation)
-      fs.writeFileSync(
-        join(profilePath, 'chats', `${chats[0].appChatId}.json`),
-        JSON.stringify({ ...chats[0], persistenceRevision: 2, messages: [] })
-      )
-      await expect(aggregate({ resetAt: 0, rangeStart: 0 })).rejects.toThrow('still indexing')
-    } finally {
-      await service.dispose()
-    }
-    // This functional pagination case fsyncs 1,005 chat generations. Parallel
-    // compiler/subprocess suites may contend for disk; latency is measured separately.
-  }, process.env.CI ? 300_000 : 120_000)
+      // This functional pagination case fsyncs 1,005 chat generations. Parallel
+      // compiler/subprocess suites may contend for disk; latency is measured separately.
+    },
+    process.env.CI ? 300_000 : 120_000
+  )
 
   it('serves remote and large control projections through real decoder modes and invalidates same-revision overlays', async () => {
     const profilePath = join(directory, 'control-remote')
