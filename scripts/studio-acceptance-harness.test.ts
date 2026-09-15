@@ -331,6 +331,15 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
   }
 }
 
+// Hosted runners are the slow class: the loaded macOS-Intel runner needed more
+// than 5 s just to fork and boot the detached coordinator on run 35022956246
+// (its import phase alone took 608 s). Every wait on a forked child — and the
+// per-test budgets of the cases that fork one — gets 6x there; local runs keep
+// the tight budgets so a genuine hang still fails fast.
+function CHILD_WAIT_MS(ms: number): number {
+  return process.env.CI ? ms * 6 : ms
+}
+
 const roots: string[] = []
 
 const validTransportMutationText =
@@ -725,7 +734,7 @@ describe('Studio acceptance harness', () => {
         const readyPromise = new Promise<Record<string, any>>((resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error('coordinator did not announce ready')),
-            5_000
+            CHILD_WAIT_MS(5_000)
           )
           coordinator.on('message', (message) => {
             if (
@@ -770,7 +779,10 @@ describe('Studio acceptance harness', () => {
         const exited = await Promise.race([
           exitPromise,
           new Promise<never>((_resolve, reject) =>
-            setTimeout(() => reject(new Error('unacknowledged coordinator kept running')), 2_000)
+            setTimeout(
+              () => reject(new Error('unacknowledged coordinator kept running')),
+              CHILD_WAIT_MS(2_000)
+            )
           )
         ])
         expect(exited).toEqual({ code: 1, signal: null })
@@ -804,7 +816,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    8_000
+    CHILD_WAIT_MS(8_000)
   )
 
   it.runIf(process.platform !== 'win32')('refuses arbitrary coordinator commands, scripts, tokens, and path overrides', () => {
@@ -1456,7 +1468,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    15_000
+    CHILD_WAIT_MS(15_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -1522,7 +1534,10 @@ describe('Studio acceptance harness', () => {
         launcherKilled = launcher.kill('SIGKILL')
         expect(launcherKilled).toBe(true)
         await new Promise<void>((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('launcher did not exit')), 5_000)
+          const timer = setTimeout(
+            () => reject(new Error('launcher did not exit')),
+            CHILD_WAIT_MS(5_000)
+          )
           launcher.once('exit', (_code, signal) => {
             clearTimeout(timer)
             expect(signal).toBe('SIGKILL')
@@ -1582,7 +1597,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    15_000
+    CHILD_WAIT_MS(15_000)
   )
 
   it.runIf(process.platform !== 'win32')('is plan-only by default and uses the sanctioned isolated profile posture', () => {
@@ -2086,7 +2101,7 @@ describe('Studio acceptance harness', () => {
         }
       }
     },
-    12_000
+    CHILD_WAIT_MS(12_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -2197,7 +2212,7 @@ describe('Studio acceptance harness', () => {
         }, 'lost-ownership fixture cleanup')
       }
     },
-    12_000
+    CHILD_WAIT_MS(12_000)
   )
 
   it.runIf(process.platform !== 'win32')(
@@ -2239,7 +2254,7 @@ describe('Studio acceptance harness', () => {
         await new Promise<void>((resolve, reject) => {
           const timer = setTimeout(
             () => reject(new Error('owner did not exit after SIGKILL')),
-            5_000
+            CHILD_WAIT_MS(5_000)
           )
           owner.once('exit', (_code, signal) => {
             clearTimeout(timer)
