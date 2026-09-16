@@ -22,7 +22,7 @@ import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { collectTranscriptExportRounds } from '../../../shared/transcriptExportScope'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ChatPopoutIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopCircleSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, WorkspaceStatsSymbolIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ChatPopoutIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopCircleSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WaveformSymbolIcon, WorkflowGlyphIcon, WorkspaceStatsSymbolIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -5339,6 +5339,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             >
                               {appearance.composerStyle === 'claude' ? (
                                 <ClaudeReturnSymbolIcon />
+                              ) : appearance.composerStyle === 'codex' &&
+                                !hasSendablePromptContent ? (
+                                /* Codex Desktop parity: the idle (empty-draft) send control
+                                   is the voice-mode waveform; the arrow returns once there is
+                                   something to send. */
+                                <WaveformSymbolIcon />
                               ) : appearance.composerStyle === 'codex' ||
                                 appearance.composerStyle === 'chatgpt' ||
                                 appearance.composerStyle === 'gemini' ||

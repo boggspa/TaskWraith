@@ -11,6 +11,32 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
+import {
+  PermissionApproveGlyphIcon,
+  PermissionAskGlyphIcon,
+  PermissionElevatedGlyphIcon,
+  PermissionPlanGlyphIcon
+} from './AppChromeSymbols'
+
+/** Codex Desktop's permission chip leads with the selected mode's icon. Only
+ * the Codex composer shell renders one; the mapping mirrors its approval menu
+ * (Ask = raised hand, Accept Edits = "Approve for me" badge, elevated presets =
+ * warning ring; Plan has no Codex counterpart and takes a checklist). */
+export const permissionModeGlyph = (value: string): React.JSX.Element | null => {
+  switch (value) {
+    case 'plan':
+      return <PermissionPlanGlyphIcon />
+    case 'read_only':
+      return <PermissionAskGlyphIcon />
+    case 'default':
+      return <PermissionApproveGlyphIcon />
+    case 'workspace_write':
+    case 'full_access':
+      return <PermissionElevatedGlyphIcon />
+    default:
+      return null
+  }
+}
 
 /** Claude Desktop writes its permission labels in sentence case ("Accept
  * edits"). The shared label constants stay Title Case for every other shell,
@@ -302,6 +328,7 @@ export function CombinedPermissionsPicker({
         title={disabledReason || 'Permission mode'}
         aria-label={disabledReason || 'Choose permission mode'}
       >
+        {composerStyle === 'codex' ? permissionModeGlyph(selectedPermission) : null}
         <span className="composer-combined-picker-trigger-primary">
           {displayLabel(selectedOption.label)}
         </span>

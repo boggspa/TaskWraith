@@ -652,6 +652,103 @@ export function ClaudeReturnSymbolIcon() {
   )
 }
 
+// Codex Desktop's idle send control shows a voice-mode waveform inside the
+// white circle while the draft is empty; the Codex composer shell renders it
+// in that state (Composer.tsx run-button branch). Five rounded bars.
+export function WaveformSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon composer-waveform-glyph" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.7"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M3 6.5v3" />
+        <path d="M5.5 4.5v7" />
+        <path d="M8 2.5v11" />
+        <path d="M10.5 4.5v7" />
+        <path d="M13 6.5v3" />
+      </svg>
+    </span>
+  )
+}
+
+// Permission-mode glyphs for the Codex composer shell's permission chip,
+// mirroring Codex Desktop's approval menu icons: a checklist for Plan, a
+// raised hand for Ask, a smiling badge for Accept Edits ("Approve for me"),
+// and a warning ring for the elevated Full WS Access / Full Access presets.
+// `data-permission-glyph` names the shape so tests and CSS can address it.
+function PermissionGlyph({
+  name,
+  children
+}: {
+  name: 'plan' | 'ask' | 'approve' | 'elevated'
+  children: React.ReactNode
+}) {
+  return (
+    <span
+      className="sf-symbol-icon composer-permission-glyph"
+      data-permission-glyph={name}
+      aria-hidden
+    >
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        {children}
+      </svg>
+    </span>
+  )
+}
+
+export function PermissionPlanGlyphIcon() {
+  return (
+    <PermissionGlyph name="plan">
+      <rect x="3.25" y="2.75" width="9.5" height="10.5" rx="1.8" />
+      <path d="M5.6 6.2h4.8M5.6 8.5h4.8M5.6 10.8h2.6" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionAskGlyphIcon() {
+  return (
+    <PermissionGlyph name="ask">
+      <path d="M5 9V5.5a1 1 0 0 1 2 0v3" />
+      <path d="M7 8V3.9a1 1 0 0 1 2 0v4.6" />
+      <path d="M9 8.5V4.9a1 1 0 0 1 2 0v4.6" />
+      <path d="M11 9.5V7.2a1 1 0 0 1 2 0v3.3a4.5 4.5 0 0 1-4.5 4.5h-.2A3.3 3.3 0 0 1 5 11.7V9" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionApproveGlyphIcon() {
+  return (
+    <PermissionGlyph name="approve">
+      <rect x="2.75" y="2.75" width="10.5" height="10.5" rx="3.2" />
+      <circle cx="6.2" cy="7.2" r="0.65" fill="currentColor" stroke="none" />
+      <circle cx="9.8" cy="7.2" r="0.65" fill="currentColor" stroke="none" />
+      <path d="M5.9 9.6c.55.75 1.3 1.15 2.1 1.15s1.55-.4 2.1-1.15" />
+    </PermissionGlyph>
+  )
+}
+
+export function PermissionElevatedGlyphIcon() {
+  return (
+    <PermissionGlyph name="elevated">
+      <circle cx="8" cy="8" r="5.9" />
+      <path d="M8 5.1v3.4" />
+      <circle cx="8" cy="10.9" r="0.7" fill="currentColor" stroke="none" />
+    </PermissionGlyph>
+  )
+}
+
 // Claude-style stop: Claude Desktop's StopCircle glyph — a hairline ring with
 // a filled, softly rounded square inside. Only the Claude composer shell
 // renders it (Composer.tsx stop-button branch); every other shell keeps
