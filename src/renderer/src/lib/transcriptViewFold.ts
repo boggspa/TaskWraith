@@ -63,6 +63,57 @@ export function transcriptViewRendersSegment(
 }
 
 /**
+ * The shape both of ActivityStack's render trees agree on.
+ *
+ * Structural rather than the concrete `ActivityTimelineSegment` so these stay
+ * pure functions a test can call with a literal, in a suite that has no DOM.
+ */
+interface FoldableSegment<TItem> {
+  kind: ActivityTimelineSegmentKind
+  items: TItem[]
+  activities: readonly ToolActivity[]
+}
+
+/**
+ * The segments a view renders, filtered once for BOTH of ActivityStack's
+ * render trees.
+ *
+ * ActivityStack renders two independent trees — a per-segment one when the
+ * live activity viewport is on, and a flat per-ITEM one when it is off, which
+ * is also the only tree `SubThreadReturnCard` ever reaches because it does not
+ * pass `liveActivityViewport` at all. Filtering each tree separately is how
+ * this feature ships half-working: the same transcript would hide different
+ * things depending on an unrelated setting. So the filter runs once, on
+ * segments, and the item tree consumes the survivors through
+ * `visibleTimelineItems` below.
+ *
+ * `standard` returns the input array by reference, so the default install
+ * renders through today's exact code path with no copy.
+ */
+export function visibleTimelineSegments<TItem, S extends FoldableSegment<TItem>>(
+  segments: S[],
+  view: TranscriptView
+): S[] {
+  if (view === 'standard') return segments
+  return segments.filter((segment) =>
+    transcriptViewRendersSegment(view, segment.kind, activityStackHasFailure(segment.activities))
+  )
+}
+
+/**
+ * The timeline items a view renders, taken from the already-filtered segments
+ * so the flat tree cannot disagree with the segmented one.
+ */
+export function visibleTimelineItems<TItem, S extends FoldableSegment<TItem>>(
+  segments: S[],
+  view: TranscriptView,
+  allItems: TItem[]
+): TItem[] {
+  if (view === 'standard') return allItems
+  return visibleTimelineSegments(segments, view).flatMap((segment) => segment.items)
+}
+
+/**
  * Whether a fan-out lane's result viewport renders its body.
  *
  * Separate from the segment predicate because a lane card is not a timeline

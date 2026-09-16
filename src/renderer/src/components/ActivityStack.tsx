@@ -43,6 +43,8 @@ import { WorkflowCard } from './WorkflowCard'
 import { ReviewCard } from './ReviewCard'
 import { CodexMultiAgentCard } from './CodexMultiAgentCard'
 import { hasExpandableDetail } from '../lib/ActivityRenderMode'
+import { visibleTimelineItems, visibleTimelineSegments } from '../lib/transcriptViewFold'
+import { DEFAULT_TRANSCRIPT_VIEW, type TranscriptView } from '../lib/transcriptViewOverride'
 import { REVEAL_GROWTH_CEILING_PX } from '../lib/LiveActivityViewport'
 import { useRevealOnExpand } from '../hooks/useRevealOnExpand'
 import { inlineStatsForActivity, sumActivityDiffTotals } from '../lib/ActivityInlineStats'
@@ -169,6 +171,14 @@ interface ActivityStackProps {
    * fan-out lane viewports leave it off (their rows carry their own diff
    * chrome, and sub-agent viewports render through their own card). */
   showDiffStats?: boolean
+  /** How much of the stack to render — see `lib/transcriptViewFold`.
+   *
+   * Optional ONLY so the 81 existing test call sites keep compiling; every
+   * non-test call site is pinned by the call-site guard in
+   * `ActivityStack.transcriptView.test.tsx`, because a stack that quietly
+   * defaults to `standard` renders everything, compiles clean and tells
+   * nobody. Absent means `DEFAULT_TRANSCRIPT_VIEW`. */
+  transcriptView?: TranscriptView
   thinkingTraceActions?: ThinkingTraceActionsConfig
 }
 
@@ -3014,6 +3024,7 @@ export function ActivityStack({
   onExpandedActivityIdsChange,
   onOpenFileChangeInWorkbench,
   showDiffStats,
+  transcriptView = DEFAULT_TRANSCRIPT_VIEW,
   thinkingTraceActions
 }: ActivityStackProps) {
   const hydratedActivities = useHydratedToolActivities(compactActivities)
@@ -3197,9 +3208,25 @@ export function ActivityStack({
   // Sub-agent spawn anchors segment as kind 'agent' so each spawn wave gets
   // its own viewport instead of being buried inside a tool-call viewport.
   const agentAnchorIds = useMemo(() => new Set(threadByParentId.keys()), [threadByParentId])
+  // Segments are built for the live tree, and ALSO whenever the view actually
+  // filters — the flat non-live tree below consumes the same survivors through
+  // `visibleTimelineItems`, so one transcript cannot hide different things
+  // depending on whether "Live activity viewport" happens to be on. Standard
+  // keeps today's exact behaviour: no segments built, no filter, no copy.
+  const viewFilters = transcriptView !== 'standard'
   const fullTimelineSegments = useMemo(
-    () => (liveViewportEnabled ? buildTimelineSegments(timelineItems, agentAnchorIds) : []),
-    [liveViewportEnabled, timelineItems, agentAnchorIds]
+    () =>
+      liveViewportEnabled || viewFilters
+        ? visibleTimelineSegments(
+            buildTimelineSegments(timelineItems, agentAnchorIds),
+            transcriptView
+          )
+        : [],
+    [liveViewportEnabled, viewFilters, timelineItems, agentAnchorIds, transcriptView]
+  )
+  const viewFilteredTimelineItems = useMemo(
+    () => visibleTimelineItems(fullTimelineSegments, transcriptView, timelineItems),
+    [fullTimelineSegments, transcriptView, timelineItems]
   )
   const collapseCapActive =
     liveViewportEnabled &&
@@ -3221,6 +3248,12 @@ export function ActivityStack({
   }, [expandedIds])
 
   if (!activities || activities.length === 0) return null
+  // A view that hid every segment must render NOTHING, not an empty timeline
+  // wrapper with its header and accent chrome still painted. The one-liner the
+  // reader keeps under Minimal is TranscriptPanel's collapsed row, not this
+  // component — if this returned an empty shell the transcript would show a
+  // bare rule where the work used to be.
+  if (viewFilters && fullTimelineSegments.length === 0) return null
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -3349,7 +3382,7 @@ export function ActivityStack({
   // Non-live path only (the live path renders per-segment viewports below and
   // early-returns) — don't eagerly build + discard the full element list on
   // every live delta flush. The collapsed item cap never applied here.
-  const timelineNodes = liveViewportEnabled ? [] : timelineItems.map(renderTimelineItem)
+  const timelineNodes = liveViewportEnabled ? [] : viewFilteredTimelineItems.map(renderTimelineItem)
   const pinnedLiveContent =
     planLanes.length > 1 ? (
       <div className="plan-rail-lanes">
@@ -3430,6 +3463,12 @@ export function ActivityStack({
               liveActivityViewportActive ? '1' : '0',
               compactDensity ? '1' : '0',
               showDiffStats ? '1' : '0',
+              // Without this the cached body outlives a view flip: the segment
+              // survives the filter, keeps its id, and is served from
+              // `segmentChildrenCacheRef` exactly as it was rendered under the
+              // previous view. Nothing fails to compile and nothing fails to
+              // render — the transcript just ignores the menu.
+              transcriptView,
               pinnedDisclosure
             ].join('|')
           })
