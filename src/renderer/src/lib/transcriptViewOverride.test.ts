@@ -95,6 +95,59 @@ describe('per-chat transcript view overrides', () => {
   })
 })
 
+describe('the four-item menu contract', () => {
+  // `setTranscriptViewOverride` is only correct against a FOUR-item menu
+  // (Follow default / Minimal / Tools / Standard). The individual pieces are
+  // pinned above; this walks the actual click sequence, because the defect it
+  // guards against is a menu SHAPE change rather than a store change, and no
+  // test of the store alone would notice one.
+
+  it('states the ticked-item click semantics the menu must implement', () => {
+    // DOCUMENTATION, NOT A GUARD — said plainly so nobody counts it as one.
+    //
+    // The likeliest click in the feature is: open the menu, see the current
+    // state already selected, click it. On an un-overridden chat that item is
+    // "Follow default", so it must arrive here as null and leave no entry.
+    //
+    // No plausible mutation of THIS module makes the assertion below fail —
+    // the null path deletes, and deleting an absent key is a no-op whatever
+    // the guard does. The risk lives entirely in the CALLER: a menu that sends
+    // the RESOLVED view instead of null for "Follow default" pins every chat
+    // whose menu the user opens, and this file cannot see that. The enforcing
+    // guard is owed by the menu slice, over the pure item-builder array.
+    setTranscriptViewOverride('chat-a', null)
+    expect(hasTranscriptViewOverride(getTranscriptViewSnapshot(), 'chat-a')).toBe(false)
+    expect(transcriptViewForChat(getTranscriptViewSnapshot(), 'chat-a', 'minimal')).toBe('minimal')
+  })
+
+  it('walks pin, repin and release without stranding an entry', () => {
+    const snapshot = () => getTranscriptViewSnapshot()
+    // Pin.
+    setTranscriptViewOverride('chat-a', 'tools')
+    expect(hasTranscriptViewOverride(snapshot(), 'chat-a')).toBe(true)
+    expect(transcriptViewForChat(snapshot(), 'chat-a', 'minimal')).toBe('tools')
+    // Repin to a different view.
+    setTranscriptViewOverride('chat-a', 'standard')
+    expect(transcriptViewForChat(snapshot(), 'chat-a', 'minimal')).toBe('standard')
+    // Release via "Follow default" — the chat must follow a LATER default too,
+    // not the one that happened to be live when it was released.
+    setTranscriptViewOverride('chat-a', null)
+    expect(hasTranscriptViewOverride(snapshot(), 'chat-a')).toBe(false)
+    expect(transcriptViewForChat(snapshot(), 'chat-a', 'minimal')).toBe('minimal')
+    expect(transcriptViewForChat(snapshot(), 'chat-a', 'tools')).toBe('tools')
+  })
+
+  it('keeps a deliberate standard pin when the default moves to minimal', () => {
+    // The state the fourth menu item exists to make reachable. Without it,
+    // "standard" and "following a standard default" are the same entry, and a
+    // user cannot hold one chat at standard once the default changes.
+    setTranscriptViewOverride('chat-a', 'standard')
+    setTranscriptViewOverride('chat-b', null)
+    expect(transcriptViewForChat(getTranscriptViewSnapshot(), 'chat-a', 'minimal')).toBe('standard')
+    expect(transcriptViewForChat(getTranscriptViewSnapshot(), 'chat-b', 'minimal')).toBe('minimal')
+  })
+})
+
 describe('transcript view store subscription', () => {
   it('publishes a new snapshot reference on every change', () => {
     // useSyncExternalStore compares by reference. Mutating the existing Map

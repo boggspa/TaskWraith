@@ -67,6 +67,29 @@ export function subscribeTranscriptView(listener: () => void): () => void {
  * The snapshot is replaced rather than mutated so `useSyncExternalStore` sees
  * a new reference; mutating the existing Map would leave every subscriber
  * reading a value it believes it has already rendered.
+ *
+ * THIS FUNCTION IS ONLY CORRECT AGAINST A FOUR-ITEM MENU, and that coupling is
+ * invisible from here, so it is written down rather than left to be
+ * rediscovered.
+ *
+ * The menu offers `Follow default / Minimal / Tools / Standard`, and only the
+ * last three call this with a view; "Follow default" calls it with `null`. A
+ * chat with no entry is therefore ticked on "Follow default", so the idempotent
+ * click a user is most likely to make — opening the menu and choosing what is
+ * already selected — arrives here as `null` and no-ops.
+ *
+ * Collapse that menu to three items and the defect is immediate and silent:
+ * the ticked item on an un-overridden chat becomes whichever view the default
+ * resolves to, clicking it writes an explicit entry, and that chat is pinned
+ * forever. A later Appearance default of `minimal` then reaches every chat
+ * EXCEPT the ones whose menu the user happened to open. Nothing on screen
+ * distinguishes the two states, and there is no production bulk-clear to
+ * recover with.
+ *
+ * A three-item menu is still buildable, but it must pass the resolved default
+ * in and write `null` on a match — at the cost that a user can then never pin
+ * `standard` deliberately against a future `minimal` default, which is the
+ * state `hasTranscriptViewOverride` exists to distinguish.
  */
 export function setTranscriptViewOverride(chatId: string, view: TranscriptView | null): void {
   const current = transcriptViewSnapshot.get(chatId)
