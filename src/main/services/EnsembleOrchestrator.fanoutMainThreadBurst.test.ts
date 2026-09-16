@@ -639,7 +639,11 @@ describe('fan-out main-thread burst (RED bench)', () => {
       // 0.5×waveMs assertions above remain the machine-independent guards.
       // Lazy host admission above is the structural proof; this remains a
       // safety net for pathological work inside the admitted prefix.
-      const absoluteBudgetMs = process.env.CI ? 250 : 100
+      // 2026-09-16: the same commit measured 276, 295 and 337 ms on loaded hosted
+      // Windows and macOS-Intel runners (tag-ref runs 35045161868, 35037419639,
+      // 35034256199) with every structural assertion above green, so CI gets
+      // 500 ms. Local keeps 100 ms; the probe-tick count stays the proof.
+      const absoluteBudgetMs = process.env.CI ? 500 : 100
       expect(maxEventLoopDelayMs).toBeLessThan(absoluteBudgetMs)
     }
   )
