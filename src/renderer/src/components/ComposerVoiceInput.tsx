@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { CSSProperties, JSX } from 'react'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
-import { MicrophoneSymbolIcon, StopSymbolIcon } from './AppChromeSymbols'
+import { ClaudeMicrophoneSymbolIcon, MicrophoneSymbolIcon, StopSymbolIcon } from './AppChromeSymbols'
 
 const VOICE_LEVEL_COUNT = 96
 const EMPTY_LEVELS = Array.from({ length: VOICE_LEVEL_COUNT }, () => 0)
@@ -876,7 +876,13 @@ export function ComposerVoiceInputButton({
           }
           aria-pressed={state.isRecording}
         >
-          {state.isRecording ? <StopSymbolIcon /> : <MicrophoneSymbolIcon />}
+          {state.isRecording ? (
+            <StopSymbolIcon />
+          ) : composerStyle === 'claude' ? (
+            <ClaudeMicrophoneSymbolIcon />
+          ) : (
+            <MicrophoneSymbolIcon />
+          )}
         </button>
         <button
           ref={chevronRef}

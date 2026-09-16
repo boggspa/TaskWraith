@@ -22,7 +22,7 @@ import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
 import { collectTranscriptExportRounds } from '../../../shared/transcriptExportScope'
 import { AgentMentionMenu } from '../components/AgentMentionMenu'
-import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ChatPopoutIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, WorkspaceStatsSymbolIcon, XSymbolIcon } from '../components/AppChromeSymbols'
+import { AppleTerminalIcon, ArrowUpSendIcon, ChatMediaIcon, ChatPopoutIcon, ClaudeReturnSymbolIcon, ClockSymbolIcon, CommandSymbolIcon, FileMenuSelectionIcon, FolderSymbolIcon, GitCommitSymbolIcon, GoalSymbolIcon, PermissionSymbolIcon, PlusSymbolIcon, RunSymbolIcon, ScreenWatchSymbolIcon, StopCircleSymbolIcon, StopSymbolIcon, TrustSymbolIcon, WorkflowGlyphIcon, WorkspaceStatsSymbolIcon, XSymbolIcon } from '../components/AppChromeSymbols'
 import { ContextMeterPopover } from './ContextMeterPopover'
 import { CombinedModelPicker } from '../components/CombinedModelPicker'
 import type {
@@ -5248,7 +5248,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 type="button"
                                 disabled={isSteerBusyForCurrentChat}
                               >
-                                <StopSymbolIcon />
+                                {/* Claude shell parity: Claude Desktop's stop control is a
+                                    ring with a filled square (StopCircle). Every other shell
+                                    keeps the square StopSymbolIcon. */}
+                                {appearance.composerStyle === 'claude' ? (
+                                  <StopCircleSymbolIcon />
+                                ) : (
+                                  <StopSymbolIcon />
+                                )}
                               </button>
                             </>
                           ) : (

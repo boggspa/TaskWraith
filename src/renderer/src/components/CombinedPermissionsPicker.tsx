@@ -12,6 +12,17 @@ import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
 
+/** Claude Desktop writes its permission labels in sentence case ("Accept
+ * edits"). The shared label constants stay Title Case for every other shell,
+ * so only the Claude composer shell lowers Title-Case words after the first;
+ * anything that is not a plain Capitalised word (acronyms, hyphenated terms)
+ * is left alone. */
+export const toClaudeSentenceCase = (label: string): string =>
+  label
+    .split(' ')
+    .map((word, index) => (index > 0 && /^[A-Z][a-z]+$/.test(word) ? word.toLowerCase() : word))
+    .join(' ')
+
 export interface PermissionOption {
   /** Internal token, usually a PermissionPresetId. */
   value: string
@@ -284,7 +295,11 @@ export function CombinedPermissionsPicker({
         title={disabledReason || 'Permission mode'}
         aria-label={disabledReason || 'Choose permission mode'}
       >
-        <span className="composer-combined-picker-trigger-primary">{selectedOption.label}</span>
+        <span className="composer-combined-picker-trigger-primary">
+          {composerStyle === 'claude'
+            ? toClaudeSentenceCase(selectedOption.label)
+            : selectedOption.label}
+        </span>
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}
     </>

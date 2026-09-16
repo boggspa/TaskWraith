@@ -630,6 +630,10 @@ export function WorkflowGlyphIcon() {
 // Claude-style send: the native Claude composer uses a "return" arrow glyph
 // (↵) inside the send button instead of a play triangle. Used when
 // appearance.composerStyle === 'claude' so the send/stop pair reads native.
+// Geometry mirrors Claude Desktop's ArrowReturn glyph at its 20px render:
+// a top bar that turns down the right side into a bottom bar ending in an
+// open arrowhead, drawn with a hairline stroke (the shell CSS sets the
+// on-screen stroke width; paths use vector-effect: non-scaling-stroke).
 export function ClaudeReturnSymbolIcon() {
   return (
     <span className="sf-symbol-icon" aria-hidden>
@@ -637,12 +641,56 @@ export function ClaudeReturnSymbolIcon() {
         viewBox="0 0 16 16"
         fill="none"
         stroke="currentColor"
-        strokeWidth="1.4"
+        strokeWidth="1.25"
         strokeLinecap="round"
         strokeLinejoin="round"
       >
-        <path d="M12.5 4v2.5a2 2 0 0 1-2 2H4" />
-        <path d="M6.5 6.5 4 8.5l2.5 2" />
+        <path d="M6.6 4h5.4a1.6 1.6 0 0 1 1.6 1.6v2.7a1.6 1.6 0 0 1-1.6 1.6H2.4" />
+        <path d="M6 6.3 2.4 9.9 6 13.5" />
+      </svg>
+    </span>
+  )
+}
+
+// Claude-style stop: Claude Desktop's StopCircle glyph — a hairline ring with
+// a filled, softly rounded square inside. Only the Claude composer shell
+// renders it (Composer.tsx stop-button branch); every other shell keeps
+// StopSymbolIcon below.
+export function StopCircleSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="8" cy="8" r="6.4" />
+        <rect x="5.4" y="5.4" width="5.2" height="5.2" rx="1.2" fill="currentColor" stroke="none" />
+      </svg>
+    </span>
+  )
+}
+
+// Claude-style microphone: Claude Desktop's Microphone glyph — capsule, U
+// cradle and a short stem, with no base bar. Only the Claude composer shell
+// renders it (ComposerVoiceInput.tsx); other shells keep MicrophoneSymbolIcon.
+export function ClaudeMicrophoneSymbolIcon() {
+  return (
+    <span className="sf-symbol-icon" aria-hidden>
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.25"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="5.9" y="2" width="4.2" height="7.6" rx="2.1" strokeWidth="1" />
+        <path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0" />
+        <path d="M8 12v2.2" />
       </svg>
     </span>
   )
@@ -1223,7 +1271,8 @@ export function ContextWheel({
   label: string
   /** Codex composer shell — 10% smaller ring, +1px rendered stroke weight. */
   codexShell?: boolean
-  /** Claude composer shell — hairline ~1px ring matching real Claude. */
+  /** Claude composer shell — 2px ring on a 12-13px donut, matching Claude
+   * Desktop's context ring (12px svg, 2px stroke). */
   claudeShell?: boolean
   /** Cursor composer shell — 10% smaller ring with a thicker stroke. */
   cursorShell?: boolean
@@ -1233,7 +1282,9 @@ export function ContextWheel({
 }) {
   const clamped = Math.max(0, Math.min(100, percent))
   const radius = 5.5
-  const strokeWidth = codexShell ? 2.7 : claudeShell ? 1 : cursorShell ? 2.5 : 1.7
+  // Claude: 2.33 in the 14-unit viewBox renders as a 2px stroke at the shell's
+  // 12px donut (2.33 × 12 / 14), matching Claude Desktop's context ring.
+  const strokeWidth = codexShell ? 2.7 : claudeShell ? 2.33 : cursorShell ? 2.5 : 1.7
   const circumference = 2 * Math.PI * radius
   const dash = (clamped / 100) * circumference
   const remainingDash = circumference - dash
