@@ -109,19 +109,80 @@ describe('trigger chip reasoning tier CSS', () => {
     expect(block).toMatch(/-webkit-text-fill-color: color-mix\([\s\S]*?\) !important/)
   })
 
-  it('re-mixes every hued tier toward theme ink on light themes (WCAG contrast)', () => {
+  it('climbs the hued tiers toward the top mix on light themes, rather than into ink', () => {
     const css = readCss()
     const lightPrefix = ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])'
     for (const tier of ['low', 'medium', 'high', 'xhigh']) {
       const selector = `${lightPrefix}\n  .composer-combined-picker-trigger[data-selected-reasoning="${tier}"]`
       expect(css, `light override for ${tier}`).toContain(selector)
     }
-    // Light mixes are ink-dominant: the accent share stays well under 50%.
-    const lightStart = css.indexOf('/* Light themes — bright brand hues')
+    const lightStart = css.indexOf('/* Light themes — this block only has to TAPER')
     expect(lightStart).toBeGreaterThanOrEqual(0)
     const lightBlock = css.slice(lightStart, lightStart + 4200)
-    expect(lightBlock).toContain('var(--chip-accent, #8e6fd8) 26%, var(--text-primary) 74%')
+    // The accent share RISES with the tier. It used to fall away to 14/20/26/28%,
+    // which measured in the running app as chroma 30/29/38 against a plain label
+    // ink of chroma 9 — no visible ladder at all, while Max kept the full hue.
+    const shareFor = (tier: string): number => {
+      const at = lightBlock.indexOf(`[data-selected-reasoning="${tier}"]`)
+      expect(at, `light ${tier} rule`).toBeGreaterThanOrEqual(0)
+      const rule = lightBlock.slice(at, lightBlock.indexOf('}', at))
+      const share = rule.match(/var\(--chip-accent, #8e6fd8\) (\d+)%/)
+      expect(share, `accent share for ${tier}`).not.toBeNull()
+      return Number(share?.[1])
+    }
+    const ladder = ['low', 'medium', 'high', 'xhigh'].map(shareFor)
+    expect(ladder, 'light tiers must climb').toEqual([...ladder].sort((a, b) => a - b))
+    expect(new Set(ladder).size, 'no two light tiers share a mix').toBe(ladder.length)
+    // Ink-led at the bottom so the rise reads as a rise, but never a bare cast.
+    expect(Math.min(...ladder)).toBeGreaterThanOrEqual(40)
+    expect(Math.max(...ladder)).toBeLessThan(100)
+    // The hotspot still mixes toward theme ink, never toward paper.
     expect(lightBlock).not.toContain('#ffffff')
+  })
+
+  it('gives the alabaster gemini/kimi ink override back the ladder it erases', () => {
+    const shard10 = readFileSync(
+      join(process.cwd(), 'src/renderer/src/assets/css/10-provider-shell-overrides.css'),
+      'utf8'
+    ).replace(/\r\n/g, '\n')
+    const guard =
+      '[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])'
+    // That shell pair flattens the chip's text runs with an !important
+    // -webkit-text-fill-color, which is the one rule in the tree that outranks
+    // the ladder's own fill. Extra High and up survive it only because they
+    // paint through background-image.
+    const flatten = shard10.indexOf(`${guard}\n  :is(\n    .composer-combined-picker-trigger,`)
+    expect(flatten, 'alabaster gemini/kimi ink override').toBeGreaterThanOrEqual(0)
+    expect(shard10.slice(flatten, flatten + 700)).toContain(
+      '-webkit-text-fill-color: rgba(18, 21, 27, 0.74) !important;'
+    )
+    const restore = shard10.slice(flatten + 700)
+    for (const [tier, share] of [
+      ['low', 42],
+      ['light', 42],
+      ['on', 42],
+      ['medium', 64],
+      ['high', 82]
+    ] as const) {
+      const at = restore.indexOf(
+        `${guard}\n  .composer-combined-picker-trigger[data-selected-reasoning="${tier}"]`
+      )
+      expect(at, `restored ladder for ${tier}`).toBeGreaterThanOrEqual(0)
+      const rule = restore.slice(at, restore.indexOf('\n}', at))
+      expect(rule, `${tier} keeps the light-family mix`).toContain(
+        `var(--chip-accent, #8e6fd8) ${share}%`
+      )
+      // The flatten sets BOTH `color` and `-webkit-text-fill-color` with
+      // !important, so the restore has to answer on both or the glyphs stay ink.
+      expect(rule, `${tier} must beat the !important flatten`).toContain(
+        `var(--chip-accent, #8e6fd8) ${share}%, var(--text-primary) ${100 - share}%) !important;`
+      )
+      expect(rule).toContain('-webkit-text-fill-color: color-mix(')
+      expect(
+        (rule.match(/!important/g) ?? []).length,
+        `${tier} needs !important on both fills`
+      ).toBe(2)
+    }
   })
 
   it('keeps Off plain and stills the Extra shimmer under reduce-motion', () => {

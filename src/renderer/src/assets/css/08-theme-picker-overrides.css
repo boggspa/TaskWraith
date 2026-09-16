@@ -8716,11 +8716,18 @@
   ) !important;
 }
 
-/* Light themes — bright brand hues (Cursor gold, Codex lavender) fall below
- * WCAG 4.5:1 on the near-white chip at the dark-theme mixes above, so the
- * light mixes lean much harder on theme ink: the hue reads as a cast, the
- * label stays legible. (Dark themes keep the richer mixes — bright accents
- * on dark pass comfortably.) */
+/* Light themes — this block only has to TAPER the ladder toward the top tier,
+ * not retreat into theme ink. Provider accents are minted to relative
+ * luminance 0.179, so a 100% hue is ~4.6:1 on a near-white chip and the
+ * Max/Ultra gradient below already ships at that. The earlier 14/20/26/28%
+ * mixes left every sub-Max tier sitting at 10-11:1 — measured in the running
+ * app at chroma 30/29/38 against a plain label ink of chroma 9, i.e. no
+ * visible ladder at all, while Max kept the full brand hue. These mixes climb
+ * instead, and stay ink-led at the bottom so the rise reads as a rise.
+ * Max/Ultra/Ultracode/UltraTask are deliberately not referenced here.
+ * The Extra High sweep brightens toward the accent rather than toward paper:
+ * the dark gradient highlights toward white, which on a near-white chip would
+ * erase the word instead of sweeping across it. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="low"]
   .composer-combined-picker-trigger-suffix,
@@ -8730,35 +8737,31 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="on"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(
-    in srgb,
-    var(--chip-accent, #8e6fd8) 14%,
-    color-mix(in srgb, var(--text-primary) 62%, transparent)
-  );
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 42%, var(--text-primary) 58%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 14%,
-    color-mix(in srgb, var(--text-primary) 62%, transparent)
+    var(--chip-accent, #8e6fd8) 42%,
+    var(--text-primary) 58%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="medium"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 20%, var(--text-primary) 80%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 64%, var(--text-primary) 36%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 20%,
-    var(--text-primary) 80%
+    var(--chip-accent, #8e6fd8) 64%,
+    var(--text-primary) 36%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
   .composer-combined-picker-trigger[data-selected-reasoning="high"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 26%, var(--text-primary) 74%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 82%, var(--text-primary) 18%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 26%,
-    var(--text-primary) 74%
+    var(--chip-accent, #8e6fd8) 82%,
+    var(--text-primary) 18%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
@@ -8766,21 +8769,21 @@
   .composer-combined-picker-trigger-suffix {
   background-image: linear-gradient(
     100deg,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 0%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 34%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 38%, var(--text-primary) 62%) 50%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 66%,
-    color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%) 100%
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 0%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 34%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 96%, var(--text-primary) 4%) 50%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 66%,
+    color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%) 100%
   );
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-reduce-motion="true"]
   .composer-combined-picker-trigger[data-selected-reasoning="xhigh"]
   .composer-combined-picker-trigger-suffix {
-  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 28%, var(--text-primary) 72%);
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 88%, var(--text-primary) 12%);
   -webkit-text-fill-color: color-mix(
     in srgb,
-    var(--chip-accent, #8e6fd8) 28%,
-    var(--text-primary) 72%
+    var(--chip-accent, #8e6fd8) 88%,
+    var(--text-primary) 12%
   );
 }
 

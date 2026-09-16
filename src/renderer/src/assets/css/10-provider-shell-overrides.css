@@ -3377,6 +3377,51 @@
   -webkit-text-fill-color: rgba(18, 21, 27, 0.74) !important;
 }
 
+/* The grouped ink override above is the only rule in the tree that sets
+ * `-webkit-text-fill-color` on the reasoning suffix, so on these two shells it
+ * also erases the provider-hue ladder for every tier below Extra High. (Extra
+ * High and up survive only because they paint through `background-image`,
+ * which it does not touch — which is why "only Max still looks right".) Give
+ * those tiers their ladder mix back at the same weights; every other text run
+ * in the chip keeps the flat alabaster ink. The percentages mirror the light
+ * family ladder in 08-theme-picker-overrides.css — keep the two in step. */
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="low"]
+  .composer-combined-picker-trigger-suffix,
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="light"]
+  .composer-combined-picker-trigger-suffix,
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="on"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 42%, var(--text-primary) 58%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 42%,
+    var(--text-primary) 58%
+  ) !important;
+}
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="medium"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 64%, var(--text-primary) 36%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 64%,
+    var(--text-primary) 36%
+  ) !important;
+}
+[data-theme="alabaster"]:is([data-composer-style="gemini"], [data-composer-style="kimi"])
+  .composer-combined-picker-trigger[data-selected-reasoning="high"]
+  .composer-combined-picker-trigger-suffix {
+  color: color-mix(in srgb, var(--chip-accent, #8e6fd8) 82%, var(--text-primary) 18%) !important;
+  -webkit-text-fill-color: color-mix(
+    in srgb,
+    var(--chip-accent, #8e6fd8) 82%,
+    var(--text-primary) 18%
+  ) !important;
+}
+
 [data-theme="alabaster"][data-composer-style="gemini"]
   :is([data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"]),
 [data-theme="alabaster"][data-composer-style="gemini"]
