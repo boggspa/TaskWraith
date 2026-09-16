@@ -8483,6 +8483,24 @@
   white-space: nowrap;
 }
 
+/* Composer real estate (every shell): the model trigger reads
+ * logo · model · effort — the provider NAME is hidden. It stays in the DOM
+ * for assistive tech, the popover and the tests that pin it, so this is a
+ * one-rule revert. Scoped to the composer's model trigger only: seat-change
+ * rows and transcript attribution chips reuse these classes and keep their
+ * names. Exception: an Ollama Cloud row carries its upstream brand (MiniMax,
+ * GLM, Kimi, …) only in the label, because the logo beside it is Ollama's —
+ * keep the name whenever the cloud indicator is present. */
+.composer-combined-picker-trigger[data-composer-control="model"]
+  .composer-combined-picker-trigger-provider-label {
+  display: none;
+}
+.composer-combined-picker-trigger[data-composer-control="model"]
+  .composer-combined-picker-trigger-provider:has(.composer-combined-picker-trigger-cloud-indicator)
+  .composer-combined-picker-trigger-provider-label {
+  display: inline;
+}
+
 .composer-combined-picker-trigger-cloud-indicator {
   width: 13px;
   height: 13px;
