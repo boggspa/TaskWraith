@@ -523,16 +523,13 @@
   color: color-mix(in srgb, #ffffff 88%, transparent);
 }
 
-[data-composer-style="claude"] .composer-textarea {
-  padding: 6px 6px 10px;
-  min-height: 48px;
-  font-size: calc(var(--font-size-sm) + 1px);
-}
-[data-composer-style="claude"] .composer-textarea::placeholder {
-  color: color-mix(in srgb, #ffffff 30%, transparent);
-}
+/* Claude shell: this block moved to the "Claude Desktop composer parity"
+ * section at the end of 10-provider-shell-overrides.css, which owns the
+ * Claude textarea box, send/stop cluster and chin row in one place. */
 
-/* Claude bottom row: [Permission text]  [+] [...]   ...   [Model · Effort]  [Send/Spinner] */
+/* Claude bottom row (Claude Desktop chin order): [+] [mic˅] [Accept edits] … [Model · Effort] [ring]
+ * DOM order inside .composer-inline-pickers-left is attach, model, permission,
+ * voice, so attach and voice need distinct negative orders to lead the chip. */
 [data-composer-style="claude"] .composer-inline-pickers {
   margin-top: 0;
 }
@@ -542,9 +539,9 @@
   gap: 6px;
   flex: 1;
 }
-[data-composer-style="claude"] [data-composer-control="permission"] { order: -1; }
-[data-composer-style="claude"] [data-composer-control="voice"] { order: 0; }
-[data-composer-style="claude"] [data-composer-control="attach"]    { order: 0; }
+[data-composer-style="claude"] [data-composer-control="permission"] { order: 0; }
+[data-composer-style="claude"] [data-composer-control="voice"] { order: -1; }
+[data-composer-style="claude"] [data-composer-control="attach"]    { order: -2; }
 [data-composer-style="claude"] [data-composer-control="schedule"] { order: 1; }
 /* Provider sits in the gap between `+` (attach) and the right-aligned model
  * picker — replaces the previous satellite footer chip. */
@@ -636,55 +633,9 @@
   font-weight: 600;
 }
 
-/* Permission as plain text label ("Plan mode" style) */
-[data-composer-style="claude"] [data-composer-control="permission"] {
-  background: transparent;
-  border: 0;
-  padding: 0 4px;
-  color: color-mix(in srgb, #ffffff 80%, transparent);
-  font-size: calc(var(--font-size-xs) + 1px);
-  font-weight: 500;
-}
-[data-composer-style="claude"] [data-composer-control="permission"] svg {
-  display: none;
-}
+/* Permission chip: 24px ghost text button — see the parity section in shard 10. */
 
-/* 1.0.5-EW27 — Satellite "+" button in the Claude shell.
- *
- * the maintainer caught: in both light and dark mode, the Claude shell's
- * `+` (composer-plus-picker) button rendered as a visible square
- * container — visible border / background — which broke the
- * "satellite chrome" aesthetic the rest of the Claude shell
- * adopted in 1.0.4 (mention overlays, chip strip, etc. are all
- * naked typography on the composer surface).
- *
- * Pre-EW27 the Claude rule already cleared the base
- * `.composer-image-picker-btn`'s visible border + background, but
- * the Claude `:hover` rule re-introduced a background fill — and
- * focus state inherited container styling from the base rule.
- *
- * EW27 strips both default and hover container chrome. The "+"
- * sits as a floating glyph with a hover *color* change only (no
- * background fill, no border, no transform). Click target stays
- * at 26x26 via the explicit dimensions so the touch area is
- * unchanged. `transform: none` defeats the base rule's hover
- * `translateY(-1px)` so the glyph doesn't bounce. */
-[data-composer-style="claude"] .composer-image-picker-btn {
-  width: 26px;
-  height: 26px;
-  background: transparent;
-  border: 0;
-  border-radius: 0;
-  color: color-mix(in srgb, currentColor 60%, transparent);
-  transform: none;
-}
-[data-composer-style="claude"] .composer-image-picker-btn:hover:not(:disabled),
-[data-composer-style="claude"] .composer-image-picker-btn:focus-visible {
-  background: transparent;
-  border: 0;
-  color: currentColor;
-  transform: none;
-}
+/* Attach "+": 24px ghost button with a 20px glyph — parity section, shard 10. */
 
 /* 1.0.5-EW27 light-mode follow-up — the generic light-theme rule
  * at line ~23465 paints a soft-grey fill on `.composer-image-picker-btn`
@@ -724,105 +675,11 @@
   display: none;
 }
 
-/* Send button: small squared enter-symbol — sits at right of the textarea row */
-[data-composer-style="claude"] .composer-action-btn {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: transparent;
-  border: 0;
-  color: color-mix(in srgb, #ffffff 58%, transparent);
-}
+/* Claude shell: this block moved to the "Claude Desktop composer parity"
+ * section at the end of 10-provider-shell-overrides.css, which owns the
+ * Claude textarea box, send/stop cluster and chin row in one place. */
 
-/* Claude's send / stop / steer glyphs are optically scaled, but layout
- * movement belongs on the button box itself. Earlier builds translated the
- * child icon upward by 26px, leaving the hover/focus rectangle behind at the
- * pre-offset location. Keep the icon centered inside the real hit target so
- * glyph, hover fill, focus ring, and pointer box stay in sync. */
-[data-composer-style="claude"] .composer-action-btn .sf-symbol-icon {
-  transform: scale(var(--claude-send-glyph-scale)) !important;
-}
-[data-composer-style="claude"] .composer-action-btn:hover:not(:disabled) .sf-symbol-icon {
-  transform: scale(var(--claude-send-glyph-hover-scale)) !important;
-}
-[data-composer-style="claude"] .composer-action-btn.stop-btn .sf-symbol-icon {
-  transform: scale(var(--claude-stop-glyph-scale)) !important;
-}
-[data-composer-style="claude"] .composer-action-btn.stop-btn:hover:not(:disabled) .sf-symbol-icon {
-  transform: scale(var(--claude-stop-glyph-hover-scale)) !important;
-}
-
-[data-composer-style="claude"] .composer-action-btn {
-  --claude-send-button-lift: 26px;
-  --claude-send-glyph-scale: 1.25;
-  --claude-send-glyph-hover-scale: 1.325;
-  --claude-stop-glyph-scale: 2;
-  --claude-stop-glyph-hover-scale: 2.12;
-}
-[data-composer-style="claude"] .composer-action-btn:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-  border-radius: 8px;
-  box-shadow: none;
-}
-
-[data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
-  background: transparent;
-  border: 0;
-  color: color-mix(in srgb, #ffffff 70%, transparent);
-}
-[data-composer-style="claude"] .composer-action-btn.run-btn:hover:not(:disabled) {
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  color: #ffffff;
-}
-[data-composer-style="claude"] .composer-action-btn:disabled {
-  background: transparent;
-  border: 0;
-  color: color-mix(in srgb, #ffffff 22%, transparent);
-}
-
-[data-composer-style="claude"] .composer-action-btn.voice-btn {
-  width: 26px;
-  height: 26px;
-  min-width: 26px;
-  border-radius: 8px;
-  background: transparent;
-  border: 0;
-  color: color-mix(in srgb, #ffffff 56%, transparent);
-  box-shadow: none;
-  transform: none;
-}
-
-[data-composer-style="claude"] .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="claude"] .composer-action-btn.voice-btn.is-recording {
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  color: color-mix(in srgb, #ffffff 92%, transparent);
-  transform: none;
-}
-
-[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon,
-[data-composer-style="claude"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
-  width: 16px;
-  height: 16px;
-  transform: none !important;
-}
-
-[data-composer-style="claude"] .composer-action-btn.voice-btn:disabled,
-[data-composer-style="claude"] .composer-voice-chevron:disabled {
-  color: color-mix(in srgb, #ffffff 22%, transparent);
-}
-
-[data-composer-style="claude"] .composer-voice-chevron {
-  width: 13px;
-  height: 26px;
-  color: color-mix(in srgb, #ffffff 48%, transparent);
-}
-
-[data-composer-style="claude"] .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="claude"] .composer-voice-control.is-menu-open .composer-voice-chevron {
-  background: color-mix(in srgb, #ffffff 8%, transparent);
-  color: color-mix(in srgb, #ffffff 92%, transparent);
-}
+/* Mic + caret: 24px ghost split button — parity section, shard 10. */
 
 /* Claude shell satellite: native Claude Code renders branch / diff /
  * commit info as free-floating chips above the composer. Three things
@@ -2123,20 +1980,8 @@
   width: 17.1px;
   height: 17.1px;
 }
-[data-composer-style="claude"] .context-wheel {
-  order: -1;
-  margin-right: 6px;
-  color: var(--provider-claude-color);
-  width: 20px;
-  height: 20px;
-}
-[data-composer-style="claude"] .context-wheel svg {
-  width: 15px;
-  height: 15px;
-}
-[data-composer-style="claude"] .composer-context-trigger {
-  transform: translateY(-4px);
-}
+/* Claude ring: 12px donut in a 24px ghost button — parity section, shard 10
+ * (hue: shard 08 "Context donut" rule; severity tints: shared rules below). */
 :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .context-wheel {
   width: 21.6px;
   height: 21.6px;
@@ -2195,45 +2040,9 @@
 [data-composer-style="claude"] .composer-chips {
   display: none; /* Top status now lives in .composer-above-bar */
 }
-[data-composer-style="claude"] .composer-textarea {
-  background: color-mix(in srgb, #161616 94%, transparent);
-  border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
-  border-radius: 10px;
-  padding: 12px 14px;
-  min-height: 56px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
-}
-[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
-  border-color: color-mix(in srgb, #ffffff 22%, transparent);
-  box-shadow:
-    0 4px 20px rgba(0, 0, 0, 0.36),
-    0 0 0 1px color-mix(in srgb, #ffffff 14%, transparent);
-}
-[data-composer-style="claude"] .composer-control-footer {
-  background: transparent;
-  padding: 4px 4px 0;
-  margin-top: 0;
-}
-[data-composer-style="claude"] .composer-inline-pickers {
-  background: transparent;
-  border: 0;
-  padding: 6px 2px 2px;
-  gap: 8px;
-}
-
-/* Native Claude Code parks the send arrow at the right of the textarea's
- * placeholder line, not in the footer row. Float the primary action
- * button (run when idle, stop when busy) absolutely into the textarea
- * bubble's top-right; .composer-surface is the positioning context. The
- * surrounding footer pickers stay where they are but no longer have to
- * carry the send button alongside them. */
-[data-composer-style="claude"] .composer-action-btn.run-btn,
-[data-composer-style="claude"] .composer-action-btn.stop-btn {
-  position: absolute;
-  top: 12px;
-  right: 14px;
-  z-index: 3;
-}
+/* Claude shell: this block moved to the "Claude Desktop composer parity"
+ * section at the end of 10-provider-shell-overrides.css, which owns the
+ * Claude textarea box, send/stop cluster and chin row in one place. */
 
 /* Belt-and-braces: ensure nothing in the footer chrome carries a
  * leftover background so the surrounding controls read as floating
@@ -4341,16 +4150,9 @@
   margin-top: 7px;
 }
 
-/* Parity: claude shell keeps its palette but drops the split-box shape
- * (forced 118px textarea + top-only / bottom-only corner radii on the
- * textarea & control footer that mimicked Claude Code's two stacked
- * rectangles). Shape now matches every other theme; the claude feel reads
- * via colors, fonts, and the accent run-button tint defined below. */
-
-[data-composer-style="claude"] .composer-textarea {
-  background: #151515 !important;
-  border-color: color-mix(in srgb, #ffffff 10%, transparent) !important;
-}
+/* Claude shell: this block moved to the "Claude Desktop composer parity"
+ * section at the end of 10-provider-shell-overrides.css, which owns the
+ * Claude textarea box, send/stop cluster and chin row in one place. */
 
 /* Move the visible bubble chrome (rounded rect, border, drop shadow,
  * tinted backdrop) OFF .composer-surface — which contains BOTH the
@@ -4380,13 +4182,6 @@
 [data-composer-style="claude"] .composer-surface::before {
   display: none !important;
 }
-[data-composer-style="claude"] .composer-textarea {
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, #ffffff 9%, transparent);
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.32);
-  padding: 18px 14px;
-}
-
 /* The footer chrome (.composer-control-footer + inline pickers) is the
  * "satellite chip row" — it must stay transparent so the chips read as
  * floating on the page background. The composer-style="claude" block
@@ -4457,10 +4252,6 @@
 
 [data-composer-style="codex"] .composer-action-btn.run-btn:not(:disabled) {
   background: color-mix(in srgb, #ffffff 90%, transparent) !important;
-}
-
-[data-composer-style="claude"] .composer-action-btn.run-btn:not(:disabled) {
-  color: color-mix(in srgb, #ffb36c 82%, #ffffff 18%) !important;
 }
 
 @media (max-width: 980px) {

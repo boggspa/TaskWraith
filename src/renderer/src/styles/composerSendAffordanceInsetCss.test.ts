@@ -28,7 +28,7 @@ describe('composer send affordance textarea inset CSS', () => {
     expect(section).toContain('[data-composer-style="claude"]')
     expect(section).toContain('[data-composer-style="obsidian"]')
     expect(section).toContain('[data-composer-style="alabaster"]')
-    expect(section).toContain('--composer-inline-send-affordance-inset: 62px')
+    expect(section).toContain('--composer-inline-send-affordance-inset: 40px')
     expect(section).toContain('--composer-inline-send-affordance-inset: 68px')
     expect(section).toContain('.composer-textarea')
     expect(section).toContain('padding-right: var(--composer-inline-send-affordance-inset)')

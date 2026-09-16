@@ -8247,86 +8247,16 @@
  *      indicator hue.
  * ============================================================ */
 
-/* 1) Textarea rect — lighter fill + more pronounced rim.
- *    Beats the earlier `!important` rules at lines 14943 + 15045
- *    by also using `!important`. */
-[data-composer-style="claude"] .composer-textarea {
-  background: #1e1e1e !important;
-  border-color: rgba(255, 255, 255, 0.18) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-textarea {
-  background: #f0f0f3 !important;
-  border-color: rgba(0, 0, 0, 0.14) !important;
-}
-
-/* Focus-within glow tunes up with the brighter rim. */
-[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
-  border-color: rgba(255, 255, 255, 0.30) !important;
-  box-shadow:
-    0 4px 22px rgba(0, 0, 0, 0.36),
-    0 0 0 1px rgba(255, 255, 255, 0.18) !important;
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-surface:focus-within .composer-textarea {
-  border-color: rgba(0, 0, 0, 0.26) !important;
-  box-shadow:
-    0 4px 22px rgba(0, 0, 0, 0.12),
-    0 0 0 1px rgba(0, 0, 0, 0.10) !important;
-}
-
-/* 2) Send / stop / queue / steer buttons → bottom-right of the
- *    textarea rect instead of top-right. The earlier rule (line
- *    14147-14152) anchored to top:12px; we override to land at
- *    the bottom edge of the textarea rect by offsetting from
- *    surface bottom enough to clear the control-footer. */
-[data-composer-style="claude"] .composer-action-btn.run-btn,
-[data-composer-style="claude"] .composer-action-btn.stop-btn,
-[data-composer-style="claude"] .composer-action-btn.steer-btn {
-  top: auto !important;
-  bottom: calc(82px + var(--claude-send-button-lift, 0px)) !important;
-  right: 14px !important;
-}
-
-/* Claude positions the send affordance inside the textarea while the rest
- * of its controls sit in the footer. Keep the cluster as the positioned
- * object and reset the child button to normal flow so the hover/focus box,
- * pointer target, and glyph share the same coordinate system. */
-[data-composer-style="claude"]
-  .composer-surface:not(.side-chat-composer)
-  .composer-send-cluster {
-  --claude-send-cluster-lift: 26px;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  position: absolute;
-  right: 14px;
-  bottom: calc(82px + var(--claude-send-cluster-lift));
-  z-index: 4;
-}
-
-[data-composer-style="claude"]
-  .composer-surface:not(.side-chat-composer)
-  .composer-send-cluster
-  > .composer-action-btn {
-  position: static !important;
-  inset: auto !important;
-  top: auto !important;
-  right: auto !important;
-  bottom: auto !important;
-  transform: none;
-  width: 35px;
-  height: 35px;
-  min-width: 35px;
-  border-radius: 10px;
-}
+/* 1) Textarea rect + 2) send/stop placement now live in the "Claude Desktop
+ *    composer parity" section at the end of shard 10. */
 
 /* Claude, Obsidian, and Alabaster place the send/stop affordance inside
  * the textarea rectangle. Reserve text-flow space on the right edge so
  * long lines wrap before they pass under the overlaid glyph. Other composer
  * shells keep their normal full-width textarea. */
 [data-composer-style="claude"] .composer-surface:not(.side-chat-composer) {
-  --composer-inline-send-affordance-inset: 62px;
+  /* Claude Desktop: 32px send button 8px inside the box = a 40px text notch. */
+  --composer-inline-send-affordance-inset: 40px;
 }
 
 [data-composer-style="obsidian"] .composer-surface:not(.side-chat-composer),
@@ -8433,39 +8363,13 @@
   color: #d1242f;
 }
 
-/* 4) Permissions picker as a contained "Auto"-style button.
- *    Replaces the earlier transparent-pill treatment (line 13540)
- *    with a soft rounded-rect button matching real Claude's
- *    permission-mode pill. */
-[data-composer-style="claude"] [data-composer-control="permission"] {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: var(--radius-md, 8px);
-  padding: 3px 10px;
-  color: rgba(255, 255, 255, 0.92);
-}
+/* 4) Permissions picker: 24px ghost text button — parity section, shard 10. */
 
-[data-composer-style="claude"] [data-composer-control="permission"]:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.16);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] [data-composer-control="permission"] {
-  background: rgba(0, 0, 0, 0.04);
-  border-color: rgba(0, 0, 0, 0.10);
-  color: rgba(29, 29, 31, 0.92);
-}
-
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] [data-composer-control="permission"]:hover {
-  background: rgba(0, 0, 0, 0.08);
-  border-color: rgba(0, 0, 0, 0.16);
-}
-
-/* 5) Context donut → Claude's blue indicator hue.
- *    Was `color: #e6a960` (amber, line 14096) — real Claude
- *    renders the context spinner in a soft cyan-blue. */
+/* 5) Context donut → Claude Desktop's context-ring blue (#2a78d6). Kept at
+ *    (0,2,0) so the shared warn/critical severity tints in shard 07 still
+ *    win; geometry lives in the parity section of shard 10. */
 [data-composer-style="claude"] .context-wheel {
-  color: #5d9eff;
+  color: #2a78d6;
 }
 
 /* ============================================================
