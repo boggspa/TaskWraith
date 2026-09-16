@@ -33,6 +33,7 @@ export function CollapsedTranscriptRow({
   providerHueClass,
   expanded,
   onToggle,
+  canExpand = true,
   ariaTargetLabel,
   children
 }: {
@@ -61,52 +62,84 @@ export function CollapsedTranscriptRow({
   providerHueClass?: string
   expanded: boolean
   onToggle: (expanded: boolean) => void
+  /** False renders an INERT one-liner: the summary still names the work and
+   * still updates, but it is not a control and nothing opens. Used by the
+   * Minimal transcript view, where the one-liner IS the surface rather than a
+   * door to one. Default true, so every caller that does not opt in keeps
+   * today's behaviour exactly. */
+  canExpand?: boolean
   ariaTargetLabel: string
   children?: ReactNode
 }): ReactElement {
   const accent = providerAccentVar(providerHueClass)
+  const isOpen = canExpand && expanded
+  // The summary body is identical either way — only the element around it and
+  // the disclosure affordances change.
+  const summaryBody = (
+    <>
+      {icons}
+      {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
+      <span className="collapsed-activity-stack-label">
+        {labelContent ??
+          (labelParts
+            ? labelParts.map((part, index) => {
+                const prefix = index > 0 ? ' · ' : ''
+                return (
+                  <Fragment key={index}>
+                    {prefix}
+                    {renderCollapsedStackLabelPart(part)}
+                  </Fragment>
+                )
+              })
+            : label)}
+      </span>
+      <CollapsedDiffStats totals={diffStats} />
+    </>
+  )
   return (
     <div
-      className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
+      className={`collapsed-activity-stack ${isOpen ? 'is-expanded' : 'is-collapsed'}${
         errored ? ' has-errors' : ''
-      }${compact ? ' is-compact' : ''}`}
+      }${compact ? ' is-compact' : ''}${canExpand ? '' : ' is-inert'}`}
       style={accent ? ({ '--accent': accent } as CSSProperties) : undefined}
     >
       {header}
-      <button
-        type="button"
-        className="collapsed-activity-stack-summary"
-        onClick={() => onToggle(!expanded)}
-        aria-expanded={expanded}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${ariaTargetLabel}: ${label}${
-          // The whole row is one button, so an aria-label on the counters
-          // themselves would never be announced — append instead.
-          diffStats ? ` — ${collapsedStackDiffAriaLabel(diffStats)}` : ''
-        }`}
-        title={expanded ? `Collapse ${ariaTargetLabel}` : `Expand ${ariaTargetLabel}`}
-      >
-        <span className="collapsed-activity-stack-chevron" aria-hidden="true">
-          ▸
-        </span>
-        {icons}
-        {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
-        <span className="collapsed-activity-stack-label">
-          {labelContent ??
-            (labelParts
-              ? labelParts.map((part, index) => {
-                  const prefix = index > 0 ? ' · ' : ''
-                  return (
-                    <Fragment key={index}>
-                      {prefix}
-                      {renderCollapsedStackLabelPart(part)}
-                    </Fragment>
-                  )
-                })
-              : label)}
-        </span>
-        <CollapsedDiffStats totals={diffStats} />
-      </button>
-      {expanded ? children : null}
+      {canExpand ? (
+        <button
+          type="button"
+          className="collapsed-activity-stack-summary"
+          onClick={() => onToggle(!expanded)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'Collapse' : 'Expand'} ${ariaTargetLabel}: ${label}${
+            // The whole row is one button, so an aria-label on the counters
+            // themselves would never be announced — append instead.
+            diffStats ? ` — ${collapsedStackDiffAriaLabel(diffStats)}` : ''
+          }`}
+          title={expanded ? `Collapse ${ariaTargetLabel}` : `Expand ${ariaTargetLabel}`}
+        >
+          <span className="collapsed-activity-stack-chevron" aria-hidden="true">
+            ▸
+          </span>
+          {summaryBody}
+        </button>
+      ) : (
+        // No role, no tabIndex, no aria-label, no title, no chevron. A node
+        // announced as expandable that does nothing is worse for a screen
+        // reader than no control, and under Minimal the transcript is a WALL
+        // of these rows — making every one a tab stop would leave the keyboard
+        // path strictly worse than Standard. The text content IS the content.
+        <div className="collapsed-activity-stack-summary">
+          {summaryBody}
+          {/* The diff counters normally ride the button's accessible name
+           * (see `collapsedStackDiffAriaLabel`), because CollapsedDiffStats is
+           * aria-hidden. With no button there is no name to ride, so without
+           * this span `+42 −18` would vanish from the a11y tree entirely. */}
+          {diffStats ? (
+            <span className="sr-only">{collapsedStackDiffAriaLabel(diffStats)}</span>
+          ) : null}
+        </div>
+      )}
+      {isOpen ? children : null}
     </div>
   )
 }
@@ -175,6 +208,7 @@ export function CollapsedActivityStackRow({
   providerHueClass,
   expanded,
   onToggle,
+  canExpand,
   children
 }: {
   header: ReactElement | null
@@ -187,6 +221,10 @@ export function CollapsedActivityStackRow({
   providerHueClass?: string
   expanded: boolean
   onToggle: (expanded: boolean) => void
+  /** False renders the summary inert — see `CollapsedTranscriptRow`. The
+   * caller computes it, because the failure carve-out is scoped to the
+   * activities THIS row folds and only the caller knows that scope. */
+  canExpand?: boolean
   children?: ReactNode
 }): ReactElement {
   return (
@@ -209,6 +247,7 @@ export function CollapsedActivityStackRow({
             providerHueClass={providerHueClass}
             expanded={expanded}
             onToggle={onToggle}
+            canExpand={canExpand}
             ariaTargetLabel={`${summary.activityCount} activity ${
               summary.activityCount === 1 ? 'step' : 'steps'
             }`}

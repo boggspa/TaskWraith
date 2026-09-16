@@ -192,6 +192,10 @@ import {
 } from '../lib/ensembleRoundCards'
 import { useTranscriptView } from '../hooks/useTranscriptView'
 import {
+  activityStackHasFailure,
+  transcriptViewAllowsExpansion
+} from '../lib/transcriptViewFold'
+import {
   coLocateUserFanoutLaneMessages,
   isEnsembleFanoutViewportHeaderMessage
 } from '../lib/ensembleFanoutViewportGroups'
@@ -5874,6 +5878,10 @@ export const TranscriptPanel = memo(
                     activities={msg.toolActivities || []}
                     showDiffStats
                     providerHueClass={activityStackProviderHueClass}
+                    canExpand={
+                      transcriptViewAllowsExpansion(transcriptView) ||
+                      activityStackHasFailure(msg.toolActivities || [])
+                    }
                     expanded={collapsedStackExpanded}
                     onToggle={(expanded) =>
                       setCollapsedStackExpanded(liveViewportStackKey, expanded)

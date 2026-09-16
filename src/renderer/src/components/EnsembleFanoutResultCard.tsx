@@ -21,6 +21,8 @@ import {
   type ThinkingTraceActionsConfig
 } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
+import { activityStackHasFailure, transcriptViewAllowsExpansion } from '../lib/transcriptViewFold'
+import { DEFAULT_TRANSCRIPT_VIEW } from '../lib/transcriptViewOverride'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
 import { composedSeatRole, seatFromEnsembleMetadata } from '../lib/transcriptSeat'
@@ -379,6 +381,10 @@ export function EnsembleFanoutResultCard({
         activities={partActivities}
         providerHueClass={hueClass}
         showDiffStats
+        canExpand={
+          transcriptViewAllowsExpansion(transcriptView ?? DEFAULT_TRANSCRIPT_VIEW) ||
+          activityStackHasFailure(partActivities)
+        }
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >

@@ -13357,6 +13357,19 @@ button.diff-file-row {
 .collapsed-activity-stack-summary:hover .collapsed-activity-stack-label {
   color: var(--text-primary);
 }
+/* Minimal's one-liner is the surface, not a door to one. The base block above
+ * is written for a <button> — on the inert <div> its `cursor: pointer` is the
+ * one declaration that actively lies, and the hover lift is an affordance cue
+ * for an interaction that no longer exists. Everything else in that block
+ * (border/background/font/text-align resets) is a harmless no-op on a div. */
+.collapsed-activity-stack.is-inert .collapsed-activity-stack-summary {
+  cursor: default;
+}
+.collapsed-activity-stack.is-inert
+  .collapsed-activity-stack-summary:hover
+  .collapsed-activity-stack-label {
+  color: inherit;
+}
 .collapsed-activity-stack-chevron {
   flex-shrink: 0;
   font-size: 10px;
