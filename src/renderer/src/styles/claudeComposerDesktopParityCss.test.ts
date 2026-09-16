@@ -104,7 +104,7 @@ describe('Claude shell — Claude Desktop composer parity CSS', () => {
     }
   })
 
-  it('pins the box: #20201f fill, 8% inset ring, 14px radius, 13px/8px text inset, 16px/22px type, 48px single line', () => {
+  it('pins the box: #20201f fill, 8% inset ring, 14px radius, inset knobs (15px vertical, 12px left), 16px/22px type', () => {
     const section = readParitySection()
     expect(section).toContain('--claude-cc-box-bg: #20201f;')
     expect(section).toContain('--claude-cc-box-ring: rgba(255, 255, 255, 0.08);')
@@ -114,10 +114,18 @@ describe('Claude shell — Claude Desktop composer parity CSS', () => {
     expect(section).toContain('--claude-cc-text-muted: #898781;')
     expect(section).toContain('border-radius: 14px !important;')
     expect(section).toContain('inset 0 0 0 1px var(--claude-cc-box-ring),')
+    expect(section).toContain('--claude-cc-box-pad-y: 15px;')
+    expect(section).toContain('--claude-cc-box-pad-x: 12px;')
     expect(section).toContain(
-      'padding: 13px var(--composer-inline-send-affordance-inset, 40px) 13px 8px;'
+      'padding: var(--claude-cc-box-pad-y) var(--composer-inline-send-affordance-inset, 40px)\n    var(--claude-cc-box-pad-y) var(--claude-cc-box-pad-x);'
     )
-    expect(section).toContain('min-height: 48px !important;')
+    expect(section).toContain('min-height: calc(22px + 2 * var(--claude-cc-box-pad-y)) !important;')
+    expect(section).toContain(
+      'max-height: calc(22px * 8 + 2 * var(--claude-cc-box-pad-y)) !important;'
+    )
+    // Each knob is defined exactly once, on the shared (dark) palette block.
+    expect(section.split('--claude-cc-box-pad-y:').length - 1).toBe(1)
+    expect(section.split('--claude-cc-box-pad-x:').length - 1).toBe(1)
     expect(section).toContain('font-size: 16px;')
     expect(section).toContain('line-height: 22px;')
     expect(section).toContain('display: block;')
@@ -130,10 +138,10 @@ describe('Claude shell — Claude Desktop composer parity CSS', () => {
     )
   })
 
-  it('anchors a 32px ghost send/stop cluster 8px inside the box bottom-right, above the chin', () => {
+  it('anchors a 32px ghost send/stop cluster 8px from the box edge, centred on a single line, above the chin', () => {
     const section = readParitySection()
     expect(section).toContain('.composer-control-footer {\n  position: relative;')
-    expect(section).toContain('bottom: calc(100% + 16px);')
+    expect(section).toContain('bottom: calc(100% + 8px + (var(--claude-cc-box-pad-y) - 5px));')
     expect(section).toContain('right: 8px;')
     expect(section).toContain('width: 32px;\n  height: 32px;\n  min-width: 32px;')
     expect(section).toContain('border-radius: 8px;')
