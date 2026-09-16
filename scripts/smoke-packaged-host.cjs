@@ -12,7 +12,7 @@ const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
 const { createConnection } = require('node:net')
-const { spawn } = require('node:child_process')
+const { spawn, spawnSync } = require('node:child_process')
 const { createWindowsCmdInvocation } = require('./windows-cmd-invocation.cjs')
 
 const repoRoot = process.cwd()
@@ -342,6 +342,7 @@ async function runProductionRoundTrip(launcher, target) {
   const workspace = path.join(profile, 'workspace')
   const museBinary = path.join(profile, 'muse')
   let child = null
+  let failure = null
   try {
     fs.mkdirSync(workspace)
     // Real pre-Host Desktop profiles inherited the process umask and commonly
@@ -626,14 +627,40 @@ async function runProductionRoundTrip(launcher, target) {
     if (discovery.socketPath && fs.existsSync(discovery.socketPath)) {
       fail('production Host did not clean its socket on shutdown')
     }
+  } catch (error) {
+    failure = error
+    throw error
   } finally {
     // Emergency-only cleanup for a smoke failure before authenticated stop.
     if (child && child.exitCode === null) {
-      child.kill('SIGTERM')
+      terminateHostTree(child)
       await waitForExit(child).catch(() => undefined)
     }
-    removeTreeWhenReleased(profile)
+    try {
+      removeTreeWhenReleased(profile)
+    } catch (error) {
+      // A cleanup error must never replace the smoke failure it followed:
+      // three unsigned Windows lanes (35034254499, 35040796137, 35044758726)
+      // reported only "EBUSY: unlink query.sqlite" and hid the real failure.
+      if (!failure) throw error
+      console.error(`[smoke-packaged-host] profile cleanup after failure: ${error.message}`)
+    }
   }
+}
+
+// On Windows the launcher is cmd.exe running the packaged node.exe. A signal
+// reaches only cmd.exe: the Host survives it holding thread-catalogue-v1/
+// query.sqlite, the profile can never be removed, and the runner kills the
+// orphan node at job end (recovery run 35044758726). Kill the whole tree.
+function terminateHostTree(child) {
+  if (process.platform === 'win32' && child.pid) {
+    spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+      stdio: 'ignore',
+      windowsHide: true
+    })
+    return
+  }
+  child.kill('SIGTERM')
 }
 
 function spawnHostLauncher(launcher, args, target, extraEnv = {}) {

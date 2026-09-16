@@ -36,6 +36,21 @@ describe('packaged production Host smoke', () => {
     expect(smoke.match(/removeTreeWhenReleased\(/g)?.length).toBeGreaterThanOrEqual(3)
   })
 
+  it('kills the launcher tree and keeps the smoke failure visible on emergency cleanup', () => {
+    // On Windows the launcher is cmd.exe running the packaged node.exe: a
+    // signal reaches only cmd.exe, the Host survives holding query.sqlite, and
+    // the profile removal in `finally` then throws EBUSY in place of the smoke
+    // failure it followed (recovery run 35044758726: orphan node, only EBUSY
+    // reported). Emergency cleanup must kill the whole tree, and a cleanup
+    // error must never replace the failure that triggered it.
+    const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
+    expect(smoke).toMatch(/function terminateHostTree\(child\)[\s\S]*?'taskkill'[\s\S]*?'\/T'/)
+    expect(smoke).toMatch(/child\.exitCode === null\) \{\s*terminateHostTree\(child\)/)
+    expect(smoke).not.toMatch(/child\.exitCode === null\) \{\s*child\.kill\('SIGTERM'\)/)
+    expect(smoke).toMatch(/catch \(error\) \{\s*failure = error\s*throw error/)
+    expect(smoke).toMatch(/if \(!failure\) throw error/)
+  })
+
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
     const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
     const posix = fs.readFileSync(
