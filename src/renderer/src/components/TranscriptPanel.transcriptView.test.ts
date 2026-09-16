@@ -109,10 +109,23 @@ describe('the transcript-view subscription survives a server render', () => {
     // card. Strictness in that direction is safe — the regression the
     // membership comment records needed membership LOOSER, not tighter.
     const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
-    expect(panel.split('shouldAutoCollapseActivityStackForView(').length - 1).toBe(1)
-    // `shouldAutoCollapseActivityStack(` cannot match the ForView name, since
-    // the paren must follow `Stack` directly. One import line + one call.
+    // Counting occurrences is not enough: one of each would still pass if the
+    // two were SWAPPED. Assert WHICH block each sits in.
+    const strictAt = panel.indexOf('shouldAutoCollapseActivityStack(')
+    const forViewAt = panel.indexOf('shouldAutoCollapseActivityStackForView(')
+    expect(strictAt).toBeGreaterThan(-1)
+    expect(forViewAt).toBeGreaterThan(-1)
     expect(panel.split('shouldAutoCollapseActivityStack(').length - 1).toBe(1)
+    expect(panel.split('shouldAutoCollapseActivityStackForView(').length - 1).toBe(1)
+    // The strict call is the super-group membership test; the view-aware one is
+    // the row renderer's `stackAutoCollapsible`.
+    const membershipAt = panel.indexOf('const membershipOf = (')
+    const rowRendererAt = panel.indexOf('const stackAutoCollapsible =')
+    expect(membershipAt).toBeGreaterThan(-1)
+    expect(rowRendererAt).toBeGreaterThan(membershipAt)
+    expect(strictAt).toBeGreaterThan(membershipAt)
+    expect(strictAt).toBeLessThan(rowRendererAt)
+    expect(forViewAt).toBeGreaterThan(rowRendererAt)
   })
 
   it('subscribes exactly once, in TranscriptPanel, and threads the rest', () => {
@@ -130,5 +143,51 @@ describe('the transcript-view subscription survives a server render', () => {
       expect(source).not.toContain('subscribeTranscriptView')
       expect(source).toContain('transcriptView?: TranscriptView')
     }
+  })
+})
+
+describe('a view flip invalidates measured row heights', () => {
+  it('shares the density invalidation effect', () => {
+    // A Minimal row is a one-liner where a Standard one was a full activity
+    // stack, so every cached height is wrong by a large margin. Without this
+    // the spacers stay sized for the pre-flip rows and the reader gets a
+    // scroll jump with blank gaps. Density already had exactly this problem
+    // and exactly this fix; the view rides the same effect.
+    const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
+    // Anchor on the density effect's own comment: there are several
+    // `measurementsRef.current.clear()` sites and the first one is the
+    // chat-change reset, which must NOT gain the view.
+    const start = panel.indexOf('// Density change alters --space-lg')
+    expect(start).toBeGreaterThan(-1)
+    const effect = panel.slice(start, panel.indexOf('}, [', start) + 200)
+    expect(effect).toContain('measurementsRef.current.clear()')
+    expect(effect).toContain('geometryHeightsRef.current.clear()')
+    const deps = effect.slice(effect.indexOf('}, ['))
+    expect(deps).toContain('compactDensity')
+    expect(deps).toContain('transcriptView')
+  })
+
+  it('threads the view into the virtualisation hook', () => {
+    const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
+    const call = panel.slice(panel.indexOf('} = useTranscriptVirtualization({'))
+    expect(call).not.toBe('')
+    expect(call.slice(0, 200)).toContain('transcriptView')
+  })
+})
+
+describe('the recovered-activity caption never outlives its stack', () => {
+  it('gates the note on whether the stack will render', () => {
+    // The caption describes the stack beneath it. When a view filtered every
+    // recovered activity away the stack rendered nothing and the note was left
+    // captioning empty space.
+    const card = readFileSync(join(RENDERER_SRC, 'components/SubThreadReturnCard.tsx'), 'utf8')
+    expect(card).toContain('recoveredActivitiesVisible')
+    const noteAt = card.indexOf('Parent-run activity recorded onto this card')
+    expect(noteAt).toBeGreaterThan(-1)
+    const gateAt = card.lastIndexOf('{recoveredActivitiesVisible && (', noteAt)
+    expect(gateAt).toBeGreaterThan(-1)
+    // The gate must be the one immediately wrapping the note, not an earlier
+    // unrelated conditional.
+    expect(card.slice(gateAt, noteAt)).not.toContain('</div>')
   })
 })

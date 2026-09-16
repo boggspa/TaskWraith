@@ -289,3 +289,83 @@ describe('activityStackHasVisibleContent agrees with what renders', () => {
     expect(activityStackHasVisibleContent([thinking()], 'standard')).toBe(true)
   })
 })
+
+function todo(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'todo-1',
+    toolName: 'TodoWrite',
+    displayName: 'Todo',
+    category: 'task',
+    status: 'success',
+    parameters: { todos: [{ content: 'PLAN-RAIL-MARKER', status: 'in_progress' }] },
+    ...overrides
+  } as ToolActivity
+}
+
+describe('pinned status outlives every view', () => {
+  it('keeps the plan rail when the view filters every segment away', () => {
+    // The rail normally rides inside the first segment's cached body, so a
+    // view that removed every segment took it with them — and then the
+    // empty-guard returned null and the whole row vanished. The rail is pinned
+    // STATUS, not a viewport, and none of the three surfaces any view hides.
+    for (const view of ['minimal', 'tools', 'standard'] as const) {
+      const html = renderToStaticMarkup(
+        <ActivityStack activities={[todo()]} transcriptView={view} liveActivityViewport />
+      )
+      expect(html).toContain('PLAN-RAIL-MARKER')
+    }
+  })
+})
+
+describe('the collapsed cap counts what the CAP hid', () => {
+  // 90 thinking + 10 shell. Under standard everything is present and the cap
+  // bites; under tools/minimal the thinking is gone and there is nothing left
+  // for the cap to hide.
+  const many: ToolActivity[] = Array.from({ length: 100 }, (_, i) =>
+    i < 90
+      ? thinking({ id: `k${i}`, outputPreview: `T${i}`, resultSummary: `T${i}` })
+      : shell({ id: `s${i}`, parameters: { command: `echo ${i}` } })
+  )
+
+  const banner = (view: 'minimal' | 'tools' | 'standard') =>
+    renderToStaticMarkup(
+      <ActivityStack activities={many} transcriptView={view} liveActivityViewport />
+    ).match(/(\d+) earlier events hidden/)?.[1] ?? null
+
+  it("never claims the view's removals as its own", () => {
+    // Reading the UNFILTERED list made the banner announce hidden events on a
+    // row where the view, not the cap, had removed them — and where nothing
+    // was capped at all.
+    expect(banner('minimal')).toBeNull()
+    expect(banner('tools')).toBeNull()
+  })
+
+  it('still reports the cap under standard', () => {
+    // Positive control: without this the assertions above would pass simply
+    // because the banner never renders.
+    expect(banner('standard')).not.toBeNull()
+    expect(Number(banner('standard'))).toBeGreaterThan(0)
+  })
+
+  it('reads the cap and its banner off the SAME filtered list', () => {
+    // These two halves mask each other at render level, which is why both
+    // shipped wrong: with only the cap reading the unfiltered list the banner
+    // computes a negative and renders nothing, and with only the banner
+    // reading it the cap never activates. Neither is observable alone, and a
+    // fixture that separates them cannot be built — `buildTimelineItems`
+    // merges consecutive same-kind activities into compact groups, so a
+    // hundred shell commands collapse well below the cap. The invariant that
+    // matters is that both read the same list, so that is what is pinned.
+    const source = readFileSync(join(__dirname, 'ActivityStack.tsx'), 'utf8')
+    const capAt = source.indexOf('const collapseCapActive =')
+    const bannerAt = source.indexOf('const hiddenTimelineItemCount =')
+    expect(capAt).toBeGreaterThan(-1)
+    expect(bannerAt).toBeGreaterThan(capAt)
+    const capBlock = source.slice(capAt, source.indexOf('\n\n', capAt))
+    const bannerBlock = source.slice(bannerAt, source.indexOf('\n\n', bannerAt))
+    expect(capBlock).toContain('viewFilteredTimelineItems.length')
+    expect(bannerBlock).toContain('viewFilteredTimelineItems.length')
+    expect(capBlock).not.toContain('timelineItems.length >')
+    expect(bannerBlock).not.toContain('? timelineItems.length')
+  })
+})

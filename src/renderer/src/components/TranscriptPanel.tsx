@@ -18,7 +18,8 @@ import type {
   DiffFileSummary,
   FanoutLaneLayout,
   ProviderId,
-  ToolActivity
+  ToolActivity,
+  TranscriptView
 } from '../../../main/store/types'
 import {
   collapsedSystemNoticeLabel,
@@ -1615,6 +1616,14 @@ export function useTranscriptVirtualization(params: {
   getUserScrollGestureLive?: () => boolean
   onProgrammaticScrollWrite?: (landedScrollTop: number) => void
   compactDensity: boolean
+  /**
+   * How much of each turn the transcript renders. A view flip changes row
+   * heights as drastically as a density change does — a Minimal row is a
+   * one-liner where a Standard one was a full stack — so it invalidates the
+   * same caches. Optional and undefined-stable, so a caller that does not pass
+   * it never invalidates.
+   */
+  transcriptView?: TranscriptView
   forcedRowIndex?: number | null
   /**
    * RowKeys currently streaming (assistant / tool / fan-out). Measurement
@@ -1677,6 +1686,7 @@ export function useTranscriptVirtualization(params: {
     getUserScrollGestureLive,
     onProgrammaticScrollWrite,
     compactDensity,
+    transcriptView,
     forcedRowIndex,
     activeLiveRowKeys,
     expandedRowIds,
@@ -2173,13 +2183,18 @@ export function useTranscriptVirtualization(params: {
 
   // Density change alters --space-lg (the row gap baked into slot
   // heights), so every cached measurement is stale — clear + re-measure.
+  // A transcript-view flip is the same class of change and worse in degree:
+  // a Minimal row is a one-liner where a Standard one was a full activity
+  // stack, so every cached height is wrong by a large margin. Without this the
+  // spacers stay sized for the pre-flip rows and the reader gets a scroll jump
+  // with blank gaps where the tall rows used to be.
   useEffect(() => {
     if (!enabled) return
     measurementsRef.current.clear()
     geometryHeightsRef.current.clear()
     const frame = window.requestAnimationFrame(() => bumpMeasure())
     return () => window.cancelAnimationFrame(frame)
-  }, [enabled, compactDensity, bumpMeasure])
+  }, [enabled, compactDensity, transcriptView, bumpMeasure])
 
   // Pre-paint: anchor correction (Phase 1) + slot measurement (Phase 2).
   // This pass is deliberately invalidation-driven. Running it after every
@@ -4312,6 +4327,7 @@ export const TranscriptPanel = memo(
       spyProgress,
       spyViewportFraction
     } = useTranscriptVirtualization({
+      transcriptView,
       enabled: virtualizeEnabled,
       rows: virtualRows,
       scrollRef,

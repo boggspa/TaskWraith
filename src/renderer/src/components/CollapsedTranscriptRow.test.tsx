@@ -333,11 +333,15 @@ describe('the inert one-liner (Minimal)', () => {
     // declaration that actively lies on a div.
     expect(css).toContain('.collapsed-activity-stack-summary {')
     expect(css).toContain('cursor: pointer;')
-    const inertBlock = css.slice(
-      css.indexOf('.collapsed-activity-stack.is-inert .collapsed-activity-stack-summary {')
+    // `css.slice(css.indexOf(missing))` is `css.slice(-1)` — the LAST
+    // CHARACTER, never ''. The old `not.toBe('')` precondition could not fail,
+    // so a renamed selector would have sailed through. Assert the index first.
+    const inertStart = css.indexOf(
+      '.collapsed-activity-stack.is-inert .collapsed-activity-stack-summary {'
     )
-    expect(inertBlock).not.toBe('')
-    expect(inertBlock.slice(0, 120)).toContain('cursor: default;')
+    expect(inertStart).toBeGreaterThan(-1)
+    const inertBlock = css.slice(inertStart, css.indexOf('}', inertStart))
+    expect(inertBlock).toContain('cursor: default;')
   })
 
   it('stays expandable by default, so every untaught caller is unchanged', () => {

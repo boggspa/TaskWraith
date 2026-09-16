@@ -5,7 +5,8 @@ import type {
   ProviderId,
   TranscriptView
 } from '../../../main/store/types'
-import { ActivityStack } from './ActivityStack'
+import { DEFAULT_TRANSCRIPT_VIEW } from '../lib/transcriptViewOverride'
+import { ActivityStack, activityStackHasVisibleContent } from './ActivityStack'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
@@ -68,6 +69,14 @@ export function SubThreadReturnCard({
   resultExpanded,
   onResultExpandedChange
 }: SubThreadReturnCardProps) {
+  // The caption below describes the stack beneath it, so it must not outlive
+  // it: when a view filters every recovered activity away the stack renders
+  // nothing and the note was left captioning empty space.
+  const recoveredActivitiesVisible = activityStackHasVisibleContent(
+    message.toolActivities || [],
+    transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+    { chatId: chat?.appChatId, runId: message.runId }
+  )
   const metadata = message.metadata || {}
   const relation = linkedChildReturnRelation(message)
   const isSideChatReturn = relation === 'sideChat'
@@ -213,7 +222,7 @@ export function SubThreadReturnCard({
           </div>
         </LiveActivityViewport>
       </div>
-      {recoveredActivities.length > 0 && (
+      {recoveredActivitiesVisible && (
         <div className="subthread-return-recovered-activity">
           <div className="subthread-return-recovered-note">
             Parent-run activity recorded onto this card while the run continued.

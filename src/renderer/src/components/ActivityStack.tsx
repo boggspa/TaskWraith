@@ -3273,10 +3273,15 @@ export function ActivityStack({
     () => visibleTimelineItems(fullTimelineSegments, transcriptView, timelineItems),
     [fullTimelineSegments, transcriptView, timelineItems]
   )
+  // Both the cap and its banner count the items this view actually RENDERS.
+  // Reading the unfiltered list instead made the banner claim "30 earlier
+  // events hidden" on a Minimal row where the view, not the cap, had removed
+  // them — and where nothing was capped at all. Identical under standard,
+  // where the filtered list IS the unfiltered one, by reference.
   const collapseCapActive =
     liveViewportEnabled &&
     !anyLiveViewportExpanded &&
-    timelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+    viewFilteredTimelineItems.length > COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
   const timelineSegments = useMemo(
     () =>
       collapseCapActive
@@ -3285,7 +3290,7 @@ export function ActivityStack({
     [collapseCapActive, fullTimelineSegments]
   )
   const hiddenTimelineItemCount = collapseCapActive
-    ? timelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
+    ? viewFilteredTimelineItems.length - COLLAPSED_LIVE_ACTIVITY_ITEM_LIMIT
     : 0
   const expandedIdsKey = useMemo(() => {
     if (!expandedIds || expandedIds.size === 0) return ''
@@ -3298,7 +3303,11 @@ export function ActivityStack({
   // reader keeps under Minimal is TranscriptPanel's collapsed row, not this
   // component — if this returned an empty shell the transcript would show a
   // bare rule where the work used to be.
-  if (viewFilters && fullTimelineSegments.length === 0) return null
+  // The plan rail is pinned STATUS, not a viewport — it is none of the three
+  // surfaces any view was asked to hide, so it outlives a filter that removed
+  // every segment. Standard never reaches this branch: `viewFilters` is false.
+  const hasPinnedLiveContent = planLanes.length > 1 || latestMergedTodos.length > 0
+  if (viewFilters && fullTimelineSegments.length === 0 && !hasPinnedLiveContent) return null
 
   const resolveThreadActivities = (thread: ChildAgentThread): ToolActivity[] => {
     return thread.toolActivityIds
@@ -3459,6 +3468,12 @@ export function ActivityStack({
     return (
       <div className="activity-timeline" style={activityAccentStyle}>
         {header}
+        {/* The rail normally rides inside the first segment's cached body. When
+         * a view has filtered every segment away there is no body to ride, so
+         * it renders here instead — pinned status must not disappear because
+         * the reader asked for a quieter transcript. Unreachable under
+         * standard, where a live viewport always has at least one segment. */}
+        {timelineSegments.length === 0 && pinnedLiveContent}
         {childThreads.length >= 2 && (
           <ChildAgentSpawnBlock
             threads={childThreads}
