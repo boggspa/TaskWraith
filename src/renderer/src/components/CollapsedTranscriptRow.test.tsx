@@ -255,7 +255,7 @@ describe('the inert one-liner (Minimal)', () => {
         header={null}
         label="Ran 2 commands"
         ariaTargetLabel="2 activity steps"
-        diffStats={{ additions: 42, deletions: 18, confidence: 'exact', files: [] }}
+        diffStats={{ additions: 42, deletions: 18, estimated: false }}
         expanded={expanded}
         onToggle={() => {}}
         canExpand={canExpand}

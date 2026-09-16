@@ -17,11 +17,11 @@ import {
 } from '../lib/ollamaDisplayBrand'
 import {
   ActivityStack,
+  activityStackHasVisibleContent,
   type ActivityTimelineSegmentKind,
   type ThinkingTraceActionsConfig
 } from './ActivityStack'
 import { CollapsedActivityStackRow } from './CollapsedTranscriptRow'
-import { activityStackHasFailure, transcriptViewAllowsExpansion } from '../lib/transcriptViewFold'
 import { DEFAULT_TRANSCRIPT_VIEW } from '../lib/transcriptViewOverride'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
@@ -381,10 +381,11 @@ export function EnsembleFanoutResultCard({
         activities={partActivities}
         providerHueClass={hueClass}
         showDiffStats
-        canExpand={
-          transcriptViewAllowsExpansion(transcriptView ?? DEFAULT_TRANSCRIPT_VIEW) ||
-          activityStackHasFailure(partActivities)
-        }
+        canExpand={activityStackHasVisibleContent(
+          partActivities,
+          transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+          { provider, chatId: chat?.appChatId, runId: streamRunId || message.runId }
+        )}
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >

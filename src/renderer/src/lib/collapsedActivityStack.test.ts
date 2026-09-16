@@ -435,6 +435,36 @@ describe('shouldAutoCollapseActivityStackForView', () => {
     ).toBe(false)
   })
 
+  it('folds a live stack the VIEW emptied, even outside minimal', () => {
+    // Without this a live thinking-only stack under `tools` renders as a blank
+    // row: the filter removes every segment and no fold produces a one-liner
+    // to fall back on. The caller supplies the emptiness answer.
+    const thinking = [activity({ toolName: 'reasoning', status: 'running' })]
+    expect(shouldAutoCollapseActivityStackForView({ activities: thinking, ...live }, 'tools')).toBe(
+      false
+    )
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: thinking, ...live }, 'tools', true)
+    ).toBe(true)
+  })
+
+  it('never folds under standard, whatever the caller claims', () => {
+    // Standard hides nothing, so an emptiness claim is incoherent there. The
+    // guard is redundant today and load-bearing the moment anyone passes it.
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: running, ...live }, 'standard', true)
+    ).toBe(false)
+  })
+
+  it('still refuses a priority activity even when told the view emptied it', () => {
+    const yielding = [
+      activity({ toolName: 'ensemble_yield', displayName: 'Yielding', status: 'running' })
+    ]
+    expect(
+      shouldAutoCollapseActivityStackForView({ activities: yielding, ...live }, 'minimal', true)
+    ).toBe(false)
+  })
+
   it('agrees with the strict predicate for every settled stack, in every view', () => {
     // The wrapper delegates first, so Standard and Tools cannot drift from
     // today's behaviour and Minimal cannot UN-fold something already folded.

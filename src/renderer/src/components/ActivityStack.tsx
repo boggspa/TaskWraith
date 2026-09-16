@@ -1903,6 +1903,51 @@ function timelineItemActivities(item: ActivityTimelineItem): ToolActivity[] {
  * anchors merge into one spawn-wave segment, mirroring how ensemble fan-out
  * lanes share one wave viewport.
  */
+/**
+ * Would opening this stack show the reader anything, under this view?
+ *
+ * Expandability is NOT a property of the view. A one-liner that opens onto
+ * nothing is a dead control, and a row whose content the view removed entirely
+ * must fold to an inert one-liner rather than vanish — which is what the
+ * user's own spec asks for: "retaining the existing one-liner collapsed, but
+ * never expands to show thinking viewports".
+ *
+ * This replicates the component's own pipeline because the CALLER has to
+ * decide `canExpand` before rendering the stack as children, so it cannot ask
+ * the mounted component. The one piece it deliberately omits is the collapse
+ * DEBOUNCE, which is a hook and cannot run here; that only delays items
+ * appearing, never changes whether any exist. `activityStackVisibleContentMatchesRender`
+ * in the test suite pins this function against what the component actually
+ * renders, for every view, so the two cannot drift apart silently.
+ *
+ * `chat` is deliberately NOT threaded through to `deriveChildAgentThreadsFromActivities`:
+ * that function MUTATES `chat.providerMetadata.agentIdentities`, and this is a
+ * question, not a render.
+ */
+export function activityStackHasVisibleContent(
+  activities: readonly ToolActivity[] | undefined,
+  view: TranscriptView,
+  options: { provider?: ProviderId; chatId?: string; runId?: string } = {}
+): boolean {
+  if (!activities || activities.length === 0) return false
+  // Standard hides nothing, so the answer is "yes" without doing any work —
+  // the default install must not pay for this.
+  if (view === 'standard') return true
+  const { provider, chatId, runId } = options
+  const childThreads = provider
+    ? deriveChildAgentThreadsFromActivities(provider, chatId, runId, activities as ToolActivity[])
+    : []
+  const childIds = new Set<string>()
+  const agentAnchorIds = new Set<string>()
+  for (const thread of childThreads) {
+    if (thread.parentToolCallId) agentAnchorIds.add(thread.parentToolCallId)
+    for (const id of thread.toolActivityIds) childIds.add(id)
+  }
+  const topLevel = (activities as ToolActivity[]).filter((activity) => !childIds.has(activity.id))
+  const segments = buildTimelineSegments(buildTimelineItems(topLevel), agentAnchorIds)
+  return visibleTimelineSegments(segments, view).length > 0
+}
+
 export function buildTimelineSegments(
   items: ActivityTimelineItem[],
   agentAnchorIds?: ReadonlySet<string>

@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import { ActivityStack } from './ActivityStack'
+import { ActivityStack, activityStackHasVisibleContent } from './ActivityStack'
 import type { ToolActivity } from '../../../main/store/types'
 
 const THINK = 'THINKING-BODY-MARKER'
@@ -193,5 +193,99 @@ describe('the live segment-children cache learns about the view', () => {
     )
     expect(call).not.toBe('')
     expect(call).toContain('transcriptView,')
+  })
+})
+
+function yielding(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  return {
+    id: 'yield-1',
+    toolName: 'mcp_TaskWraith_ensemble_yield',
+    displayName: 'Captain K yielding to Gems',
+    category: 'task',
+    status: 'success',
+    parameters: { target: 'Gems' },
+    ...overrides
+  } as ToolActivity
+}
+
+describe('a priority row survives every view', () => {
+  it('renders an ensemble_yield identically under minimal, tools and standard', () => {
+    // The carve-out used to CANCEL ITSELF: the fold refused a yield because it
+    // is conversation structure, so it fell through to the full stack, where
+    // the segment filter dropped it as tool noise and the row rendered NOTHING.
+    const standard = renderToStaticMarkup(
+      <ActivityStack activities={[yielding()]} transcriptView="standard" />
+    )
+    expect(standard).not.toBe('')
+    for (const view of ['minimal', 'tools'] as const) {
+      expect(
+        renderToStaticMarkup(<ActivityStack activities={[yielding()]} transcriptView={view} />)
+      ).toBe(standard)
+    }
+  })
+})
+
+function spawn(overrides: Partial<ToolActivity> = {}): ToolActivity {
+  // `task` is on ChildAgentThreads' explicit TASK_TOOL_NAMES list, so this
+  // activity anchors a ChildAgentThread and therefore segments as kind
+  // 'agent' — the one kind every view keeps.
+  return {
+    id: 'spawn-1',
+    toolName: 'task',
+    displayName: 'Task',
+    category: 'task',
+    status: 'success',
+    parameters: { prompt: 'SPAWN-PROMPT-MARKER' },
+    ...overrides
+  } as ToolActivity
+}
+
+describe('a sub-agent spawn wave stays reachable', () => {
+  it('renders under every view, and is expandable under minimal', () => {
+    // `transcriptViewRendersSegment` keeps kind 'agent' in every view — but
+    // that promise was unkept: the settled stack folded, `canExpand` asked
+    // "is the view minimal" and said no, so the children never mounted and
+    // the surviving agent segment could not be reached.
+    const opts = { provider: 'claude' as const, chatId: 'c1', runId: 'r1' }
+    for (const view of ['minimal', 'tools', 'standard'] as const) {
+      expect(activityStackHasVisibleContent([spawn()], view, opts)).toBe(true)
+    }
+    // Control: without the provider there is no thread, so the same activity
+    // segments as ordinary tool noise and minimal drops it. This is what makes
+    // the assertion above depend on the agent-anchor path.
+    expect(activityStackHasVisibleContent([spawn()], 'minimal')).toBe(false)
+  })
+})
+
+describe('activityStackHasVisibleContent agrees with what renders', () => {
+  // The predicate replicates the component's pipeline because the CALLER must
+  // decide `canExpand` before rendering the stack as children. This is the
+  // anti-drift pin: for every fixture and every view, "would opening show
+  // anything" must equal "does the component render anything".
+  const fixtures: { name: string; activities: ToolActivity[] }[] = [
+    { name: 'thinking only', activities: [thinking()] },
+    { name: 'tools only', activities: [shell()] },
+    { name: 'thinking + tools', activities: [thinking(), shell()] },
+    { name: 'failed tool', activities: [shell({ status: 'error' })] },
+    { name: 'priority yield', activities: [yielding()] },
+    { name: 'thinking + failed tool', activities: [thinking(), shell({ status: 'error' })] }
+  ]
+
+  for (const view of ['minimal', 'tools', 'standard'] as const) {
+    for (const fixture of fixtures) {
+      it(`${view}: ${fixture.name}`, () => {
+        const rendered =
+          renderToStaticMarkup(
+            <ActivityStack activities={fixture.activities} transcriptView={view} />
+          ) !== ''
+        expect(activityStackHasVisibleContent(fixture.activities, view)).toBe(rendered)
+      })
+    }
+  }
+
+  it('says no for an empty stack and yes for standard without doing any work', () => {
+    expect(activityStackHasVisibleContent([], 'minimal')).toBe(false)
+    expect(activityStackHasVisibleContent(undefined, 'minimal')).toBe(false)
+    expect(activityStackHasVisibleContent([thinking()], 'standard')).toBe(true)
   })
 })

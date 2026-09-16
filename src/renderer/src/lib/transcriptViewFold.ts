@@ -1,4 +1,5 @@
 import type { ToolActivity } from '../../../main/store/types'
+import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import type { ActivityTimelineSegmentKind } from '../components/ActivityStack'
 import type { TranscriptView } from './transcriptViewOverride'
 
@@ -43,20 +44,43 @@ export function activityStackHasFailure(activities: readonly ToolActivity[]): bo
   return activities.some((activity) => activity.status === 'error')
 }
 
+/** Lifecycle-routing actions have the same transcript standing as seat and
+ * handoff-turn changes. Their full attributed row is conversation structure,
+ * not tool noise, so no settled-stack or super-group fold may hide it behind
+ * a generic "Used N tools" summary.
+ *
+ * It lives HERE, next to the failure twin, because the fold and the segment
+ * filter must read one fact. They used to read two, and that is exactly why
+ * the carve-out protecting a yield from being FOLDED was what got it DELETED:
+ * the fold refused it, so it fell through to the full stack, where the filter
+ * dropped it as ordinary tool noise and the row rendered nothing at all. */
+export function isTranscriptPriorityActivity(activity: ToolActivity): boolean {
+  return resolveCanonicalToolName(activity.toolName || '') === 'ensemble_yield'
+}
+
+export function activityStackHasPriorityActivity(activities: readonly ToolActivity[]): boolean {
+  return activities.some(isTranscriptPriorityActivity)
+}
+
 /**
  * Whether a timeline segment renders at all.
  *
- * `hasFailure` is the caller's answer for the activities inside THIS segment,
- * not the whole stack — a failed shell command must not drag an unrelated
- * thinking viewport back onto the screen.
+ * `hasFailure` and `hasPriorityActivity` are the caller's answers for the
+ * activities inside THIS segment, not the whole stack — a failed shell command
+ * must not drag an unrelated thinking viewport back onto the screen.
+ *
+ * A priority activity is exempt for the same reason a failure is: it is
+ * conversation structure, and the fold already refuses to swallow it. Without
+ * the exemption here the two protections cancel out and the row disappears.
  */
 export function transcriptViewRendersSegment(
   view: TranscriptView,
   kind: ActivityTimelineSegmentKind,
-  hasFailure = false
+  hasFailure = false,
+  hasPriorityActivity = false
 ): boolean {
   if (view === 'standard') return true
-  if (hasFailure) return true
+  if (hasFailure || hasPriorityActivity) return true
   if (kind === 'agent') return true
   if (view === 'tools') return kind !== 'thinking'
   return false
@@ -96,7 +120,12 @@ export function visibleTimelineSegments<TItem, S extends FoldableSegment<TItem>>
 ): S[] {
   if (view === 'standard') return segments
   return segments.filter((segment) =>
-    transcriptViewRendersSegment(view, segment.kind, activityStackHasFailure(segment.activities))
+    transcriptViewRendersSegment(
+      view,
+      segment.kind,
+      activityStackHasFailure(segment.activities),
+      activityStackHasPriorityActivity(segment.activities)
+    )
   )
 }
 
@@ -128,19 +157,14 @@ export function transcriptViewRendersFanoutViewport(
   return view !== 'minimal' || hasFailure
 }
 
-/**
- * Whether a collapsed one-liner can be opened.
- *
- * Minimal's one-liners are inert — not "collapsed by default". The row must
- * therefore render as a non-button with no `aria-expanded` at all, following
- * `ActivityStack.tsx:4146`: a control announced as expandable that does
- * nothing is worse for a screen reader than no control. A failure is exempt
- * from HIDING, not from this — its body is already on screen, so there is
- * nothing left for an expander to reveal.
- */
-export function transcriptViewAllowsExpansion(view: TranscriptView): boolean {
-  return view !== 'minimal'
-}
+/* `transcriptViewAllowsExpansion` used to live here. It was deleted, not
+ * moved: a helper named "does this VIEW allow expansion" is a trap, because
+ * views do not decide that. A row is expandable iff OPENING IT WOULD SHOW
+ * SOMETHING — see `activityStackHasVisibleContent` in `components/ActivityStack`.
+ * Asking the view instead produced two shipped defects: a thinking-only stack
+ * under Tools folded to a one-liner that opened onto nothing, and a settled
+ * sub-agent spawn wave under Minimal became unreachable even though its
+ * segment survives the filter by design. */
 
 /**
  * Whether this view folds a stack the transcript would otherwise leave open.

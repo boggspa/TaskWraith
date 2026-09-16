@@ -192,10 +192,6 @@ import {
 } from '../lib/ensembleRoundCards'
 import { useTranscriptView } from '../hooks/useTranscriptView'
 import {
-  activityStackHasFailure,
-  transcriptViewAllowsExpansion
-} from '../lib/transcriptViewFold'
-import {
   coLocateUserFanoutLaneMessages,
   isEnsembleFanoutViewportHeaderMessage
 } from '../lib/ensembleFanoutViewportGroups'
@@ -219,6 +215,7 @@ import {
 } from '../lib/transcriptSearchHighlight'
 import {
   ActivityStack,
+  activityStackHasVisibleContent,
   stabilizeThinkingTraceActions,
   type ActivityTimelineSegmentKind,
   type ThinkingTraceActionsConfig,
@@ -5158,6 +5155,18 @@ export const TranscriptPanel = memo(
             // one-line summary once the conversation has moved past it.
             // Under Minimal this also folds a stack whose work is still
             // running — the one-liner IS the live surface in that view.
+            // One answer, two uses: whether opening this stack would show
+            // anything decides BOTH whether the one-liner can be opened and
+            // whether a live stack must fold rather than render blank.
+            const stackHasVisibleContent = activityStackHasVisibleContent(
+              msg.toolActivities || [],
+              transcriptView,
+              {
+                provider: getChatProvider(currentChat),
+                chatId: currentChat?.appChatId,
+                runId: msg.runId || boundaryRun?.runId
+              }
+            )
             const stackAutoCollapsible =
               isToolActivityStack &&
               shouldAutoCollapseActivityStackForView(
@@ -5166,7 +5175,8 @@ export const TranscriptPanel = memo(
                   isLiveRow: liveViewportActive,
                   isLastRow: protectedFromCollapseRowKeys.has(rowKey)
                 },
-                transcriptView
+                transcriptView,
+                !stackHasVisibleContent
               )
             const collapsedStackExpanded =
               stackAutoCollapsible && liveViewportStackKey
@@ -5878,10 +5888,7 @@ export const TranscriptPanel = memo(
                     activities={msg.toolActivities || []}
                     showDiffStats
                     providerHueClass={activityStackProviderHueClass}
-                    canExpand={
-                      transcriptViewAllowsExpansion(transcriptView) ||
-                      activityStackHasFailure(msg.toolActivities || [])
-                    }
+                    canExpand={stackHasVisibleContent}
                     expanded={collapsedStackExpanded}
                     onToggle={(expanded) =>
                       setCollapsedStackExpanded(liveViewportStackKey, expanded)

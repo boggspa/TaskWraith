@@ -3,10 +3,13 @@ import type { ToolActivity } from '../../../main/store/types'
 import {
   TRANSCRIPT_VIEWS,
   activityStackHasFailure,
-  transcriptViewAllowsExpansion,
+  activityStackHasPriorityActivity,
+  isTranscriptPriorityActivity,
   transcriptViewFoldsLiveStacks,
   transcriptViewRendersFanoutViewport,
-  transcriptViewRendersSegment
+  transcriptViewRendersSegment,
+  visibleTimelineItems,
+  visibleTimelineSegments
 } from './transcriptViewFold'
 
 function activity(overrides: Partial<ToolActivity> = {}): ToolActivity {
@@ -85,12 +88,6 @@ describe('fan-out lane viewports', () => {
 })
 
 describe('expansion and live folding', () => {
-  it('makes minimal one-liners inert and leaves the others expandable', () => {
-    expect(transcriptViewAllowsExpansion('minimal')).toBe(false)
-    expect(transcriptViewAllowsExpansion('tools')).toBe(true)
-    expect(transcriptViewAllowsExpansion('standard')).toBe(true)
-  })
-
   it('folds live stacks under minimal only', () => {
     expect(transcriptViewFoldsLiveStacks('minimal')).toBe(true)
     expect(transcriptViewFoldsLiveStacks('tools')).toBe(false)
@@ -103,15 +100,75 @@ describe('the view list', () => {
     expect(TRANSCRIPT_VIEWS).toEqual(['minimal', 'tools', 'standard'])
   })
 
-  it('covers every view the fold predicates accept', () => {
-    // Guards the pair: a fourth view added to the union without a picker entry
-    // would be unreachable, and one added here without fold handling would
-    // fall through to `return false` and hide the whole turn.
-    const decided = TRANSCRIPT_VIEWS.filter(
-      (view) =>
-        transcriptViewRendersSegment(view, 'agent') &&
-        typeof transcriptViewAllowsExpansion(view) === 'boolean'
-    )
-    expect(decided).toHaveLength(3)
+  it('renders SOMETHING for every view and kind, so no view can blank a turn', () => {
+    // A fourth view added to the union without fold handling would fall
+    // through to `return false` for every kind and hide the whole turn. This
+    // asserts each view keeps at least one kind, which `return false` breaks.
+    for (const view of TRANSCRIPT_VIEWS) {
+      const kept = (['thinking', 'tools', 'agent'] as const).filter((kind) =>
+        transcriptViewRendersSegment(view, kind)
+      )
+      expect(kept.length).toBeGreaterThan(0)
+    }
+  })
+})
+
+describe('the priority carve-out', () => {
+  const yielding = activity({ toolName: 'mcp_TaskWraith_ensemble_yield' })
+
+  it('recognises a yield through its canonical name', () => {
+    expect(isTranscriptPriorityActivity(yielding)).toBe(true)
+    expect(isTranscriptPriorityActivity(activity())).toBe(false)
+    expect(activityStackHasPriorityActivity([activity(), yielding])).toBe(true)
+    expect(activityStackHasPriorityActivity([activity()])).toBe(false)
+  })
+
+  it('keeps a priority segment on screen under every view', () => {
+    // Without this the two protections CANCEL: the fold refuses a yield
+    // because it is conversation structure, so it falls through to the full
+    // stack, where the filter drops it as ordinary tool noise and the row
+    // renders nothing at all. That shipped.
+    for (const view of TRANSCRIPT_VIEWS) {
+      expect(transcriptViewRendersSegment(view, 'tools', false, true)).toBe(true)
+    }
+    // Control: the same segment WITHOUT a priority activity is dropped under
+    // minimal, so the assertion above is the exemption doing work.
+    expect(transcriptViewRendersSegment('minimal', 'tools', false, false)).toBe(false)
+  })
+})
+
+describe('segment and item filtering', () => {
+  const seg = (kind: 'thinking' | 'tools' | 'agent', items: string[], acts = [activity()]) => ({
+    kind,
+    items,
+    activities: acts
+  })
+
+  it('returns the SAME ARRAY for standard, so the default install pays nothing', () => {
+    // Not just equal — identical. Standard must not allocate a copy per render
+    // of every activity stack in the transcript.
+    const segments = [seg('thinking', ['t1']), seg('tools', ['x1'])]
+    expect(visibleTimelineSegments(segments, 'standard')).toBe(segments)
+    const items = ['t1', 'x1']
+    expect(visibleTimelineItems(segments, 'standard', items)).toBe(items)
+  })
+
+  it('drops thinking under tools and both under minimal', () => {
+    const segments = [seg('thinking', ['t1']), seg('tools', ['x1'])]
+    expect(visibleTimelineSegments(segments, 'tools').map((s) => s.kind)).toEqual(['tools'])
+    expect(visibleTimelineSegments(segments, 'minimal')).toEqual([])
+  })
+
+  it('feeds the flat tree exactly the survivors, in order', () => {
+    const segments = [seg('thinking', ['t1']), seg('agent', ['a1']), seg('tools', ['x1'])]
+    expect(visibleTimelineItems(segments, 'tools', ['t1', 'a1', 'x1'])).toEqual(['a1', 'x1'])
+    expect(visibleTimelineItems(segments, 'minimal', ['t1', 'a1', 'x1'])).toEqual(['a1'])
+  })
+
+  it('keeps a failed or priority segment through the filter', () => {
+    const failed = seg('tools', ['x1'], [activity({ status: 'error' })])
+    const priority = seg('tools', ['y1'], [activity({ toolName: 'mcp_TaskWraith_ensemble_yield' })])
+    expect(visibleTimelineSegments([failed], 'minimal')).toHaveLength(1)
+    expect(visibleTimelineSegments([priority], 'minimal')).toHaveLength(1)
   })
 })

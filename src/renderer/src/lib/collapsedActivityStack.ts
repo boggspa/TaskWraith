@@ -1,9 +1,8 @@
 import type { ToolActivity } from '../../../main/store/types'
-import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
 import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
-import { transcriptViewFoldsLiveStacks } from './transcriptViewFold'
+import { isTranscriptPriorityActivity, transcriptViewFoldsLiveStacks } from './transcriptViewFold'
 import type { TranscriptView } from './transcriptViewOverride'
 
 /**
@@ -44,14 +43,6 @@ function isCollapsedStackPresentationActivity(activity: ToolActivity): boolean {
     !isHiddenInfrastructureToolName(activity.toolName || '') &&
     !isMcpTransportWrapperActivity(activity)
   )
-}
-
-/** Lifecycle-routing actions have the same transcript standing as seat and
- * handoff-turn changes. Their full attributed row is conversation structure,
- * not tool noise, so no settled-stack or super-group fold may hide it behind
- * a generic "Used N tools" summary. */
-function isTranscriptPriorityActivity(activity: ToolActivity): boolean {
-  return resolveCanonicalToolName(activity.toolName || '') === 'ensemble_yield'
 }
 
 export type CollapsedStackFamily = 'thinking' | 'read' | 'write' | 'search' | 'shell' | 'task'
@@ -321,11 +312,21 @@ export function shouldAutoCollapseActivityStackForView(
     isLiveRow: boolean
     isLastRow: boolean
   },
-  view: TranscriptView
+  view: TranscriptView,
+  viewHidesAllContent = false
 ): boolean {
   if (shouldAutoCollapseActivityStack(input)) return true
-  if (!transcriptViewFoldsLiveStacks(view)) return false
+  // Redundant today, load-bearing the moment a caller passes the flag:
+  // standard hides nothing, so it can never reach the clauses below.
+  if (view === 'standard') return false
   const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
   if (visibleActivities.length === 0) return false
-  return !visibleActivities.some(isTranscriptPriorityActivity)
+  if (visibleActivities.some(isTranscriptPriorityActivity)) return false
+  // Minimal folds a live stack BECAUSE THE USER ASKED FOR QUIET, even when
+  // content survives. Any other filtering view folds one only BECAUSE THERE IS
+  // NOTHING LEFT TO SHOW — without that, a live stack the view emptied renders
+  // as a blank row with no one-liner to fall back on. Two different rules;
+  // collapsing them into one would fold Tools rows that still have tool
+  // content to display.
+  return transcriptViewFoldsLiveStacks(view) || viewHidesAllContent
 }
