@@ -117,6 +117,54 @@ describe('every ActivityStack render site declares its transcript view', () => {
   })
 })
 
+describe('no row type gains the view without a recorded decision', () => {
+  // The guard above catches UNDER-threading: an ActivityStack that forgot the
+  // prop. It cannot catch OVER-threading, and that is the live risk here.
+  //
+  // `<SubThreadDelegationCard` mounts with no view prop ten lines above
+  // `<SubThreadReturnCard transcriptView={transcriptView}`, inside the same
+  // ternary. That reads exactly like an oversight and is not one — the four
+  // ungated row types were each examined and deliberately kept
+  // (`TRANSCRIPT_ROW_VIEW_GATING`). A later pass tidying the asymmetry would
+  // silently start deleting rows, and nothing in the existing guard would
+  // notice: the ActivityStack count stays 4 and every assertion still passes.
+
+  /** Every JSX tag in TranscriptPanel that is handed `transcriptView`. */
+  function tagsCarryingTheView(): string[] {
+    const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
+    const names: string[] = []
+    for (const match of panel.matchAll(/<([A-Z][A-Za-z0-9_]*)/g)) {
+      const tag = readOpeningTag(panel, match.index!)
+      if (/\btranscriptView[=:]/.test(tag)) names.push(match[1])
+    }
+    return [...new Set(names)].sort()
+  }
+
+  it('hands the view only to components with a gated row type', () => {
+    // Deliberately an exact list rather than a subset check: the failure mode
+    // is a NEW name appearing, so a subset assertion would not fire.
+    expect(tagsCarryingTheView()).toEqual([
+      'ActivityStack',
+      'EnsembleFanoutResultCard',
+      'SubThreadReturnCard'
+    ])
+  })
+
+  it('leaves the four kept row types without the prop', () => {
+    const carrying = tagsCarryingTheView()
+    for (const kept of ['SubThreadDelegationCard', 'ParticipantHealthCard']) {
+      expect(carrying, `${kept} must stay ungated — see TRANSCRIPT_ROW_VIEW_GATING`).not.toContain(
+        kept
+      )
+    }
+    // Anti-vacuity: these components really are mounted in this file, so their
+    // absence above is a filtered result and not an empty one.
+    const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
+    expect(panel).toContain('<SubThreadDelegationCard')
+    expect(panel).toContain('<ParticipantHealthCard')
+  })
+})
+
 describe('the transcript-view subscription survives a server render', () => {
   it('passes the snapshot getter as getServerSnapshot too', () => {
     // Every renderer test in this repo is `renderToStaticMarkup`, and React's

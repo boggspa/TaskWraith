@@ -1,6 +1,7 @@
 import type { ToolActivity } from '../../../main/store/types'
 import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import type { ActivityTimelineSegmentKind } from '../components/ActivityStack'
+import type { VirtualRowType } from './TranscriptVirtualWindow'
 import type { TranscriptView } from './transcriptViewOverride'
 
 /**
@@ -193,6 +194,90 @@ export function transcriptViewOffersExpandChrome(view: TranscriptView): boolean 
  * under Tools folded to a one-liner that opened onto nothing, and a settled
  * sub-agent spawn wave under Minimal became unreachable even though its
  * segment survives the filter by design. */
+
+/**
+ * Every transcript row type, and whether any view gates it.
+ *
+ * This table exists because at these sites CORRECT and UNFINISHED are
+ * byte-identical. Four row types render with no view prop, and that is a
+ * DECISION — but an absence of code cannot say so, and one of them looks
+ * actively like an oversight: `SubThreadDelegationCard` mounts with no view
+ * prop ten lines above `SubThreadReturnCard transcriptView={transcriptView}`,
+ * inside the same ternary. Without this table a later pass "finishes" that
+ * asymmetry and silently deletes rows.
+ *
+ * It is keyed on the full `VirtualRowType` union and pinned against it, so a
+ * fourteenth row type cannot be added without recording an answer here.
+ *
+ * `gated` means some view removes or folds the row's content. `kept` means
+ * every view renders it identically. The line between them is that Minimal
+ * names exactly three surfaces — thinking viewports, tool-call viewports and
+ * fan-out viewports — and all three are `ActivityStack`-shaped. A row that
+ * mounts no ActivityStack mounts none of them.
+ *
+ * MINIMAL IS A TURN-CONTENT VIEW, NOT A ROW-COUNT VIEW. It quietens what an
+ * agent DID; it does not thin what was SAID or by whom. Under Minimal a busy
+ * ensemble thread still shows its round headers, health cards and one
+ * delegation plus one return card per lane. That weight is intended, and it is
+ * the reason every `kept` below is a `kept`.
+ */
+export const TRANSCRIPT_ROW_VIEW_GATING: Record<VirtualRowType, 'gated' | 'kept'> = {
+  // Plain conversation. Never had anything to gate.
+  user: 'kept',
+  assistant: 'kept',
+  threadMessage: 'kept',
+  // The three surfaces the feature exists for, plus the rows that embed them.
+  tool: 'gated',
+  fanoutResult: 'gated',
+  return: 'gated',
+  // Never fold a failure, in any view.
+  system: 'kept',
+  error: 'kept',
+  // The four examined individually below.
+  participantHealth: 'kept',
+  delegation: 'kept',
+  guestReply: 'kept',
+  collaborator: 'kept'
+}
+
+/* WHY THE FOUR UNGATED ROWS ARE UNGATED. Each was read on its own merits, not
+ * lumped, and each failed the test for folding independently. None of them has
+ * a collapsed form anywhere in the tree, so a gate would DELETE the row rather
+ * than fold it — the same defect the fan-out tombstone above records.
+ *
+ * participantHealth — when a seat goes unreachable, `markParticipantUnreachable`
+ *   is a pure round-state mutation that creates no run and no message, so this
+ *   card is the ONLY transcript record that it happened. It is also already
+ *   exempt from system-notice compaction beside `providerRunFailure`, so the
+ *   repo ruled it preserved once already. Its all-OK state is kept too, by
+ *   explicit decision: a gate would make its absence ambiguous between "no
+ *   probe ran", "all fine" and "the view ate it". It is written once per NEW
+ *   PROMPT and never on a steer — the probe is gated on `!options.skipPreamble`
+ *   and steering-boundary passes set that flag.
+ *
+ * delegation — the outbound half of the pair whose inbound half (the return
+ *   card body) is deliberately kept. The pairing is asymmetric in the direction
+ *   that matters: a `returnResult: false` child produces a delegation card and
+ *   NO return card ever, and a child that fails to dispatch leaves its error
+ *   only here. Folding it yields a transcript showing answers to questions it
+ *   does not show.
+ *
+ * guestReply — a peer agent's final assistant message relayed verbatim: the
+ *   same object class as the return-card body, with strictly less machinery
+ *   since it has no chrome to drop. The remote projector already classifies it
+ *   first-class participant conversation. It renders through the literal
+ *   assistant branch, so gating it means carving content back out of the one
+ *   branch Minimal exists to preserve.
+ *
+ * collaborator — a named person's typed words, the only transcript content no
+ *   model ever reads. The row also carries the "Insert as draft" promote
+ *   control and the "Out of position" badge that appears on no other surface,
+ *   so hiding it severs a capability and conceals a degraded round.
+ *
+ * Note KEEP-BUT-INERT was unavailable for all four rather than rejected:
+ * `transcriptViewOffersExpandChrome` needs expand chrome to remove, and none of
+ * them has any. The controls they do carry are navigation and actions, not
+ * disclosure — "nothing expands" must not be read as "no buttons". */
 
 /**
  * Whether this view folds a stack the transcript would otherwise leave open.

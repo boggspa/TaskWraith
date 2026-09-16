@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { ToolActivity } from '../../../main/store/types'
 import {
@@ -6,6 +8,7 @@ import {
   activityStackHasPriorityActivity,
   isTranscriptPriorityActivity,
   transcriptViewFoldsLiveStacks,
+  TRANSCRIPT_ROW_VIEW_GATING,
   transcriptViewOffersExpandChrome,
   transcriptViewRendersSegment,
   visibleTimelineItems,
@@ -78,6 +81,55 @@ describe('expand chrome on a relayed message body', () => {
     expect(transcriptViewOffersExpandChrome('minimal')).toBe(false)
     expect(transcriptViewOffersExpandChrome('tools')).toBe(true)
     expect(transcriptViewOffersExpandChrome('standard')).toBe(true)
+  })
+})
+
+describe('every transcript row type has a recorded gating decision', () => {
+  // The four ungated rows are a DECISION, and an absence of code cannot say so.
+  // This table is what makes "correct" distinguishable from "unfinished" at
+  // sites where the two are byte-identical.
+
+  /** The `VirtualRowType` union, parsed from its own source. */
+  function declaredRowTypes(): string[] {
+    const source = readFileSync(join(__dirname, 'TranscriptVirtualWindow.ts'), 'utf8')
+    const start = source.indexOf('export type VirtualRowType =')
+    expect(start).toBeGreaterThan(-1)
+    const end = source.indexOf('export interface VirtualRow', start)
+    expect(end).toBeGreaterThan(start)
+    return [...source.slice(start, end).matchAll(/\|\s*'([a-zA-Z]+)'/g)].map((m) => m[1])
+  }
+
+  it('parses the union, and finds every member', () => {
+    // Anti-vacuity: a regex that matched nothing would make the comparison
+    // below pass over two empty lists.
+    const declared = declaredRowTypes()
+    expect(declared.length).toBeGreaterThan(10)
+    expect(declared).toContain('participantHealth')
+    expect(declared).toContain('collaborator')
+  })
+
+  it('records exactly the declared row types, no more and no fewer', () => {
+    // A fourteenth row type cannot be added without answering here. TypeScript
+    // catches a MISSING key on its own; this catches a STALE one, and pins that
+    // the table is keyed on the real union rather than on a copy that drifted.
+    expect(Object.keys(TRANSCRIPT_ROW_VIEW_GATING).sort()).toEqual(declaredRowTypes().sort())
+  })
+
+  it('keeps the four examined rows ungated, and the three surfaces gated', () => {
+    for (const row of ['participantHealth', 'delegation', 'guestReply', 'collaborator'] as const) {
+      expect(TRANSCRIPT_ROW_VIEW_GATING[row], row).toBe('kept')
+    }
+    // The positive control. Without it "everything is kept" would pass, which
+    // is the state the feature exists to move away from.
+    for (const row of ['tool', 'fanoutResult', 'return'] as const) {
+      expect(TRANSCRIPT_ROW_VIEW_GATING[row], row).toBe('gated')
+    }
+  })
+
+  it('never gates a row that may be the only record of a failure', () => {
+    for (const row of ['system', 'error', 'participantHealth'] as const) {
+      expect(TRANSCRIPT_ROW_VIEW_GATING[row], row).toBe('kept')
+    }
   })
 })
 
