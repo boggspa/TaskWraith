@@ -71,7 +71,8 @@ describe('composerSurfaceRequest', () => {
         'multiview',
         'plan',
         'schedule',
-        'terminal'
+        'terminal',
+        'view'
       ])
     })
   })

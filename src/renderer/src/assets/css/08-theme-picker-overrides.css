@@ -10385,6 +10385,106 @@
   font-weight: 500;
 }
 
+/* Transcript view menu (per-chat verbosity). A vertical LIST rather than the
+   multiview grid: four rows of label + description, where the description is
+   the only thing distinguishing them, so it must not be truncated to a glyph.
+   "Follow default" is set apart because it selects no view — it clears the
+   per-chat override. */
+.composer-transcript-view-popover {
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(360px, calc(100vw - 16px));
+  max-width: calc(100vw - 16px);
+  max-height: calc(100vh - 16px);
+  box-sizing: border-box;
+  padding: 10px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.composer-transcript-view-popover-header {
+  padding: 0 2px;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.composer-transcript-view-list {
+  display: grid;
+  gap: 4px;
+}
+
+.composer-transcript-view-item {
+  appearance: none;
+  -webkit-appearance: none;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 9px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 78%, transparent);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    border-color 120ms ease,
+    color 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.composer-transcript-view-item:hover,
+.composer-transcript-view-item:focus-visible {
+  outline: none;
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 40%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+}
+
+.composer-transcript-view-item.is-selected {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 54%, var(--panel-border));
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 22%, transparent),
+    0 0 0 2px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* Separated from the three views below it: this row clears the override
+   rather than choosing a view, and the menu reads wrong if it looks like a
+   fourth peer. */
+.composer-transcript-view-item.is-follow-default {
+  margin-bottom: 4px;
+  border-style: dashed;
+}
+
+.composer-transcript-view-copy {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.composer-transcript-view-label {
+  min-width: 0;
+  font-size: var(--font-size-xs);
+  font-weight: 700;
+}
+
+/* Deliberately NOT truncated with ellipsis, unlike the multiview grid's
+   subtitle: here the description is what tells the three views apart. */
+.composer-transcript-view-sub {
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+
 @media (max-width: 620px) {
   .composer-multiview-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));

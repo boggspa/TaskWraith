@@ -2,6 +2,7 @@ import { useMemo, useSyncExternalStore } from 'react'
 import {
   DEFAULT_TRANSCRIPT_VIEW,
   getTranscriptViewSnapshot,
+  hasTranscriptViewOverride,
   subscribeTranscriptView,
   transcriptViewForChat,
   type TranscriptView
@@ -34,6 +35,40 @@ export function useTranscriptView(chatId: string | null | undefined): Transcript
   )
   return useMemo(
     () => transcriptViewForChat(viewByChatId, chatId ?? null, DEFAULT_TRANSCRIPT_VIEW),
+    [viewByChatId, chatId]
+  )
+}
+
+/**
+ * The same subscription, plus whether this chat is following the Appearance
+ * default or pinned to a view of its own.
+ *
+ * Separate from `useTranscriptView` because only the MENU needs the second
+ * fact, and everything that merely RENDERS a transcript would be re-rendered
+ * by a change it does not care about. Rendering asks "what view is this chat
+ * at"; the menu also has to ask "and did the user say so", because those two
+ * states resolve identically and must tick different rows.
+ *
+ * The snapshot getter is passed a THIRD time as `getServerSnapshot` for the
+ * same reason as above: every renderer test here is a server render, and
+ * React's server shim throws "Missing getServerSnapshot" without it — which
+ * would red every suite mounting the composer at once rather than failing
+ * anywhere near this file.
+ */
+export function useTranscriptViewSelection(chatId: string | null | undefined): {
+  view: TranscriptView
+  hasOverride: boolean
+} {
+  const viewByChatId = useSyncExternalStore(
+    subscribeTranscriptView,
+    getTranscriptViewSnapshot,
+    getTranscriptViewSnapshot
+  )
+  return useMemo(
+    () => ({
+      view: transcriptViewForChat(viewByChatId, chatId ?? null, DEFAULT_TRANSCRIPT_VIEW),
+      hasOverride: hasTranscriptViewOverride(viewByChatId, chatId ?? null)
+    }),
     [viewByChatId, chatId]
   )
 }

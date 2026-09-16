@@ -172,6 +172,11 @@ import {
 } from '../../shared/runStreamMetrics'
 import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
+import { TRANSCRIPT_VIEWS } from './lib/transcriptViewFold'
+import {
+  setTranscriptViewOverride,
+  type TranscriptView
+} from './lib/transcriptViewOverride'
 import {
   acceptedProviderReasoningEfforts,
   acceptsStoredProviderReasoning
@@ -27977,6 +27982,7 @@ function App(): React.JSX.Element {
     handleToggleEnsembleCommand,
     handleComposerSurfaceCommand,
     handleSelectMultiviewLayoutCommand,
+    handleSelectTranscriptViewCommand,
     focusPaneForFocusedFlow
   }: {
     chat: ChatRecord | null
@@ -28007,6 +28013,13 @@ function App(): React.JSX.Element {
     handleSelectMultiviewLayoutCommand: (
       ctx: SlashCommandRunContext,
       layout: MultiviewLayout
+    ) => void
+    /** `/view <view>` — set this chat's transcript view directly, skipping the
+     * menu. `null` clears the override back to the Appearance default, which is
+     * the menu's "Follow default" row. */
+    handleSelectTranscriptViewCommand: (
+      ctx: SlashCommandRunContext,
+      view: TranscriptView | null
     ) => void
     focusPaneForFocusedFlow?: () => void
   }): ComposerSlashCommand[] => [
@@ -28256,6 +28269,36 @@ function App(): React.JSX.Element {
           return
         }
         handleComposerSurfaceCommand(ctx, 'multiview')
+      }
+    },
+    {
+      kind: 'action',
+      id: 'taskwraith-transcript-view',
+      command: '/view',
+      label: 'Transcript view',
+      description: `Open the view menu, or name one: default, ${TRANSCRIPT_VIEWS.join(', ')}.`,
+      group: 'Custom',
+      run: (ctx) => {
+        // Bare `/view` opens the menu; a named view skips it. `default` clears
+        // the per-chat override rather than pinning a view — the same thing the
+        // menu's first row does, and the reason both exist.
+        const arg = slashActionRemainder(ctx, /^\/view\b/i)
+          .trim()
+          .toLowerCase()
+        if (arg === 'default') {
+          handleSelectTranscriptViewCommand(ctx, null)
+          return
+        }
+        const view = (TRANSCRIPT_VIEWS as readonly string[]).includes(arg)
+          ? (arg as TranscriptView)
+          : null
+        if (view) {
+          handleSelectTranscriptViewCommand(ctx, view)
+          return
+        }
+        // An unrecognised argument falls through to the menu rather than
+        // failing silently, so a typo still lands somewhere useful.
+        handleComposerSurfaceCommand(ctx, 'view')
       }
     },
     ...(isEnsembleChat
@@ -28941,6 +28984,14 @@ function App(): React.JSX.Element {
     handleSelectMultiviewLayoutCommand: (ctx, layout) => {
       ctx.consumeSlashToken()
       handleSelectMultiviewLayout(layout)
+    },
+    handleSelectTranscriptViewCommand: (ctx, view) => {
+      ctx.consumeSlashToken()
+      // Never write under '' — an empty key notifies every listener while both
+      // readers short-circuit on it, so the store churns and nothing changes.
+      const chatId = currentChat?.appChatId
+      if (!chatId) return
+      setTranscriptViewOverride(chatId, view)
     }
   })
 
@@ -29865,6 +29916,15 @@ function App(): React.JSX.Element {
                 ctx,
                 'Layout changes apply from the focused pane. This pane is now focused; run /multiview again.'
               ),
+            // Not redirected to the focused pane, unlike the surfaces above:
+            // the transcript view is per-CHAT and this pane has one, so
+            // `/view minimal` here means THIS pane's chat. The bare `/view`
+            // popover still redirects, because the open signal is published
+            // globally and would otherwise open every pane's menu at once.
+            handleSelectTranscriptViewCommand: (ctx, view) => {
+              ctx.consumeSlashToken()
+              setTranscriptViewOverride(chat.appChatId, view)
+            },
             focusPaneForFocusedFlow: focusPane
           }),
           ...skillSlashPromptTemplates

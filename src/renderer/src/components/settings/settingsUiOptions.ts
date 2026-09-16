@@ -14,6 +14,7 @@ import type {
   FanoutLaneLayout,
   NativeSubAgentRequestPolicy,
   PromptSurfaceStyle,
+  TranscriptView,
   VisualEffectStyle
 } from '../../../../main/store/types'
 import type { AppIconVariant } from '../../../../shared/iconVariants'
@@ -55,6 +56,40 @@ export const PROMPT_SURFACE_OPTIONS: Array<{ value: PromptSurfaceStyle; label: s
 export const FANOUT_LANE_LAYOUT_OPTIONS: Array<{ value: FanoutLaneLayout; label: string }> = [
   { value: 'stacked', label: 'One per line' },
   { value: 'paired', label: 'Two side by side' }
+]
+
+/**
+ * How much of each turn the transcript renders.
+ *
+ * ONE source for the per-chat menu and the Appearance default, so the two
+ * cannot describe the same three views differently. Ordered quietest-first to
+ * match `TRANSCRIPT_VIEWS`; the menu's fourth row ("Follow default") is not
+ * here, because it selects no view — it clears the override.
+ *
+ * The helper text quotes what the collapsed one-liner ACTUALLY renders
+ * ("Ran 2 commands", "Edited 1 file"), not the wording the feature was
+ * requested in. Those differ, and the shipped strings are the promise.
+ */
+export const TRANSCRIPT_VIEW_OPTIONS: Array<{
+  value: TranscriptView
+  label: string
+  helper: string
+}> = [
+  {
+    value: 'minimal',
+    label: 'Minimal',
+    helper: 'Messages, plus one-liners like "Ran 2 commands". Thinking and tool viewports hidden.'
+  },
+  {
+    value: 'tools',
+    label: 'Tools',
+    helper: 'Messages, tool calls and fan-out lanes. Thinking viewports hidden.'
+  },
+  {
+    value: 'standard',
+    label: 'Standard',
+    helper: "Everything renders and expands. Today's transcript."
+  }
 ]
 export const COMPOSER_STYLE_OPTIONS: Array<{
   value: ComposerStyle

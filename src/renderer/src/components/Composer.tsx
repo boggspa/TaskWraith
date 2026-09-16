@@ -80,6 +80,7 @@ import { GitHubSatelliteRow } from '../components/GitHubSatelliteRow'
 import { WorkspaceLockPill } from '../components/WorkspaceLockPill'
 import { LiveThreadTokenTally } from '../components/LiveThreadTokenTally'
 import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
+import { TranscriptViewPicker } from '../components/TranscriptViewPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { ComposerAboveRowsToggleButton } from '../components/ComposerAboveRowsToggleButton'
 import { GoalPopoverMarkdown } from './GoalPopoverMarkdown'
@@ -5747,6 +5748,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  onDownload={(scope) =>
 	                    downloadChatMarkdownTranscript(currentChat?.appChatId, scope)
 	                  }
+	                />
+	                <TranscriptViewPicker
+	                  chatId={currentChat?.appChatId ?? null}
+	                  provider={currentProvider}
+	                  composerStyle={appearance.composerStyle}
+	                  openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'view')}
 	                />
 	                <MultiviewLayoutPicker
 	                  layout={multiview.layout}

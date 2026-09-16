@@ -1,3 +1,4 @@
+import * as allOptions from './settingsUiOptions'
 import { describe, expect, it } from 'vitest'
 import {
   APP_ICON_THUMBS,
@@ -7,7 +8,6 @@ import {
   FANOUT_LANE_LAYOUT_OPTIONS,
   FUN_FX_MODES,
   NATIVE_SUB_AGENT_REQUEST_OPTIONS,
-  PROMPT_SURFACE_OPTIONS,
   VISUAL_EFFECT_OPTIONS,
   clampPaneOpacity,
   rangeFillStyle
@@ -76,33 +76,62 @@ describe('CONTEXT_TURN_OPTIONS', () => {
   })
 })
 
+/**
+ * Every exported `{ value, label }` array in the module, found by inspecting
+ * the module's own exports rather than by listing them here.
+ *
+ * A hand-written list fails OPEN: a new options array is simply absent from it
+ * and every assertion passes over the arrays that were remembered.
+ */
+function optionLists(): Array<[string, Array<{ value: unknown; label: string }>]> {
+  const lists: Array<[string, Array<{ value: unknown; label: string }>]> = []
+  for (const [name, exported] of Object.entries(allOptions) as Array<[string, unknown]>) {
+    if (!Array.isArray(exported) || exported.length === 0) continue
+    const isOptionList = exported.every(
+      (option) =>
+        typeof option === 'object' &&
+        option !== null &&
+        'value' in option &&
+        'label' in option &&
+        typeof (option as { label: unknown }).label === 'string'
+    )
+    if (!isOptionList) continue
+    lists.push([name, exported as Array<{ value: unknown; label: string }>])
+  }
+  return lists
+}
+
 describe('option arrays', () => {
+  it('discovers every option list in the module, not a hand-copied subset', () => {
+    // Anti-vacuity, and the reason the two hand-maintained copies below are
+    // gone. Each `it` used to carry its own literal list of seven arrays, so a
+    // NEW options array was covered only if someone remembered to add it to
+    // BOTH — and nothing red if they did not. Discovery removes the choice.
+    const names = optionLists().map(([name]) => name)
+    for (const known of [
+      'VISUAL_EFFECT_OPTIONS',
+      'PROMPT_SURFACE_OPTIONS',
+      'FANOUT_LANE_LAYOUT_OPTIONS',
+      'COMPOSER_STYLE_OPTIONS',
+      'NATIVE_SUB_AGENT_REQUEST_OPTIONS',
+      'CODEX_SANDBOX_FALLBACK_OPTIONS',
+      'FUN_FX_MODES',
+      'TRANSCRIPT_VIEW_OPTIONS'
+    ]) {
+      expect(names, known).toContain(known)
+    }
+    expect(names.length).toBeGreaterThanOrEqual(7)
+  })
+
   it('keeps every option value unique within its own list', () => {
-    const lists = [
-      VISUAL_EFFECT_OPTIONS,
-      PROMPT_SURFACE_OPTIONS,
-      FANOUT_LANE_LAYOUT_OPTIONS,
-      COMPOSER_STYLE_OPTIONS,
-      NATIVE_SUB_AGENT_REQUEST_OPTIONS,
-      CODEX_SANDBOX_FALLBACK_OPTIONS,
-      FUN_FX_MODES
-    ]
-    for (const list of lists) {
+    for (const [, list] of optionLists()) {
       const values = list.map((option) => option.value)
       expect(new Set(values).size).toBe(values.length)
     }
   })
 
   it('gives every option a non-empty label', () => {
-    const lists = [
-      VISUAL_EFFECT_OPTIONS,
-      PROMPT_SURFACE_OPTIONS,
-      FANOUT_LANE_LAYOUT_OPTIONS,
-      COMPOSER_STYLE_OPTIONS,
-      NATIVE_SUB_AGENT_REQUEST_OPTIONS,
-      CODEX_SANDBOX_FALLBACK_OPTIONS,
-      FUN_FX_MODES
-    ]
+    const lists = optionLists().map(([, list]) => list)
     for (const list of lists) {
       for (const option of list) {
         expect(option.label.length).toBeGreaterThan(0)

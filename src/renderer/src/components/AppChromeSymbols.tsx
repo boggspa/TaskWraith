@@ -309,6 +309,25 @@ export function MultiviewSymbolIcon() {
   )
 }
 
+/** Transcript view (verbosity): stacked lines, the top one full and the two
+ * below progressively shorter — "how much of each turn is shown". */
+export function TranscriptViewSymbolIcon() {
+  return (
+    <span className="composer-control-icon">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.35"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M2.6 4.2h10.8M2.6 8h7.6M2.6 11.8h4.4" />
+      </svg>
+    </span>
+  )
+}
+
 export function BackToParentIcon() {
   return (
     <span className="chat-corner-symbol">
