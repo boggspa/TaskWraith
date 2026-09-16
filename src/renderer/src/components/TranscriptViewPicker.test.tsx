@@ -153,6 +153,22 @@ describe('the picker cannot write a stray empty key', () => {
     expect(tag).toContain("composerSurfaceOpenSignal(composerSurfaceRequest, 'view')")
   })
 
+  it('holds its position object when nothing moved', () => {
+    // Repositioning runs from a CAPTURING window scroll listener, so a scroll
+    // inside the popover's own body reaches it as well as one that actually
+    // moves the composer. Storing a fresh object for those re-renders the whole
+    // menu for a position identical to the one it already had — which is what
+    // `sameComposerSurfacePopoverPosition` exists to prevent. Source-pinned
+    // because effects never run in this harness.
+    const source = readFileSync(join(__dirname, 'TranscriptViewPicker.tsx'), 'utf8')
+    expect(source).toContain('sameComposerSurfacePopoverPosition')
+    const at = source.indexOf('setPosition((current) =>')
+    expect(at).toBeGreaterThan(-1)
+    expect(source.slice(at, at + 160)).toContain(
+      'sameComposerSurfacePopoverPosition(current, next)'
+    )
+  })
+
   it('does not mention the activity-stack component, which would red the site count', () => {
     // TranscriptPanel.transcriptView.test.ts scans every renderer source file
     // for the opening tag and asserts EXACTLY four sites. A mention of it here —

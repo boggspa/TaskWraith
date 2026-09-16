@@ -60,6 +60,7 @@ describe('popover visual grammar inventory', () => {
       'components/GitHubSatellitePopover.tsx',
       'components/MainPaneActionPill.tsx',
       'components/MultiviewLayoutPicker.tsx',
+      'components/TranscriptViewPicker.tsx',
       'components/WorkspaceStatsPopover.tsx'
     ])
   })

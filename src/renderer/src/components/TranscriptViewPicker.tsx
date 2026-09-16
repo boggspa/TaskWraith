@@ -4,7 +4,10 @@ import type { ComposerStyle, ProviderId } from '../../../main/store/types'
 import { TRANSCRIPT_VIEWS } from '../lib/transcriptViewFold'
 import { setTranscriptViewOverride, type TranscriptView } from '../lib/transcriptViewOverride'
 import { useTranscriptViewSelection } from '../hooks/useTranscriptView'
-import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
+import {
+  resolveComposerSurfacePopoverPosition,
+  sameComposerSurfacePopoverPosition
+} from '../lib/composerSurfacePopover'
 import { TRANSCRIPT_VIEW_OPTIONS } from './settings/settingsUiOptions'
 import { TranscriptViewSymbolIcon } from './AppChromeSymbols'
 
@@ -131,13 +134,16 @@ export function TranscriptViewPicker(props: TranscriptViewPickerProps): ReactEle
     const triggerRect = trigger.getBoundingClientRect()
     const surface = trigger.closest('.composer-surface') as HTMLElement | null
     const surfaceRect = surface?.getBoundingClientRect() ?? triggerRect
-    setPosition(
-      resolveComposerSurfacePopoverPosition({
-        triggerRect,
-        surfaceRect,
-        viewportWidth: window.innerWidth
-      })
-    )
+    const next = resolveComposerSurfacePopoverPosition({
+      triggerRect,
+      surfaceRect,
+      viewportWidth: window.innerWidth
+    })
+    // Hold the previous object when nothing moved. Repositioning runs from a
+    // CAPTURING window scroll listener, so a scroll inside the popover's own
+    // body arrives here too — and storing a fresh object for that re-renders
+    // the whole menu for a position identical to the one it already had.
+    setPosition((current) => (sameComposerSurfacePopoverPosition(current, next) ? current : next))
   }, [])
 
   useEffect(() => {

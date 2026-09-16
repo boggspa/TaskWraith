@@ -19,7 +19,7 @@ In the chat composer. Type `/` at the start of a word, press **⌘K** (Ctrl+K on
 
 ## Tips & related
 - **Provider commands** vary by provider — Codex offers `/status`, `/model`, `/fast`, `/diff`, `/mcp`, `/review`, `/resume`, `/fork`, and `/permissions`.
-- **TaskWraith actions** include `/goal`, `/plan`, `/clear`, `/attach`, `/screen`, `/schedule`, `/terminal`, `/canvas`, `/multiview`, `/stop`, `/copy-transcript`, `/files`, `/editor`, `/side`, `/help`, and `/settings`.
+- **TaskWraith actions** include `/goal`, `/plan`, `/clear`, `/attach`, `/screen`, `/schedule`, `/terminal`, `/canvas`, `/multiview`, `/view`, `/stop`, `/copy-transcript`, `/files`, `/editor`, `/side`, `/help`, and `/settings`.
 - **In an Ensemble** you also get `/ensemble` (on/off), `/ensemble-fanout`, `/ensemble-hops`, `/ensemble-reflect`, `/ensemble-skip`, `/ensemble-skip-reads`, `/ensemble-steer`, `/blackboard`, and `/discuss`.
 - **Templates** like `/compact`, `/explain`, `/test`, and `/review-diff` write prompt text for you instead of running an action.
 - [Plus Tools Menu](plus-tools-menu.md) — the popover whose **Slash commands** entry opens this menu.
