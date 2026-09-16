@@ -184,6 +184,22 @@ export type PromptSurfaceStyle = 'theme' | 'solid' | 'liquid_glass' | 'classic'
  * Only lane cards pair, never ordinary transcript rows.
  */
 export type FanoutLaneLayout = 'stacked' | 'paired'
+/**
+ * How much of a turn's work the transcript renders.
+ *
+ * `standard` is the historical behaviour — every thinking, tool-call and
+ * fan-out viewport renders and expands. `tools` drops thinking viewports and
+ * keeps the rest expandable. `minimal` renders assistant messages plus
+ * collapsed one-liners that cannot be opened at all; the one-liner still
+ * names the work ("Ran 2 commands, Edited a file") and still updates as that
+ * work lands, so nothing disappears silently — it just stops unfolding.
+ *
+ * A failed lane or run is deliberately exempt at every level. Folding a
+ * failure into a summary that reads like success is the one thing both this
+ * transcript and the iOS one refuse to do (`isTranscriptPriorityActivity` in
+ * renderer `lib/collapsedActivityStack`, `TranscriptStackCollapse.swift`).
+ */
+export type TranscriptView = 'minimal' | 'tools' | 'standard'
 export type ComposerStyle =
   | 'default'
   | 'codex'
