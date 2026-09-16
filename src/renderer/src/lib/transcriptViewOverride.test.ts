@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  captureTranscriptViewOverrideForChat,
   DEFAULT_TRANSCRIPT_VIEW,
   getTranscriptViewSnapshot,
   hasTranscriptViewOverride,
@@ -188,5 +189,36 @@ describe('transcript view store subscription', () => {
     subscribeTranscriptView(listener)()
     setTranscriptViewOverride('chat-a', 'minimal')
     expect(listener).not.toHaveBeenCalled()
+  })
+})
+
+describe('capturing an override for another window', () => {
+  it('captures a real override so a chat popout opens at the same view', () => {
+    setTranscriptViewOverride('chat-a', 'tools')
+    expect(captureTranscriptViewOverrideForChat('chat-a')).toBe('tools')
+    setTranscriptViewOverride('chat-b', 'standard')
+    expect(captureTranscriptViewOverrideForChat('chat-b')).toBe('standard')
+  })
+
+  it('captures absence as absence, never as the resolved default', () => {
+    // A chat popout is a second BrowserWindow with its own module realm, so it
+    // starts with an empty map. Handing it a resolved `'standard'` for a chat
+    // that carries no override would write an explicit pin there that beats a
+    // later Appearance default of `minimal`, invisibly and permanently.
+    expect(captureTranscriptViewOverrideForChat('chat-never-set')).toBeUndefined()
+    expect(captureTranscriptViewOverrideForChat('chat-never-set')).not.toBe(DEFAULT_TRANSCRIPT_VIEW)
+    expect(captureTranscriptViewOverrideForChat('')).toBeUndefined()
+
+    // Positive control: the same helper DOES return a value once one is set, so
+    // the assertions above are about absence and not about a dead accessor.
+    setTranscriptViewOverride('chat-never-set', 'minimal')
+    expect(captureTranscriptViewOverrideForChat('chat-never-set')).toBe('minimal')
+  })
+
+  it('captures absence again after the override is cleared back to the default', () => {
+    setTranscriptViewOverride('chat-a', 'minimal')
+    expect(captureTranscriptViewOverrideForChat('chat-a')).toBe('minimal')
+    setTranscriptViewOverride('chat-a', null)
+    expect(captureTranscriptViewOverrideForChat('chat-a')).toBeUndefined()
   })
 })

@@ -174,9 +174,11 @@ import { MULTIVIEW_LAYOUT_IDS } from '../../shared/multiviewLayouts'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
 import { TRANSCRIPT_VIEWS } from './lib/transcriptViewFold'
 import {
+  captureTranscriptViewOverrideForChat,
   setTranscriptViewOverride,
   type TranscriptView
 } from './lib/transcriptViewOverride'
+import { normalizeTranscriptViewOverrideTransfer } from '../../shared/chatPopoutTransfer'
 import {
   acceptedProviderReasoningEfforts,
   acceptsStoredProviderReasoning
@@ -7532,6 +7534,18 @@ function App(): React.JSX.Element {
         if (popoutHandoff?.roundExpansion !== undefined) {
           hydrateSessionRoundExpansionForChat(popoutChat.appChatId, popoutHandoff.roundExpansion)
         }
+        // Before `setCurrentChat`: the panel's chat id is `currentChat?.appChatId
+        // ?? null` and the view lookup short-circuits on null, so this commit is
+        // the first render that can read the store for this chat. Applying the
+        // view after it paints the full `standard` row set once and then
+        // relayouts under the bounded scroll restore queued below.
+        //
+        // Guarded rather than unconditional: absence means "follow the default",
+        // and writing the default in as an explicit entry would pin this chat
+        // against a later Appearance default.
+        if (popoutHandoff?.transcriptView) {
+          setTranscriptViewOverride(popoutChat.appChatId, popoutHandoff.transcriptView)
+        }
         setCurrentChat(popoutChat)
         applyChatComposerSelection(popoutChat, provider)
         if (typeof popoutHandoff?.draft === 'string') {
@@ -7630,6 +7644,13 @@ function App(): React.JSX.Element {
       const popoutHandoff = readChatPopoutHandoff(chatId)
       if (popoutHandoff?.roundExpansion !== undefined) {
         hydrateSessionRoundExpansionForChat(chatId, popoutHandoff.roundExpansion)
+      }
+      // A re-pop-out of an already-open popout reuses this window, so this is
+      // the only delivery after the first. Still guarded: the popout may have
+      // been put on Follow default from inside, and an absent carried value
+      // must not overwrite that with a pin.
+      if (popoutHandoff?.transcriptView) {
+        setTranscriptViewOverride(chatId, popoutHandoff.transcriptView)
       }
       if (typeof popoutHandoff?.draft === 'string') {
         setChatPromptDraft(chatId, popoutHandoff.draft)
@@ -17383,7 +17404,12 @@ function App(): React.JSX.Element {
         : currentChat?.appChatId === targetChat.appChatId
           ? captureMainTranscriptScrollState()
           : undefined,
-      roundExpansion: captureSessionRoundExpansionForChat(targetChat.appChatId)
+      roundExpansion: captureSessionRoundExpansionForChat(targetChat.appChatId),
+      // Absent when this chat follows the Appearance default, and absent is
+      // carried as absent: the popout is a second BrowserWindow with its own
+      // module realm, so it starts with an empty override map and a resolved
+      // `'standard'` here would pin it there for the window's lifetime.
+      transcriptView: captureTranscriptViewOverrideForChat(targetChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -17564,6 +17590,14 @@ function App(): React.JSX.Element {
         }
         if (request.roundExpansion !== undefined) {
           hydrateSessionRoundExpansionForChat(linkedChat.appChatId, request.roundExpansion)
+        }
+        // Tri-state, and applied before the side pane opens so it never paints
+        // at the outgoing view. `null` is the popout saying it is on Follow
+        // default, which CLEARS a pin the main window may still be holding;
+        // `undefined` is the popout saying nothing, which must leave it alone.
+        const dockTranscriptView = normalizeTranscriptViewOverrideTransfer(request.transcriptView)
+        if (dockTranscriptView !== undefined) {
+          setTranscriptViewOverride(linkedChat.appChatId, dockTranscriptView)
         }
         if (currentChatIdRef.current !== parentChat.appChatId) {
           await handleSelectChatRef.current(parentChat)
@@ -21385,7 +21419,8 @@ function App(): React.JSX.Element {
       // is on screen and silently drop the user's most recent typing.
       draft: composerDraftState.getDraft(currentChat.appChatId),
       scrollState: captureMainTranscriptScrollState(),
-      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+      transcriptView: captureTranscriptViewOverrideForChat(currentChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -21403,7 +21438,8 @@ function App(): React.JSX.Element {
       // is on screen and silently drop the user's most recent typing.
       draft: composerDraftState.getDraft(currentChat.appChatId),
       scrollState: captureMainTranscriptScrollState(),
-      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+      roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+      transcriptView: captureTranscriptViewOverrideForChat(currentChat.appChatId)
     })
     void window.api.openWorkspacePopout({
       kind: 'chat',
@@ -21417,13 +21453,32 @@ function App(): React.JSX.Element {
     (presentation: SidePanelPresentation) => {
       if (!isChatPopoutWindow || !currentChat?.appChatId) return
       isDockingChatPopoutRef.current = true
+      // Read once, at call time, from the module store rather than from a
+      // render-time hook value.
+      const dockedTranscriptView = captureTranscriptViewOverrideForChat(currentChat.appChatId)
       void window.api
         .dockSideChatPopout({
           chatId: currentChat.appChatId,
           presentation,
           draft: composerDraftState.getDraft(currentChat.appChatId),
           scrollState: captureMainTranscriptScrollState(),
-          roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId)
+          roundExpansion: captureSessionRoundExpansionForChat(currentChat.appChatId),
+          // The wire format is tri-state on the return leg — `null` is an
+          // explicit "clear this chat back to Follow default" — but THIS SENDER
+          // NEVER SENDS ONE, and that is deliberate.
+          //
+          // It cannot tell a deliberate clear from a lost one. `readChatPopoutHandoff`
+          // is destructive, so a popout that merely RELOADED holds no override
+          // through no act of the user. Coercing that absence with `?? null`
+          // would travel home as an explicit clear and silently delete a pin the
+          // user set in the main window and never touched: pin Minimal, pop out,
+          // press Cmd-R in the popout, dock — and Minimal is gone.
+          //
+          // Declining to send a clear costs the other direction: clearing the
+          // view INSIDE a popout does not follow the chat home. That is a
+          // visible no-op the user can repeat in the main window, where the
+          // coercion is silent data loss they never asked for and cannot see.
+          ...(dockedTranscriptView !== undefined ? { transcriptView: dockedTranscriptView } : {})
         })
         .catch(() => {
           isDockingChatPopoutRef.current = false
@@ -30164,7 +30219,8 @@ function App(): React.JSX.Element {
       writeChatPopoutHandoff(chatId, {
         draft: composerDraftState.getDraft(chatId),
         scrollState: paneScrollState,
-        roundExpansion: captureSessionRoundExpansionForChat(chatId)
+        roundExpansion: captureSessionRoundExpansionForChat(chatId),
+        transcriptView: captureTranscriptViewOverrideForChat(chatId)
       })
       void window.api.openWorkspacePopout({
         kind: 'chat',

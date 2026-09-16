@@ -1,3 +1,4 @@
+import { normalizeTranscriptViewOverride } from '../../../shared/chatPopoutTransfer'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -81,6 +82,35 @@ describe('expand chrome on a relayed message body', () => {
     expect(transcriptViewOffersExpandChrome('minimal')).toBe(false)
     expect(transcriptViewOffersExpandChrome('tools')).toBe(true)
     expect(transcriptViewOffersExpandChrome('standard')).toBe(true)
+  })
+})
+
+describe('the popout normaliser stays bound to the canonical view list', () => {
+  it('accepts exactly the views TRANSCRIPT_VIEWS declares', () => {
+    // `normalizeTranscriptViewOverride` lives in src/shared (main cannot reach
+    // the renderer lib) and hard-codes the three view literals, which is a
+    // FOURTH independent copy of them. Nothing else ties it to this list: add a
+    // fourth view here and the narrowed union stays assignable to the widened
+    // one, so the normaliser keeps compiling while silently rejecting the new
+    // view and collapsing it to "no override" on every popout.
+    for (const view of TRANSCRIPT_VIEWS) {
+      expect(normalizeTranscriptViewOverride(view), view).toBe(view)
+    }
+    // Anti-vacuity: the normaliser really does reject things, so the loop above
+    // is a filter rather than an identity function.
+    expect(normalizeTranscriptViewOverride('verbose')).toBeUndefined()
+    expect(normalizeTranscriptViewOverride(undefined)).toBeUndefined()
+  })
+
+  it('narrows nothing the list does not contain', () => {
+    // The other direction: a view the normaliser accepts but the list has
+    // dropped would travel across a popout and resolve to a view no menu
+    // offers.
+    for (const candidate of ['minimal', 'tools', 'standard', 'verbose', 'quiet', '']) {
+      const accepted = normalizeTranscriptViewOverride(candidate) !== undefined
+      const listed = (TRANSCRIPT_VIEWS as readonly string[]).includes(candidate)
+      expect(accepted, candidate).toBe(listed)
+    }
   })
 })
 

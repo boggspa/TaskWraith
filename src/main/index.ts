@@ -117,7 +117,8 @@ import { TuiHeadlessHostSession } from './TuiHeadlessHostSession'
 import { createQuitPersistenceCoordinator } from './QuitPersistenceCoordinator'
 import {
   normalizeChatPopoutRoundExpansion,
-  normalizeChatPopoutScrollState
+  normalizeChatPopoutScrollState,
+  normalizeTranscriptViewOverrideTransfer
 } from '../shared/chatPopoutTransfer'
 import {
   contentPartsToText,
@@ -46693,6 +46694,7 @@ async function dockSideChatPopout(
   const draft = typeof input.draft === 'string' ? input.draft : undefined
   const scrollState = normalizeChatPopoutScrollState(input.scrollState)
   const roundExpansion = normalizeChatPopoutRoundExpansion(input.roundExpansion)
+  const transcriptView = normalizeTranscriptViewOverrideTransfer(input.transcriptView)
   const chat = AppStore.getChat(chatId)
   if (!chat) {
     throw new Error('Chat does not exist.')
@@ -46720,7 +46722,11 @@ async function dockSideChatPopout(
     presentation,
     ...(draft !== undefined ? { draft } : {}),
     ...(scrollState ? { scrollState } : {}),
-    ...(roundExpansion ? { roundExpansion } : {})
+    ...(roundExpansion ? { roundExpansion } : {}),
+    // `!== undefined`, NOT the truthiness idiom the three siblings use: the
+    // transcript view is tri-state and `null` is the popout's explicit
+    // "I am on Follow default" clear, which a truthiness guard would swallow.
+    ...(transcriptView !== undefined ? { transcriptView } : {})
   })
 
   const sourceWindow = BrowserWindow.fromWebContents(event.sender)

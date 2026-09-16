@@ -123,6 +123,67 @@ describe('chatPopoutHandoff', () => {
       })
     })
 
+    it('carries an explicit transcript-view override across the window boundary', () => {
+      const raw = serializeChatPopoutHandoff({ transcriptView: 'minimal' }, 555)
+      expect(JSON.parse(raw)).toEqual({ transcriptView: 'minimal', writtenAt: 555 })
+      expect(parseChatPopoutHandoffPayload(raw)).toEqual({
+        transcriptView: 'minimal',
+        writtenAt: 555
+      })
+      expect(
+        parseChatPopoutHandoffPayload(JSON.stringify({ transcriptView: 'tools', writtenAt: 556 }))
+      ).toEqual({ transcriptView: 'tools', writtenAt: 556 })
+    })
+
+    it('carries a deliberate standard pin, distinctly from carrying no override', () => {
+      // These two cases are the whole reason the four-item menu exists, and the
+      // reason the carried value must not go through a total normaliser.
+      const pinned = serializeChatPopoutHandoff({ transcriptView: 'standard' }, 601)
+      expect(JSON.parse(pinned)).toEqual({ transcriptView: 'standard', writtenAt: 601 })
+      expect(parseChatPopoutHandoffPayload(pinned)).toEqual({
+        transcriptView: 'standard',
+        writtenAt: 601
+      })
+
+      const unpinned = serializeChatPopoutHandoff({ draft: 'x' }, 602)
+      expect(JSON.parse(unpinned)).toEqual({ draft: 'x', writtenAt: 602 })
+      expect(parseChatPopoutHandoffPayload(unpinned)).toEqual({ draft: 'x', writtenAt: 602 })
+      expect(parseChatPopoutHandoffPayload(unpinned)).not.toHaveProperty('transcriptView')
+    })
+
+    it('keeps an absent or unreadable transcript view out of the payload entirely', () => {
+      expect(JSON.parse(serializeChatPopoutHandoff({ draft: 'a' }, 701))).toEqual({
+        draft: 'a',
+        writtenAt: 701
+      })
+      expect(
+        JSON.parse(serializeChatPopoutHandoff({ draft: 'a', transcriptView: undefined }, 702))
+      ).toEqual({ draft: 'a', writtenAt: 702 })
+      expect(
+        JSON.parse(serializeChatPopoutHandoff({ draft: 'a', transcriptView: 'huge' as never }, 703))
+      ).toEqual({ draft: 'a', writtenAt: 703 })
+      expect(
+        parseChatPopoutHandoffPayload(
+          JSON.stringify({ draft: 'a', transcriptView: 'huge', writtenAt: 704 })
+        )
+      ).toEqual({ draft: 'a', writtenAt: 704 })
+      expect(
+        parseChatPopoutHandoffPayload(
+          JSON.stringify({ draft: 'a', transcriptView: null, writtenAt: 705 })
+        )
+      ).toEqual({ draft: 'a', writtenAt: 705 })
+      // Positive control: the same two boundaries DO carry a real view, so the
+      // four assertions above are about rejection, not about a dead field.
+      expect(
+        JSON.parse(serializeChatPopoutHandoff({ draft: 'a', transcriptView: 'tools' }, 706))
+      ).toEqual({ draft: 'a', transcriptView: 'tools', writtenAt: 706 })
+      expect(
+        parseChatPopoutHandoffPayload(
+          JSON.stringify({ draft: 'a', transcriptView: 'tools', writtenAt: 707 })
+        )
+      ).toEqual({ draft: 'a', transcriptView: 'tools', writtenAt: 707 })
+    })
+
     it('preserves explicit empty disclosure so the destination can clear stale state', () => {
       const raw = serializeChatPopoutHandoff({ roundExpansion: [] }, 321)
       expect(parseChatPopoutHandoffPayload(raw)).toEqual({
@@ -179,6 +240,26 @@ describe('chatPopoutHandoff', () => {
         writtenAt: 789
       })
       expect(storage.getItem(chatPopoutHandoffKey('chat-1'))).toBeNull()
+      expect(readChatPopoutHandoff('chat-1')).toBeNull()
+    })
+
+    it('consumes the carried transcript view once, so a reloaded popout follows the default', () => {
+      const storage = installWindow()
+      vi.spyOn(Date, 'now').mockReturnValue(790)
+
+      writeChatPopoutHandoff('chat-1', { transcriptView: 'minimal' })
+
+      expect(storage.getItem(chatPopoutHandoffKey('chat-1'))).toBe(
+        JSON.stringify({ transcriptView: 'minimal', writtenAt: 790 })
+      )
+      expect(readChatPopoutHandoff('chat-1')).toEqual({
+        transcriptView: 'minimal',
+        writtenAt: 790
+      })
+      // Deliberate: the read is destructive, exactly as it already is for the
+      // draft, the scroll state and the disclosure map. A popout that reloads
+      // finds nothing and falls back to the Appearance default, which shows
+      // MORE rather than silently hiding a turn's work.
       expect(readChatPopoutHandoff('chat-1')).toBeNull()
     })
 

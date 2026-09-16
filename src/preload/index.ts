@@ -183,7 +183,8 @@ import {
 } from '../shared/workLockProjection'
 import type {
   ChatPopoutRoundExpansionSnapshot,
-  ChatPopoutScrollState
+  ChatPopoutScrollState,
+  TranscriptView
 } from '../shared/chatPopoutTransfer'
 import {
   SerializedChatPersistence,
@@ -1252,6 +1253,9 @@ const api = {
     draft?: string
     scrollState?: ChatPopoutScrollState
     roundExpansion?: ChatPopoutRoundExpansionSnapshot
+    // Tri-state: a view pins, `null` clears back to the Appearance default,
+    // absent says nothing and leaves the main window's override alone.
+    transcriptView?: TranscriptView | null
   }) => ipcRenderer.invoke('dock-side-chat-popout', input) as Promise<{ ok: true }>,
   quitApp: () => ipcRenderer.invoke('app:quit') as Promise<boolean>,
   listWorkspaceFiles: (workspace: string) => ipcRenderer.invoke('list-workspace-files', workspace),
@@ -3378,6 +3382,7 @@ const api = {
       draft?: string
       scrollState?: ChatPopoutScrollState
       roundExpansion?: ChatPopoutRoundExpansionSnapshot
+      transcriptView?: TranscriptView | null
     }) => void
   ) => {
     const wrapped = (
@@ -3389,6 +3394,7 @@ const api = {
         draft?: string
         scrollState?: ChatPopoutScrollState
         roundExpansion?: ChatPopoutRoundExpansionSnapshot
+        transcriptView?: TranscriptView | null
       }
     ): void => callback(payload)
     ipcRenderer.on('side-chat:dock-request', wrapped)

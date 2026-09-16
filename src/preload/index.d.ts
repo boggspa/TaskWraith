@@ -186,7 +186,8 @@ import type {
 } from '../main/store/ProjectRegistry'
 import type {
   ChatPopoutRoundExpansionSnapshot,
-  ChatPopoutScrollState
+  ChatPopoutScrollState,
+  TranscriptView
 } from '../shared/chatPopoutTransfer'
 import type {
   WorkflowRunSummary,
@@ -1386,6 +1387,7 @@ declare global {
         draft?: string
         scrollState?: ChatPopoutScrollState
         roundExpansion?: ChatPopoutRoundExpansionSnapshot
+        transcriptView?: TranscriptView | null
       }) => Promise<{ ok: true }>
       quitApp: () => Promise<boolean>
       listWorkspaceFiles: (workspace: string) => Promise<WorkspaceFileEntry[]>
@@ -3323,6 +3325,7 @@ declare global {
           draft?: string
           scrollState?: ChatPopoutScrollState
           roundExpansion?: ChatPopoutRoundExpansionSnapshot
+          transcriptView?: TranscriptView | null
         }) => void
       ) => () => void
       onCreativeActionRequest: (

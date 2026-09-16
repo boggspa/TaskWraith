@@ -119,6 +119,21 @@ export function transcriptViewForChat(
   return override ?? defaultView
 }
 
+/**
+ * The explicit override `chatId` carries, or `undefined` when it follows the
+ * default — for handing the per-chat view to a window that cannot share this
+ * module (a chat popout is a second BrowserWindow with its own JS realm).
+ *
+ * Reads the snapshot directly, mirroring `captureSessionRoundExpansionForChat`,
+ * and is deliberately PARTIAL: `transcriptViewForChat` and
+ * `resolveTranscriptView` are both total, so capturing through either would
+ * hand the other window an explicit `'standard'` for a chat that has no
+ * override at all, pinning it against the Appearance default forever.
+ */
+export function captureTranscriptViewOverrideForChat(chatId: string): TranscriptView | undefined {
+  return chatId ? transcriptViewSnapshot.get(chatId) : undefined
+}
+
 /** Whether `chatId` carries an explicit override, for a menu that marks it. */
 export function hasTranscriptViewOverride(
   viewByChatId: TranscriptViewByChatId,

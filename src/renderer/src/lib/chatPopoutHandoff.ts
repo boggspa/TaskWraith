@@ -1,8 +1,10 @@
 import {
   normalizeChatPopoutRoundExpansion,
   normalizeChatPopoutScrollState,
+  normalizeTranscriptViewOverride,
   type ChatPopoutRoundExpansionSnapshot,
-  type ChatPopoutScrollState
+  type ChatPopoutScrollState,
+  type TranscriptView
 } from '../../../shared/chatPopoutTransfer'
 import {
   normalizeChatPopoutPresentation,
@@ -13,6 +15,13 @@ export interface ChatPopoutHandoffState {
   draft?: string
   scrollState?: ChatPopoutScrollState
   roundExpansion?: ChatPopoutRoundExpansionSnapshot
+  /**
+   * The sending chat's explicit transcript-view override, or absent when it
+   * follows the Appearance default. OPTIONAL on purpose: absence is a real,
+   * distinct state that the four-item view menu exposes, and a popout that
+   * receives absence must write nothing rather than pin `'standard'`.
+   */
+  transcriptView?: TranscriptView
   writtenAt: number
 }
 
@@ -54,10 +63,12 @@ export function serializeChatPopoutHandoff(
 ): string {
   const scrollState = normalizeChatPopoutScrollState(handoff.scrollState)
   const roundExpansion = normalizeChatPopoutRoundExpansion(handoff.roundExpansion)
+  const transcriptView = normalizeTranscriptViewOverride(handoff.transcriptView)
   return JSON.stringify({
     ...(typeof handoff.draft === 'string' ? { draft: handoff.draft } : {}),
     ...(scrollState ? { scrollState } : {}),
     ...(roundExpansion ? { roundExpansion } : {}),
+    ...(transcriptView ? { transcriptView } : {}),
     writtenAt
   })
 }
@@ -72,10 +83,12 @@ export function parseChatPopoutHandoffPayload(
     const record = parsed as Record<string, unknown>
     const scrollState = normalizeChatPopoutScrollState(record.scrollState)
     const roundExpansion = normalizeChatPopoutRoundExpansion(record.roundExpansion)
+    const transcriptView = normalizeTranscriptViewOverride(record.transcriptView)
     return {
       ...(typeof record.draft === 'string' ? { draft: record.draft } : {}),
       ...(scrollState ? { scrollState } : {}),
       ...(roundExpansion ? { roundExpansion } : {}),
+      ...(transcriptView ? { transcriptView } : {}),
       writtenAt: typeof record.writtenAt === 'number' ? record.writtenAt : fallbackWrittenAt
     }
   } catch {
