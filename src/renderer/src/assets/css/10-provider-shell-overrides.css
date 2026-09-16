@@ -3897,9 +3897,13 @@
  *
  * Isolation contract:
  *   - Every selector is prefixed
- *     `[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)`
- *     so the other 13 composer shells and the side-chat composer are
- *     untouched (claudeComposerDesktopParityCss.test.ts pins this).
+ *     `[data-composer-style="claude"] .app-transcript .composer-surface`
+ *     so the other 13 composer shells are untouched
+ *     (claudeComposerDesktopParityCss.test.ts pins this). The linked
+ *     side-chat pane and multiview panes mount the same Composer component
+ *     and take the same styling by design; 11-side-chat.css only adjusts
+ *     docking geometry. (There is no `.side-chat-composer` class anywhere in
+ *     the tree — do not reintroduce it as a guard.)
  *   - Colours are Claude-local custom properties set on the surface; the
  *     light family (light / mist / sage) only swaps the palette block.
  *   - The model · effort chip keeps its content, colour, weight, padding and
@@ -3910,7 +3914,7 @@
 
 /* Palette — dark (default). `gap` pins the 8px box→chin distance the send
  * cluster's anchor below relies on. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer) {
+[data-composer-style="claude"] .app-transcript .composer-surface {
   --claude-cc-box-bg: #20201f;
   --claude-cc-box-ring: rgba(255, 255, 255, 0.08);
   --claude-cc-box-ring-focus: rgba(255, 255, 255, 0.16);
@@ -3927,7 +3931,7 @@
 /* Palette — light family */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]
   .app-transcript
-  .composer-surface:not(.side-chat-composer) {
+  .composer-surface {
   --claude-cc-box-bg: #ffffff;
   --claude-cc-box-ring: rgba(0, 0, 0, 0.1);
   --claude-cc-box-ring-focus: rgba(0, 0, 0, 0.25);
@@ -3945,7 +3949,7 @@
  *    the send-button notch; `display: block` drops the inline-block descender
  *    gap so the 8px chin gap is exact. `!important` only where an earlier
  *    shard already pins the same property with `!important`. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-textarea {
   display: block;
   box-sizing: border-box;
@@ -3964,15 +3968,27 @@
   color: var(--claude-cc-text) !important;
   caret-color: var(--claude-cc-text);
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-textarea::placeholder {
   color: var(--claude-cc-text-muted) !important;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer):focus-within
+[data-composer-style="claude"] .app-transcript .composer-surface:focus-within
   .composer-textarea {
   box-shadow:
     inset 0 0 0 1px var(--claude-cc-box-ring-focus),
     var(--claude-cc-box-shadow-focus) !important;
+}
+/* Ensemble mention overlay: the textarea's own glyphs stay transparent so the
+ * overlay (`.composer-textarea-highlight`, z-index 2, metrics synced from the
+ * textarea at runtime) is the only visible text; the overlay takes the box's
+ * ink so mention-free text matches the plain state exactly. */
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea.has-mention-overlay {
+  color: transparent !important;
+}
+[data-composer-style="claude"] .app-transcript .composer-surface
+  .composer-textarea-highlight-content {
+  color: var(--claude-cc-text);
 }
 
 /* 2) Send / stop cluster: a 32px ghost button 8px inside the box's
@@ -3980,13 +3996,13 @@
  *    positioning context; its top edge sits 8px below the box, so
  *    `100% + 16px` lands the cluster 8px inside the box however many lines
  *    the draft has. The child buttons return to normal flow inside it. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-control-footer {
   position: relative;
   padding: 0;
   margin: 0;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster {
   display: inline-flex;
   align-items: center;
@@ -3996,7 +4012,7 @@
   bottom: calc(100% + 16px);
   z-index: 4;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn {
   position: static;
@@ -4012,43 +4028,43 @@
   color: var(--claude-cc-text);
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn:hover:not(:disabled) {
   background: var(--claude-cc-hover);
   color: var(--claude-cc-text);
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn:active:not(:disabled) {
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn:disabled {
   background: transparent;
   color: var(--claude-cc-text);
   opacity: 0.4;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn:disabled
   .sf-symbol-icon {
   color: inherit;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn:focus-visible {
   outline: 2px solid var(--focus-ring, var(--accent));
   outline-offset: 2px;
   box-shadow: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn
   .sf-symbol-icon,
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-send-cluster
   > .composer-action-btn
   .sf-symbol-icon
@@ -4059,7 +4075,7 @@
 }
 
 /* 3) Chin: a 24px row with 4px gaps, inset 8px like the text above it. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-inline-pickers {
   padding: 0 8px;
   margin: 0;
@@ -4067,12 +4083,12 @@
   min-height: 24px;
   align-items: center;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-inline-pickers-left {
   gap: 4px;
   align-items: center;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-inline-actions {
   gap: 4px;
   margin-right: 0;
@@ -4080,7 +4096,7 @@
 /* Row type: 13px on a 24px line for every chip. The model · effort chip keeps
  * its own colour, weight, padding and hover (shard 08 "Claude shell model
  * chip"); only its size follows the row. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-combined-picker-trigger {
   height: 24px;
   min-height: 24px;
@@ -4089,7 +4105,7 @@
 }
 
 /* Attach "+": 24px ghost, radius 6, 20px glyph. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-image-picker-btn {
   width: 24px;
   height: 24px;
@@ -4102,19 +4118,19 @@
   color: var(--claude-cc-text-secondary);
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-image-picker-btn:hover:not(:disabled),
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-image-picker-btn:focus-visible {
   background: var(--claude-cc-hover);
   border: 0;
   color: var(--claude-cc-text);
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-image-picker-btn
   .sf-symbol-icon,
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-image-picker-btn
   .sf-symbol-icon
   svg {
@@ -4125,12 +4141,12 @@
 /* Mic + caret: a split dropdown button — 24px ghost mic with a 20px glyph
  * joined to a 12px caret segment. The shared light-family voice rules above
  * pin colours with `!important`, so these do too. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-voice-control {
   gap: 0;
   padding: 0;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn {
   width: 24px;
   height: 24px;
@@ -4143,18 +4159,18 @@
   color: var(--claude-cc-text-secondary) !important;
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn.is-recording {
   background: var(--claude-cc-hover) !important;
   color: var(--claude-cc-text) !important;
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn
   .sf-symbol-icon,
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn
   .sf-symbol-icon
   svg {
@@ -4162,23 +4178,23 @@
   height: 20px;
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-action-btn.voice-btn:disabled,
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-voice-chevron:disabled {
   background: transparent !important;
   color: var(--claude-cc-text-muted) !important;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-voice-chevron {
   width: 12px;
   height: 24px;
   border-radius: 6px;
   color: var(--claude-cc-text-muted) !important;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-voice-control.is-menu-open
   .composer-voice-chevron {
   background: var(--claude-cc-hover) !important;
@@ -4188,7 +4204,7 @@
 /* Permission chip ("Accept edits"): a 24px ghost text button, 13px / 400,
  * 8px side padding, no fill or border, hover 7.5%. The shared light-family
  * chip rules pin its colour with `!important`, so this does too. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   [data-composer-control="permission"] {
   height: 24px;
   min-height: 24px;
@@ -4202,12 +4218,12 @@
   font-weight: 400;
   line-height: 24px;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   [data-composer-control="permission"]:hover:not(:disabled) {
   background: var(--claude-cc-hover) !important;
   color: var(--claude-cc-text) !important;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   [data-composer-control="permission"]
   .composer-combined-picker-trigger-primary {
   color: inherit !important;
@@ -4218,7 +4234,7 @@
  *    prop) inside a 24px ghost button, last in the row. The track circle is
  *    the neutral 10% ring; the arc keeps the hue from shard 08 and the shared
  *    warn/critical tints. */
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-context-trigger {
   width: 24px;
   height: 24px;
@@ -4227,24 +4243,23 @@
   background: transparent;
   transform: none;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .composer-context-trigger:hover:not(:disabled) {
   background: var(--claude-cc-hover);
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .context-wheel {
   width: 24px;
   height: 24px;
   margin: 0;
-  order: 0;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .context-wheel
   svg {
   width: 12px;
   height: 12px;
 }
-[data-composer-style="claude"] .app-transcript .composer-surface:not(.side-chat-composer)
+[data-composer-style="claude"] .app-transcript .composer-surface
   .context-wheel
   svg
   circle:first-child {

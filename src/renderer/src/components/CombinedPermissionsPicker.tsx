@@ -206,6 +206,11 @@ export function CombinedPermissionsPicker({
   }, [open, permissionOptions, permissionHighlight, choosePermissionOption])
 
   const hasBottomContent = Boolean(bottomContent)
+  // Claude shell only: chip and menu rows share one casing so the open menu
+  // matches the visible chip.
+  const displayLabel = (label: string): string =>
+    composerStyle === 'claude' ? toClaudeSentenceCase(label) : label
+
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
@@ -239,7 +244,9 @@ export function CombinedPermissionsPicker({
               title={option.disabledReason}
             >
               <span className="composer-combined-picker-row-body">
-                <span className="composer-combined-picker-row-label">{option.label}</span>
+                <span className="composer-combined-picker-row-label">
+                  {displayLabel(option.label)}
+                </span>
                 {optionDescription && (
                   <span className="composer-combined-picker-row-sub">{optionDescription}</span>
                 )}
@@ -296,9 +303,7 @@ export function CombinedPermissionsPicker({
         aria-label={disabledReason || 'Choose permission mode'}
       >
         <span className="composer-combined-picker-trigger-primary">
-          {composerStyle === 'claude'
-            ? toClaudeSentenceCase(selectedOption.label)
-            : selectedOption.label}
+          {displayLabel(selectedOption.label)}
         </span>
       </button>
       {popoverContent ? createPortal(popoverContent, document.body) : null}

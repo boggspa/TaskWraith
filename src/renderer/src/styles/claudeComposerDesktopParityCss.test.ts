@@ -10,7 +10,7 @@ const SECTION_START = 'Claude shell — Claude Desktop composer parity (comforta
 const SECTION_END =
   '/* ==================== end Claude Desktop composer parity ==================== */'
 const CLAUDE_GUARD = '[data-composer-style="claude"]'
-const SURFACE_GUARD = '.composer-surface:not(.side-chat-composer)'
+const SURFACE_GUARD = '.composer-surface'
 
 const readParitySection = (): string => {
   const css = readShard('10-provider-shell-overrides.css')
@@ -72,15 +72,19 @@ describe('Claude shell — Claude Desktop composer parity CSS', () => {
     expect(parity).toBeGreaterThan(signOff)
   })
 
-  it('scopes every rule to the Claude shell and outside the side-chat composer', () => {
+  it('scopes every rule to the Claude shell composer surface', () => {
     const selectors = selectorsOf(readParitySection())
     expect(selectors.length).toBeGreaterThan(30)
     for (const selector of selectors) {
       expect(selector, selector).toContain(CLAUDE_GUARD)
       expect(selector, selector).toContain('.app-transcript ' + SURFACE_GUARD)
     }
-    // No other shell id anywhere in the section, comments included.
+    // No other shell id anywhere in the section, comments included, and no
+    // `.side-chat-composer` guard: that class is set nowhere in the tree, so a
+    // selector carrying it only looks scoped (the side-chat pane mounts the
+    // same Composer and is styled alike by design).
     const section = readParitySection()
+    expect(selectors.some((selector) => selector.includes('side-chat-composer'))).toBe(false)
     for (const shell of [
       'default',
       'codex',
@@ -117,6 +121,13 @@ describe('Claude shell — Claude Desktop composer parity CSS', () => {
     expect(section).toContain('font-size: 16px;')
     expect(section).toContain('line-height: 22px;')
     expect(section).toContain('display: block;')
+    // The ensemble mention overlay relies on transparent textarea glyphs.
+    expect(section).toContain(
+      '.composer-textarea.has-mention-overlay {\n  color: transparent !important;'
+    )
+    expect(section).toContain(
+      '.composer-textarea-highlight-content {\n  color: var(--claude-cc-text);'
+    )
   })
 
   it('anchors a 32px ghost send/stop cluster 8px inside the box bottom-right, above the chin', () => {

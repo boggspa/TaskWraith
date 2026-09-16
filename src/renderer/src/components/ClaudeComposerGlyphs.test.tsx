@@ -9,9 +9,11 @@ import {
   StopCircleSymbolIcon,
   StopSymbolIcon
 } from './AppChromeSymbols'
+import { composerPermissionOptions } from '../lib/planModeLabels'
 import { CombinedPermissionsPicker, toClaudeSentenceCase } from './CombinedPermissionsPicker'
 
 const read = (file: string): string => readFileSync(new URL(file, import.meta.url), 'utf8')
+const pickerSource = read('./CombinedPermissionsPicker.tsx')
 
 const permissionOptions = [
   { value: 'default', label: 'Accept Edits' },
@@ -86,10 +88,25 @@ describe('Claude composer shell glyphs', () => {
     expect(renderPermission('claude')).toContain('>Accept edits<')
     expect(renderPermission('codex')).toContain('>Accept Edits<')
 
-    expect(toClaudeSentenceCase('Accept Edits')).toBe('Accept edits')
-    expect(toClaudeSentenceCase('Plan')).toBe('Plan')
-    expect(toClaudeSentenceCase('Full Access')).toBe('Full access')
-    expect(toClaudeSentenceCase('MCP Grants')).toBe('MCP grants')
-    expect(toClaudeSentenceCase('Read-Only Recon')).toBe('Read-Only recon')
+    // The real label set, single source of truth for solo + ensemble pickers.
+    const realLabels = composerPermissionOptions().map((option) => option.label)
+    expect(realLabels).toEqual(['Plan', 'Ask', 'Accept Edits', 'Full WS Access', 'Full Access'])
+    expect(realLabels.map(toClaudeSentenceCase)).toEqual([
+      'Plan',
+      'Ask',
+      'Accept edits',
+      'Full WS access',
+      'Full access'
+    ])
+
+    // Menu rows take the same casing as the chip (source guard: the popover
+    // only renders open, which renderToStaticMarkup cannot reach).
+    expect(pickerSource).toMatch(
+      /composer-combined-picker-row-label">\s*\{displayLabel\(option\.label\)\}\s*<\/span>/
+    )
+    expect(pickerSource).toContain('{displayLabel(selectedOption.label)}')
+    expect(pickerSource).toContain(
+      "composerStyle === 'claude' ? toClaudeSentenceCase(label) : label"
+    )
   })
 })

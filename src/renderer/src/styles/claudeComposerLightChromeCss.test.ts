@@ -42,7 +42,7 @@ describe('Claude composer light chrome', () => {
     // shared box rule through Claude-local custom properties.
     const lightPalette = section.slice(section.indexOf('/* Palette — light family */'))
     expect(lightPalette).toContain(
-      ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]\n  .app-transcript\n  .composer-surface:not(.side-chat-composer) {'
+      ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"]\n  .app-transcript\n  .composer-surface {'
     )
     expect(lightPalette).toContain('--claude-cc-box-bg: #ffffff;')
     expect(lightPalette).toContain('--claude-cc-box-ring: rgba(0, 0, 0, 0.1);')
@@ -54,9 +54,7 @@ describe('Claude composer light chrome', () => {
 
     expect(section).toContain('background: var(--claude-cc-box-bg) !important;')
     expect(section).toContain('inset 0 0 0 1px var(--claude-cc-box-ring),')
-    expect(section).toContain(
-      '.composer-surface:not(.side-chat-composer):focus-within\n  .composer-textarea {'
-    )
+    expect(section).toContain('.composer-surface:focus-within\n  .composer-textarea {')
     expect(section).toContain('inset 0 0 0 1px var(--claude-cc-box-ring-focus),')
 
     // The pre-parity light frame (rimmed border + two-layer drop shadow) is gone.
