@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
@@ -276,5 +278,143 @@ describe('SubThreadReturnCard', () => {
     const html = renderToStaticMarkup(<SubThreadReturnCard message={subThreadMessage()} />)
 
     expect(html).not.toContain('subthread-return-recovered-activity')
+  })
+})
+
+describe('SubThreadReturnCard under a filtering transcript view', () => {
+  // This body is the child's final assistant message, relayed verbatim by main.
+  // Minimal keeps assistant messages, so it keeps this — what it drops is the
+  // expand/collapse chrome, because nothing on a Minimal row is expandable.
+
+  const BODY_MARKER = 'CHILD-ANSWER-MARKER'
+  const withBody = (body: string) =>
+    subThreadMessage({ content: `↩ Result from Codex sub-thread (Build agent):\n\n${body}` })
+
+  it('keeps the relayed body under every view', () => {
+    // If this ever stopped holding, the chrome assertions below would be
+    // vacuous: they would pass on a card that rendered nothing at all.
+    for (const view of ['minimal', 'tools', 'standard'] as const) {
+      const html = renderToStaticMarkup(
+        <SubThreadReturnCard message={withBody(BODY_MARKER)} transcriptView={view} />
+      )
+      expect(html, view).toContain(BODY_MARKER)
+    }
+  })
+
+  it('drops the expander under minimal, and keeps it under tools and standard', () => {
+    const minimal = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={withBody(BODY_MARKER)}
+        transcriptView="minimal"
+        resultExpanded={false}
+        onResultExpandedChange={() => {}}
+      />
+    )
+    // A COLLAPSED viewport would not do: LiveActivityViewport always renders
+    // its children and merely clamps them with a CSS max-height, so the
+    // expander would still be there and still be pressable. The element has to
+    // go.
+    expect(minimal).not.toContain('Expand result')
+    expect(minimal).not.toContain('Collapse result')
+    expect(minimal).not.toContain('subthread-return-viewport')
+    expect(minimal).not.toContain('aria-expanded')
+
+    for (const view of ['tools', 'standard'] as const) {
+      const html = renderToStaticMarkup(
+        <SubThreadReturnCard
+          message={withBody(BODY_MARKER)}
+          transcriptView={view}
+          resultExpanded={false}
+          onResultExpandedChange={() => {}}
+        />
+      )
+      // The positive control that makes all four negatives above meaningful.
+      expect(html, view).toContain('Expand result')
+      expect(html, view).toContain('subthread-return-viewport')
+    }
+  })
+
+  it('renders a huge body in full under minimal rather than a preview with no way out', () => {
+    // The truncated preview ends in "Full result is rendered when expanded." —
+    // which, with the expander gone, would be a dead end the reader could never
+    // get past. Minimal shows the whole thing instead.
+    const huge = `${'x'.repeat(8_000)}\nUNREACHABLE_TAIL_MARKER`
+    const minimal = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={withBody(huge)}
+        transcriptView="minimal"
+        resultExpanded={false}
+        onResultExpandedChange={() => {}}
+      />
+    )
+    expect(minimal).toContain('UNREACHABLE_TAIL_MARKER')
+    expect(minimal).not.toContain('Full result is rendered when expanded.')
+
+    // Positive control: the same body under standard DOES truncate, so the
+    // assertions above are about the view and not about the fixture.
+    const standard = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={withBody(huge)}
+        transcriptView="standard"
+        resultExpanded={false}
+        onResultExpandedChange={() => {}}
+      />
+    )
+    expect(standard).not.toContain('UNREACHABLE_TAIL_MARKER')
+    expect(standard).toContain('Full result is rendered when expanded.')
+  })
+
+  it('keeps a failed child run visible under minimal', () => {
+    // A child's failure is appended INTO this body by LinkedChildReturn rather
+    // than carried as an activity status, so `activityStackHasFailure` cannot
+    // see it. Hiding the body would hide the failure, which no view may do.
+    const html = renderToStaticMarkup(
+      <SubThreadReturnCard
+        message={withBody('Sub-thread failed before returning a result.')}
+        transcriptView="minimal"
+      />
+    )
+    expect(html).toContain('Sub-thread failed before returning a result.')
+  })
+
+  it('keeps the unwrapped body indented like the wrapped one', () => {
+    // The 12px inset lives on `.subthread-return-viewport`, which Minimal does
+    // not render, so without a rule for the bare case the text sits flush
+    // against the card edge. The child combinator is load-bearing: it must
+    // match ONLY the unwrapped body, or the wrapped one gets a double indent.
+    const css = readFileSync(join(__dirname, '../assets/css/02-transcript-messages-fx.css'), 'utf8')
+    // The trailing ` {` is load-bearing: without it the selector is a PREFIX of
+    // any longer class name, so renaming the rule to `...-innerX` would still
+    // match and the guard would pass on a stylesheet that no longer styles
+    // anything. (It did, until this was tightened.)
+    const selector = '.subthread-return-body > .subthread-return-body-inner {'
+    const at = css.indexOf(selector)
+    // `slice(indexOf(x))` on a missing needle is slice(-1) — the last
+    // character, never '' — so the index must be asserted directly or this
+    // guard cannot fail.
+    expect(at).toBeGreaterThan(-1)
+    expect(css.slice(at, at + 200)).toContain('padding-left: 12px')
+    // The rule it mirrors must still be the one carrying the inset.
+    const viewportAt = css.indexOf('.subthread-return-viewport {')
+    expect(viewportAt).toBeGreaterThan(-1)
+    expect(css.slice(viewportAt, viewportAt + 200)).toContain('padding-left: 12px')
+  })
+
+  it('renders the same body whether or not a viewport wraps it', () => {
+    // The two branches must differ only in chrome. Stripping the viewport
+    // markup from the standard render should leave the minimal one.
+    const body = '## Heading\n\n- item one\n- item two'
+    const minimal = renderToStaticMarkup(
+      <SubThreadReturnCard message={withBody(body)} transcriptView="minimal" />
+    )
+    const standard = renderToStaticMarkup(
+      <SubThreadReturnCard message={withBody(body)} transcriptView="standard" />
+    )
+    const inner = /<div class="subthread-return-body-inner">[\s\S]*?<\/div><\/div>/
+    const fromMinimal = minimal.match(inner)?.[0]
+    const fromStandard = standard.match(inner)?.[0]
+    expect(fromMinimal).toBeTruthy()
+    expect(fromStandard).toBeTruthy()
+    expect(fromMinimal).toBe(fromStandard)
   })
 })

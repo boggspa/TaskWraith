@@ -6,7 +6,7 @@ import {
   activityStackHasPriorityActivity,
   isTranscriptPriorityActivity,
   transcriptViewFoldsLiveStacks,
-  transcriptViewRendersFanoutViewport,
+  transcriptViewOffersExpandChrome,
   transcriptViewRendersSegment,
   visibleTimelineItems,
   visibleTimelineSegments
@@ -73,17 +73,27 @@ describe('the failure carve-out', () => {
   })
 })
 
-describe('fan-out lane viewports', () => {
-  it('folds a succeeded lane under minimal only', () => {
-    expect(transcriptViewRendersFanoutViewport('minimal')).toBe(false)
-    expect(transcriptViewRendersFanoutViewport('tools')).toBe(true)
-    expect(transcriptViewRendersFanoutViewport('standard')).toBe(true)
+describe('expand chrome on a relayed message body', () => {
+  it('drops the expander under minimal only', () => {
+    expect(transcriptViewOffersExpandChrome('minimal')).toBe(false)
+    expect(transcriptViewOffersExpandChrome('tools')).toBe(true)
+    expect(transcriptViewOffersExpandChrome('standard')).toBe(true)
   })
+})
 
-  it('keeps a failed lane whole under minimal', () => {
-    // The lane card is the only thing attributing a lane to its seat, so a
-    // failed lane that folded would lose both the error and its owner.
-    expect(transcriptViewRendersFanoutViewport('minimal', true)).toBe(true)
+describe('the rejected fan-out lane gate stays deleted', () => {
+  it('exports no fan-out viewport predicate', async () => {
+    // A lane's RESULT is the seat's answer, and no view removes it. The gate
+    // that would have hidden it was examined and rejected: a wave only folds
+    // to its one-liner once every lane is terminal and focus has moved on, so
+    // on a live wave hiding the body leaves an attribution header with nothing
+    // underneath. Pinned as an export assertion rather than a comment because
+    // the failure mode is someone re-adding the helper as "unfinished work".
+    const fold = await import('./transcriptViewFold')
+    expect(Object.keys(fold)).not.toContain('transcriptViewRendersFanoutViewport')
+    // Anti-vacuity: the module really does export predicates under this name
+    // shape, so the absence above is a filtered result and not an empty one.
+    expect(Object.keys(fold)).toContain('transcriptViewRendersSegment')
   })
 })
 

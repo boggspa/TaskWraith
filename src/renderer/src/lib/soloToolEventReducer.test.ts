@@ -437,8 +437,11 @@ describe('kind-tagged tool cards never absorb the live burst', () => {
   // system authority"), so once it was the transcript tail, EVERY subsequent
   // activity of the still-running parent (41 kimi_thinking segments, 8
   // git_commits, …110 events over 6 minutes) collapsed into the card's
-  // toolActivities — which SubThreadReturnCard never renders. The transcript
-  // read as frozen until the next assistant message re-anchored the tail.
+  // toolActivities — which SubThreadReturnCard did not render AT THE TIME. The
+  // transcript read as frozen until the next assistant message re-anchored the
+  // tail. (The card has since grown a recovered-activity section so those
+  // damaged records stay readable; this reducer guard is what stops NEW ones
+  // being written, and remains the actual fix.)
   // Shape below mirrors the persisted damaged record (runId absent,
   // metadata.kind discriminates every transcript card).
   const subThreadReturnCard = (): ChatMessage => ({

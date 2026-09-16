@@ -7270,6 +7270,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--text-primary);
 }
 
+/* Minimal renders the body with no LiveActivityViewport around it, so the
+   12px inset that .subthread-return-viewport carries would be lost and the
+   text would sit flush against the card edge. The child combinator matches
+   ONLY the unwrapped case: when a viewport is present the inner div sits
+   inside its scroll container and is not a direct child. */
+.subthread-return-body > .subthread-return-body-inner {
+  padding-left: 12px;
+}
+
 .subthread-return-preview,
 .ensemble-fanout-result-preview {
   display: grid;

@@ -6,6 +6,7 @@ import type {
   TranscriptView
 } from '../../../main/store/types'
 import { DEFAULT_TRANSCRIPT_VIEW } from '../lib/transcriptViewOverride'
+import { transcriptViewOffersExpandChrome } from '../lib/transcriptViewFold'
 import { ActivityStack, activityStackHasVisibleContent } from './ActivityStack'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
@@ -72,11 +73,26 @@ export function SubThreadReturnCard({
   // The caption below describes the stack beneath it, so it must not outlive
   // it: when a view filters every recovered activity away the stack renders
   // nothing and the note was left captioning empty space.
+  const view = transcriptView ?? DEFAULT_TRANSCRIPT_VIEW
   const recoveredActivitiesVisible = activityStackHasVisibleContent(
     message.toolActivities || [],
-    transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+    view,
     { chatId: chat?.appChatId, runId: message.runId }
   )
+  // This body is the CHILD'S FINAL ASSISTANT MESSAGE, relayed: main takes the
+  // child's last assistant message verbatim (`LinkedChildReturn`) and this card
+  // strips the envelope back off. The `tool` role it carries is prompt-injection
+  // containment — "may this steer the parent model", not "is this machine
+  // output" — so Minimal keeps it for the same reason it keeps every other
+  // assistant message. Hiding it would also hide child FAILURES, which are
+  // appended into this body rather than carried as an activity status, and no
+  // view may hide a failure.
+  //
+  // What Minimal drops is the expand/collapse chrome, so nothing on a Minimal
+  // row is expandable. The body is rendered in FULL when the chrome goes: with
+  // no control to press, the truncated preview below would be a dead end no
+  // reader could get past.
+  const bodyExpandable = transcriptViewOffersExpandChrome(view)
   const metadata = message.metadata || {}
   const relation = linkedChildReturnRelation(message)
   const isSideChatReturn = relation === 'sideChat'
@@ -108,11 +124,32 @@ export function SubThreadReturnCard({
   // run's activities here (the 2026-08-26 frozen-transcript incident).
   // Rendering them is the only way that history stays visible.
   const recoveredActivities = message.toolActivities || []
-  const renderFullBody = Boolean(resultExpanded) || body.length <= COLLAPSED_RESULT_MARKDOWN_LIMIT
+  const renderFullBody =
+    !bodyExpandable || Boolean(resultExpanded) || body.length <= COLLAPSED_RESULT_MARKDOWN_LIMIT
   const previewBody =
     body.length > COLLAPSED_RESULT_PREVIEW_CHARS
       ? `${body.slice(0, COLLAPSED_RESULT_PREVIEW_CHARS).trimEnd()}\n...`
       : body
+  // Defined once and used by both branches below. Two copies of this drift:
+  // the expandable and unexpandable rows must render the SAME body, and only
+  // differ in whether a viewport wraps it.
+  const bodyInner = (
+    <div className="subthread-return-body-inner">
+      {renderFullBody ? (
+        <MarkdownMessage content={body} chat={chat} />
+      ) : (
+        <div
+          className="subthread-return-preview"
+          aria-label={`Collapsed ${isSideChatReturn ? 'side-chat' : 'sub-thread'} result preview`}
+        >
+          <MarkdownMessage content={previewBody} chat={chat} />
+          <div className="subthread-return-preview-note">
+            Full result is rendered when expanded.
+          </div>
+        </div>
+      )}
+    </div>
+  )
   const handleOpen = () => {
     if (!subThreadId) return
     if (onOpenSubThreadInSidePanel) {
@@ -194,33 +231,28 @@ export function SubThreadReturnCard({
         )}
       </header>
       <div className="subthread-return-body">
-        <LiveActivityViewport
-          className="subthread-return-viewport"
-          revision={`${message.id}:${body.length}`}
-          collapsedMaxHeight={220}
-          expanded={resultExpanded}
-          onExpandedChange={onResultExpandedChange}
-          label={isSideChatReturn ? 'Side-chat result' : 'Sub-thread result'}
-          expandLabel="Expand result"
-          collapseLabel="Collapse result"
-          jumpLabel="Jump to latest result"
-        >
-          <div className="subthread-return-body-inner">
-            {renderFullBody ? (
-              <MarkdownMessage content={body} chat={chat} />
-            ) : (
-              <div
-                className="subthread-return-preview"
-                aria-label={`Collapsed ${isSideChatReturn ? 'side-chat' : 'sub-thread'} result preview`}
-              >
-                <MarkdownMessage content={previewBody} chat={chat} />
-                <div className="subthread-return-preview-note">
-                  Full result is rendered when expanded.
-                </div>
-              </div>
-            )}
-          </div>
-        </LiveActivityViewport>
+        {bodyExpandable ? (
+          <LiveActivityViewport
+            className="subthread-return-viewport"
+            revision={`${message.id}:${body.length}`}
+            collapsedMaxHeight={220}
+            expanded={resultExpanded}
+            onExpandedChange={onResultExpandedChange}
+            label={isSideChatReturn ? 'Side-chat result' : 'Sub-thread result'}
+            expandLabel="Expand result"
+            collapseLabel="Collapse result"
+            jumpLabel="Jump to latest result"
+          >
+            {bodyInner}
+          </LiveActivityViewport>
+        ) : (
+          // No viewport wrapper at all, rather than a collapsed one:
+          // `LiveActivityViewport` always renders its children and merely clamps
+          // them with a CSS max-height, so a "collapsed" viewport would still
+          // carry the expander and still be scrollable. Dropping the element is
+          // the only way the row genuinely stops being expandable.
+          bodyInner
+        )}
       </div>
       {recoveredActivitiesVisible && (
         <div className="subthread-return-recovered-activity">

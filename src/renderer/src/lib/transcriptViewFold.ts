@@ -15,10 +15,18 @@ import type { TranscriptView } from './transcriptViewOverride'
  *   standard — today's transcript. Nothing is hidden, everything expands.
  *   tools    — thinking viewports are gone. Tool-call and fan-out viewports
  *              render and still expand.
- *   minimal  — assistant messages and collapsed one-liners only. Thinking,
- *              tool-call and fan-out viewports are all gone and nothing
- *              expands. The one-liner still names the work and still updates
- *              as it lands; it just never unfolds.
+ *   minimal  — assistant messages and collapsed one-liners only. Thinking and
+ *              tool-call viewports are gone and nothing expands. The one-liner
+ *              still names the work and still updates as it lands; it just
+ *              never unfolds.
+ *
+ * One deliberate exception to Minimal, recorded where it will be found: a
+ * FAN-OUT LANE keeps its result body. The spec called for hiding it, but a
+ * lane card has no one-liner of its own and a wave only gains one once it has
+ * fully settled, so hiding it would leave an attribution header over empty
+ * space on exactly the live waves Minimal is for. The tombstone further down
+ * carries the full reasoning. A lane's own tool and thinking segments are
+ * still gated like everyone else's — it is only the seat's ANSWER that stays.
  *
  * Sub-agent segments (`kind: 'agent'`) survive every view. They are not one of
  * the three surfaces Minimal was asked to hide, and a spawn wave that vanished
@@ -142,19 +150,39 @@ export function visibleTimelineItems<TItem, S extends FoldableSegment<TItem>>(
   return visibleTimelineSegments(segments, view).flatMap((segment) => segment.items)
 }
 
-/**
- * Whether a fan-out lane's result viewport renders its body.
+/* `transcriptViewRendersFanoutViewport` used to live here, gating an
+ * `EnsembleFanoutResultCard`'s result body. It is deleted rather than left
+ * uncalled, because it encodes a design that was examined and REJECTED, and a
+ * plausible-looking helper is how a rejected design gets shipped later by
+ * someone who assumes it was merely unfinished.
  *
- * Separate from the segment predicate because a lane card is not a timeline
- * segment: it is the only thing attributing a lane to its seat, so a failed
- * lane keeps its body even under Minimal while a succeeded one folds to the
- * one-liner like everything else.
+ * Why it was rejected: a fan-out wave only folds to its "Work · 4 lanes"
+ * one-liner once every lane is terminal AND focus has moved to a later turn
+ * (`shouldCollapseFanoutGroup`). On a LIVE wave — exactly the case Minimal
+ * exists for — there is no header and no lane-level summary of any kind, so
+ * hiding the body leaves an attribution header with nothing underneath it.
+ * Minimal promises "unexpandable one-liners", not empty ones. Quietening a
+ * fan-out wave therefore stays with the settled-wave fold that already exists.
+ *
+ * A lane's own tool and thinking segments are still gated: the card passes
+ * `transcriptView` to its `ActivityStack` like every other site. It is only
+ * the lane RESULT — the seat's answer — that no view removes. */
+
+/**
+ * Whether a view offers expand/collapse chrome on a relayed message body.
+ *
+ * Read the tombstone below before assuming this is the same mistake:
+ * `transcriptViewAllowsExpansion` asked whether a view permits opening a
+ * COLLAPSED row to reveal content that is otherwise not rendered, and that is
+ * not a view's business — the answer is whether anything is there. This asks
+ * something different and genuinely view-shaped: whether to render the Expand
+ * control on a body that is ALREADY COMPLETE either way. Under Minimal the
+ * chrome is dropped and the body renders in full, so nothing is concealed and
+ * there is nothing to reveal. Losing content is what made the other helper a
+ * trap; this one cannot lose any.
  */
-export function transcriptViewRendersFanoutViewport(
-  view: TranscriptView,
-  hasFailure = false
-): boolean {
-  return view !== 'minimal' || hasFailure
+export function transcriptViewOffersExpandChrome(view: TranscriptView): boolean {
+  return view !== 'minimal'
 }
 
 /* `transcriptViewAllowsExpansion` used to live here. It was deleted, not

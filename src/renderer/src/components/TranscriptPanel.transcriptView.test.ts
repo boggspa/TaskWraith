@@ -26,15 +26,54 @@ function sourceFiles(dir: string): string[] {
  * non-identifier character immediately after the name is what makes this
  * exact — a plain `includes('<ActivityStack')` finds six sites, not four.
  */
-function activityStackSites(): { file: string; tag: string }[] {
-  const sites: { file: string; tag: string }[] = []
+function activityStackSites(): { file: string; tag: string; selfClosing: boolean }[] {
+  const sites: { file: string; tag: string; selfClosing: boolean }[] = []
   for (const file of sourceFiles(RENDERER_SRC)) {
     const source = readFileSync(file, 'utf8')
-    for (const match of source.matchAll(/<ActivityStack(?![A-Za-z0-9_])[\s\S]*?\/>/g)) {
-      sites.push({ file, tag: match[0] })
+    for (const match of source.matchAll(/<ActivityStack(?![A-Za-z0-9_])/g)) {
+      const tag = readOpeningTag(source, match.index!)
+      sites.push({ file, tag, selfClosing: tag.endsWith('/>') })
     }
   }
   return sites
+}
+
+/**
+ * Read one JSX opening tag, from `<Name` to its own `>` or `/>`.
+ *
+ * A lazy `[\s\S]*?\/>` is wrong in both directions and this guard is the only
+ * thing standing between an unthreaded render site and a silently
+ * everything-showing transcript, so it is worth doing properly:
+ *
+ *  - a CHILDREN-form site (`<ActivityStack ...>...</ActivityStack>`) has no
+ *    `/>` of its own, so the lazy form runs on to the next self-closing tag
+ *    anywhere below and hands back a span that may well contain some OTHER
+ *    element's `transcriptView=` — a false pass, the dangerous direction;
+ *  - a `/>` inside a prop (`icon={<Foo />}`) truncates the match early and can
+ *    cut the real `transcriptView=` off the end.
+ *
+ * So: scan forward, tracking string literals and brace depth, and stop at the
+ * first `>` that is genuinely at depth zero and outside quotes.
+ */
+function readOpeningTag(source: string, start: number): string {
+  let depth = 0
+  let quote: string | null = null
+  for (let i = start; i < source.length; i += 1) {
+    const char = source[i]
+    if (quote) {
+      if (char === '\\') i += 1
+      else if (char === quote) quote = null
+      continue
+    }
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char
+      continue
+    }
+    if (char === '{') depth += 1
+    else if (char === '}') depth -= 1
+    else if (char === '>' && depth === 0) return source.slice(start, i + 1)
+  }
+  return source.slice(start)
 }
 
 describe('every ActivityStack render site declares its transcript view', () => {
@@ -50,6 +89,10 @@ describe('every ActivityStack render site declares its transcript view', () => {
     // every assertion below pass over an empty collection.
     const sites = activityStackSites()
     expect(sites.length).toBe(4)
+    // Every site is self-closing today. If one ever takes children the tag
+    // scanner still reads it correctly, but say so out loud rather than
+    // letting the shape change go unnoticed.
+    expect(sites.filter((site) => !site.selfClosing)).toEqual([])
     expect(sites.map((s) => s.file.split('/').pop()).sort()).toEqual([
       'EnsembleFanoutResultCard.tsx',
       'SubThreadReturnCard.tsx',
@@ -97,7 +140,13 @@ describe('the transcript-view subscription survives a server render', () => {
     const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
     const start = panel.indexOf('const rowSignature: TranscriptRowRenderSignature = {')
     expect(start).toBeGreaterThan(-1)
-    const literal = panel.slice(start, panel.indexOf('\n            }', start))
+    const end = panel.indexOf('\n            }', start)
+    // Without this the end anchor is indentation-dependent and fails OPEN: a
+    // missed `indexOf` returns -1, `slice(start, -1)` hands back the rest of
+    // the file, and `transcriptView,` is certain to appear somewhere in it. The
+    // guard would pass on a signature that had lost the field entirely.
+    expect(end).toBeGreaterThan(start)
+    const literal = panel.slice(start, end)
     expect(literal).toContain('virtualized:')
     expect(literal).toContain('transcriptView,')
   })

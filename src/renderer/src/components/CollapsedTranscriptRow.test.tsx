@@ -308,6 +308,19 @@ describe('the inert one-liner (Minimal)', () => {
     // Under Minimal the transcript is a WALL of these rows. Making each one
     // focusable with no operation behind it would leave the keyboard path
     // strictly worse than Standard (WCAG 2.4.3).
+    //
+    // The load-bearing assertion is the ELEMENT, not the attributes. An
+    // expandable row is a native `<button>`, which is a tab stop without
+    // carrying either `tabindex` or `role` — so asserting the inert row lacks
+    // those two proves nothing on its own, because the expandable row lacks
+    // them too. `<button` is the only thing that actually differs.
+    expect(row(false)).not.toContain('<button')
+    expect(row(true)).toContain('<button')
+
+    // Kept as forward guards, deliberately without a positive control: they
+    // catch someone making the inert DIV focusable by hand, which is the only
+    // other way this row becomes a tab stop. Neither can be positively
+    // controlled against the expandable row, for the reason above.
     expect(row(false)).not.toContain('tabindex')
     expect(row(false)).not.toContain('role=')
   })
