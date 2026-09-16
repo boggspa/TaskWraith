@@ -58,6 +58,11 @@ public enum PiBrandTable {
             label: "Nex AGI", hueClass: "nexagi"),
         "openrouter/sakana": Brand(
             label: "Sakana", hueClass: "sakana"),
+        // `stealth` is OpenRouter's anonymous preview slot, not a vendor. It
+        // still overrides, so a stealth row does not wear the generic
+        // OpenRouter red. Covers the retired Ox Alpha too.
+        "openrouter/stealth": Brand(
+            label: "Stealth", hueClass: "stealth"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -123,6 +128,7 @@ public enum PiBrandTable {
         "openrouter/nex-agi/nex-n2.5-pro:free": "Nex-N2.5-Pro",
         "openrouter/sakana/fugu-max": "Fugu Max",
         "openrouter/sakana/fugu-ultra-v2": "Fugu Ultra v2",
+        "openrouter/stealth/union-alpha": "Union Alpha",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

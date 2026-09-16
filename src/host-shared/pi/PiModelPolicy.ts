@@ -134,7 +134,11 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // orchestrator rather than a single model; both routes are first-party
   // Sakana-hosted, so OpenRouter forwards to one provider with no routing.
   'sakana/fugu-max',
-  'sakana/fugu-ultra-v2'
+  'sakana/fugu-ultra-v2',
+  // Released 2026-09-16. A stealth preview: OpenRouter forwards to a single
+  // anonymous provider and is not its developer or owner, so there is no
+  // first-party seat this route could duplicate.
+  'stealth/union-alpha'
 ] as const
 
 /**

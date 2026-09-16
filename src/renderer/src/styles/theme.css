@@ -323,6 +323,17 @@
    * from BOTH openbmb and openrouter, its two nearest neighbours. Wider than
    * most of the palette already manages (kimi/meta are dE 1.5 apart). */
   --provider-sakana-color: #EA0C2D;
+  /* OpenRouter's `stealth` namespace has no brand to borrow from — the whole
+   * point is that the lab is anonymous during the preview — so this is a
+   * TaskWraith design token like nexagi's, not a vendor value. Gold, because
+   * it reads as "limited-time preview" next to the vendor reds and blues, and
+   * it is the most saturated gold this palette's band can hold: at relative
+   * luminance 0.179 a true yellow is out of gamut, so hue 41 deg at HLS
+   * saturation 100% is the sRGB edge. Placed between claude (#B16105) and
+   * cursor (#8C7508), the two accents it could be confused with, at dE 9.20
+   * and 8.88 — roughly six times the palette's tightest existing pair
+   * (kimi/meta, dE 1.5). 4.57:1 on white, 4.60:1 on black. */
+  --provider-stealth-color: #9E6C00;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

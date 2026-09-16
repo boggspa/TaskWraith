@@ -23,7 +23,15 @@ function failureMessage(model: string): ChatMessage {
 describe('ProviderRunFailureCard provider accent', () => {
   it('uses every Pi upstream hue from the frozen failed-run model', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
+      // Every catalogued OpenRouter route is claimed by a per-vendor override —
+      // `openrouter/stealth` was the last one without, until Union Alpha took
+      // that namespace on 2026-09-16 — so a startsWith search returns a model
+      // belonging to a DIFFERENT brand. The bare `openrouter` brand is now
+      // reachable only through a namespace no override claims.
+      const model =
+        upstream === 'openrouter'
+          ? 'openrouter/unclaimed-lab/some-model'
+          : Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       const html = renderToStaticMarkup(
         <ProviderRunFailureCard message={failureMessage(model!)} onCopy={() => undefined} />

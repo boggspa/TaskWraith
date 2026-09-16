@@ -62,7 +62,13 @@ describe('resolvePiReasoningSupport', () => {
       'mistral/mistral-large-2512',
       'mistral/devstral-2512',
       'mistral/codestral-2508',
-      'mistral/ministral-3b-2512'
+      'mistral/ministral-3b-2512',
+      // Union Alpha is the only OpenRouter route here with NO reasoning axis:
+      // its supported_parameters carry neither `reasoning` nor
+      // `reasoning_effort`. Dropping its row does not fall back to "no
+      // control" — an unlisted id inherits the 7-stop FULL ladder, so the
+      // picker would offer seven stops the gateway silently discards.
+      'openrouter/stealth/union-alpha'
     ]) {
       expect(resolvePiReasoningSupport(wireId).kind, wireId).toBe('unsupported')
       expect(resolvePiReasoningSupport(wireId).efforts, wireId).toEqual([])

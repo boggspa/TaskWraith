@@ -120,6 +120,7 @@ public enum ModelContextLengths {
                 (id: "openrouter/inception/mercury-2.5", label: "Mercury 2.5"),
                 (id: "openrouter/nex-agi/nex-n2.5-mini:free", label: "Nex-N2.5-Mini"),
                 (id: "openrouter/nex-agi/nex-n2.5-pro:free", label: "Nex-N2.5-Pro"),
+                (id: "openrouter/stealth/union-alpha", label: "Union Alpha"),
                 (id: "openrouter/sakana/fugu-max", label: "Fugu Max"),
                 (id: "openrouter/sakana/fugu-ultra-v2", label: "Fugu Ultra v2"),
             ]

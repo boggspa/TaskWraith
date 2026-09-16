@@ -602,6 +602,22 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 128_000,
     thinking: true,
     images: true
+  },
+  {
+    // Union Alpha — a free stealth preview, released 2026-09-16 and offered
+    // for seven days. `thinking` is FALSE on purpose: the endpoint advertises
+    // only max_tokens/temperature/top_p/tools/tool_choice/response_format,
+    // with no `reasoning` or `reasoning_effort`, so a ladder here would be a
+    // control the route discards. Verified against the OpenRouter Models API
+    // on 2026-09-16.
+    wireId: 'openrouter/stealth/union-alpha',
+    upstream: 'openrouter',
+    modelId: 'stealth/union-alpha',
+    label: 'Union Alpha',
+    contextWindow: 262_144,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
   }
 ]
 

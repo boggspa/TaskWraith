@@ -404,9 +404,17 @@ describe('CombinedModelPicker', () => {
 
   it('uses each Pi upstream hue and the Cerebras logo override', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
-      const id = Object.keys(PI_MODEL_LABELS).find((model) => model.startsWith(`${upstream}/`))
+      // Every catalogued OpenRouter route is claimed by a per-vendor override —
+      // `openrouter/stealth` was the last one without, until Union Alpha took
+      // that namespace on 2026-09-16 — so a startsWith search returns a model
+      // belonging to a DIFFERENT brand. The bare `openrouter` brand is now
+      // reachable only through a namespace no override claims.
+      const id =
+        upstream === 'openrouter'
+          ? 'openrouter/unclaimed-lab/some-model'
+          : Object.keys(PI_MODEL_LABELS).find((model) => model.startsWith(`${upstream}/`))
       expect(id, `missing representative Pi model for ${upstream}`).toBeTruthy()
-      const model = { id: id!, label: PI_MODEL_LABELS[id!] }
+      const model = { id: id!, label: PI_MODEL_LABELS[id!] ?? 'Some Model' }
       const html = renderToStaticMarkup(
         <CombinedModelPicker
           provider="pi"

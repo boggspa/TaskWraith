@@ -10,6 +10,9 @@ describe('Pi model lifecycle', () => {
   it('records verified upstream sunsets while leaving neighboring models active', () => {
     expect(piModelRetiresAt('cerebras/zai-glm-4.7')).toBe('2026-08-17')
     expect(piModelRetiresAt('openrouter/stealth/ox-alpha')).toBe('2026-08-28')
+    // Union Alpha is offered for seven days from its 2026-09-16 listing.
+    // OpenRouter publishes no sunset of its own, so this date is TaskWraith's.
+    expect(piModelRetiresAt('openrouter/stealth/union-alpha')).toBe('2026-09-23')
     expect(piModelRetiresAt('zai/glm-4.7')).toBeUndefined()
     expect(piModelRetiresAt('cerebras/gpt-oss-120b')).toBeUndefined()
     expect(piModelRetiresAt('openrouter/z-ai/glm-5.2')).toBeUndefined()
@@ -23,6 +26,13 @@ describe('Pi model lifecycle', () => {
       false
     )
     expect(isPiModelRetired('openrouter/stealth/ox-alpha', new Date(2026, 7, 28, 0, 0))).toBe(true)
+    // Still offered on day seven, gone at the start of the next local day.
+    expect(isPiModelRetired('openrouter/stealth/union-alpha', new Date(2026, 8, 22, 23, 59))).toBe(
+      false
+    )
+    expect(isPiModelRetired('openrouter/stealth/union-alpha', new Date(2026, 8, 23, 0, 0))).toBe(
+      true
+    )
   })
 
   it('fails open for malformed lifecycle dates', () => {

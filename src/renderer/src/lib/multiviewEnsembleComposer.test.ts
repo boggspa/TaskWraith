@@ -592,7 +592,18 @@ describe('buildMultiviewEnsembleComposerProjection', () => {
 
 describe('buildEnsembleProviderBlendStyle', () => {
   it('uses every Pi upstream hue and preserves Ollama spoofing', () => {
+    expect(
+      buildEnsembleProviderBlendStyle([
+        { provider: 'pi', model: 'openrouter/unclaimed-lab/some-model' }
+      ])
+    ).toEqual({ '--ensemble-provider-1': 'var(--provider-openrouter-color)' })
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const model = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(model, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(

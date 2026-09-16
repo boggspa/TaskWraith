@@ -82,7 +82,11 @@ const STATIC_PROVIDER_COLORS = {
   // Sakana's brand red (#E10600) pulled ~10 degrees toward crimson: the
   // straight hue-preserving lift lands dE 2.2 from openbmb, which is not a
   // distinguishable accent. This sits dE 6.3 from openbmb and openrouter both.
-  sakana: '#EA0C2D'
+  sakana: '#EA0C2D',
+  // OpenRouter's stealth slot is anonymous by design, so this is a TaskWraith
+  // design token like nexagi's: the most saturated gold available at this
+  // palette's luminance, sat between claude (dE 9.20) and cursor (dE 8.88).
+  stealth: '#9E6C00'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -118,7 +122,8 @@ const IOS_PROVIDER_CASES = [
   ['case "tencent"', '#4E73CA'],
   ['case "inception"', '#7C5BE9'],
   ['case "nexagi"', '#747A42'],
-  ['case "sakana"', '#EA0C2D']
+  ['case "sakana"', '#EA0C2D'],
+  ['case "stealth"', '#9E6C00']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

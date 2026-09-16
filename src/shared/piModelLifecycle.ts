@@ -16,7 +16,13 @@ export const PI_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.fre
   // MiMo V2.5 and MiMo V2.5 Pro.
   'xiaomi-token-plan-cn/mimo-v2-pro': '2026-08-30',
   'xiaomi-token-plan-sgp/mimo-v2-pro': '2026-08-30',
-  'xiaomi-token-plan-ams/mimo-v2-pro': '2026-08-30'
+  'xiaomi-token-plan-ams/mimo-v2-pro': '2026-08-30',
+  // Stealth preview listed 2026-09-16. OpenRouter publishes no sunset for it
+  // (the Models API carries a 2098 placeholder), so this is the seven-day
+  // window the user approved on 2026-09-16, not a vendor date. Until it lands
+  // the row carries `retiresAt` and the pickers show the warning; on the day
+  // it stops being offered while saved chats keep the label.
+  'openrouter/stealth/union-alpha': '2026-09-23'
 })
 
 const ISO_CALENDAR_DATE = /^(\d{4})-(\d{2})-(\d{2})$/

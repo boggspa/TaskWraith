@@ -2853,7 +2853,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-11-2","kind":"addition","title":"New Additions","body":"Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-16","kind":"addition","title":"New Additions","body":"Union Alpha, a free seven-day stealth preview on OpenRouter via Pi, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"kimi","label":"Kimi","models":[
               {"name":"K2.8 Preview","blurb":"Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."},
               {"name":"K2.7 Code Highspeed","blurb":"The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking."}
@@ -2912,6 +2912,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Rnj-1","blurb":"Essential AI's 8B agentic coding model with native tools.","accentProvider":"essential"}
             ]},
             {"provider":"pi","label":"Pi","models":[
+              {"name":"Union Alpha (OpenRouter Free)","blurb":"A free stealth preview from an anonymous lab - 262K context, vision and tools, no effort axis. 7 days only.","accentProvider":"stealth"},
               {"name":"Fugu Max (OpenRouter)","blurb":"Sakana's multi-agent orchestrator — 1M context, Off-to-Max effort, $2/$6 per Mtok.","accentProvider":"sakana"},
               {"name":"Fugu Ultra v2 (OpenRouter)","blurb":"The higher-performance Fugu for deep research and full-stack work — 1M, $5/$30 per Mtok.","accentProvider":"sakana"},
               {"name":"Mercury 2.5 (OpenRouter)","blurb":"Inception's GA diffusion LLM — 260K context, Off-to-Max effort, $0.20/$0.75 per Mtok.","accentProvider":"inception"},

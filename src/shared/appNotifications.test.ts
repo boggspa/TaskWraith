@@ -290,7 +290,9 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
-      // Sakana's Fugu pair leads: it is the newest story on the card.
+      // Union Alpha leads: it is the newest story on the card, and the only
+      // one on a clock — OpenRouter lists the stealth preview for seven days.
+      'Union Alpha (OpenRouter Free)',
       'Fugu Max (OpenRouter)',
       'Fugu Ultra v2 (OpenRouter)',
       'Mercury 2.5 (OpenRouter)',
@@ -312,6 +314,11 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      // `stealth` is a brand override for an anonymous namespace rather than a
+      // vendor. Without it the row falls back to the generic OpenRouter red,
+      // which is the one accent a stealth preview must NOT wear — OpenRouter
+      // is explicitly not this model's developer, owner or provider.
+      'stealth',
       // Sakana is its own brand override — without it both Fugu rows fall back
       // to the generic OpenRouter red, which is a DIFFERENT vendor's accent.
       'sakana',
@@ -348,6 +355,11 @@ describe('notification registry', () => {
     )
     expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Mini (OpenRouter Free)')?.blurb).toMatch(
       /262K.*text only/i
+    )
+    // The 'no effort axis' claim is load-bearing: this endpoint advertises no
+    // `reasoning`/`reasoning_effort`, and every neighbouring row does.
+    expect(pi?.models.find((m) => m.name === 'Union Alpha (OpenRouter Free)')?.blurb).toMatch(
+      /262K.*vision.*no effort axis.*7 days/i
     )
     expect(pi?.models.find((m) => m.name === 'Fugu Max (OpenRouter)')?.blurb).toMatch(
       /1M context.*Off-to-Max.*\$2\/\$6/

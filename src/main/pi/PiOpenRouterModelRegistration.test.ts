@@ -305,6 +305,47 @@ describe('writePiOpenRouterModelRegistration', () => {
     }
   })
 
+  it('registers Union Alpha as a NON-reasoning route', () => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find(
+      (model) => model.modelId === 'stealth/union-alpha'
+    )
+    expect(entry).toEqual({
+      modelId: 'stealth/union-alpha',
+      label: 'Union Alpha',
+      // The load-bearing field. This endpoint advertises max_tokens,
+      // temperature, top_p, tools, tool_choice and response_format — and
+      // neither `reasoning` nor `reasoning_effort`. Flipping this to true
+      // writes a reasoning model into Pi's per-run models.json and puts a live
+      // effort selector over a gateway that drops the field.
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 262_144,
+      maxTokens: 131_072,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('thinkingLevelMap')
+    expect(entry).not.toHaveProperty('reasoningControl')
+
+    const home = isolatedHome()
+    expect(
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: home,
+        modelId: 'stealth/union-alpha'
+      })
+    ).toBe(true)
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.openrouter.models[0]).toMatchObject({
+      id: 'stealth/union-alpha',
+      name: 'Union Alpha',
+      api: 'openai-completions',
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 262_144,
+      maxTokens: 131_072
+    })
+    expect(config.providers.openrouter.models[0]).not.toHaveProperty('thinkingLevelMap')
+  })
+
   it('leaves Pi’s home untouched for every model outside the curated exception', () => {
     const home = isolatedHome()
 

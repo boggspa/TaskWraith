@@ -59,6 +59,7 @@ public enum ContextWindows {
         "opus": 200_000,
         "haiku": 200_000,
         // Pi seat wire ids (`<upstream>/<model>`); mirrors contextWindows.ts.
+        "openrouter/stealth/union-alpha": 262_144,
         "openrouter/sakana/fugu-max": 1_000_000,
         "openrouter/sakana/fugu-ultra-v2": 1_000_000,
         "deepseek/deepseek-v4-pro": 1_000_000,

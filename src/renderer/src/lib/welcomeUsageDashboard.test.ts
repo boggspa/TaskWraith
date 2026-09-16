@@ -727,6 +727,12 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
     const byModel = new Map(data.modelBreakdown.map((entry) => [entry.model, entry.colorClass]))
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(byModel.get(modelId!)).toBe(`provider-${brand.hueClass}`)
     }

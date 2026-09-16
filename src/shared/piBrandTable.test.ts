@@ -60,7 +60,14 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('mistral/devstral-2512')?.hueClass).toBe('mistral')
     expect(resolvePiUpstreamBrand('groq/openai/gpt-oss-120b')?.hueClass).toBe('groq')
     expect(resolvePiUpstreamBrand('minimax/MiniMax-M3')?.label).toBe('MiniMax')
-    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('OpenRouter')
+    // `openrouter/stealth` gained a brand override when Union Alpha landed
+    // (2026-09-16). Ox Alpha is retired but still decodes in saved chats, and
+    // it was the same kind of route, so it moves to the gold with it rather
+    // than keeping the generic OpenRouter red.
+    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.hueClass).toBe('stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.hueClass).toBe('stealth')
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.label).toBe('Z.ai')
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
@@ -111,6 +118,7 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('mistral/zai-glm-5-2')).toBe('GLM-5.2 (via Mistral)')
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('V4 Flash')
     expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
+    expect(resolvePiModelLabel('openrouter/stealth/union-alpha')).toBe('Union Alpha')
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {

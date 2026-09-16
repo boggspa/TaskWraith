@@ -479,6 +479,7 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Union Alpha (OpenRouter Free)',
       'Fugu Max (OpenRouter)',
       'Fugu Ultra v2 (OpenRouter)',
       'Mercury 2.5 (OpenRouter)',
@@ -498,6 +499,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'Nemotron 3 Ultra'
     ])
     expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      // The projection iOS actually receives must carry the stealth override
+      // too, or the row arrives with no accent on the phone while the desktop
+      // card shows gold.
+      'stealth',
       'sakana',
       'sakana',
       'inception',

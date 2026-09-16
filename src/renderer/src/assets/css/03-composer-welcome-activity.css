@@ -3184,6 +3184,9 @@
 .welcome-usage-model-dot.provider-sakana,
 .welcome-usage-model-meter-fill.provider-sakana,
 .welcome-usage-bar-segment.provider-sakana { color: var(--provider-sakana-color); }
+.welcome-usage-model-dot.provider-stealth,
+.welcome-usage-model-meter-fill.provider-stealth,
+.welcome-usage-bar-segment.provider-stealth { color: var(--provider-stealth-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -14976,6 +14979,10 @@ button.diff-file-row {
 .notification-newadditions-model.provider-thinkingmachines {
   color: var(--provider-thinkingmachines-color, #c24e68);
 }
+.notification-newadditions-model.provider-tencent {
+  color: var(--provider-tencent-color, #4e73ca);
+}
+
 .notification-newadditions-model.provider-inception {
   color: var(--provider-inception-color, #7c5be9);
 }
@@ -14984,6 +14991,9 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-sakana {
   color: var(--provider-sakana-color, #ea0c2d);
+}
+.notification-newadditions-model.provider-stealth {
+  color: var(--provider-stealth-color, #9e6c00);
 }
 
 .notification-newadditions-model.provider-groq {

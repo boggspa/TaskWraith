@@ -163,6 +163,12 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses every Pi upstream brand and human model name for solo transcript attribution', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(
@@ -177,6 +183,13 @@ describe('formatAssistantMessageLabel', () => {
   })
 
   it('uses the Pi upstream hue for guest transcript attribution', () => {
+    expect(
+      formatAssistantMessageLabel(
+        assistant({ providerModel: 'openrouter/unclaimed-lab/some-model' }),
+        'Pi',
+        'pi'
+      )
+    ).toMatchObject({ label: 'OpenRouter', provider: 'pi', providerClass: 'openrouter' })
     expect(
       formatAssistantMessageLabel(
         assistant({
@@ -252,6 +265,12 @@ describe('formatAssistantMessageLabel', () => {
 
   it('uses every Pi upstream brand and human model name for ensemble assistant bubbles', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // Every catalogued OpenRouter route is claimed by a per-vendor override,
+      // so a `startsWith('openrouter/')` search returns a model belonging to a
+      // DIFFERENT brand. `openrouter/stealth/ox-alpha` was the last unclaimed
+      // one until Union Alpha took the namespace (2026-09-16). The generic
+      // brand is asserted through an unclaimed namespace instead.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(

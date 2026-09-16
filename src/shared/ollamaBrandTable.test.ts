@@ -55,6 +55,11 @@ describe('resolveHealthEntryPresentation', () => {
 
   it('freezes every Pi upstream brand label and hue from its wire model', () => {
     for (const [upstream, brand] of Object.entries(PI_UPSTREAM_BRANDS)) {
+      // The bare `openrouter` brand has no representative left in the label
+      // table — every catalogued route is claimed by a per-vendor override —
+      // so it gets its own case below rather than whichever override happens
+      // to sit first in PI_MODEL_LABELS.
+      if (upstream === 'openrouter') continue
       const modelId = Object.keys(PI_MODEL_LABELS).find((id) => id.startsWith(`${upstream}/`))
       expect(modelId, `missing representative Pi model for ${upstream}`).toBeTruthy()
       expect(resolveHealthEntryPresentation('pi', modelId, 'Pi')).toEqual({
@@ -62,6 +67,24 @@ describe('resolveHealthEntryPresentation', () => {
         displayHueClass: brand.hueClass
       })
     }
+  })
+
+  it('reaches the generic OpenRouter brand only through an unclaimed namespace', () => {
+    // Every OpenRouter route TaskWraith catalogues now carries a per-vendor
+    // override — `openrouter/stealth` was the last one without, until Union
+    // Alpha landed on 2026-09-16. So the generic OpenRouter red is reachable
+    // only for a namespace no override claims, which is the fallback arm of
+    // resolvePiUpstreamBrand rather than a catalogued row.
+    for (const id of Object.keys(PI_MODEL_LABELS)) {
+      if (!id.startsWith('openrouter/')) continue
+      expect(resolveHealthEntryPresentation('pi', id, 'Pi').displayHueClass).not.toBe('openrouter')
+    }
+    expect(
+      resolveHealthEntryPresentation('pi', 'openrouter/unclaimed-lab/some-model', 'Pi')
+    ).toEqual({
+      displayProviderLabel: 'OpenRouter',
+      displayHueClass: 'openrouter'
+    })
   })
 
   it('uses generic Pi presentation when the upstream is unknown', () => {

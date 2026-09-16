@@ -197,7 +197,14 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   // take the same unenumerated ladder as Mercury and the Nex-N2.5 pair rather
   // than Laguna's bare on/off stop.
   'openrouter/sakana/fugu-max': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium'),
-  'openrouter/sakana/fugu-ultra-v2': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium')
+  'openrouter/sakana/fugu-ultra-v2': ladder(['minimal', 'low', 'medium', 'high', 'max'], 'medium'),
+  // Union Alpha is the one stealth/preview route here with NO reasoning axis.
+  // Its supported_parameters are max_tokens, temperature, top_p, tools,
+  // tool_choice and response_format — neither `reasoning` nor
+  // `reasoning_effort` (OpenRouter Models API + /endpoints, 2026-09-16). An
+  // unlisted id would inherit the 7-stop FULL ladder, so this row is the only
+  // thing between the picker and seven stops the gateway silently drops.
+  'openrouter/stealth/union-alpha': UNSUPPORTED
 }
 
 const FULL: PiReasoningSupport = Object.freeze({

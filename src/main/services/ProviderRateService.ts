@@ -1612,6 +1612,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Paid OpenRouter route (verified 2026-09-11). BASE tier: OpenRouter publishes a pricing override that raises this to $10 / $45 with $1.00 cache read once the PROMPT exceeds 272,000 tokens. This flat table cannot express a prompt-length break, so a long-prompt turn is UNDER-estimated by up to 2x on input and 1.5x on output; the break is recorded in docs/MODEL_CATALOGUE.md.'
+      },
+      {
+        modelId: 'openrouter/stealth/union-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/union-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free stealth preview (verified 2026-09-16); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
       }
     ]
   },

@@ -54,7 +54,14 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // OpenRouter spells the namespace `nex-agi`; the hue class drops the hyphen
   // so it stays a valid `--provider-<class>-color` token and CSS class name.
   'openrouter/nex-agi': { label: 'Nex AGI', hueClass: 'nexagi' },
-  'openrouter/sakana': { label: 'Sakana', hueClass: 'sakana' }
+  'openrouter/sakana': { label: 'Sakana', hueClass: 'sakana' },
+  // OpenRouter's `stealth` namespace is not a vendor: it is the anonymous
+  // slot an unnamed lab previews a model through. It still earns a brand
+  // override, because falling through to the generic OpenRouter red is what
+  // every OTHER openrouter route does, and a stealth preview is exactly the
+  // row a user needs to pick out of that list. Covers the retired Ox Alpha
+  // too, which was the same kind of route.
+  'openrouter/stealth': { label: 'Stealth', hueClass: 'stealth' }
 }
 
 /**
@@ -123,7 +130,8 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/nex-agi/nex-n2.5-mini:free': 'Nex-N2.5-Mini',
   'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro',
   'openrouter/sakana/fugu-max': 'Fugu Max',
-  'openrouter/sakana/fugu-ultra-v2': 'Fugu Ultra v2'
+  'openrouter/sakana/fugu-ultra-v2': 'Fugu Ultra v2',
+  'openrouter/stealth/union-alpha': 'Union Alpha'
 }
 
 /**

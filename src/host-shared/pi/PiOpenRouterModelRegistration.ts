@@ -39,6 +39,8 @@ export interface PiOpenRouterCustomModelRegistration {
  * OpenRouter withdrew `stealth/ox-alpha` on 2026-08-28. Its historical
  * metadata remains in PiModels, PiBrandTable, and context-window lookups so
  * saved chats and ensemble seats still render, but no new Pi home registers it.
+ * `stealth/union-alpha` is the current stealth preview and carries its own
+ * dated sunset for the same reason.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
   {
@@ -274,6 +276,26 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     contextWindow: 1_000_000,
     maxTokens: 128_000,
     cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 }
+  },
+  {
+    // Union Alpha — free stealth preview released 2026-09-16, offered for a
+    // seven-day window (see PI_MODEL_RETIREMENTS).
+    //
+    // `reasoning: false` is the whole point of this row. Every other stealth
+    // or preview route above advertises `reasoning_effort`; this endpoint's
+    // supported_parameters are max_tokens, temperature, top_p, tools,
+    // tool_choice and response_format ONLY. Registering it as a reasoning
+    // model would put a live effort selector over a gateway that drops the
+    // field, which is the failure `piReasoning` exists to prevent.
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-09-16.
+    modelId: 'stealth/union-alpha',
+    label: 'Union Alpha',
+    reasoning: false,
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    maxTokens: 131_072,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }
 ]
 
