@@ -3,6 +3,8 @@ import { resolveCanonicalToolName } from '../../../shared/canonicalToolCoalesce'
 import { isMcpTransportWrapperActivity } from '../../../shared/toolInvocationPresentation'
 import { sumActivityDiffTotals, type InlineStatTotals } from './ActivityInlineStats'
 import { isHiddenInfrastructureToolName, isReasoningToolName } from './ToolParser'
+import { transcriptViewFoldsLiveStacks } from './transcriptViewFold'
+import type { TranscriptView } from './transcriptViewOverride'
 
 /**
  * Settled-stack auto-collapse (transcript tidy-up).
@@ -288,4 +290,42 @@ export function shouldAutoCollapseActivityStack(input: {
   if (visibleActivities.length === 0) return false
   if (visibleActivities.some(isTranscriptPriorityActivity)) return false
   return !activityStackHasLiveWork(visibleActivities)
+}
+
+/**
+ * The same question, asked for a transcript view that folds live work.
+ *
+ * Minimal's whole point is a one-liner WHILE the turn runs, so it must clear
+ * two of the four refusals above, not one. Clearing only `isLiveRow`/
+ * `isLastRow` provably does nothing for a running stack: the liveness refusal
+ * is evaluated afterwards and unconditionally, so a fold that cleared only the
+ * first would still be refused for exactly the rows the feature exists for.
+ *
+ * The other two refusals are kept, and for different reasons. A stack of only
+ * hidden infrastructure has no visible one-liner to show, and folding it
+ * produced a "0 activity steps" control once already — keeping it is also what
+ * stops `CollapsedActivityStackRow` hitting its `activityCount === 0` guard and
+ * rendering nothing at all for a live turn. And a priority activity
+ * (`ensemble_yield`) is conversation structure rather than tool noise, the same
+ * rule that exempts a failure from every fold.
+ *
+ * Deliberately a separate export rather than a parameter on the predicate
+ * above: that one stays byte-identical, so Standard and Tools cannot change,
+ * and every call site has to say out loud whether it folds live work. Today
+ * exactly one does — the transcript's row renderer. Super-group membership and
+ * the fan-out lane model both keep the strict predicate.
+ */
+export function shouldAutoCollapseActivityStackForView(
+  input: {
+    activities: readonly ToolActivity[]
+    isLiveRow: boolean
+    isLastRow: boolean
+  },
+  view: TranscriptView
+): boolean {
+  if (shouldAutoCollapseActivityStack(input)) return true
+  if (!transcriptViewFoldsLiveStacks(view)) return false
+  const visibleActivities = input.activities.filter(isCollapsedStackPresentationActivity)
+  if (visibleActivities.length === 0) return false
+  return !visibleActivities.some(isTranscriptPriorityActivity)
 }

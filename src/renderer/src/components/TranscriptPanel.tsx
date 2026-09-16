@@ -23,6 +23,7 @@ import type {
 import {
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
+  shouldAutoCollapseActivityStackForView,
   summarizeCollapsedSuperGroup
 } from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
@@ -3830,11 +3831,17 @@ export const TranscriptPanel = memo(
         if (protectedFromCollapseRowKeys.has(rowKey)) return null
         if (typeof msg.metadata?.pinnedAt === 'number') return null
         if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
-          // This deliberately calls the same predicate as the row renderer,
-          // not a looser "all settled" check. In particular, a stack made
-          // only of hidden infrastructure has no visible one-liner to merge;
-          // admitting it here created an empty super-group member and an
-          // "Activity · N system notices" summary that hid real notices.
+          // This deliberately calls the STRICT predicate, not the row
+          // renderer's view-aware one. In particular, a stack made only of
+          // hidden infrastructure has no visible one-liner to merge; admitting
+          // it here created an empty super-group member and an "Activity · N
+          // system notices" summary that hid real notices.
+          //
+          // The row renderer folds live stacks under Minimal and this does not,
+          // which makes membership STRICTER than the renderer, not looser — a
+          // live Minimal row is simply not a super-group member and renders its
+          // own one-liner. That direction is safe; the named regression needed
+          // membership looser. Do not "align" these by passing the view here.
           return shouldAutoCollapseActivityStack({
             activities: msg.toolActivities || [],
             isLiveRow: activeLiveRowKeys.has(rowKey),
@@ -5145,13 +5152,18 @@ export const TranscriptPanel = memo(
             const liveViewportActive = isToolActivityStack && activeLiveRowKeys.has(rowKey)
             // Settled-stack auto-collapse: fold the whole stack into a
             // one-line summary once the conversation has moved past it.
+            // Under Minimal this also folds a stack whose work is still
+            // running — the one-liner IS the live surface in that view.
             const stackAutoCollapsible =
               isToolActivityStack &&
-              shouldAutoCollapseActivityStack({
-                activities: msg.toolActivities || [],
-                isLiveRow: liveViewportActive,
-                isLastRow: protectedFromCollapseRowKeys.has(rowKey)
-              })
+              shouldAutoCollapseActivityStackForView(
+                {
+                  activities: msg.toolActivities || [],
+                  isLiveRow: liveViewportActive,
+                  isLastRow: protectedFromCollapseRowKeys.has(rowKey)
+                },
+                transcriptView
+              )
             const collapsedStackExpanded =
               stackAutoCollapsible && liveViewportStackKey
                 ? expandedCollapsedStacks.has(liveViewportStackKey)

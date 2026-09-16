@@ -145,11 +145,15 @@ export function transcriptViewAllowsExpansion(view: TranscriptView): boolean {
 /**
  * Whether this view folds a stack the transcript would otherwise leave open.
  *
- * Only Minimal does. The caller uses this to re-ask
- * `shouldAutoCollapseActivityStack` with `isLiveRow`/`isLastRow` cleared —
- * never to skip that predicate, whose other three refusals (an all-infrastructure
- * stack, a priority activity, and work still running inside a stack that has
- * something to show) still apply and each fixed a shipped bug.
+ * Only Minimal does, and it clears TWO of `shouldAutoCollapseActivityStack`'s
+ * four refusals, not one. Clearing `isLiveRow`/`isLastRow` alone provably does
+ * nothing for a running stack — the liveness refusal is evaluated afterwards
+ * and unconditionally — so Minimal would fold nothing in exactly the case it
+ * exists for. The all-infrastructure and priority-activity refusals are kept.
+ *
+ * Read it through `shouldAutoCollapseActivityStackForView` in
+ * `collapsedActivityStack`, which owns that arithmetic; this predicate only
+ * answers whether the view asks for it at all.
  */
 export function transcriptViewFoldsLiveStacks(view: TranscriptView): boolean {
   return view === 'minimal'

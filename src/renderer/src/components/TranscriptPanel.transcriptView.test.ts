@@ -102,6 +102,19 @@ describe('the transcript-view subscription survives a server render', () => {
     expect(literal).toContain('transcriptView,')
   })
 
+  it('folds live stacks only in the row renderer, never in super-group membership', () => {
+    // Two callers, deliberately different predicates. The row renderer folds a
+    // live stack under Minimal; super-group membership must not, or a live
+    // Minimal row could be swallowed as a member while rendering as its own
+    // card. Strictness in that direction is safe — the regression the
+    // membership comment records needed membership LOOSER, not tighter.
+    const panel = readFileSync(join(RENDERER_SRC, 'components/TranscriptPanel.tsx'), 'utf8')
+    expect(panel.split('shouldAutoCollapseActivityStackForView(').length - 1).toBe(1)
+    // `shouldAutoCollapseActivityStack(` cannot match the ForView name, since
+    // the paren must follow `Stack` directly. One import line + one call.
+    expect(panel.split('shouldAutoCollapseActivityStack(').length - 1).toBe(1)
+  })
+
   it('subscribes exactly once, in TranscriptPanel, and threads the rest', () => {
     // Both cards render only from TranscriptPanel, so they take the view as a
     // prop. That is not a style choice: `SubThreadReturnCard` is invoked as a
