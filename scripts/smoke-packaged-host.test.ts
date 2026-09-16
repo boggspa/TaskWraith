@@ -22,6 +22,20 @@ const localTuiRuntimeNode = path.join(
 const hasLocalTuiRuntime = fs.existsSync(localTuiRuntimeNode)
 
 describe('packaged production Host smoke', () => {
+  it('waits out a late-released profile tree before removing it', () => {
+    // Windows releases a just-closed SQLite file late: the Host's thread-
+    // catalogue worker closes thread-catalogue-v1/query.sqlite on shutdown,
+    // the launcher exit is observed first, and the hosted runner's scanner can
+    // hold the file for seconds after that. Three 100 ms retries were not
+    // enough (runs 35034254499 and 35040796137: EBUSY on unlink).
+    const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
+    const retries = Number(/const PROFILE_REMOVE_RETRIES = (\d+)/.exec(smoke)?.[1])
+    const delayMs = Number(/const PROFILE_REMOVE_DELAY_MS = (\d+)/.exec(smoke)?.[1])
+    expect(retries * delayMs).toBeGreaterThanOrEqual(15_000)
+    expect(smoke).not.toMatch(/maxRetries: 3, retryDelay: 100/)
+    expect(smoke.match(/removeTreeWhenReleased\(/g)?.length).toBeGreaterThanOrEqual(3)
+  })
+
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
     const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
     const posix = fs.readFileSync(

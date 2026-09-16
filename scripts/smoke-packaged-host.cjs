@@ -141,7 +141,7 @@ async function validateSourceLauncher() {
     fs.symlinkSync(sourceRuntime, path.join(resources, 'tui-runtime'), 'dir')
     await validateHostResources(resources, inferCurrentTarget())
   } finally {
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    removeTreeWhenReleased(root)
   }
 }
 
@@ -632,7 +632,7 @@ async function runProductionRoundTrip(launcher, target) {
       child.kill('SIGTERM')
       await waitForExit(child).catch(() => undefined)
     }
-    fs.rmSync(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 })
+    removeTreeWhenReleased(profile)
   }
 }
 
@@ -750,6 +750,25 @@ async function hostRequest(discovery, token, request) {
 function assertOwnerOnly(filePath, label) {
   if (process.platform === 'win32') return
   if ((fs.statSync(filePath).mode & 0o077) !== 0) fail(`${label} is not owner-only`)
+}
+
+// Windows releases a just-closed SQLite file late: the Host's thread-catalogue
+// worker closes `thread-catalogue-v1/query.sqlite` on shutdown, the launcher's
+// exit is observed first, and the hosted runner's scanner can hold the file for
+// seconds after that. Three 100 ms retries were not enough (unsigned Windows
+// lanes 35034254499 and 35040796137: EBUSY on unlink, every check before it
+// green). rmSync retries EBUSY/EPERM/ENOTEMPTY itself with a linear backoff, so
+// give it a real budget rather than reaching for a signal.
+const PROFILE_REMOVE_RETRIES = 80
+const PROFILE_REMOVE_DELAY_MS = 250
+
+function removeTreeWhenReleased(target) {
+  fs.rmSync(target, {
+    recursive: true,
+    force: true,
+    maxRetries: PROFILE_REMOVE_RETRIES,
+    retryDelay: PROFILE_REMOVE_DELAY_MS
+  })
 }
 
 async function waitFor(check, message) {
