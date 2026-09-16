@@ -1,8 +1,8 @@
 import { useMemo, useSyncExternalStore } from 'react'
 import {
-  DEFAULT_TRANSCRIPT_VIEW,
   getTranscriptViewSnapshot,
   hasTranscriptViewOverride,
+  resolveTranscriptView,
   subscribeTranscriptView,
   transcriptViewForChat,
   type TranscriptView
@@ -23,19 +23,29 @@ import {
  * renderer test in this repo is a `renderToStaticMarkup` server render, and
  * React's server shim throws "Missing getServerSnapshot" without it.
  *
- * Until the Appearance default lands, a chat with no explicit override
- * resolves to `DEFAULT_TRANSCRIPT_VIEW` — that argument is the single seam
- * the settings slice replaces.
+ * A chat with no explicit override resolves to `defaultView` — the Settings →
+ * Appearance default, threaded in as a PROP rather than read from a second
+ * subscription. One store subscription per transcript, and the settings half
+ * stays a one-argument change in one place.
+ *
+ * `defaultView` is optional and run through `resolveTranscriptView`, so a
+ * caller that has not threaded it yet lands on the same view the rest of the
+ * app is using rather than silently on a different one.
  */
-export function useTranscriptView(chatId: string | null | undefined): TranscriptView {
+export function useTranscriptView(
+  chatId: string | null | undefined,
+  defaultView?: TranscriptView
+): TranscriptView {
   const viewByChatId = useSyncExternalStore(
     subscribeTranscriptView,
     getTranscriptViewSnapshot,
     getTranscriptViewSnapshot
   )
   return useMemo(
-    () => transcriptViewForChat(viewByChatId, chatId ?? null, DEFAULT_TRANSCRIPT_VIEW),
-    [viewByChatId, chatId]
+    () => transcriptViewForChat(viewByChatId, chatId ?? null, resolveTranscriptView(defaultView)),
+    // `defaultView` belongs in the deps: left out, the resolved view freezes at
+    // whatever the default was on first mount and no type or test notices.
+    [viewByChatId, chatId, defaultView]
   )
 }
 
@@ -55,7 +65,10 @@ export function useTranscriptView(chatId: string | null | undefined): Transcript
  * would red every suite mounting the composer at once rather than failing
  * anywhere near this file.
  */
-export function useTranscriptViewSelection(chatId: string | null | undefined): {
+export function useTranscriptViewSelection(
+  chatId: string | null | undefined,
+  defaultView?: TranscriptView
+): {
   view: TranscriptView
   hasOverride: boolean
 } {
@@ -66,9 +79,12 @@ export function useTranscriptViewSelection(chatId: string | null | undefined): {
   )
   return useMemo(
     () => ({
-      view: transcriptViewForChat(viewByChatId, chatId ?? null, DEFAULT_TRANSCRIPT_VIEW),
+      view: transcriptViewForChat(viewByChatId, chatId ?? null, resolveTranscriptView(defaultView)),
       hasOverride: hasTranscriptViewOverride(viewByChatId, chatId ?? null)
     }),
-    [viewByChatId, chatId]
+    // Without `defaultView` here the menu's "Follow default" row keeps naming
+    // the default the window mounted with, which is the exact wrong-but-
+    // confident state this row exists to prevent.
+    [viewByChatId, chatId, defaultView]
   )
 }

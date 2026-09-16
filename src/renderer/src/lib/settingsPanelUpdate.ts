@@ -16,6 +16,8 @@ export type SettingsPanelUpdate = {
   appIconVariant?: AppSettings['appIconVariant']
   promptSurfaceStyle?: AppSettings['promptSurfaceStyle']
   fanoutLaneLayout?: AppSettings['fanoutLaneLayout']
+  /** Settings → Appearance default for the per-chat transcript view. */
+  defaultTranscriptView?: AppSettings['defaultTranscriptView']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']

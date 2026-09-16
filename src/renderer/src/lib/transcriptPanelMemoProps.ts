@@ -89,6 +89,27 @@ export type TranscriptPanelMemoComparable = {
   showRunCompleteSummary?: unknown
   compactDensity: unknown
   liveActivityViewport?: unknown
+  /**
+   * The two Settings → Appearance values the panel consumes INSIDE its render.
+   *
+   * An unlisted prop here is silent in both directions: the structural type
+   * below is all `unknown`, so `TranscriptPanelProps` stays assignable, and the
+   * transcript simply never re-renders when the value changes. There is no type
+   * error and no render error — only a stale panel.
+   *
+   * `fanoutLaneLayout` was missing, and the reason it looked safe is worth
+   * writing down: its EFFECT is mostly a `:root` attribute CSS reads outside
+   * React, so it reads like pure styling. It is not. TranscriptPanel derives
+   * `pairFanoutLanes` from it in JS (`resolveFanoutLaneLayout(fanoutLaneLayout)
+   * === 'paired'`), and that one boolean feeds the projection estimate, the
+   * slot map and the measurement pass. Left uncompared, switching Fan-out lanes
+   * in Settings and returning to the app leaves the panel on the old layout —
+   * the takeover hides `.app-transcript` with `display: none` rather than
+   * unmounting it, precisely so state survives the round trip, so nothing
+   * forces the re-render an unmount would have.
+   */
+  fanoutLaneLayout?: unknown
+  defaultTranscriptView?: unknown
   isGlobal?: unknown
 }
 
@@ -324,6 +345,8 @@ export function transcriptPanelPropsEqual(
     previous.showRunCompleteSummary === next.showRunCompleteSummary &&
     previous.compactDensity === next.compactDensity &&
     previous.liveActivityViewport === next.liveActivityViewport &&
+    previous.fanoutLaneLayout === next.fanoutLaneLayout &&
+    previous.defaultTranscriptView === next.defaultTranscriptView &&
     previous.isGlobal === next.isGlobal
   )
 }

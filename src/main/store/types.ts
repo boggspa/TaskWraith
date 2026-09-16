@@ -2792,6 +2792,22 @@ export interface AppSettings {
    * `DEFAULT_FANOUT_LANE_LAYOUT` (renderer `lib/fanoutLanePairing`), not to the
    * historical stack. Only a value written here overrides the default. */
   fanoutLaneLayout?: FanoutLaneLayout
+  /** Appearance default for how much of a turn a transcript renders.
+   * Optional, and ABSENT is the common case on upgrade — the per-chat view and
+   * its menu shipped before this setting did. Absence resolves to
+   * `DEFAULT_TRANSCRIPT_VIEW` (renderer `lib/transcriptViewOverride`), and a
+   * chat's own session override still beats whatever is written here; this is
+   * only the starting point.
+   *
+   * Absence is NOT durable, and that is the `fanoutLaneLayout` precedent rather
+   * than an oversight: `useAppearance.update()` persists its whole literal, so
+   * the FIRST unrelated appearance change a user makes materialises this key at
+   * its resolved value. Both keys behave this way. It is invisible while the
+   * resolved value equals the shipped default; if `DEFAULT_TRANSCRIPT_VIEW`
+   * ever moves, every install that touched any appearance setting is already
+   * pinned to the old one. Read this before treating "key present" as "user
+   * chose". */
+  defaultTranscriptView?: TranscriptView
   composerStyle: ComposerStyle
   transcriptFontFamily?: string
   composerFontFamily?: string

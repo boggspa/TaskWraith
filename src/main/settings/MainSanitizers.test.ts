@@ -1148,6 +1148,29 @@ describe('MainSanitizers settings patches', () => {
     expect('appIconVariant' in sanitizeSettingsPatch({ appIconVariant: 'nope' })).toBe(false)
   })
 
+  it('persists defaultTranscriptView (SETTINGS_PATCH_KEYS guard)', () => {
+    // The Appearance transcript-view default rides the same allowlist. Absent
+    // from it, the key is dropped by a bare `continue` with no log and no
+    // throw: the chosen default applies live and is gone on the next restart,
+    // exactly the toolIconAccent/diffStatColors shape above.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ defaultTranscriptView: 'minimal' }).defaultTranscriptView).toBe(
+      'minimal'
+    )
+    expect(sanitizeSettingsPatch({ defaultTranscriptView: 'tools' }).defaultTranscriptView).toBe(
+      'tools'
+    )
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      defaultTranscriptView: 'standard',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.defaultTranscriptView).toBe('standard')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
   it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

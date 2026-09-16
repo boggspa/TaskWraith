@@ -93,6 +93,16 @@ export interface TranscriptViewPickerProps {
    * nothing on screen changes. The picker hides itself rather than write one.
    */
   chatId: string | null
+  /**
+   * The Settings → Appearance default (`settings.defaultTranscriptView`).
+   *
+   * Load-bearing for the FIRST row, not just for rendering: "Follow default"
+   * names what the default currently resolves to, so a picker that does not
+   * receive this confidently prints a view the transcript is not using.
+   * Optional and resolved in the hook, so an un-threaded mount lands on the
+   * same view the transcript does.
+   */
+  defaultView?: TranscriptView
   provider: ProviderId
   composerStyle: ComposerStyle
   disabled?: boolean
@@ -108,7 +118,7 @@ export function TranscriptViewPicker(props: TranscriptViewPickerProps): ReactEle
     null
   )
   const chatId = props.chatId && props.chatId.length > 0 ? props.chatId : null
-  const { view, hasOverride } = useTranscriptViewSelection(chatId)
+  const { view, hasOverride } = useTranscriptViewSelection(chatId, props.defaultView)
   const items = buildTranscriptViewMenuItems(view, hasOverride, (next) => {
     if (!chatId) return
     setTranscriptViewOverride(chatId, next)

@@ -211,6 +211,11 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'agentThemeTokens',
   'promptSurfaceStyle',
   'fanoutLaneLayout',
+  // Absent here and the Appearance default applies live and is dropped on the
+  // very next persist — the "works until I restart the app" shape recorded for
+  // diffStatColors above. The renderer's `useAppearance.update()` sends this
+  // key in every appearance patch, so the allowlist is the only gate.
+  'defaultTranscriptView',
   'composerStyle',
   'transcriptFontFamily',
   'composerFontFamily',

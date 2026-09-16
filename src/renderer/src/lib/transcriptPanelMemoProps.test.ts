@@ -85,6 +85,60 @@ describe('transcriptPanelMemoProps', () => {
     expect(transcriptPanelPropsEqual(shared, next)).toBe(true)
   })
 
+  it('invalidates when the Appearance transcript-view default changes', () => {
+    // This comparable type is structurally `unknown` per field, so a new prop
+    // on TranscriptPanelProps type-checks whether or not it is listed here.
+    // Unlisted, the MAIN pane and the SIDE CHAT both freeze on the old default
+    // — the panel consumes this one inside its own render (it is the fallback
+    // argument to `useTranscriptView`), with no `:root` attribute to repaint
+    // around React the way `fanoutLaneLayout` has.
+    const shared = baseProps()
+    expect(transcriptPanelPropsEqual(shared, { ...shared, defaultTranscriptView: 'minimal' })).toBe(
+      false
+    )
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, defaultTranscriptView: 'tools' },
+        { ...shared, defaultTranscriptView: 'standard' }
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the two above are
+    // this field moving and not the comparator returning false for everything.
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, defaultTranscriptView: 'minimal' },
+        { ...shared, defaultTranscriptView: 'minimal' }
+      )
+    ).toBe(true)
+  })
+
+  it('re-renders when the fan-out lane layout changes', () => {
+    // This key was MISSING from the comparator, excused by a comment claiming
+    // its effect is only a `:root` attribute CSS reads outside React. It is
+    // not: TranscriptPanel derives `pairFanoutLanes` from it in JS, and that
+    // boolean feeds the projection estimate, the slot map and the measurement
+    // pass. Uncompared, switching Fan-out lanes in Settings and returning to
+    // the app left the panel on the old layout — the takeover hides
+    // `.app-transcript` with `display: none` rather than unmounting it, so
+    // nothing forces the re-render an unmount would have.
+    const shared = baseProps()
+    expect(transcriptPanelPropsEqual(shared, { ...shared, fanoutLaneLayout: 'stacked' })).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, fanoutLaneLayout: 'paired' },
+        { ...shared, fanoutLaneLayout: 'stacked' }
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the two above are
+    // this field moving and not the comparator refusing everything.
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, fanoutLaneLayout: 'stacked' },
+        { ...shared, fanoutLaneLayout: 'stacked' }
+      )
+    ).toBe(true)
+  })
+
   it('guards TranscriptPanel against currentChat === memo keying', () => {
     const source = readFileSync(
       new URL('../components/TranscriptPanel.tsx', import.meta.url),

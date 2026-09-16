@@ -245,6 +245,10 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.compactDensity === b.compactDensity &&
     a.liveActivityViewport === b.liveActivityViewport &&
     a.fanoutLaneLayout === b.fanoutLaneLayout &&
+    // Inherited from BuildChatViewPropsInput, so TypeScript never asked for it
+    // here. Unlisted, a pane that is not the focused one keeps rendering the
+    // OLD Appearance default until an unrelated prop happens to change.
+    a.defaultTranscriptView === b.defaultTranscriptView &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&

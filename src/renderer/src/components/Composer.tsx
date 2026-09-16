@@ -5751,6 +5751,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                />
 	                <TranscriptViewPicker
 	                  chatId={currentChat?.appChatId ?? null}
+	                  defaultView={appearance.defaultTranscriptView}
 	                  provider={currentProvider}
 	                  composerStyle={appearance.composerStyle}
 	                  openSignal={composerSurfaceOpenSignal(composerSurfaceRequest, 'view')}

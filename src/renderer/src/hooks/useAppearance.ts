@@ -8,6 +8,7 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
+  TranscriptView,
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
@@ -38,6 +39,7 @@ import {
 } from '../lib/typefaceOptions'
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
 import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
+import { DEFAULT_TRANSCRIPT_VIEW, resolveTranscriptView } from '../lib/transcriptViewOverride'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
 import { startupSettingsRequest } from '../lib/startupSettingsCache'
 
@@ -71,6 +73,15 @@ export interface AppearanceState {
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   fanoutLaneLayout: FanoutLaneLayout
+  /**
+   * Appearance default for how much of a turn a transcript renders.
+   *
+   * REQUIRED here although `AppSettings.defaultTranscriptView` is optional:
+   * absence is resolved once, at the hydrate seam below, so no consumer has to
+   * re-decide what "user has not chosen" means. Required also makes the
+   * interface and `getInitialState` compile-caught rather than silent.
+   */
+  defaultTranscriptView: TranscriptView
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
@@ -199,6 +210,7 @@ function getInitialState(): AppearanceState {
     appIconVariant: DEFAULT_APP_ICON_VARIANT,
     promptSurfaceStyle: 'liquid_glass',
     fanoutLaneLayout: DEFAULT_FANOUT_LANE_LAYOUT,
+    defaultTranscriptView: DEFAULT_TRANSCRIPT_VIEW,
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -297,6 +309,10 @@ export function useAppearance() {
           // every fresh install) reads as the DEFAULT layout; only an explicit
           // choice overrides it. See resolveFanoutLaneLayout.
           fanoutLaneLayout: resolveFanoutLaneLayout(settings.fanoutLaneLayout),
+          // Same contract, one seam: absent (or unreadable) means "follow the
+          // default", never a pin. This is the ONE place absence is resolved —
+          // every consumer downstream reads a concrete view.
+          defaultTranscriptView: resolveTranscriptView(settings.defaultTranscriptView),
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,
@@ -401,6 +417,11 @@ export function useAppearance() {
     // needs no prop threaded through the transcript tree, only the per-lane
     // slot attribute the panel stamps on its own rows.
     root.setAttribute('data-fanout-lane-layout', next.fanoutLaneLayout)
+    // `defaultTranscriptView` deliberately stamps NOTHING here. The fold it
+    // drives is pure JS (`lib/transcriptViewFold`) read through
+    // `useTranscriptView`, so an attribute would be a second source of truth
+    // that no stylesheet reads — and one a future seam guard could demand
+    // everywhere. The absence is a decision, not an oversight.
     root.setAttribute('data-composer-style', next.composerStyle)
     // NOTE: `data-interface-style` used to mirror the composer shell onto the
     // whole app (transcript/sidebar/message-bubbles). That app-wide repaint was
@@ -593,6 +614,7 @@ export function useAppearance() {
             appIconVariant: next.appIconVariant,
             promptSurfaceStyle: next.promptSurfaceStyle,
             fanoutLaneLayout: next.fanoutLaneLayout,
+            defaultTranscriptView: next.defaultTranscriptView,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,
             composerFontFamily: next.composerFontFamily,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerSettingsHandlers } from './settingsHandlers'
+import { registerSettingsHandlers, rendererSettingsForSender } from './settingsHandlers'
 import type { ExtensionSecretRef } from '../ExtensionSecretStore'
 import type { AppSettings, HandoffCard, ProviderId, RuntimeProfile } from '../store/types'
 
@@ -695,5 +695,74 @@ describe('registerSettingsHandlers', () => {
       'Renderer cannot read handoff cards for another chat.'
     )
     expect(deps.getHandoffCards).not.toHaveBeenCalled()
+  })
+})
+
+describe('the appearance projection carries the transcript-view settings', () => {
+  // `rendererAppearanceSettings` is a hand-written allowlist returned through an
+  // `as AppSettings` cast, so an omitted key is invisible: no type error, no
+  // runtime error, just a window rendering the wrong thing. It is the ONLY lane
+  // a popped-out chat or a utility window has — the main window escapes it
+  // entirely through `rendererSafeSettings`, so a main-window check proves
+  // nothing. Both scopes are asserted here for that reason.
+  const pathsEqual = (left: string, right: string): boolean => left === right
+  // The chat projection dereferences agenticServices unconditionally.
+  const baseSettings = {
+    agenticServices: {},
+    fanoutLaneLayout: 'stacked',
+    defaultTranscriptView: 'minimal'
+  } as unknown as AppSettings
+
+  it('reaches a utility renderer', () => {
+    const projected = rendererSettingsForSender(baseSettings, { kind: 'utility' }, pathsEqual)
+    expect(projected.defaultTranscriptView).toBe('minimal')
+    // Shipped before this setting and genuinely absent from the projection, so
+    // a user who chose one-per-line lanes got two-across in every window but
+    // the main one. Fixed alongside, pinned here.
+    expect(projected.fanoutLaneLayout).toBe('stacked')
+    // Positive control for the negative below: the allowlist really did run.
+    expect(projected).not.toHaveProperty('agenticServices')
+  })
+
+  it('reaches a popped-out chat renderer', () => {
+    const projected = rendererSettingsForSender(
+      baseSettings,
+      { kind: 'chat', workspacePath: '/tmp/ws' },
+      pathsEqual
+    )
+    expect(projected.defaultTranscriptView).toBe('minimal')
+    expect(projected.fanoutLaneLayout).toBe('stacked')
+  })
+
+  it('carries absence as absence, never as a pin', () => {
+    // Absent means "the user has not chosen" and must resolve in the renderer.
+    // Forwarding a default here would hand every popout an explicit view that
+    // beats a later Appearance choice.
+    const projected = rendererSettingsForSender(
+      { agenticServices: {} } as unknown as AppSettings,
+      { kind: 'utility' },
+      pathsEqual
+    )
+    expect(projected.defaultTranscriptView).toBeUndefined()
+    expect(projected.fanoutLaneLayout).toBeUndefined()
+    // Positive control: this projection does forward things — it is not empty.
+    expect(projected).toHaveProperty('showInspector', false)
+
+    // THE control that matters, and without which the two assertions above are
+    // vacuous: they are equally satisfied by these keys being absent from the
+    // projection ENTIRELY. Delete both forwards and the test above still passes
+    // while no popout ever receives either setting — which is the exact bug
+    // this slice fixed for `fanoutLaneLayout`.
+    const carried = rendererSettingsForSender(
+      {
+        agenticServices: {},
+        defaultTranscriptView: 'minimal',
+        fanoutLaneLayout: 'stacked'
+      } as unknown as AppSettings,
+      { kind: 'utility' },
+      pathsEqual
+    )
+    expect(carried.defaultTranscriptView).toBe('minimal')
+    expect(carried.fanoutLaneLayout).toBe('stacked')
   })
 })

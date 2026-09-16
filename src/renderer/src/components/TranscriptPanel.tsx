@@ -721,6 +721,15 @@ export type TranscriptPanelProps = {
    * to thread it must land on the same layout the rest of the app is using,
    * not silently on the other one. */
   fanoutLaneLayout?: FanoutLaneLayout
+  /** `settings.defaultTranscriptView` — the Appearance default this transcript
+   * falls back to for a chat carrying no per-chat override of its own.
+   * Optional, and undefined resolves to `DEFAULT_TRANSCRIPT_VIEW` for the same
+   * reason `fanoutLaneLayout` does: a caller that forgets to thread it must
+   * land on the view the rest of the app is using, not silently on another.
+   * It must also be listed in `TranscriptPanelMemoComparable` — this panel is
+   * memoized against a hand-written chain, so an unlisted prop is a setting
+   * change the transcript never re-renders for. */
+  defaultTranscriptView?: TranscriptView
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -2494,6 +2503,7 @@ export const TranscriptPanel = memo(
     compactDensity,
     liveActivityViewport,
     fanoutLaneLayout,
+    defaultTranscriptView,
     onCopyMessage,
     onAddMessageToPrompt,
     onDeleteMessage,
@@ -3162,7 +3172,7 @@ export const TranscriptPanel = memo(
     )
     // Per-chat transcript view. Shared with the cards that render their own
     // activity stacks outside this prop flow — see `useTranscriptView`.
-    const transcriptView = useTranscriptView(chatId)
+    const transcriptView = useTranscriptView(chatId, defaultTranscriptView)
     const setRoundExpanded = useCallback(
       (roundId: string, expanded: boolean) => {
         if (!roundExpansionChatId) return

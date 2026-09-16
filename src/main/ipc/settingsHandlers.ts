@@ -136,6 +136,12 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     agentThemeTokens: settings.agentThemeTokens,
     appIconVariant: settings.appIconVariant,
     promptSurfaceStyle: settings.promptSurfaceStyle,
+    // Was MISSING since the setting shipped: this projection is the ONLY lane a
+    // popped-out chat or a utility window has, so a user who chose `stacked`
+    // got `paired` in every window except the main one. The `as AppSettings`
+    // cast below is why that omission never type-errored.
+    fanoutLaneLayout: settings.fanoutLaneLayout,
+    defaultTranscriptView: settings.defaultTranscriptView,
     composerStyle: settings.composerStyle,
     transcriptFontFamily: settings.transcriptFontFamily,
     composerFontFamily: settings.composerFontFamily,

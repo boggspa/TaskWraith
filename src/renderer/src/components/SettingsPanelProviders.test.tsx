@@ -22,6 +22,7 @@ import {
   uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
+import { TRANSCRIPT_VIEW_OPTIONS } from './settings/settingsUiOptions'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -176,6 +177,43 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('Tool-icon color')
     expect(html).not.toContain('Your chat bubble')
     expect(html).not.toContain('Selected accent')
+  })
+
+  it('renders the default transcript view control on Appearance, from the shared catalogue', () => {
+    // The control is a source-pinned seam everywhere else; this is the only
+    // assertion that it actually REACHES the Appearance tab and selects the
+    // value it was given.
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', defaultTranscriptView: 'minimal' })}
+      />
+    )
+
+    expect(html).toContain('Default transcript view')
+    // Labels come from the catalogue, so a second copy of the wording cannot
+    // satisfy this — the expected strings are read from the catalogue itself.
+    for (const option of TRANSCRIPT_VIEW_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The chosen value is marked selected, so this is the BINDING and not
+    // merely the presence of three options.
+    expect(html).toContain('<option value="minimal" selected="">Minimal</option>')
+
+    const tools = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', defaultTranscriptView: 'tools' })}
+      />
+    )
+    expect(tools).toContain('<option value="tools" selected="">Tools</option>')
+    // The helper text follows the selection, straight from the catalogue.
+    // (`TRANSCRIPT_VIEW_OPTIONS[1]` is the only one of the three whose helper
+    // contains no character React escapes on the way out.)
+    expect(tools).toContain(TRANSCRIPT_VIEW_OPTIONS[1].helper)
+    // Negative with its positive control directly above: the same string is
+    // present for `tools` and absent for `minimal`, so this cannot pass over a
+    // page that simply never rendered the control.
+    expect(html).not.toContain(TRANSCRIPT_VIEW_OPTIONS[1].helper)
   })
 
   it('binds the custom transcript-font input to the PERSISTED value (not appearance state)', () => {

@@ -7830,6 +7830,10 @@ function App(): React.JSX.Element {
       settingsPatch.fanoutLaneLayout = next.fanoutLaneLayout
       appearance.update({ fanoutLaneLayout: next.fanoutLaneLayout })
     }
+    if (next.defaultTranscriptView !== undefined) {
+      settingsPatch.defaultTranscriptView = next.defaultTranscriptView
+      appearance.update({ defaultTranscriptView: next.defaultTranscriptView })
+    }
     if (next.composerStyle !== undefined) {
       settingsPatch.composerStyle = next.composerStyle
       appearance.update({ composerStyle: next.composerStyle })
@@ -30570,6 +30574,7 @@ function App(): React.JSX.Element {
         compactDensity={appearance.compactDensity}
         liveActivityViewport={appearance.liveActivityViewport}
         fanoutLaneLayout={appearance.fanoutLaneLayout}
+        defaultTranscriptView={appearance.defaultTranscriptView}
         copiedId={copiedId}
         copy={copy}
         onOpenSubThread={handleOpenCockpitThread}

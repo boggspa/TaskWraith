@@ -30,6 +30,7 @@ import type {
   AuditRetentionSurface,
   PromptSurfaceStyle,
   FanoutLaneLayout,
+  TranscriptView,
   ComposerStyle,
   ThemeAppearance,
   ThemeCornerStyle,
@@ -72,6 +73,7 @@ import {
 import { setFxRatesPerUsd } from '../lib/formatCost'
 import { useUsageSummary } from '../lib/usageSummaryStore'
 import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
+import { resolveTranscriptView } from '../lib/transcriptViewOverride'
 import {
   KEY_COMMAND_DEFINITIONS,
   KEY_COMMAND_GROUPS,
@@ -306,6 +308,7 @@ import {
   APP_ICON_THUMBS,
   PROMPT_SURFACE_OPTIONS,
   FANOUT_LANE_LAYOUT_OPTIONS,
+  TRANSCRIPT_VIEW_OPTIONS,
   COMPOSER_STYLE_OPTIONS,
   NATIVE_SUB_AGENT_REQUEST_OPTIONS,
   CODEX_SANDBOX_FALLBACK_OPTIONS,
@@ -349,6 +352,8 @@ interface SettingsPanelProps {
   reduceMotion: boolean
   compactDensity: boolean
   fanoutLaneLayout?: FanoutLaneLayout
+  /** Settings → Appearance default for the per-chat transcript view. */
+  defaultTranscriptView?: TranscriptView
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
@@ -496,6 +501,7 @@ interface SettingsPanelProps {
     reduceMotion?: boolean
     compactDensity?: boolean
     fanoutLaneLayout?: FanoutLaneLayout
+    defaultTranscriptView?: TranscriptView
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -976,6 +982,7 @@ export function SettingsPanel({
   reduceMotion,
   compactDensity,
   fanoutLaneLayout,
+  defaultTranscriptView,
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
@@ -3283,6 +3290,38 @@ export function SettingsPanel({
                         runs, and the same two-across layout for parallel sub-thread return cards.
                         Side by side fits twice as many lanes on screen; a lane with no neighbour
                         still spans the full width.
+                      </small>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Default transcript view</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptView(defaultTranscriptView)}
+                        onChange={(e) =>
+                          onChange({ defaultTranscriptView: e.target.value as TranscriptView })
+                        }
+                      >
+                        {TRANSCRIPT_VIEW_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue the per-chat menu reads, so the
+                            two can never describe the same three views differently.
+                            The lookup cannot miss: the value is resolved to one of
+                            exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_VIEW_OPTIONS.find(
+                            (option) =>
+                              option.value === resolveTranscriptView(defaultTranscriptView)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        Where every chat starts. A chat switched to its own view from the
+                        composer&rsquo;s view menu keeps that view for the rest of the session.
                       </small>
                     </label>
                   </section>

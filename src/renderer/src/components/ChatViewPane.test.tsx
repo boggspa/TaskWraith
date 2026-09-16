@@ -171,6 +171,30 @@ describe('chatViewPanePropsEqual', () => {
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ providerClass: 'claude' }))).toBe(false)
   })
 
+  it('re-renders when the Appearance transcript-view default changes', () => {
+    // `defaultTranscriptView` is INHERITED from BuildChatViewPropsInput, so
+    // TypeScript never asked for it in the comparator. Unlisted, every
+    // unfocused pane keeps rendering the old default until an unrelated prop
+    // happens to change — no type error, no render error, looks intermittent.
+    expect(
+      chatViewPanePropsEqual(makeProps(), makeProps({ defaultTranscriptView: 'minimal' }))
+    ).toBe(false)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ defaultTranscriptView: 'tools' }),
+        makeProps({ defaultTranscriptView: 'standard' })
+      )
+    ).toBe(false)
+    // Positive control: the comparator still bails out when it has not moved,
+    // so the two assertions above are the field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ defaultTranscriptView: 'minimal' }),
+        makeProps({ defaultTranscriptView: 'minimal' })
+      )
+    ).toBe(true)
+  })
+
   it('re-renders when the chat record identity changes', () => {
     const chat = { appChatId: 'c2' } as unknown as ChatViewPaneProps['chat']
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ chat }))).toBe(false)
