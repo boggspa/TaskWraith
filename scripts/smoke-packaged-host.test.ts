@@ -47,8 +47,11 @@ describe('packaged production Host smoke', () => {
     expect(smoke).toMatch(/function terminateHostTree\(child\)[\s\S]*?'taskkill'[\s\S]*?'\/T'/)
     expect(smoke).toMatch(/child\.exitCode === null\) \{\s*terminateHostTree\(child\)/)
     expect(smoke).not.toMatch(/child\.exitCode === null\) \{\s*child\.kill\('SIGTERM'\)/)
-    expect(smoke).toMatch(/catch \(error\) \{\s*failure = error\s*throw error/)
-    expect(smoke).toMatch(/if \(!failure\) throw error/)
+    expect(smoke).toMatch(/catch \(error\) \{\s*failure = error\s*\}/)
+    expect(smoke).toMatch(/if \(failure\) throw failure/)
+    // Nothing may throw from a `finally` (no-unsafe-finally): the cleanup runs
+    // after the try/catch and re-throws the recorded failure last.
+    expect(smoke).not.toMatch(/\} finally \{[\s\S]{0,400}removeTreeWhenReleased\(profile\)/)
   })
 
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {

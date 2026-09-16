@@ -629,23 +629,25 @@ async function runProductionRoundTrip(launcher, target) {
     }
   } catch (error) {
     failure = error
-    throw error
-  } finally {
-    // Emergency-only cleanup for a smoke failure before authenticated stop.
-    if (child && child.exitCode === null) {
-      terminateHostTree(child)
-      await waitForExit(child).catch(() => undefined)
-    }
-    try {
-      removeTreeWhenReleased(profile)
-    } catch (error) {
-      // A cleanup error must never replace the smoke failure it followed:
-      // three unsigned Windows lanes (35034254499, 35040796137, 35044758726)
-      // reported only "EBUSY: unlink query.sqlite" and hid the real failure.
-      if (!failure) throw error
+  }
+  // Emergency-only cleanup for a smoke failure before authenticated stop.
+  if (child && child.exitCode === null) {
+    terminateHostTree(child)
+    await waitForExit(child).catch(() => undefined)
+  }
+  try {
+    removeTreeWhenReleased(profile)
+  } catch (error) {
+    // A cleanup error must never replace the smoke failure it followed:
+    // three unsigned Windows lanes (35034254499, 35040796137, 35044758726)
+    // reported only "EBUSY: unlink query.sqlite" and hid the real failure.
+    if (failure) {
       console.error(`[smoke-packaged-host] profile cleanup after failure: ${error.message}`)
+    } else {
+      failure = error
     }
   }
+  if (failure) throw failure
 }
 
 // On Windows the launcher is cmd.exe running the packaged node.exe. A signal
