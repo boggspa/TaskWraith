@@ -84,6 +84,53 @@ describe('expand chrome on a relayed message body', () => {
   })
 })
 
+describe('the cross-module citations stay true', () => {
+  // Three citations in this feature went stale when a function MOVED, and the
+  // failure is silent: a comment pointing at the wrong module reads as
+  // authoritative and sends the next reader to a file where the rule is not.
+  // b561f9a3e already spent paragraphs undoing one. These pin the two that
+  // cross a module or a platform boundary.
+
+  it('keeps the priority carve-out in this module, not in collapsedActivityStack', () => {
+    const fold = readFileSync(join(__dirname, 'transcriptViewFold.ts'), 'utf8')
+    const collapsed = readFileSync(join(__dirname, 'collapsedActivityStack.ts'), 'utf8')
+    expect(fold).toContain('export function isTranscriptPriorityActivity')
+    // It was MOVED, not copied: two definitions would let the fold and the
+    // segment filter drift back apart, which is the defect ac32daa78 fixed.
+    expect(collapsed).not.toContain('export function isTranscriptPriorityActivity')
+    // Anti-vacuity for the negative: that file really does still import and use
+    // the symbol, so its absence above is about the DEFINITION.
+    expect(collapsed).toContain('isTranscriptPriorityActivity')
+  })
+
+  it('names the right module where the type is documented', () => {
+    // `store/types.ts` is the first thing a reader meets, and it cited the old
+    // home for this symbol until this commit.
+    const types = readFileSync(join(__dirname, '../../../main/store/types.ts'), 'utf8')
+    const at = types.indexOf('isTranscriptPriorityActivity')
+    expect(at).toBeGreaterThan(-1)
+    const citation = types.slice(at, at + 160)
+    expect(citation).toContain('lib/transcriptViewFold')
+    expect(citation).not.toContain('lib/collapsedActivityStack')
+  })
+
+  it('still finds the failure rule on the iOS side it cites', () => {
+    // A cross-PLATFORM citation cannot be checked by any compiler, and this one
+    // carries a real invariant: both transcripts refuse to fold a failure into
+    // a summary that reads like success. Pinned on the rule's own words rather
+    // than on a line number, because the line number is what drifts.
+    const swift = readFileSync(
+      join(
+        __dirname,
+        '../../../../ios/TaskWraithKit/Sources/TaskWraithUI/TranscriptStackCollapse.swift'
+      ),
+      'utf8'
+    )
+    expect(swift).toContain('must never be folded away')
+    expect(swift).toContain('would hide an error behind a summary that reads like success')
+  })
+})
+
 describe('every transcript row type has a recorded gating decision', () => {
   // The four ungated rows are a DECISION, and an absence of code cannot say so.
   // This table is what makes "correct" distinguishable from "unfinished" at

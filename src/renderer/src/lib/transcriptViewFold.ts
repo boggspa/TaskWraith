@@ -44,7 +44,9 @@ export const TRANSCRIPT_VIEWS: readonly TranscriptView[] = ['minimal', 'tools', 
  * step folded behind "Used 3 tools" reads like success, so the reader is told
  * the opposite of what happened. Both transcripts already refuse this — the
  * settled-stack fold keeps `ensemble_yield` rows whole for the same reason
- * (`isTranscriptPriorityActivity`, `collapsedActivityStack.ts:47-53`), and iOS
+ * (`isTranscriptPriorityActivity`, defined a few lines below in THIS file —
+ * ac32daa78 moved it here from `collapsedActivityStack` so the fold and the
+ * segment filter read one fact), and iOS
  * states it outright in `TranscriptStackCollapse.swift:47-52`. A view that
  * hides work the user chose to hide is the feature; a view that hides an error
  * is a bug that looks like the feature.

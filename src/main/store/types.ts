@@ -190,14 +190,28 @@ export type FanoutLaneLayout = 'stacked' | 'paired'
  * `standard` is the historical behaviour — every thinking, tool-call and
  * fan-out viewport renders and expands. `tools` drops thinking viewports and
  * keeps the rest expandable. `minimal` renders assistant messages plus
- * collapsed one-liners that cannot be opened at all; the one-liner still
- * names the work ("Ran 2 commands, Edited a file") and still updates as that
- * work lands, so nothing disappears silently — it just stops unfolding.
+ * collapsed one-liners; the one-liner still names the work ("Ran 2 commands ·
+ * Edited 1 file") and still updates as that work lands, so nothing disappears
+ * silently — it just stops unfolding.
+ *
+ * "Stops unfolding" rather than "cannot be opened at all", which this comment
+ * used to claim and which two shipped decisions have made untrue.
+ * Expandability is NOT a property of the view: a row is expandable iff opening
+ * it would show something. Under Minimal a sub-agent spawn wave therefore
+ * still opens (its segments survive the filter by design), while a
+ * thinking-only stack does not. See `activityStackHasVisibleContent`.
+ *
+ * Minimal is a TURN-CONTENT view, not a row-count view: it quietens what an
+ * agent DID, and does not thin what was SAID or by whom. Which row types it
+ * touches at all is recorded in `TRANSCRIPT_ROW_VIEW_GATING`. Two deliberate
+ * exceptions to the literal wording above live there and in
+ * `transcriptViewFold`: a fan-out lane keeps its result body, and a relayed
+ * sub-thread answer keeps its body while losing only its expander.
  *
  * A failed lane or run is deliberately exempt at every level. Folding a
  * failure into a summary that reads like success is the one thing both this
  * transcript and the iOS one refuse to do (`isTranscriptPriorityActivity` in
- * renderer `lib/collapsedActivityStack`, `TranscriptStackCollapse.swift`).
+ * renderer `lib/transcriptViewFold`, `TranscriptStackCollapse.swift`).
  */
 export type TranscriptView = 'minimal' | 'tools' | 'standard'
 export type ComposerStyle =
