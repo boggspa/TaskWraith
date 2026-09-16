@@ -1,5 +1,10 @@
 import type { CSSProperties } from 'react'
-import type { ChatMessage, ChatRecord, ProviderId } from '../../../main/store/types'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ProviderId,
+  TranscriptView
+} from '../../../main/store/types'
 import { ActivityStack } from './ActivityStack'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
@@ -32,6 +37,12 @@ interface SubThreadReturnCardProps {
   copied?: boolean
   resultExpanded?: boolean
   onResultExpandedChange?: (expanded: boolean) => void
+  /** How much of the recovered activity stack to render. Threaded rather than
+   * subscribed: this component is invoked as a plain function in its tests, so
+   * it must hold no hooks. Its stack never passes `liveActivityViewport`, so it
+   * always takes ActivityStack's FLAT render tree — the tree a live-viewport-only
+   * gate would have missed entirely. */
+  transcriptView?: TranscriptView
 }
 
 const COLLAPSED_RESULT_MARKDOWN_LIMIT = 6_000
@@ -44,6 +55,7 @@ function textValue(value: unknown): string | undefined {
 export function SubThreadReturnCard({
   message,
   chat,
+  transcriptView,
   onOpenSubThread,
   onOpenSubThreadInSidePanel,
   onCopyMessage,
@@ -211,6 +223,7 @@ export function SubThreadReturnCard({
             chat={chat}
             chatId={chat?.appChatId}
             runId={message.runId}
+            transcriptView={transcriptView}
           />
         </div>
       )}

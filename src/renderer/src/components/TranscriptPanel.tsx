@@ -189,6 +189,7 @@ import {
   setSessionRoundExpanded,
   subscribeSessionRoundExpansion
 } from '../lib/ensembleRoundCards'
+import { useTranscriptView } from '../hooks/useTranscriptView'
 import {
   coLocateUserFanoutLaneMessages,
   isEnsembleFanoutViewportHeaderMessage
@@ -3142,6 +3143,9 @@ export const TranscriptPanel = memo(
       () => roundExpansionForChat(manualRoundExpansionByChatId, roundExpansionChatId),
       [manualRoundExpansionByChatId, roundExpansionChatId]
     )
+    // Per-chat transcript view. Shared with the cards that render their own
+    // activity stacks outside this prop flow — see `useTranscriptView`.
+    const transcriptView = useTranscriptView(chatId)
     const setRoundExpanded = useCallback(
       (roundId: string, expanded: boolean) => {
         if (!roundExpansionChatId) return
@@ -5423,6 +5427,7 @@ export const TranscriptPanel = memo(
               compactDensity,
               liveActivityViewport,
               liveActivityViewportActive: liveViewportActive,
+              transcriptView,
               virtualized: virtualizeEnabled,
               speakerContinuation,
               seatChangeStackPosition,
@@ -5777,6 +5782,7 @@ export const TranscriptPanel = memo(
                       />
                     ) : (
                       <SubThreadReturnCard
+                        transcriptView={transcriptView}
                         message={msg}
                         chat={currentChat || undefined}
                         onOpenSubThread={onOpenSubThread}
@@ -5825,6 +5831,7 @@ export const TranscriptPanel = memo(
                     }
                   >
                     <EnsembleFanoutResultCard
+                      transcriptView={transcriptView}
                       message={msg}
                       chat={currentChat || undefined}
                       workspacePath={currentWorkspacePath}
@@ -5886,6 +5893,7 @@ export const TranscriptPanel = memo(
                       }
                       onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                       showDiffStats
+                      transcriptView={transcriptView}
                       thinkingTraceActions={thinkingTraceActions}
                     />
                   </CollapsedActivityStackRow>
@@ -5915,6 +5923,7 @@ export const TranscriptPanel = memo(
                     onExpandedActivityIdsChange={(next) => setActivityExpansionForRow(rowKey, next)}
                     onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
                     showDiffStats
+                    transcriptView={transcriptView}
                     thinkingTraceActions={thinkingTraceActions}
                   />
                 ) : msg.role === 'tool' ? (

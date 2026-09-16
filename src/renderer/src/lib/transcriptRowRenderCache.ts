@@ -1,4 +1,10 @@
-import type { ChatMessage, ChatRecord, ChatRun, ProviderId } from '../../../main/store/types'
+import type {
+  ChatMessage,
+  ChatRecord,
+  ChatRun,
+  ProviderId,
+  TranscriptView
+} from '../../../main/store/types'
 import type { FanoutLaneSlot } from './fanoutLanePairing'
 
 export interface TranscriptRowRenderSignature {
@@ -24,6 +30,11 @@ export interface TranscriptRowRenderSignature {
   compactDensity: boolean
   liveActivityViewport?: boolean
   liveActivityViewportActive?: boolean
+  /** How much of each turn the transcript renders. Part of the signature
+   * because the cached ELEMENT was built under one view: without it a row
+   * already on screen keeps its pre-switch element and the transcript ignores
+   * the menu, with nothing failing to compile and nothing failing to render. */
+  transcriptView?: TranscriptView
   virtualized: boolean
   /** Which cell of a paired fan-out row this is, or undefined while the lanes
    * are stacked. Part of the signature because it is stamped onto the cached
@@ -385,6 +396,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.compactDensity !== next.compactDensity) return false
   if (prev.liveActivityViewport !== next.liveActivityViewport) return false
   if (prev.liveActivityViewportActive !== next.liveActivityViewportActive) return false
+  if (prev.transcriptView !== next.transcriptView) return false
   if (prev.virtualized !== next.virtualized) return false
   if (prev.fanoutLaneSlot !== next.fanoutLaneSlot) return false
   if (prev.fanoutLaneCompact !== next.fanoutLaneCompact) return false

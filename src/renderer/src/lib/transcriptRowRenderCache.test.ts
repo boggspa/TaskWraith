@@ -570,4 +570,34 @@ describe('transcriptRowRenderCache', () => {
       )
     ).toBe(false)
   })
+
+  it('invalidates a cached row when the transcript view changes', () => {
+    // The cached ELEMENT was built under one view. Without this the reader
+    // switches to Minimal, every row already on screen keeps its pre-switch
+    // element, and the transcript ignores the menu — nothing fails to compile
+    // and nothing fails to render.
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'standard' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(false)
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'tools' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(false)
+  })
+
+  it('reuses a cached row when the view is unchanged', () => {
+    // Positive control: proves the assertion above discriminates on the view
+    // rather than on signature identity, which would make it vacuous.
+    expect(
+      transcriptRowRenderSignatureEqual(
+        signature({ transcriptView: 'minimal' }),
+        signature({ transcriptView: 'minimal' })
+      )
+    ).toBe(true)
+  })
 })

@@ -4,7 +4,8 @@ import type {
   ChatRecord,
   DiffFileSummary,
   ProviderId,
-  ToolActivity
+  ToolActivity,
+  TranscriptView
 } from '../../../main/store/types'
 import { shortModelName } from '../lib/composerChipFormat'
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
@@ -80,6 +81,10 @@ interface EnsembleFanoutResultCardProps {
   thinkingTraceActions?: ThinkingTraceActionsConfig
   onPreviewImage: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
+  /** How much of each lane's activity stack to render. Threaded from
+   * TranscriptPanel, the card's only render site, rather than subscribed —
+   * one subscription per transcript, not one per lane card. */
+  transcriptView?: TranscriptView
 }
 
 function textValue(value: unknown): string | undefined {
@@ -186,6 +191,7 @@ function FanoutContentPart({
 export function EnsembleFanoutResultCard({
   message,
   chat,
+  transcriptView,
   workspacePath,
   streamRunId,
   working = false,
@@ -338,6 +344,7 @@ export function EnsembleFanoutResultCard({
         providerHueClass={hueClass}
         chatId={chat?.appChatId}
         runId={streamRunId || message.runId}
+        transcriptView={transcriptView}
         chat={chat}
         compactDensity={compactDensity}
         liveActivityViewport
