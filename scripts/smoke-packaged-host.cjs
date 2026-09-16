@@ -25,6 +25,14 @@ const searchRoots = pathArgs[0]
   ? [path.resolve(repoRoot, pathArgs[0])]
   : ['dist', 'dist-debug'].map((dir) => path.join(repoRoot, dir))
 const timeoutMs = readIntegerEnv('TASKWRAITH_HOST_SMOKE_TIMEOUT_MS', 12_000)
+// Since e2187b89f the Host indexes launch history itself. The release-scale
+// fixture reaches coverage=complete in 8-12 s on an Apple Silicon Mac; the
+// hosted Windows runner is the slow I/O class (the store suites carry 120 s
+// win32 budgets) and lapsed a fixed 30 s budget in recovery run 35050063151.
+const coverageBudgetMs = readIntegerEnv(
+  'TASKWRAITH_HOST_SMOKE_COVERAGE_MS',
+  process.env.CI ? 300_000 : 30_000
+)
 
 main().catch((error) => {
   console.error(error instanceof Error ? error.stack || error.message : String(error))
@@ -407,7 +415,10 @@ async function runProductionRoundTrip(launcher, target) {
     // The initial snapshot is intentionally useful before historical indexing
     // completes. Assert the release-scale families only after explicit coverage
     // and the corresponding projection have both arrived.
-    const coverageDeadline = Date.now() + Math.max(timeoutMs, 30_000)
+    const coverageStartedAt = Date.now()
+    const coverageDeadline = coverageStartedAt + Math.max(timeoutMs, coverageBudgetMs)
+    let coverageComplete = false
+    let lastCoverage = 'unknown'
     while (Date.now() < coverageDeadline) {
       const coverage = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
         type: 'request',
@@ -417,7 +428,8 @@ async function runProductionRoundTrip(launcher, target) {
         params: { method: 'list', limit: 1 }
       })
       if (coverage.frame?.ok !== true) fail('production Host did not report history coverage')
-      if (coverage.frame.result?.reply?.data?.coverage === 'complete') {
+      lastCoverage = String(coverage.frame.result?.reply?.data?.coverage)
+      if (lastCoverage === 'complete') {
         const complete = await hostRequest(discovery, fs.readFileSync(tokenPath, 'utf8').trim(), {
           type: 'request',
           transportVersion: 1,
@@ -434,10 +446,19 @@ async function runProductionRoundTrip(launcher, target) {
           snapshot?.runs?.length > 0
         ) {
           releaseScaleSnapshot = snapshot
+          coverageComplete = true
           break
         }
       }
       await new Promise((resolve) => setTimeout(resolve, 500))
+    }
+    if (!coverageComplete) {
+      fail(
+        `production Host history coverage did not complete within ${String(Date.now() - coverageStartedAt)} ms` +
+          ` (last coverage=${lastCoverage}, threads=${String(releaseScaleSnapshot?.threads?.length)},` +
+          ` participants=${String(releaseScaleSnapshot?.participants?.length)},` +
+          ` runs=${String(releaseScaleSnapshot?.runs?.length)})`
+      )
     }
     const warningCodes = Array.isArray(releaseScaleSnapshot?.warnings)
       ? releaseScaleSnapshot.warnings.map((warning) => `${warning.code}:${warning.warningId}`)

@@ -54,6 +54,24 @@ describe('packaged production Host smoke', () => {
     expect(smoke).not.toMatch(/\} finally \{[\s\S]{0,400}removeTreeWhenReleased\(profile\)/)
   })
 
+  it('gives hosted runners a real history-coverage budget and names a coverage timeout', () => {
+    // Since e2187b89f the Host indexes launch history itself: the release-scale
+    // fixture (41 threads, >2000 runs and participants) takes 8-12 s to reach
+    // coverage=complete on an Apple Silicon Mac, and the hosted Windows runner
+    // is the slow I/O class (recovery run 35050063151 lapsed the fixed 30 s
+    // budget and then failed a later assertion against the initial snapshot).
+    const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
+    const budget =
+      /TASKWRAITH_HOST_SMOKE_COVERAGE_MS',\s*process\.env\.CI \? (\d[\d_]*) : (\d[\d_]*)/.exec(
+        smoke
+      )
+    expect(budget).not.toBeNull()
+    expect(Number(budget![1].replace(/_/g, ''))).toBeGreaterThanOrEqual(120_000)
+    expect(Number(budget![2].replace(/_/g, ''))).toBeGreaterThanOrEqual(30_000)
+    expect(smoke).not.toMatch(/Math\.max\(timeoutMs, 30_000\)/)
+    expect(smoke).toMatch(/history coverage did not complete within/)
+  })
+
   it('keeps launcher, resource, and sidecar mode contracts explicit', () => {
     const smoke = fs.readFileSync(path.join(repoRoot, 'scripts', 'smoke-packaged-host.cjs'), 'utf8')
     const posix = fs.readFileSync(
