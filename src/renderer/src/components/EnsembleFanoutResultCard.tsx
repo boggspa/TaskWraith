@@ -365,12 +365,24 @@ export function EnsembleFanoutResultCard({
         thinkingTraceActions={thinkingTraceActions}
       />
     )
+    // Computed ONCE and used for both the fold and `canExpand`, so a part
+    // cannot fold to a one-liner that opens onto nothing, nor stay unfolded
+    // while rendering nothing. The row renderer pairs these the same way.
+    const partHasVisibleContent = activityStackHasVisibleContent(
+      partActivities,
+      transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+      { provider, chatId: chat?.appChatId, runId: streamRunId || message.runId }
+    )
     if (
-      !shouldCollapseFanoutActivityPart({
-        activities: partActivities,
-        isLatestPart,
-        laneWorking: working
-      })
+      !shouldCollapseFanoutActivityPart(
+        {
+          activities: partActivities,
+          isLatestPart,
+          laneWorking: working
+        },
+        transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
+        !partHasVisibleContent
+      )
     ) {
       return activityStack
     }
@@ -381,11 +393,7 @@ export function EnsembleFanoutResultCard({
         activities={partActivities}
         providerHueClass={hueClass}
         showDiffStats
-        canExpand={activityStackHasVisibleContent(
-          partActivities,
-          transcriptView ?? DEFAULT_TRANSCRIPT_VIEW,
-          { provider, chatId: chat?.appChatId, runId: streamRunId || message.runId }
-        )}
+        canExpand={partHasVisibleContent}
         expanded={effectiveExpandedActivityIds.has(expansionId)}
         onToggle={(nextExpanded) => setActivityPartExpanded(partId, nextExpanded)}
       >

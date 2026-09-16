@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord, ToolActivity } from '../../../main/store/types'
@@ -813,5 +815,130 @@ describe('EnsembleFanoutResultCard — authority glyph', () => {
     expect(render({ ensembleSeatSnapshot: SNAP, ensembleStageRole: 'worker' })).toContain(
       'Worker · #2 Reader'
     )
+  })
+})
+
+describe('a fan-out lane under a filtering transcript view', () => {
+  // This suite renders the card 27 other times and passes `transcriptView` at
+  // none of them, so every one of those is implicitly standard. These are the
+  // view-aware cases.
+
+  const LANE_THINK = 'LANE-THINKING-MARKER'
+
+  function liveThinkingLane(): ChatMessage {
+    const think = {
+      id: 'lane-think-1',
+      toolName: 'reasoning',
+      displayName: 'Thinking',
+      category: 'task',
+      status: 'running',
+      parameters: { kind: 'thinking' },
+      outputPreview: LANE_THINK,
+      resultSummary: LANE_THINK
+    } as ToolActivity
+    return fanoutMessage({
+      content: '',
+      toolActivities: [think],
+      metadata: {
+        ...fanoutMessage().metadata,
+        groupedFanoutMessageIds: ['live-tools'],
+        groupedToolMessageIds: ['live-tools'],
+        ensembleFanoutTranscriptParts: [
+          { kind: 'tools', id: 'live-tools', messageIds: ['live-tools'], toolActivities: [think] }
+        ]
+      }
+    })
+  }
+
+  const render = (view?: 'minimal' | 'tools' | 'standard') =>
+    renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={liveThinkingLane()}
+        working
+        transcriptView={view}
+        onPreviewImage={() => {}}
+      />
+    )
+
+  it('folds a live lane to a one-liner instead of rendering nothing', () => {
+    // MEASURED BEFORE THE FIX: minimal and tools emitted no tool area at all —
+    // no thinking body, no viewport, and no one-liner either. The strict
+    // predicate refuses to fold running work, so the part fell through to the
+    // full ActivityStack, whose empty-guard returns null once the view has
+    // removed every segment. A working lane looked idle.
+    for (const view of ['minimal', 'tools'] as const) {
+      const html = render(view)
+      expect(html, view).toContain('collapsed-activity-stack')
+      expect(html, view).not.toContain(LANE_THINK)
+      expect(html, view).not.toContain('ensemble-fanout-tools-viewport')
+    }
+  })
+
+  it('leaves standard rendering the full viewport', () => {
+    // The positive control. Without it the assertions above would also pass on
+    // a card that had stopped rendering its tool area in every view.
+    const html = render('standard')
+    expect(html).toContain(LANE_THINK)
+    expect(html).toContain('ensemble-fanout-tools-viewport')
+    expect(html).not.toContain('collapsed-activity-stack')
+  })
+
+  it('treats an absent view exactly as standard', () => {
+    expect(render(undefined)).toBe(render('standard'))
+  })
+
+  it('makes the folded one-liner inert when nothing survives the filter', () => {
+    // A thinking-only part under minimal or tools has nothing left to show, so
+    // the one-liner must not offer to open onto an empty stack. The fold and
+    // `canExpand` read ONE fact for exactly this reason.
+    // Scoped to the row's own marker, NOT to `<button` over the whole card:
+    // the card carries other buttons (the result viewport's expander, the
+    // actions chip), so a card-wide assertion would fail on every input and
+    // prove nothing about this row.
+    for (const view of ['minimal', 'tools'] as const) {
+      expect(render(view), view).toContain('is-inert')
+    }
+    // And the same row is NOT inert when something survives. Note the control
+    // has to be `standard`: under minimal a settled READ is inert too, and
+    // correctly so — minimal hides tool viewports, so there is nothing behind
+    // that row either. Picking a tool fixture under minimal as the "positive"
+    // control asserts the opposite of the truth.
+    const settledRead = renderToStaticMarkup(
+      <EnsembleFanoutResultCard
+        message={fanoutMessage({
+          content: '',
+          toolActivities: [toolActivity()],
+          metadata: {
+            ...fanoutMessage().metadata,
+            groupedFanoutMessageIds: ['done-tools'],
+            groupedToolMessageIds: ['done-tools'],
+            ensembleFanoutTranscriptParts: [
+              {
+                kind: 'tools',
+                id: 'done-tools',
+                messageIds: ['done-tools'],
+                toolActivities: [toolActivity()]
+              }
+            ]
+          }
+        })}
+        transcriptView="standard"
+        onPreviewImage={() => {}}
+      />
+    )
+    expect(settledRead).toContain('collapsed-activity-stack')
+    expect(settledRead).not.toContain('is-inert')
+  })
+
+  it('reads one visibility fact for both the fold and the expander', () => {
+    // Source guard: the two decisions are computed in different places in the
+    // render and there is no fixture that separates them — a part that folds
+    // but cannot expand looks identical to one that neither folds nor renders
+    // until you are the reader staring at a blank lane.
+    const source = readFileSync(join(__dirname, 'EnsembleFanoutResultCard.tsx'), 'utf8')
+    const at = source.indexOf('const partHasVisibleContent =')
+    expect(at).toBeGreaterThan(-1)
+    expect(source).toContain('canExpand={partHasVisibleContent}')
+    expect(source.split('activityStackHasVisibleContent(').length - 1).toBe(1)
   })
 })
