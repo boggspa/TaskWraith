@@ -156,15 +156,18 @@ describe('Codex shell — Codex Desktop composer parity CSS', () => {
       'border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;\n  border-bottom: 0;'
     )
     // Joined welcome stack: when the merged ensemble/roster/queued frame
-    // abuts the strip from above, (1) the surface's transparent border-top
-    // drops so the backdrop-filter blur can no longer seam the join dark,
-    // and (2) the strip's top corners flatten so the pair reads as one
-    // continuous stacked tab; the kept top border draws the single seam.
-    // The sibling-combinator gate on the frame scopes both to the
-    // frame-present case — a frame-less welcome keeps the rounded
-    // tucked-tab top (and the invisible border-top costs nothing there).
+    // abuts the strip from above, (1) the surface's transparent border
+    // drops so the backdrop-filter blur can no longer seam the join dark
+    // AND the strip's inset margins resolve against the full stack width
+    // (the leftover 1px side borders would otherwise make the strip 1px
+    // shy of the frame's edges per side), and (2) the strip's top corners
+    // flatten so the pair reads as one continuous stacked tab; the kept
+    // top border draws the single seam. The sibling-combinator gate on the
+    // frame scopes both to the frame-present case — a frame-less welcome
+    // keeps the rounded tucked-tab top (and the invisible border costs
+    // nothing there).
     expect(section).toContain(
-      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(\n    :is(\n      .ensemble-above-row,\n      .queued-messages-above-row,\n      .ensemble-roster-preset-picker.is-compact\n    )\n  )\n  + .composer-surface {\n  border-top: 0;'
+      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(\n    :is(\n      .ensemble-above-row,\n      .queued-messages-above-row,\n      .ensemble-roster-preset-picker.is-compact\n    )\n  )\n  + .composer-surface {\n  border: 0;'
     )
     expect(section).toContain(
       '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(\n    :is(\n      .ensemble-above-row,\n      .queued-messages-above-row,\n      .ensemble-roster-preset-picker.is-compact\n    )\n  )\n  + .composer-surface\n  .composer-telemetry-row {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;'

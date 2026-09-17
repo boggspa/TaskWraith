@@ -4573,7 +4573,7 @@ oser-orchestration-cell-label {
 /* Joined welcome stack: the merged ensemble/roster/queued frame renders as
  * the previous sibling of .composer-surface (shard 08 drops the frame's
  * tuck-under padding band in this configuration), so the pair should read
- * as ONE continuous stacked tab. Two seams need shaping:
+ * as ONE continuous stacked tab. Three seams need shaping:
  *   1. The strip's rounded top corners against the frame's flat bottom —
  *      flattened below so the kept top border draws the single hairline
  *      seam, mirroring the frame's internal row separators.
@@ -4583,6 +4583,14 @@ oser-orchestration-cell-label {
  *      dark band across the join. Dropping border-top removes the
  *      transparent gap, so the strip's opaque top border abuts the frame
  *      directly and the blur region starts under the opaque strip.
+ *   3. The surface's leftover transparent left/right borders still occupy
+ *      1px per side, so the strip's inset margins resolve against a content
+ *      box 1px narrower per side than the frame's width reference (the
+ *      border-less primary stack) — the strip lands 1px shy of the frame's
+ *      hairline edges on each side. Dropping the whole border makes the
+ *      content box flush with the stack, so `--codex-cc-strip-inset` is
+ *      measured from exactly the same edges the frame's width is, and the
+ *      two outlines align to the pixel.
  * Without the frame above, the strip keeps its rounded tucked-tab top and
  * the surface keeps its (invisible) border. Selector note: :has() may not
  * nest inside another :has() (the previous primary-stack form was invalid
@@ -4598,7 +4606,7 @@ oser-orchestration-cell-label {
     )
   )
   + .composer-surface {
-  border-top: 0;
+  border: 0;
 }
 [data-composer-style="codex"]
   .app-transcript.welcome-mode:not(.multiview-pane-transcript)
