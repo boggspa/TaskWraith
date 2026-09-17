@@ -71,16 +71,19 @@ describe('Codex shell — Codex Desktop composer parity CSS', () => {
     expect(selectors.length).toBeGreaterThan(20)
     for (const selector of selectors) {
       expect(selector, selector).toContain(CODEX_GUARD)
-      // Joined-stack exception: the welcome seam rule (merged above-row
-      // frame above → flatten the strip's top corners so the pair reads as
-      // one continuous stacked tab) must detect the frame, which lives as a
-      // previous sibling of the surface inside .composer-primary-stack —
-      // unreachable from .composer-surface by combinators. It detours
-      // through `.composer-primary-stack:has(> .composer-above-bar-stack …)`
-      // between .app-transcript and .composer-surface, but keeps the codex
-      // guard (checked above) and names no other shell, so the isolation
-      // intent of this contract holds.
-      if (selector.includes('.composer-primary-stack:has(')) continue
+      // Joined-stack exception: the welcome seam rules (merged above-row
+      // frame above → drop the surface's transparent border-top so the
+      // backdrop-filter blur cannot seam the join, and flatten the strip's
+      // top corners so the pair reads as one continuous stacked tab) must
+      // detect the frame, which lives as a previous sibling of the surface
+      // inside .composer-primary-stack — unreachable from .composer-surface
+      // by combinators. They gate on the frame with
+      // `.composer-above-bar-stack:has(…) + .composer-surface` (a :has()
+      // may not nest inside another :has(), so the previous primary-stack
+      // detour was invalid and dropped at parse time). The rules keep the
+      // codex guard (checked above) and name no other shell, so the
+      // isolation intent of this contract holds.
+      if (selector.includes('.composer-above-bar-stack:has(')) continue
       expect(selector, selector).toMatch(
         /\.app-transcript(\.welcome-mode|:not\(\.welcome-mode\))? \.composer-surface/
       )
@@ -153,13 +156,18 @@ describe('Codex shell — Codex Desktop composer parity CSS', () => {
       'border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;\n  border-bottom: 0;'
     )
     // Joined welcome stack: when the merged ensemble/roster/queued frame
-    // abuts the strip from above, the strip's top corners flatten so the
-    // pair reads as one continuous stacked tab; the kept top border draws
-    // the single seam. The :has() gate on the welcome primary stack scopes
-    // it to the frame-present case — a frame-less welcome keeps the
-    // rounded tucked-tab top.
+    // abuts the strip from above, (1) the surface's transparent border-top
+    // drops so the backdrop-filter blur can no longer seam the join dark,
+    // and (2) the strip's top corners flatten so the pair reads as one
+    // continuous stacked tab; the kept top border draws the single seam.
+    // The sibling-combinator gate on the frame scopes both to the
+    // frame-present case — a frame-less welcome keeps the rounded
+    // tucked-tab top (and the invisible border-top costs nothing there).
     expect(section).toContain(
-      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-primary-stack:has(\n    > .composer-above-bar-stack:has(\n      :is(\n        .ensemble-above-row,\n        .queued-messages-above-row,\n        .ensemble-roster-preset-picker.is-compact\n      )\n    )\n  )\n  .composer-surface\n  .composer-telemetry-row {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;'
+      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(\n    :is(\n      .ensemble-above-row,\n      .queued-messages-above-row,\n      .ensemble-roster-preset-picker.is-compact\n    )\n  )\n  + .composer-surface {\n  border-top: 0;'
+    )
+    expect(section).toContain(
+      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(\n    :is(\n      .ensemble-above-row,\n      .queued-messages-above-row,\n      .ensemble-roster-preset-picker.is-compact\n    )\n  )\n  + .composer-surface\n  .composer-telemetry-row {\n  border-top-left-radius: 0;\n  border-top-right-radius: 0;'
     )
     expect(section).toContain('margin-bottom: calc(-1 * var(--codex-cc-strip-overlap));')
     expect(section).toContain(

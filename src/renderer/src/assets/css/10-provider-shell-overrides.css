@@ -4571,24 +4571,45 @@ oser-orchestration-cell-label {
   justify-content: flex-start;
 }
 /* Joined welcome stack: the merged ensemble/roster/queued frame renders as
- * the previous sibling of .composer-surface, and its flat, borderless
- * bottom already abuts this strip (shard 08 drops the frame's tuck-under
- * padding band in this configuration). Flatten the strip's top corners so
- * the pair reads as ONE continuous stacked tab; the kept top border draws
- * the single hairline seam, mirroring the frame's internal row separators.
- * Without the frame above, the strip keeps its rounded tucked-tab top. */
+ * the previous sibling of .composer-surface (shard 08 drops the frame's
+ * tuck-under padding band in this configuration), so the pair should read
+ * as ONE continuous stacked tab. Two seams need shaping:
+ *   1. The strip's rounded top corners against the frame's flat bottom —
+ *      flattened below so the kept top border draws the single hairline
+ *      seam, mirroring the frame's internal row separators.
+ *   2. The surface's 1px transparent border-top (leftover base-chrome) runs
+ *      above the strip; the aura's backdrop-filter blur(16px) reaches into
+ *      that transparent strip and smears the frame's bottom edge into a
+ *      dark band across the join. Dropping border-top removes the
+ *      transparent gap, so the strip's opaque top border abuts the frame
+ *      directly and the blur region starts under the opaque strip.
+ * Without the frame above, the strip keeps its rounded tucked-tab top and
+ * the surface keeps its (invisible) border. Selector note: :has() may not
+ * nest inside another :has() (the previous primary-stack form was invalid
+ * and silently dropped at parse time — the corners never flattened), so
+ * the frame gate uses the adjacent-sibling combinator instead. */
 [data-composer-style="codex"]
   .app-transcript.welcome-mode:not(.multiview-pane-transcript)
-  .composer-primary-stack:has(
-    > .composer-above-bar-stack:has(
-      :is(
-        .ensemble-above-row,
-        .queued-messages-above-row,
-        .ensemble-roster-preset-picker.is-compact
-      )
+  .composer-above-bar-stack:has(
+    :is(
+      .ensemble-above-row,
+      .queued-messages-above-row,
+      .ensemble-roster-preset-picker.is-compact
     )
   )
-  .composer-surface
+  + .composer-surface {
+  border-top: 0;
+}
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-above-bar-stack:has(
+    :is(
+      .ensemble-above-row,
+      .queued-messages-above-row,
+      .ensemble-roster-preset-picker.is-compact
+    )
+  )
+  + .composer-surface
   .composer-telemetry-row {
   border-top-left-radius: 0;
   border-top-right-radius: 0;
