@@ -24,7 +24,19 @@ const requirePackage = process.env.TASKWRAITH_HOST_REQUIRE_PACKAGE === '1'
 const searchRoots = pathArgs[0]
   ? [path.resolve(repoRoot, pathArgs[0])]
   : ['dist', 'dist-debug'].map((dir) => path.join(repoRoot, dir))
-const timeoutMs = readIntegerEnv('TASKWRAITH_HOST_SMOKE_TIMEOUT_MS', 12_000)
+// 45 s, raised from 12 s. The first run against a FRESHLY BUILT bundle reliably
+// exceeded 12 s and then passed on every subsequent run — measured on the same
+// 1.2 GB universal bundle: fail at 12 s, pass at 90 s, then pass at 12 s twice
+// (8 s, 14 s) once the app had been launched once. So the Host was healthy and
+// the budget simply had no headroom for a cold start; the gate failed on every
+// release build's first smoke, which is the kind of gate people learn to ignore.
+//
+// What this gives up, deliberately: 12 s was calibrated against the 8-12 s
+// window the comment below describes, so it would have caught a Host that
+// regressed to, say, 30 s startup. At 45 s that regression now passes silently.
+// Tighten it per-run with TASKWRAITH_HOST_SMOKE_TIMEOUT_MS when that is the
+// thing being measured.
+const timeoutMs = readIntegerEnv('TASKWRAITH_HOST_SMOKE_TIMEOUT_MS', 45_000)
 // Since e2187b89f the Host indexes launch history itself. The release-scale
 // fixture reaches coverage=complete in 8-12 s on an Apple Silicon Mac; the
 // hosted Windows runner is the slow I/O class (the store suites carry 120 s
