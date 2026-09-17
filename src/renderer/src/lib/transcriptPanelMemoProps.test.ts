@@ -140,6 +140,47 @@ describe('transcriptPanelMemoProps', () => {
     ).toBe(true)
   })
 
+  it('invalidates when the Appearance transcript WIDTH changes', () => {
+    // Called, not read out of the source. Order 10 pinned the text-size entry in
+    // this comparator BEHAVIOURALLY, right above; the width entry shipped pinned
+    // only by `toContain('previous.transcriptWidth === next.transcriptWidth &&')`
+    // over the raw file — which a comment satisfies, and which cannot tell an
+    // `&&` from a `||`.
+    //
+    // Worse to miss than the text size, because the width has a second
+    // consumer: `.transcript-inner`'s `data-transcript-width` is rendered by
+    // this component, so an uncompared width leaves the COLUMN at the old cap as
+    // well as the estimator. And the Settings takeover hides `.app-transcript`
+    // with `display: none` rather than unmounting it, so returning from Settings
+    // forces no render of its own.
+    const shared = baseProps()
+    expect(transcriptPanelPropsEqual(shared, { ...shared, transcriptWidth: 'wide' })).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, transcriptWidth: 'narrow' },
+        { ...shared, transcriptWidth: 'wide' }
+      )
+    ).toBe(false)
+    // Medium is the default and is spelled as absence in a settings file that
+    // predates the control, so the two spellings of "Medium" must also be
+    // distinguished — the panel resolves them to the same render, but the
+    // comparator is what decides whether that render happens at all.
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, transcriptWidth: undefined },
+        { ...shared, transcriptWidth: 'wide' }
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the three above are
+    // this field moving and not the comparator refusing everything.
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, transcriptWidth: 'wide' },
+        { ...shared, transcriptWidth: 'wide' }
+      )
+    ).toBe(true)
+  })
+
   it('re-renders when the fan-out lane layout changes', () => {
     // This key was MISSING from the comparator, excused by a comment claiming
     // its effect is only a `:root` attribute CSS reads outside React. It is

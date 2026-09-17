@@ -10,6 +10,7 @@ import type {
   ThemeCornerStyle,
   TranscriptTextSize,
   TranscriptView,
+  TranscriptWidth,
   UserBubbleColor,
   VisualEffectStyle
 } from '../../../main/store/types'
@@ -42,6 +43,7 @@ import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funF
 import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { DEFAULT_TRANSCRIPT_VIEW, resolveTranscriptView } from '../lib/transcriptViewOverride'
 import { DEFAULT_TRANSCRIPT_TEXT_SIZE, resolveTranscriptTextSize } from '../lib/transcriptTextSize'
+import { DEFAULT_TRANSCRIPT_WIDTH, resolveTranscriptWidth } from '../lib/transcriptWidth'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
 import { startupSettingsRequest } from '../lib/startupSettingsCache'
 
@@ -94,6 +96,16 @@ export interface AppearanceState {
    * hand two consumers two different scales.
    */
   transcriptTextSize: TranscriptTextSize
+  /**
+   * Appearance width for the transcript reading column.
+   *
+   * REQUIRED here like its siblings, and carried as the NAME — but unlike
+   * `transcriptTextSize` the name never becomes a number anywhere upstream of
+   * CSS. There is no width in px for this hook to hold, because the column a
+   * name produces depends on the pane: `narrow` is 640px in the main pane and
+   * 348px in a phone-narrow side chat. See `lib/transcriptWidth`.
+   */
+  transcriptWidth: TranscriptWidth
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
@@ -224,6 +236,7 @@ function getInitialState(): AppearanceState {
     fanoutLaneLayout: DEFAULT_FANOUT_LANE_LAYOUT,
     defaultTranscriptView: DEFAULT_TRANSCRIPT_VIEW,
     transcriptTextSize: DEFAULT_TRANSCRIPT_TEXT_SIZE,
+    transcriptWidth: DEFAULT_TRANSCRIPT_WIDTH,
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -330,6 +343,10 @@ export function useAppearance() {
           // estimate constant in the virtualiser was measured at. Resolved HERE
           // and nowhere else, so no consumer re-decides what "unset" means.
           transcriptTextSize: resolveTranscriptTextSize(settings.transcriptTextSize),
+          // Absence resolves to `medium` — no attribute stamped, i.e. the column
+          // every pane already renders. Resolved HERE and nowhere else, so no
+          // consumer re-decides what "unset" means.
+          transcriptWidth: resolveTranscriptWidth(settings.transcriptWidth),
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,
@@ -643,6 +660,7 @@ export function useAppearance() {
             fanoutLaneLayout: next.fanoutLaneLayout,
             defaultTranscriptView: next.defaultTranscriptView,
             transcriptTextSize: next.transcriptTextSize,
+            transcriptWidth: next.transcriptWidth,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,
             composerFontFamily: next.composerFontFamily,

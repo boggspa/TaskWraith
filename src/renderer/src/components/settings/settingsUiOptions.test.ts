@@ -117,11 +117,12 @@ describe('option arrays', () => {
       'CODEX_SANDBOX_FALLBACK_OPTIONS',
       'FUN_FX_MODES',
       'TRANSCRIPT_VIEW_OPTIONS',
-      'TRANSCRIPT_TEXT_SIZE_OPTIONS'
+      'TRANSCRIPT_TEXT_SIZE_OPTIONS',
+      'TRANSCRIPT_WIDTH_OPTIONS'
     ]) {
       expect(names, known).toContain(known)
     }
-    expect(names.length).toBeGreaterThanOrEqual(9)
+    expect(names.length).toBeGreaterThanOrEqual(10)
   })
 
   it('keeps every option value unique within its own list', () => {

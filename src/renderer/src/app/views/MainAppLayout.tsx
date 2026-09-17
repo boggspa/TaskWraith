@@ -1580,6 +1580,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               fanoutLaneLayout={appearance.fanoutLaneLayout}
               defaultTranscriptView={appearance.defaultTranscriptView}
               transcriptTextSize={appearance.transcriptTextSize}
+              transcriptWidth={appearance.transcriptWidth}
               composerStyle={appearance.composerStyle}
               configuredProviderSnapshot={configuredProviderSnapshot}
               transcriptFontFamily={appearance.transcriptFontFamily}
@@ -2370,6 +2371,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 fanoutLaneLayout={appearance.fanoutLaneLayout}
                 defaultTranscriptView={appearance.defaultTranscriptView}
                 transcriptTextSize={appearance.transcriptTextSize}
+                transcriptWidth={appearance.transcriptWidth}
                 onCopyMessage={handleCopyMessage}
                 onAddMessageToPrompt={
                   currentChatAppChatId ? handleTranscriptAddMessageToPrompt : undefined
@@ -2758,6 +2760,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               fanoutLaneLayout={appearance.fanoutLaneLayout}
               defaultTranscriptView={appearance.defaultTranscriptView}
               transcriptTextSize={appearance.transcriptTextSize}
+              transcriptWidth={appearance.transcriptWidth}
               onCopyMessage={handleCopyMessage}
               onAddMessageToPrompt={handleSideTranscriptAddMessageToPrompt}
               onDeleteMessage={handleSideTranscriptDeleteMessage}

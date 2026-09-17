@@ -124,6 +124,7 @@ export type TranscriptPanelMemoComparable = {
    * that precedent for a font SCALE is the mistake this comment exists to stop.
    */
   transcriptTextSize?: unknown
+  transcriptWidth?: unknown
   isGlobal?: unknown
 }
 
@@ -362,6 +363,7 @@ export function transcriptPanelPropsEqual(
     previous.fanoutLaneLayout === next.fanoutLaneLayout &&
     previous.defaultTranscriptView === next.defaultTranscriptView &&
     previous.transcriptTextSize === next.transcriptTextSize &&
+    previous.transcriptWidth === next.transcriptWidth &&
     previous.isGlobal === next.isGlobal
   )
 }

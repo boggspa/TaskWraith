@@ -146,6 +146,11 @@ import {
   transcriptTextScale,
   type TranscriptTextSize
 } from '../lib/transcriptTextSize'
+import {
+  transcriptWidthAttribute,
+  transcriptWidthLayoutBucket,
+  type TranscriptWidth
+} from '../lib/transcriptWidth'
 import { selectTranscriptWindow } from '../lib/transcriptWindowGeometry'
 import {
   buildTranscriptUserGutterMarkers,
@@ -756,6 +761,23 @@ export type TranscriptPanelProps = {
    * `defaultTranscriptView` documents above: unlisted, the size changes in
    * Settings and this panel never re-renders. */
   transcriptTextSize?: TranscriptTextSize
+  /** `settings.transcriptWidth` — how wide this transcript's reading column
+   * runs. Optional for the same reason the three props above are: a caller that
+   * forgets to thread it lands on the width the rest of the app is using.
+   *
+   * THIS PROP IS THE WIDTH'S ONLY ENTRANCE, and it carries the NAME — but note
+   * that unlike `transcriptTextSize` the name never becomes a number in here.
+   * It becomes a `data-transcript-width` attribute on `.transcript-inner`, CSS
+   * resolves it against whatever ceiling that pane has, and the number the
+   * virtualiser needs comes back from a ResizeObserver on the resulting box.
+   * That indirection is the point: `narrow` is 640px in the main pane and 348px
+   * in a phone-narrow side chat, so a width resolved in JS would be right in one
+   * scope and silently wrong in the other four (see `lib/transcriptWidth`).
+   *
+   * It must also be listed in `TranscriptPanelMemoComparable`, for the reason
+   * `defaultTranscriptView` documents above: unlisted, the width changes in
+   * Settings and this panel never re-renders. */
+  transcriptWidth?: TranscriptWidth
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -1687,6 +1709,24 @@ export function useTranscriptVirtualization(params: {
    * does not pass it gets byte-identical keys.
    */
   layoutEpoch?: TranscriptLayoutEpoch
+  /**
+   * The MEASURED column bucket — live at every width setting, including Medium.
+   *
+   * Deliberately NOT `layoutEpoch.widthBucket`. Those are two numbers with two
+   * jobs. The epoch's bucket is the ESTIMATE correction and is gated to 0 at
+   * Medium so the default setting keeps the shipped calibration. This one is
+   * cache INVALIDATION: it must track the real column at every setting, or a
+   * height measured at one column is served under another. Reading the gated
+   * value here silently deleted the width dimension from BOTH key spaces at the
+   * default setting and made `bucketChanged` unfireable — a regression against
+   * the build before this setting existed, where the key carried a live
+   * `widthBucket(el.clientWidth)`.
+   *
+   * Byte-identity at Medium still holds: the key is `…|bucket|…` plus the
+   * epoch's suffix, and a gated epoch's suffix is EMPTY, so a Medium key is
+   * exactly the pre-setting key.
+   */
+  measuredWidthBucket?: number
   forcedRowIndex?: number | null
   /**
    * RowKeys currently streaming (assistant / tool / fan-out). Measurement
@@ -1751,6 +1791,7 @@ export function useTranscriptVirtualization(params: {
     compactDensity,
     transcriptView,
     layoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+    measuredWidthBucket = 0,
     forcedRowIndex,
     activeLiveRowKeys,
     expandedRowIds,
@@ -1765,7 +1806,36 @@ export function useTranscriptVirtualization(params: {
   const geometryHeightsRef = useRef<Map<string, number>>(new Map())
   const scrollTopRef = useRef(0)
   const viewportRef = useRef(0)
-  const bucketRef = useRef(0)
+  /*
+   * THE COLUMN-WIDTH SEAM. There is exactly ONE width number in this file, and
+   * this hook does not produce it.
+   *
+   * Until Transcript Width, there were two. A MEASURED `widthBucket(el.clientWidth)`
+   * was sampled in the scroll handler into a ref and fed `measurementKey` /
+   * `geometryKey`; the epoch's `widthBucket` was minted in render and hardcoded
+   * to 0. They were ~10 and 0 in the shipped build, so the estimator sized every
+   * row for a 980px column the transcript never renders at while the cache keys
+   * recorded the real one — and the module comment claimed they were the same
+   * number. Carrying the width axis in the key SUFFIX as well as the argument is
+   * what kept that from being a silent lie.
+   *
+   * Now `TranscriptPanel` owns the only `widthBucket(` call in the file (a
+   * ResizeObserver on `.transcript-inner`, above the projection), commits it to
+   * state, and mints the epoch from it. This hook READS that one value off the
+   * epoch — for the estimate, for the measurement key and for the geometry key
+   * alike. A second source needs somebody to add a second `widthBucket(` call,
+   * which `transcriptWidthSetting.test.ts` counts and refuses.
+   *
+   * These two refs are NOT a second source. `layoutWidthBucketRef` is the
+   * committed epoch bucket mirrored in render, so the metrics reader (which
+   * lives in a `useEffect` closure that does not see a fresh `layoutEpoch`) can
+   * read the current one; `seenWidthBucketRef` is what that reader last
+   * observed, so `decideScrollerBoxRefresh` still learns that the box crossed a
+   * boundary. Neither is ever passed to a cache key.
+   */
+  const layoutWidthBucketRef = useRef(measuredWidthBucket)
+  layoutWidthBucketRef.current = measuredWidthBucket
+  const seenWidthBucketRef = useRef(layoutEpoch.widthBucket)
   const heightsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHTS)
   const heightOffsetsRef = useRef<number[]>(EMPTY_TRANSCRIPT_HEIGHT_OFFSETS)
   const rowsRef = useRef<VirtualRow[]>(rows)
@@ -1888,9 +1958,12 @@ export function useTranscriptVirtualization(params: {
       scrollTopRef.current = scrollTop
       if (scroller) {
         viewportRef.current = scroller.clientHeight
-        const widthEl = contentRef?.current ?? scroller
-        bucketRef.current = widthBucket(widthEl.clientWidth)
       }
+      // No width sample here any more. This was the SECOND of the two writes to
+      // the old measured-bucket ref, and the one most likely to be missed: it
+      // re-sampled on every PROGRAMMATIC scroll, so a jump-to-message could
+      // move the cache-key bucket without ever moving the estimate's. The width
+      // has one producer now, and it is above this hook.
       hasScrolledRef.current = true
       anchorRef.current = null
       skipNextAnchorCorrectionRef.current = true
@@ -1906,7 +1979,12 @@ export function useTranscriptVirtualization(params: {
   const heights = useMemo(() => {
     if (!enabled) return EMPTY_TRANSCRIPT_HEIGHTS
     const m = measurementsRef.current
-    const bucket = bucketRef.current
+    // The epoch's bucket, not a sample of our own. This memo already lists
+    // `layoutEpoch` as a dependency, so reading the bucket from it also closes
+    // the staleness window the old ref had: the ref was written in a scroll
+    // handler and never appeared in this dependency array, so the heights array
+    // could be built at one bucket and keyed at another.
+    const bucket = measuredWidthBucket
     return rows.map((row) =>
       hiddenRowKeys?.has(row.rowKey)
         ? 0
@@ -1921,7 +1999,18 @@ export function useTranscriptVirtualization(params: {
           )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKeys, hiddenRowKeys, layoutEpoch])
+  }, [
+    enabled,
+    rows,
+    measureTick,
+    expandedRowIds,
+    activeLiveRowKeys,
+    hiddenRowKeys,
+    layoutEpoch,
+    // The keys this memo READS are written under the measured bucket, so a
+    // column reflow must re-run it even when the epoch is gated (Medium).
+    measuredWidthBucket
+  ])
   heightsRef.current = heights
   const heightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -2032,15 +2121,21 @@ export function useTranscriptVirtualization(params: {
     const readMetricsInto = (el: HTMLDivElement): boolean => {
       scrollTopRef.current = el.scrollTop
       viewportRef.current = el.clientHeight
-      // 1.0.7 — bucket width off the capped `.transcript-inner` (contentRef),
-      // not the scroll container: a scrollbar appear/disappear changes the
-      // scroller's clientWidth but not the inner's, so this can't flip the
-      // bucket and invalidate the whole measurement cache. Fall back to the
-      // scroller when contentRef hasn't mounted yet.
-      const widthEl = contentRef?.current ?? el
-      const nextBucket = widthBucket(widthEl.clientWidth)
-      const bucketChanged = nextBucket !== bucketRef.current
-      bucketRef.current = nextBucket
+      // 1.0.7 — the bucket is read off the capped `.transcript-inner`, not the
+      // scroll container: a scrollbar appear/disappear changes the scroller's
+      // clientWidth but not the inner's, so it must not be able to flip the
+      // bucket and invalidate the whole measurement cache.
+      //
+      // Transcript Width — that sample now happens ONCE, in the panel's own
+      // ResizeObserver above the projection, and arrives here as
+      // `layoutEpoch.widthBucket`. This function no longer measures width; it
+      // only reports whether the COMMITTED bucket has moved since it last
+      // looked, which is all `decideScrollerBoxRefresh` ever wanted it for. Any
+      // `widthBucket(` call reintroduced here is a second source of the one
+      // number the estimate and both cache keys are built from.
+      const nextBucket = layoutWidthBucketRef.current
+      const bucketChanged = nextBucket !== seenWidthBucketRef.current
+      seenWidthBucketRef.current = nextBucket
       return bucketChanged
     }
     readMetricsInto(scroller)
@@ -2373,7 +2468,10 @@ export function useTranscriptVirtualization(params: {
     // include the row gap), keyed by `measurementKey`. Request one more
     // pass when something moved; converges once stable.
     const measurements = measurementsRef.current
-    const bucket = bucketRef.current
+    // Same one number the estimate above was built from. This effect already
+    // depends on `layoutEpoch`, so a width change re-runs the pass that writes
+    // the keys as well as the memo that reads them.
+    const bucket = measuredWidthBucket
     const mountedRows = rowsRef.current.slice(virtualWindow.startIndex, virtualWindow.endIndex)
     const spacerBottom = spacerBottomRef.current
     for (const [rowKey, el] of blockElsRef.current) {
@@ -2478,6 +2576,9 @@ export function useTranscriptVirtualization(params: {
     hiddenRowKeys,
     layoutEpoch,
     measureTick,
+    // The pass WRITES both keys under the measured bucket, so a column reflow
+    // must re-run it even at Medium, where the epoch is gated to 0.
+    measuredWidthBucket,
     onProgrammaticScrollWrite,
     rowsStructuralKey,
     scheduleDeferredAnchorCorrection,
@@ -2569,6 +2670,7 @@ export const TranscriptPanel = memo(
     fanoutLaneLayout,
     defaultTranscriptView,
     transcriptTextSize,
+    transcriptWidth,
     onCopyMessage,
     onAddMessageToPrompt,
     onDeleteMessage,
@@ -3791,35 +3893,157 @@ export const TranscriptPanel = memo(
         ),
       [currentChat?.ensemble?.activeRound?.lanes, displayMessages]
     )
-    /**
-     * The one place the transcript's layout epoch is minted.
+    /*
+     * THE WIDTH SEAM — the ONE `widthBucket(` call in this file.
      *
-     * The TEXT SIZE axis is live (Settings -> Appearance -> Transcript text
-     * size). The WIDTH axis is still identity: the measured column bucket lives
-     * inside `useTranscriptVirtualization`, called far below this projection, so
-     * wiring the real width up here is a data-flow change — a ResizeObserver
-     * lifted above the projection, bucketed so a drag does not re-project on
-     * every pixel — that belongs with the setting that needs it. At Default both
-     * axes resolve to identity and every estimate and cache key below is
-     * byte-identical to the pre-epoch build.
+     * The column the estimator has to size for is not the setting and cannot be
+     * derived from it: `narrow` is 640px in the main pane and 348px in a
+     * phone-narrow side chat, and `medium` is 850px, 760px in General Chat, or
+     * `calc(100% - 28px)` in a Multiview pane. The only honest source is the box
+     * CSS actually produced, so this observes `.transcript-inner` itself.
      *
-     * MEMOISED, and that is not ceremony. The epoch sits raw in two
-     * `Object.is`-compared dependency arrays (the heights memo and the
-     * pre-paint measure effect), so a fresh object each render re-runs the
-     * measure pass every render — the pass whose own comment calls it
-     * deliberately invalidation-driven. Today's value is a frozen module
-     * constant and would be stable by accident; the moment Transcript Width or
-     * Text Size supplies a real value, the obvious edit is an inline object
-     * literal, which is a NEW object every render. Minting through `useMemo`
-     * over the two primitive axes means those settings replace the two scalars
-     * below and inherit the stability rather than having to rediscover it.
+     * Lifted ABOVE the projection on purpose. It used to live inside
+     * `useTranscriptVirtualization`, below everything that needed it, written to
+     * a ref that triggers no render — so the cache keys carried a measured ~10
+     * while the epoch carried a hardcoded 0, and the estimator sized every row
+     * for a 980px column the transcript never renders at. One state, read by the
+     * mint below and by both cache keys through the epoch, is what makes that
+     * shape unrepresentable rather than merely discouraged.
      *
-     * Keep this mint the LAST declaration before `const projectedRows =`:
-     * `TranscriptLayoutEpochPlumbing.test.ts` derives the mint's dependency
-     * array from exactly that slice, so a memo inserted between the two is read
-     * as the mint's own deps.
+     * BUCKETED, so a drag does not re-project on every pixel: `widthBucket`
+     * quantises to 80px and React bails out on an equal `useState` write, so a
+     * drag that stays inside one bucket costs zero re-projections. SETTLED as
+     * well, because at Wide the column is uncapped: dragging a window from 700px
+     * to 2400px of column sweeps 21 bucket boundaries, and each committed bucket
+     * discards the whole projection cache and re-walks every message. The first
+     * measurement commits on the leading edge (so first paint converges in one
+     * frame instead of waiting out a timer on a resting pane); every later one
+     * waits out the same 120ms gesture window the anchor correction uses.
+     *
+     * THE SETTLE MEANS THE COMMITTED BUCKET LAGS THE DOM, and that is accepted
+     * rather than overlooked. Mid-drag the column is already at its new width
+     * while the epoch still carries the old bucket, for the RAF plus the 120ms
+     * window. The deleted `bucketRef` lagged too — by one frame — so this is a
+     * longer lag of the same kind, not a new class of staleness, and the
+     * invariant that matters survives it untouched: there is ONE number, so the
+     * estimate, `measurementKey` and `geometryKey` are all stale together and
+     * still agree with each other. A row measured mid-drag is filed under the
+     * bucket it was estimated at, and the settle then misses those keys rather
+     * than serving one layout's heights under another's estimate. Shortening the
+     * window would not improve correctness, only cost re-projections; what would
+     * break it is a SECOND sample taken at a different moment, which is what the
+     * one-call-site guard refuses.
+     *
+     * Starting at 0 is load-bearing, not incidental. 0 is
+     * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.widthBucket`, which `transcriptLayoutScales`
+     * and `transcriptLayoutEpochKeySuffix` both treat as "not measured — apply
+     * no correction", so first paint is exactly identity. These suites are
+     * `renderToStaticMarkup` with no jsdom and therefore no ResizeObserver, so
+     * the bucket never leaves 0 in any of them — every property of this data
+     * flow has to be pinned by source string, and is, in
+     * `transcriptWidthSetting.test.ts`.
+     *
+     * This state is the MEASURED bucket, which is not the same thing as the
+     * bucket the epoch is minted from: `transcriptWidthLayoutBucket` gates it to
+     * 0 at Medium (see the mint below). Measuring runs at every width all the
+     * same — the observer has no width name in its closure, and a Medium user's
+     * drag simply commits a number the mint discards, leaving the epoch object
+     * identical and the projection cache intact.
      */
-    const transcriptLayoutWidthBucket = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.widthBucket
+    const [transcriptMeasuredWidthBucket, setTranscriptMeasuredWidthBucket] = useState(0)
+    const transcriptWidthSettleRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    const transcriptWidthRafRef = useRef<number | null>(null)
+    const transcriptWidthMeasuredRef = useRef(false)
+    useEffect(() => {
+      const el = contentRef.current
+      if (!el) return
+      if (typeof ResizeObserver === 'undefined') return
+      /*
+       * A MEASURABLE BOX, not merely a mounted element — and `isConnected` does
+       * not answer that question.
+       *
+       * `.transcript-inner` keeps its whole subtree mounted while it loses its
+       * layout box, in three shipped states: the Settings takeover
+       * (`.app-transcript.transcript-hidden-for-settings { display: none }`),
+       * welcome mode, and a suspended Multiview pane. The ResizeObserver fires
+       * on that transition with a 0x0 box, `isConnected` is still true, and the
+       * commit below would quantise it to bucket 0 — which is not "a very narrow
+       * column", it is the sentinel for "never measured". The epoch would flip to
+       * identity, `transcriptLayoutEpochsEqual` would report a change, and the
+       * whole projection cache plus BOTH height-cache key spaces would be
+       * discarded — on opening Settings, at ~10,000 accumulated turns, for a
+       * transcript whose column never moved.
+       *
+       * Refusing the sample is the correct answer rather than clamping it to 1:
+       * the element has no width to report, so the last real measurement is
+       * still the truth about the layout the cached heights were taken under.
+       */
+      const hasLayoutBox = (): boolean => el.isConnected && el.clientWidth > 0
+      const commit = (): void => {
+        if (!hasLayoutBox()) return
+        const next = widthBucket(el.clientWidth)
+        setTranscriptMeasuredWidthBucket((current) => (current === next ? current : next))
+      }
+      const observer = new ResizeObserver(() => {
+        // Its own RAF ref, deliberately separate from the scroll and
+        // scroller-box ones: neither may swallow the other's frame.
+        if (transcriptWidthRafRef.current !== null) return
+        transcriptWidthRafRef.current = requestAnimationFrame(() => {
+          transcriptWidthRafRef.current = null
+          // Checked BEFORE the leading-edge flag is consumed: a panel whose
+          // first observation is a boxless one (mounted under the Settings
+          // takeover) must still get its leading-edge commit when it is shown.
+          if (!hasLayoutBox()) return
+          if (!transcriptWidthMeasuredRef.current) {
+            transcriptWidthMeasuredRef.current = true
+            commit()
+            return
+          }
+          if (transcriptWidthSettleRef.current !== null) {
+            clearTimeout(transcriptWidthSettleRef.current)
+          }
+          transcriptWidthSettleRef.current = setTimeout(() => {
+            transcriptWidthSettleRef.current = null
+            commit()
+          }, USER_SCROLL_GESTURE_WINDOW_MS)
+        })
+      })
+      observer.observe(el)
+      return () => {
+        observer.disconnect()
+        if (transcriptWidthRafRef.current !== null) {
+          cancelAnimationFrame(transcriptWidthRafRef.current)
+          transcriptWidthRafRef.current = null
+        }
+        if (transcriptWidthSettleRef.current !== null) {
+          clearTimeout(transcriptWidthSettleRef.current)
+          transcriptWidthSettleRef.current = null
+        }
+      }
+    }, [contentRef])
+    /*
+     * THE WIDTH NAME, resolved once — for the DOM and for the estimator.
+     *
+     * `transcriptWidthAttributeValue` is `undefined` at Medium, which is what
+     * React needs to emit no attribute at all; `transcriptWidthLayoutBucket` is
+     * defined in terms of that same function, so "no attribute stamped" and "no
+     * width correction applied" are one decision rather than two that agree.
+     *
+     * MEDIUM IS BYTE-IDENTICAL, by decision. The measured bucket reaches the
+     * epoch only at Narrow and Wide; at Medium the epoch carries widthBucket 0
+     * and `transcriptLayoutEpochKeySuffix` returns '' (at Default text), so every
+     * estimate and every height-cache key is exactly the one the build before
+     * this setting produced — for the user who never opens the control and for
+     * the user who chooses Medium back again. Waking the axis at Medium moved the
+     * main pane's estimates by +11.4% and General Chat's by +22.5%; the decision
+     * is to keep today's numbers there and spend the correction only where the
+     * column genuinely leaves the ceiling it always had.
+     */
+    const transcriptWidthAttributeValue = transcriptWidthAttribute(transcriptWidth)
+    const transcriptLayoutWidthBucket = transcriptWidthLayoutBucket(
+      transcriptWidth,
+      transcriptMeasuredWidthBucket
+    )
     /*
      * THE TEXT-SIZE SEAM. This `const` is the only place the chosen size becomes
      * a number, and it has exactly two consumers, both directly below:
@@ -3845,6 +4069,37 @@ export const TranscriptPanel = memo(
       () => transcriptFontScaleStyle(transcriptLayoutFontScale),
       [transcriptLayoutFontScale]
     )
+    /**
+     * The one place the transcript's layout epoch is minted.
+     *
+     * BOTH axes are live now. TEXT SIZE arrives as a name and is resolved by the
+     * `const` above; WIDTH arrives as the measured column bucket the
+     * ResizeObserver above commits, GATED by the width name — the identity
+     * bucket at Medium, the measurement at Narrow and Wide. The width number reaches the estimate, the
+     * measurement key and the geometry key through THIS object and nowhere else
+     * — `useTranscriptVirtualization` no longer samples a width of its own, and
+     * this file contains exactly one `widthBucket(` call.
+     *
+     * Both axes read the panel local directly and untouched. Arithmetic here is
+     * the desync in its most plausible disguise: the DOM renders at one number
+     * and the estimator is calibrated for another, with nothing on screen to say
+     * so. `transcriptWidthSetting.test.ts` and `transcriptTextSizeSetting.test.ts`
+     * both match these two value expressions EXACTLY, because every arithmetic
+     * form has the bare identifier as a strict prefix.
+     *
+     * MEMOISED, and that is not ceremony. The epoch sits raw in two
+     * `Object.is`-compared dependency arrays (the heights memo and the pre-paint
+     * measure effect), so a fresh object each render would re-run the measure
+     * pass every render — the pass whose own comment calls it deliberately
+     * invalidation-driven. Now that both axes carry real values, an inline
+     * object literal here is a NEW object every render; the `useMemo` over the
+     * two primitive axes is what keeps it stable.
+     *
+     * Keep this mint the LAST declaration before `const projectedRows =`:
+     * `TranscriptLayoutEpochPlumbing.test.ts` derives the mint's dependency
+     * array from exactly that slice, so a memo inserted between the two is read
+     * as the mint's own deps.
+     */
     const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>(
       () => ({ widthBucket: transcriptLayoutWidthBucket, fontScale: transcriptLayoutFontScale }),
       [transcriptLayoutWidthBucket, transcriptLayoutFontScale]
@@ -4472,6 +4727,7 @@ export const TranscriptPanel = memo(
       onProgrammaticScrollWrite,
       compactDensity,
       layoutEpoch: transcriptLayoutEpoch,
+      measuredWidthBucket: transcriptMeasuredWidthBucket,
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKeys,
       expandedRowIds: expandedRowIdsWithLiveViewports,
@@ -5067,6 +5323,7 @@ export const TranscriptPanel = memo(
         <div
           className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
           ref={contentRef}
+          data-transcript-width={transcriptWidthAttributeValue}
           style={transcriptFontScaleVariables}
         >
           {virtualizeEnabled && (

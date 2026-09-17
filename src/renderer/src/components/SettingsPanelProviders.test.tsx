@@ -22,7 +22,11 @@ import {
   uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
-import { TRANSCRIPT_TEXT_SIZE_OPTIONS, TRANSCRIPT_VIEW_OPTIONS } from './settings/settingsUiOptions'
+import {
+  TRANSCRIPT_TEXT_SIZE_OPTIONS,
+  TRANSCRIPT_VIEW_OPTIONS,
+  TRANSCRIPT_WIDTH_OPTIONS
+} from './settings/settingsUiOptions'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -211,6 +215,39 @@ describe('SettingsPanel provider cards', () => {
     const smallOption = TRANSCRIPT_TEXT_SIZE_OPTIONS.find((option) => option.value === 'small')!
     expect(small).toContain(`<option value="small" selected="">${smallOption.label}</option>`)
     expect(small).not.toContain(`<option value="large" selected="">`)
+  })
+
+  it('renders the transcript width control on Appearance, from the shared catalogue', () => {
+    // Same stake as the text-size test directly above: every other assertion
+    // about this control reads SettingsPanel.tsx as a STRING, so the whole
+    // <label> block could be gated behind a condition that is never true and
+    // the entire guard set would stay green while the control rendered for
+    // nobody. Order 10 shipped without one of these.
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptWidth: 'wide' })} />
+    )
+
+    expect(html).toContain('Transcript width')
+    for (const option of TRANSCRIPT_WIDTH_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The BINDING, not merely the presence of three options.
+    const wide = TRANSCRIPT_WIDTH_OPTIONS.find((option) => option.value === 'wide')!
+    expect(html).toContain(`<option value="wide" selected="">${wide.label}</option>`)
+
+    // A second value, so the `selected` above tracks the prop rather than being
+    // the catalogue's own last entry — and specifically MEDIUM, because medium
+    // is the value that stamps nothing on the transcript. A control that
+    // silently refused to bind it would look identical in the app.
+    const medium = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'appearance', transcriptWidth: 'medium' })}
+      />
+    )
+    const mediumOption = TRANSCRIPT_WIDTH_OPTIONS.find((option) => option.value === 'medium')!
+    expect(medium).toContain(`<option value="medium" selected="">${mediumOption.label}</option>`)
+    expect(medium).not.toContain(`<option value="wide" selected="">`)
   })
 
   it('renders the default transcript view control on Appearance, from the shared catalogue', () => {

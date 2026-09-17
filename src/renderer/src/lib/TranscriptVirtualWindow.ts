@@ -25,7 +25,8 @@ import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
 import {
   DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
   transcriptLayoutEpochKeySuffix,
-  transcriptLayoutScales
+  transcriptLayoutScales,
+  transcriptLayoutWidthInvariantContentScale
 } from './transcriptLayoutEpoch'
 import { nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
@@ -283,6 +284,18 @@ const CONTENT_SCALED_TYPES: ReadonlySet<VirtualRowType> = new Set([
 const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
 
 /**
+ * Content-scaled row types whose content term is a COUNT, not a text length, so
+ * the column-width half of the layout epoch must not touch them.
+ *
+ * Exactly `tool` today. See the `contentScale` note in `estimatedHeightFor` for
+ * why, and `TOOL_ACTIVITY_ESTIMATE_CHARS` just above for where the count enters
+ * the estimate. Membership here is only meaningful for a type that is also in
+ * `CONTENT_SCALED_TYPES`; a type outside that set takes `base` and never reads a
+ * content scale at all.
+ */
+const WIDTH_INVARIANT_CONTENT_TYPES: ReadonlySet<VirtualRowType> = new Set(['tool'])
+
+/**
  * Tighter scale ceiling for row types whose ENTIRE body renders inside a single
  * height-clamped `LiveActivityViewport`, so their off-screen (collapsed) height
  * is bounded no matter how much content accumulates.
@@ -375,13 +388,61 @@ export function estimatedHeightFor(
    * without ever letting content push past it. All three bases (280/300/320)
    * sit under 360, so at identity this is the bare constant, unchanged.
    */
+  /*
+   * The content scale this row type actually obeys.
+   *
+   * `tool` is the exception, and it is one the constants above already state:
+   * "Tool rows keep the flat estimate (their height is driven by activity
+   * count, not text length)" — and `projectRow` honours that by synthesising
+   * their `contentLength` from `activities.length * TOOL_ACTIVITY_ESTIMATE_CHARS`
+   * plus a per-activity CAPPED output sum. That number is an activity COUNT in
+   * disguise, and an activity count does not re-wrap when the column widens: one
+   * activity is one line at 640px and one line at 2400px. The width term is
+   * therefore wrong for it in both directions — at a 2156px Wide column it
+   * shrinks the estimate ~2.5x against a height that barely moves, and at Narrow
+   * it inflates it ~1.36x, which is the bottom-spacer direction this module
+   * calls the dangerous one.
+   *
+   * The TEXT term still applies: an ActivityStack's rows are text, and they get
+   * taller with the text size. So `tool` takes the width-INVARIANT content
+   * scale, which is the same number as `scales.content` at every bucket 0 —
+   * i.e. at Medium, at first paint, and in every `renderToStaticMarkup` suite.
+   */
+  const contentScale = WIDTH_INVARIANT_CONTENT_TYPES.has(rowType)
+    ? transcriptLayoutWidthInvariantContentScale(epoch)
+    : scales.content
+  /*
+   * BOTH ceilings are floored at `base`, for the same reason, and the second
+   * floor is the one Transcript Width made reachable.
+   *
+   * The clamped branch has floored since the text axis landed: `base` scales
+   * with text size while the 360px body ceiling does not, so without the floor
+   * the two invert and `Math.min(360, Math.max(base, …))` pins the row BELOW its
+   * own furniture. The generic branch has exactly the same inversion on the
+   * WIDTH axis, and it is no longer hypothetical: `CONTENT_SCALE_CAP_PX *
+   * content` falls under `base` once the column passes ~5300px at Small text —
+   * a 6K display at Wide. Computed: a 5488px column buckets to 68, whose upper
+   * edge 5520 gives a width term of 0.1775, so `content` is 0.1283 and the cap
+   * lands at 180 against an `assistant` base of 187. The estimate would be
+   * pinned at 180 for EVERY content length, under the row's own chrome, with the
+   * content scale silently dead — the precise failure the clamped branch already
+   * documents.
+   *
+   * Flooring the CEILING is the right repair rather than restoring a floor under
+   * `scales.content` itself. A floor on the scale returns MORE than physics asks
+   * for on a wide column — the over-estimate direction — for every content-scaled
+   * row; a floor on the ceiling only ever stops the ceiling from cutting below
+   * the furniture, and is inert at every width where the cap is doing real work.
+   * At identity `content` is 1, the cap is 1400 and every `base` is under 320, so
+   * this changes nothing there.
+   */
   const scaleCap = VIEWPORT_CLAMPED_TYPES.has(rowType)
     ? Math.max(VIEWPORT_CLAMPED_ESTIMATE_CAP_PX, base)
-    : Math.round(CONTENT_SCALE_CAP_PX * scales.content)
+    : Math.max(base, Math.round(CONTENT_SCALE_CAP_PX * contentScale))
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
     ? Math.min(
         scaleCap,
-        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR * scales.content))
+        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR * contentScale))
       )
     : base
   /*
@@ -613,14 +674,19 @@ export function measurementKey(
   bucket: number,
   expanded: boolean,
   /**
-   * The layout the measurement was taken UNDER. `bucket` and this epoch are
-   * NOT the same number and nothing makes them so: `bucket` is a MEASURED
-   * `widthBucket(el.clientWidth)` sampled in a scroll handler, the epoch is
-   * minted in render. So the suffix carries BOTH of the epoch's axes rather
-   * than trusting that the caller's `bucket` already covers the width one. The
-   * text axis is the one nothing else can see at all — the bucket is read off
-   * `.transcript-inner`, whose `max-width` is an absolute 850px, so no
-   * text-size change can ever move it and every cached height would be reused
+   * The layout the measurement was taken UNDER.
+   *
+   * `bucket` and `epoch.widthBucket` ARE the same number as of Transcript
+   * Width, and that is enforced rather than assumed: `TranscriptPanel` holds
+   * the transcript's only `widthBucket(` call and passes
+   * `layoutEpoch.widthBucket` to this argument. They were NOT the same before
+   * it — the argument was sampled in a scroll handler while the epoch was
+   * minted in render, at ~10 and 0 respectively — so the suffix still carries
+   * both of the epoch's axes rather than trusting the caller. That redundancy
+   * is deliberate; see `transcriptLayoutEpochKeySuffix`.
+   *
+   * The text axis is the one nothing else can see at all: a text-size change
+   * does not move the column, so without it every cached height would be reused
    * at the wrong size. The suffix is EMPTY at the default epoch, so this key is
    * byte-identical to the pre-epoch one.
    */

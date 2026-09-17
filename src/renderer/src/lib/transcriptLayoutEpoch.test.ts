@@ -11,6 +11,7 @@ import {
   transcriptLayoutEpochToken,
   transcriptLayoutEpochsEqual,
   transcriptLayoutScales,
+  transcriptLayoutWidthInvariantContentScale,
   type TranscriptLayoutEpoch
 } from './transcriptLayoutEpoch'
 import {
@@ -98,12 +99,70 @@ describe('transcriptLayoutScales', () => {
     expect(transcriptLayoutScales({ widthBucket: 1, fontScale: 8 }).content).toBe(
       LAYOUT_EPOCH_MAX_SCALE
     )
+    // The floor is the TEXT term's, not the product's, and that changed with
+    // Transcript Width. A large bucket shrinks the content rate, which is the
+    // UNDER-estimate direction the virtualiser calls safe and absorbs in one
+    // anchor correction; flooring it there returns MORE than physics asks for,
+    // which is the inflated-bottom-spacer direction. Unreachable while the
+    // column was capped at 850px; reachable the moment Wide uncaps it — a 4K
+    // display at Wide with Small text is a ~3436px column, where the true term
+    // is 0.206 and a product floor would have returned 0.25.
     expect(transcriptLayoutScales({ widthBucket: 400, fontScale: 1 }).content).toBe(
+      LAYOUT_EPOCH_CALIBRATION_WIDTH_PX / ((400 + 1) * WIDTH_BUCKET_PX)
+    )
+    expect(transcriptLayoutScales({ widthBucket: 400, fontScale: 1 }).content).toBeLessThan(
+      LAYOUT_EPOCH_MIN_SCALE
+    )
+    // The floor still does the job it was introduced for: a corrupt or absurd
+    // persisted TEXT scale cannot drive the content rate to nothing.
+    expect(transcriptLayoutScales({ widthBucket: 0, fontScale: 0.01 }).content).toBe(
       LAYOUT_EPOCH_MIN_SCALE
     )
     expect(transcriptLayoutScales({ widthBucket: 0, fontScale: 9 }).chrome).toBe(
       LAYOUT_EPOCH_MAX_SCALE
     )
+  })
+
+  it('offers a width-INVARIANT content scale that is the same number at bucket 0', () => {
+    // For the one content-scaled row type whose content term is a COUNT rather
+    // than a text length (`tool`, whose `contentLength` is synthesised from
+    // `activities.length`). An activity is one line at any column width, so the
+    // width term is wrong for it; the TEXT term is not.
+    //
+    // The property that matters is that it is the SAME number as `content`
+    // whenever the width bucket is 0 — which is every install at Medium, first
+    // paint, and every `renderToStaticMarkup` suite. Not "agrees to 4 decimal
+    // places": the same IEEE-754 value, because a tool row's estimate at Medium
+    // has to be byte-identical to the pre-setting one.
+    for (const fontScale of [0.85, 1, 1.25, 0.01, 9]) {
+      const epoch: TranscriptLayoutEpoch = { widthBucket: 0, fontScale }
+      expect(
+        Object.is(
+          transcriptLayoutWidthInvariantContentScale(epoch),
+          transcriptLayoutScales(epoch).content
+        ),
+        `fontScale ${fontScale}`
+      ).toBe(true)
+    }
+    // And it ignores the bucket entirely, which is the whole point.
+    for (const widthBucket of [0, 4, 10, 26, 68, 400]) {
+      expect(transcriptLayoutWidthInvariantContentScale({ widthBucket, fontScale: 1.25 })).toBe(
+        1.5625
+      )
+    }
+    // Positive control: `content` at those same buckets really does move, so the
+    // constancy above is the exemption and not a dead function.
+    expect(transcriptLayoutScales({ widthBucket: 26, fontScale: 1.25 }).content).not.toBe(1.5625)
+    // Same clamps as the text term of `content`, so a corrupt persisted scale
+    // cannot drive a tool row's estimate to nothing or to absurdity.
+    expect(transcriptLayoutWidthInvariantContentScale({ widthBucket: 0, fontScale: 0.01 })).toBe(
+      LAYOUT_EPOCH_MIN_SCALE
+    )
+    expect(transcriptLayoutWidthInvariantContentScale({ widthBucket: 0, fontScale: 9 })).toBe(
+      LAYOUT_EPOCH_MAX_SCALE
+    )
+    expect(transcriptLayoutWidthInvariantContentScale(null)).toBe(1)
+    expect(transcriptLayoutWidthInvariantContentScale(undefined)).toBe(1)
   })
 
   it('uses the virtualiser`s own width bucket size by default', () => {

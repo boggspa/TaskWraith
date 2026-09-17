@@ -148,6 +148,12 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     // virtualiser is calibrated for 1x too — consistent, but a different size
     // from the main window with no way for the reader to tell which is right.
     transcriptTextSize: settings.transcriptTextSize,
+    // Same lane, same `as AppSettings` cast hiding an omission. A popped-out chat
+    // that never learns the width renders at Medium while the main window is
+    // Wide — and its virtualiser measures the column it actually got, so the two
+    // windows are internally consistent and disagree with each other, which is
+    // the hardest version of this bug to see.
+    transcriptWidth: settings.transcriptWidth,
     composerStyle: settings.composerStyle,
     transcriptFontFamily: settings.transcriptFontFamily,
     composerFontFamily: settings.composerFontFamily,

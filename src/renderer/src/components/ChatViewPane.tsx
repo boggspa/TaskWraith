@@ -253,6 +253,7 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // number the pane's own virtualiser is calibrated for, so an unlisted pane
     // renders AND estimates at the old size while its neighbours move.
     a.transcriptTextSize === b.transcriptTextSize &&
+    a.transcriptWidth === b.transcriptWidth &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&

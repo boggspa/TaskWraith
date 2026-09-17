@@ -103,6 +103,7 @@ function withoutComments(source: string): string {
 }
 
 const PANEL = renderer('components/TranscriptPanel.tsx')
+const PANEL_CODE = withoutComments(PANEL)
 
 describe('one size name, one number', () => {
   it('resolves absence and junk to the size everything was calibrated at', () => {
@@ -162,7 +163,14 @@ describe('the CSS number and the epoch number are the same number', () => {
     // separately, by TranscriptLayoutEpochPlumbing.test.ts.)
     const mintAt = PANEL.indexOf('const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>(')
     expect(mintAt).toBeGreaterThan(-1)
-    const mint = PANEL.slice(mintAt, PANEL.indexOf('const projectedRows =', mintAt))
+    // COMMENT-STRIPPED. Read from the raw file, `valueOf` below lands on a
+    // comment that merely mentions `fontScale:` and returns the identifier from
+    // the prose while the real mint does arithmetic — the exactness this block
+    // is named for, defeated by a one-line decoy.
+    const mint = PANEL_CODE.slice(
+      PANEL_CODE.indexOf('const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>('),
+      PANEL_CODE.indexOf('const projectedRows =')
+    )
 
     // EXACT, not `toContain`. A containment check on `fontScale:
     // transcriptLayoutFontScale` is a strict PREFIX of every arithmetic form —
@@ -285,7 +293,24 @@ describe('the scale is scoped to transcript message text', () => {
       ).toBe(1)
     }
     // Positive control: this is the real capped column rule, not a decoy.
-    expect(owner.body).toContain('max-width: min(100%, var(--composer-content-max-width))')
+    //
+    // Whitespace-collapsed and matched EXACTLY rather than by containment, and
+    // asserted to be the rule's ONLY `max-width`. Transcript Width turned this
+    // single declaration into a three-term fallback chain (choice -> pane
+    // ceiling -> composer cap), and the way that goes wrong is a SECOND
+    // `max-width` appended by a more specific rule while a `toContain` keeps
+    // matching this one. Whose terms they are and what each resolves to belongs
+    // to `transcriptWidthSetting.test.ts`; all this control claims is that the
+    // rule carrying the four scaled font tokens is the same rule that caps the
+    // column.
+    const squashed = owner.body.replace(/\s+/g, '')
+    expect(squashed).toContain(
+      'max-width:min(100%,var(--transcript-column-max-width,var(--transcript-pane-max-width,var(--composer-content-max-width))));'
+    )
+    expect(
+      squashed.split('max-width:').length - 1,
+      'the column rule must declare max-width exactly once; CSS is last-wins'
+    ).toBe(1)
   })
 
   it('keeps it off the pane wrapper, the scroller and the root', () => {

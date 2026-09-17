@@ -1189,6 +1189,25 @@ describe('MainSanitizers settings patches', () => {
     expect(mixed).not.toHaveProperty('notASettingsKey')
   })
 
+  it('persists transcriptWidth (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop, and for a WIDTH the symptom is worse
+    // than "the app forgets": the column applies live, is dropped on the very
+    // next appearance patch, and on relaunch the virtualiser re-measures a
+    // column the user did not choose.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ transcriptWidth: 'wide' }).transcriptWidth).toBe('wide')
+    expect(sanitizeSettingsPatch({ transcriptWidth: 'narrow' }).transcriptWidth).toBe('narrow')
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      transcriptWidth: 'medium',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.transcriptWidth).toBe('medium')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
   it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

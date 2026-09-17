@@ -20,6 +20,7 @@ export type SettingsPanelUpdate = {
   defaultTranscriptView?: AppSettings['defaultTranscriptView']
   /** Settings → Appearance size for transcript message text. */
   transcriptTextSize?: AppSettings['transcriptTextSize']
+  transcriptWidth?: AppSettings['transcriptWidth']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']

@@ -2458,7 +2458,17 @@ body.is-resizing-side-chat * {
 }
 
 .side-chat-pane .transcript-inner {
-  max-width: 100%;
+  /* Full bleed: a linked-chat pane is already narrow, so the composer-aligned
+   * 850px cap would do nothing but it must not be INHERITED either — the pane
+   * re-declares `--composer-content-max-width: 100%` on `.composer-area` below,
+   * which is a DESCENDANT of this element's ancestor and so never reaches it.
+   *
+   * The pane TERM, not a second `max-width` declaration. As a declaration this
+   * shadowed the base rule, so a Narrow choice inside a wide side pane was
+   * silently ignored; as a term it is the ceiling an explicit choice may lower.
+   * Medium computes `min(100%, 100%)` — the same value the old declaration
+   * produced. */
+  --transcript-pane-max-width: 100%;
 }
 
 /* Linked chats now mount the same Composer component as the main and

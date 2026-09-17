@@ -231,6 +231,28 @@ export type TranscriptView = 'minimal' | 'tools' | 'standard'
  * cache-key suffix in `transcriptLayoutEpochKeySuffix`.
  */
 export type TranscriptTextSize = 'small' | 'default' | 'large'
+
+/**
+ * How wide the transcript's reading column runs, as a NAME.
+ *
+ * Deliberately NOT the same shape as `TranscriptTextSize`, and the difference
+ * is the whole design. For a text size the setting IS the number: one map, one
+ * resolution, one `const` handed to both consumers. For a width the setting
+ * only INFLUENCES the number — the column the virtualiser has to estimate for
+ * is the MEASURED `.transcript-inner` box, which depends on this name AND the
+ * window size AND which pane the transcript is in AND that pane's own ceiling
+ * (`--composer-content-max-width` is redefined in four scopes, and General Chat
+ * caps narrower still). So no width in px ever travels through JS: the name
+ * reaches CSS as a `data-transcript-width` attribute on `.transcript-inner`,
+ * CSS resolves it against the pane, and a ResizeObserver reads the resulting
+ * box back as the one width bucket the layout epoch and both height-cache keys
+ * are built from.
+ *
+ * `medium` is today's column byte for byte — it stamps NO attribute, so every
+ * `max-width` in every scope computes exactly what it computed before this
+ * setting existed.
+ */
+export type TranscriptWidth = 'narrow' | 'medium' | 'wide'
 export type ComposerStyle =
   | 'default'
   | 'codex'
@@ -2841,6 +2863,20 @@ export interface AppSettings {
    * Treat the three scales as frozen, and add a fourth name rather than
    * re-pointing an existing one. */
   transcriptTextSize?: TranscriptTextSize
+  /** Appearance width for the transcript reading column: `narrow` | `medium` |
+   * `wide`. Optional, and ABSENT is the common case on upgrade; absence
+   * resolves to `DEFAULT_TRANSCRIPT_WIDTH` (renderer `lib/transcriptWidth`),
+   * which is `medium` — no attribute stamped, so every pane's column computes
+   * exactly the width it always did.
+   *
+   * Absence is NOT durable here either, for the `fanoutLaneLayout` /
+   * `defaultTranscriptView` / `transcriptTextSize` reason above:
+   * `useAppearance.update()` persists its whole literal, so the first unrelated
+   * appearance change materialises this key at its resolved value. Unlike the
+   * text scale that is harmless to re-point later, because nothing is
+   * calibrated against `medium` — the estimator reads the column it MEASURES,
+   * not the name. */
+  transcriptWidth?: TranscriptWidth
   composerStyle: ComposerStyle
   transcriptFontFamily?: string
   composerFontFamily?: string

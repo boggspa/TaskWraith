@@ -66,6 +66,37 @@ describe('General Chat composer width CSS', () => {
       '.app-transcript.chat-scope-global:not(.welcome-mode) .transcript-inner {'
     )
 
-    expect(transcriptBlock).toContain('max-width: min(100%, 760px)')
+    // 760px still, and still scoped to transcript content rather than to the
+    // shared composer token — but expressed as the PANE TERM of
+    // `.transcript-inner`'s single `max-width` instead of as a second
+    // `max-width` declaration.
+    //
+    // That rewrite is the point of the assertion, not incidental to it. As a
+    // declaration this rule outranked the base rule on specificity, so the
+    // Transcript Width terms added to the base rule would have been inert in
+    // General Chat — a shipped control doing nothing in one of the four scopes
+    // a transcript renders in, with this suite green because 760px was still
+    // there. The negative below is what fails if anyone restores the old shape.
+    expect(literalMatchCount(transcriptBlock, '--transcript-pane-max-width: 760px')).toBe(1)
+    // Comments STRIPPED before the negative. This rule's comment explains the
+    // shape it is NOT allowed to use, and names it — a negative asserted over
+    // the raw block is defeated by its own rationale.
+    const declarations = transcriptBlock.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\s+/g, '')
+    // Anchored to a declaration boundary, not a bare substring: the term this
+    // rule is SUPPOSED to set, `--transcript-pane-max-width`, ends in the very
+    // text a `toContain('max-width:')` looks for, so the loose form can never
+    // distinguish the shape it wants from the shape it forbids.
+    const declaresMaxWidth = /(^|[;{])max-width:/
+    expect(
+      declaresMaxWidth.test(declarations),
+      'the narrow reading column must be a TERM, never a second max-width'
+    ).toBe(false)
+    // Positive control for that negative, in two parts: the matcher really does
+    // fire on the exact shape being refused (and is not merely fooled by the
+    // custom property), and the stripped slice really is the rule's
+    // declarations rather than an empty read that satisfies any negative.
+    expect(declaresMaxWidth.test('.x{max-width:min(100%,760px);}')).toBe(true)
+    expect(declaresMaxWidth.test('.x{--transcript-pane-max-width:760px;}')).toBe(false)
+    expect(declarations).toContain('760px')
   })
 })

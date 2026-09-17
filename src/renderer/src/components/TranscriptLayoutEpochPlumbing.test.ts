@@ -36,6 +36,12 @@ const panelSource = readFileSync(new URL('./TranscriptPanel.tsx', import.meta.ur
  */
 const PER_ROW_PROJECTION_INPUTS = new Set(['messages', 'runBoundaryIds'])
 
+/** Executable source only. A count of how many times an identifier is READ must
+ * not move because somebody mentioned it in a comment. */
+function withoutComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')
+}
+
 function projectionHookSource(): string {
   const start = panelSource.indexOf('function useProjectedTranscriptRows(')
   expect(start).toBeGreaterThan(-1)
@@ -243,21 +249,86 @@ describe('the layout epoch reaches the height caches', () => {
     expect(writeStart).toBeGreaterThan(-1)
     const writeEnd = panelSource.indexOf('const prev = measurements.get(key)', writeStart)
     expect(writeEnd).toBeGreaterThan(writeStart)
-    const writeSite = panelSource.slice(writeStart, writeEnd)
-    expect(
-      writeSite.match(/\blayoutEpoch\b/g)?.length,
-      'both the measurement key and the geometry key must be written under the epoch'
-    ).toBe(2)
+    // Comments STRIPPED and each key pinned BY ROLE. A bare `match()` count over
+    // the raw slice is satisfied by prose: dropping `layoutEpoch` from the
+    // `geometryKey(...)` call and adding a one-line comment naming it holds the
+    // count at 2 while the geometry map — the worse of the two to serve stale,
+    // since it carries no content version — loses the epoch from its key.
+    const writeSite = withoutComments(panelSource.slice(writeStart, writeEnd))
+    for (const [fn, role] of [
+      ['measurementKey(', 'the measurement key'],
+      ['geometryKey(', 'the geometry key']
+    ] as const) {
+      const at = writeSite.indexOf(fn)
+      expect(at, `${role} must be written here`).toBeGreaterThan(-1)
+      // BALANCED, not the first `)`. Both calls take nested calls as arguments
+      // (`expandedRowIds?.has(...)`), so stopping at the first closer truncates
+      // the argument list before the epoch and the guard reads false for code
+      // that is perfectly correct.
+      let depth = 0
+      let end = at
+      for (let i = at + fn.length - 1; i < writeSite.length; i += 1) {
+        if (writeSite[i] === '(') depth += 1
+        else if (writeSite[i] === ')') {
+          depth -= 1
+          if (depth === 0) {
+            end = i
+            break
+          }
+        }
+      }
+      expect(end, `${role} has an unbalanced argument list`).toBeGreaterThan(at)
+      const args = writeSite.slice(at, end)
+      expect(
+        new RegExp('\\blayoutEpoch\\b').test(args),
+        `${role} must be written under the epoch`
+      ).toBe(true)
+    }
 
     const readStart = panelSource.indexOf('const heights = useMemo(() => {')
     expect(readStart).toBeGreaterThan(-1)
     const readEnd = panelSource.indexOf('heightsRef.current = heights', readStart)
     expect(readEnd).toBeGreaterThan(readStart)
-    const readSite = panelSource.slice(readStart, readEnd)
-    // Once as getRowHeight's argument, once in the memo's dependency array.
+    const readSite = withoutComments(panelSource.slice(readStart, readEnd))
+    // The bucket the keys are built at is the MEASURED column, not the epoch's.
+    // Those are two numbers with two jobs and conflating them is a regression:
+    // the epoch's bucket is the ESTIMATE correction and is gated to 0 at Medium
+    // so the default setting keeps its shipped calibration, while the key's
+    // bucket is cache INVALIDATION and must track the real column at EVERY
+    // setting. Routing the key through the gated epoch deleted the width
+    // dimension from both key spaces at the default width, so a Medium column
+    // that tracks its box — a side-chat divider drag, a Multiview pane, any
+    // window under the cap — served heights measured at the previous column.
+    // The epoch is still handed to `getRowHeight` and is still in the deps.
+    //
+    // Comments STRIPPED. A bare `match()` count over the raw slice moves every
+    // time somebody writes the identifier in prose, which is how a count guard
+    // gets "corrected" to whatever the file currently says.
+    // EXACTLY that expression, to its line terminator. `toContain` on the bare
+    // read is strict-PREFIX anchored: `const bucket = layoutEpoch.widthBucket + 1`
+    // satisfies it, and satisfied every other guard on this seam too — 883 test
+    // files green while the estimate was calibrated for one column and
+    // `measurementKey` / `geometryKey` recorded another, which is the exact
+    // defect this whole file exists to make unrepresentable.
+    const bucketAt = readSite.indexOf('const bucket =')
+    expect(
+      bucketAt,
+      'the bucket the heights are keyed at must come from the epoch, not a second sample'
+    ).toBeGreaterThan(-1)
+    expect(
+      readSite.slice(bucketAt, readSite.indexOf('\n', bucketAt)).trim(),
+      'the epoch bucket must reach the heights memo untouched'
+    ).toBe('const bucket = measuredWidthBucket')
+    expect(readSite).toContain('layoutEpoch\n          )')
+    const readDeps = readSite.slice(readSite.lastIndexOf('}, ['))
+    expect(readDeps, 'the heights memo must re-run when the epoch moves').toContain('layoutEpoch')
+    expect(
+      readDeps,
+      'and when the MEASURED column moves, or it reads keys written at another width'
+    ).toContain('measuredWidthBucket')
     expect(
       readSite.match(/\blayoutEpoch\b/g)?.length,
-      'getRowHeight must both receive the epoch and re-run when it changes'
+      'exactly those two roles — a third mention is a second reader to account for'
     ).toBe(2)
   })
 

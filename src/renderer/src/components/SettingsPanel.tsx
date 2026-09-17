@@ -32,6 +32,7 @@ import type {
   FanoutLaneLayout,
   TranscriptView,
   TranscriptTextSize,
+  TranscriptWidth,
   ComposerStyle,
   ThemeAppearance,
   ThemeCornerStyle,
@@ -76,6 +77,7 @@ import { useUsageSummary } from '../lib/usageSummaryStore'
 import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
 import { resolveTranscriptView } from '../lib/transcriptViewOverride'
 import { resolveTranscriptTextSize } from '../lib/transcriptTextSize'
+import { resolveTranscriptWidth } from '../lib/transcriptWidth'
 import {
   KEY_COMMAND_DEFINITIONS,
   KEY_COMMAND_GROUPS,
@@ -312,6 +314,7 @@ import {
   FANOUT_LANE_LAYOUT_OPTIONS,
   TRANSCRIPT_VIEW_OPTIONS,
   TRANSCRIPT_TEXT_SIZE_OPTIONS,
+  TRANSCRIPT_WIDTH_OPTIONS,
   COMPOSER_STYLE_OPTIONS,
   NATIVE_SUB_AGENT_REQUEST_OPTIONS,
   CODEX_SANDBOX_FALLBACK_OPTIONS,
@@ -359,6 +362,8 @@ interface SettingsPanelProps {
   defaultTranscriptView?: TranscriptView
   /** Settings → Appearance size for transcript message text. */
   transcriptTextSize?: TranscriptTextSize
+  /** Settings → Appearance width for the transcript reading column. */
+  transcriptWidth?: TranscriptWidth
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
@@ -509,6 +514,7 @@ interface SettingsPanelProps {
     fanoutLaneLayout?: FanoutLaneLayout
     defaultTranscriptView?: TranscriptView
     transcriptTextSize?: TranscriptTextSize
+    transcriptWidth?: TranscriptWidth
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -992,6 +998,7 @@ export function SettingsPanel({
   fanoutLaneLayout,
   defaultTranscriptView,
   transcriptTextSize,
+  transcriptWidth,
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
@@ -3363,6 +3370,37 @@ export function SettingsPanel({
                       <small>
                         Message text only. The composer, the sidebar and Settings keep their
                         own size.
+                      </small>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Transcript width</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptWidth(transcriptWidth)}
+                        onChange={(e) =>
+                          onChange({ transcriptWidth: e.target.value as TranscriptWidth })
+                        }
+                      >
+                        {TRANSCRIPT_WIDTH_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue that owns the three caps, so this
+                            control cannot describe a column the transcript does not
+                            render at. The lookup cannot miss: the value is resolved to
+                            one of exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_WIDTH_OPTIONS.find(
+                            (option) => option.value === resolveTranscriptWidth(transcriptWidth)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        The reading column only. The composer keeps its own width, so at Wide
+                        the two no longer share the same edges.
                       </small>
                     </label>
                   </section>

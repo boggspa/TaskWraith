@@ -711,7 +711,8 @@ describe('the appearance projection carries the transcript-view settings', () =>
     agenticServices: {},
     fanoutLaneLayout: 'stacked',
     defaultTranscriptView: 'minimal',
-    transcriptTextSize: 'large'
+    transcriptTextSize: 'large',
+    transcriptWidth: 'wide'
   } as unknown as AppSettings
 
   it('reaches a utility renderer', () => {
@@ -725,6 +726,11 @@ describe('the appearance projection carries the transcript-view settings', () =>
     // popout that never learns it renders its transcript at another size from
     // the main window, with nothing on screen saying which is right.
     expect(projected.transcriptTextSize).toBe('large')
+    // Same lane, same cast hiding the omission. A popout stuck at Medium while
+    // the main window is Wide is internally consistent — its own virtualiser
+    // measures the column it got — so the two windows simply disagree, with
+    // nothing on screen saying which is right.
+    expect(projected.transcriptWidth).toBe('wide')
     // Positive control for the negative below: the allowlist really did run.
     expect(projected).not.toHaveProperty('agenticServices')
   })
@@ -738,6 +744,7 @@ describe('the appearance projection carries the transcript-view settings', () =>
     expect(projected.defaultTranscriptView).toBe('minimal')
     expect(projected.fanoutLaneLayout).toBe('stacked')
     expect(projected.transcriptTextSize).toBe('large')
+    expect(projected.transcriptWidth).toBe('wide')
   })
 
   it('carries absence as absence, never as a pin', () => {
@@ -752,6 +759,7 @@ describe('the appearance projection carries the transcript-view settings', () =>
     expect(projected.defaultTranscriptView).toBeUndefined()
     expect(projected.fanoutLaneLayout).toBeUndefined()
     expect(projected.transcriptTextSize).toBeUndefined()
+    expect(projected.transcriptWidth).toBeUndefined()
     // Positive control: this projection does forward things — it is not empty.
     expect(projected).toHaveProperty('showInspector', false)
 
@@ -765,7 +773,8 @@ describe('the appearance projection carries the transcript-view settings', () =>
         agenticServices: {},
         defaultTranscriptView: 'minimal',
         fanoutLaneLayout: 'stacked',
-        transcriptTextSize: 'large'
+        transcriptTextSize: 'large',
+        transcriptWidth: 'wide'
       } as unknown as AppSettings,
       { kind: 'utility' },
       pathsEqual
@@ -773,5 +782,6 @@ describe('the appearance projection carries the transcript-view settings', () =>
     expect(carried.defaultTranscriptView).toBe('minimal')
     expect(carried.fanoutLaneLayout).toBe('stacked')
     expect(carried.transcriptTextSize).toBe('large')
+    expect(carried.transcriptWidth).toBe('wide')
   })
 })

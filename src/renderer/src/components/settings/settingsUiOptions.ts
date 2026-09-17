@@ -16,6 +16,7 @@ import type {
   PromptSurfaceStyle,
   TranscriptTextSize,
   TranscriptView,
+  TranscriptWidth,
   VisualEffectStyle
 } from '../../../../main/store/types'
 import type { AppIconVariant } from '../../../../shared/iconVariants'
@@ -24,6 +25,7 @@ import appIconMonolineThumb from '../../assets/app-icons/monoline.png'
 import appIconGlassThumb from '../../assets/app-icons/glass.png'
 import appIconLightMonolineThumb from '../../assets/app-icons/light-monoline.png'
 import { TRANSCRIPT_TEXT_SCALES } from '../../lib/transcriptTextSize'
+import { TRANSCRIPT_WIDTH_COLUMN_CAPS } from '../../lib/transcriptWidth'
 
 export const CONTEXT_TURN_OPTIONS = [0, 2, 4, 6, 8, 10, 12, 16, 20]
 export const clampPaneOpacity = (value: unknown): number => {
@@ -124,6 +126,41 @@ export const TRANSCRIPT_TEXT_SIZE_OPTIONS: Array<{
     label: 'Large',
     helper: 'Easier to read; fewer messages visible at once.',
     scale: TRANSCRIPT_TEXT_SCALES.large
+  }
+]
+/**
+ * How wide the transcript's reading column runs.
+ *
+ * `cap` is READ FROM `TRANSCRIPT_WIDTH_COLUMN_CAPS` rather than re-typed, for
+ * the reason `scale` is above — a catalogue may describe a width but must not
+ * be able to invent one. Note the values are CSS strings, and `medium` is
+ * `null`: Medium emits no rule at all, so there is no number to quote and the
+ * helper text says so instead of repeating "850px", which is the composer's
+ * token and not this setting's to restate.
+ */
+export const TRANSCRIPT_WIDTH_OPTIONS: Array<{
+  value: TranscriptWidth
+  label: string
+  helper: string
+  cap: string | null
+}> = [
+  {
+    value: 'narrow',
+    label: 'Narrow',
+    helper: 'A tighter reading column. Shorter lines, easier to scan.',
+    cap: TRANSCRIPT_WIDTH_COLUMN_CAPS.narrow
+  },
+  {
+    value: 'medium',
+    label: 'Medium',
+    helper: "Today's column, lined up with the composer.",
+    cap: TRANSCRIPT_WIDTH_COLUMN_CAPS.medium
+  },
+  {
+    value: 'wide',
+    label: 'Wide',
+    helper: 'Fills the pane. The composer stays where it is.',
+    cap: TRANSCRIPT_WIDTH_COLUMN_CAPS.wide
   }
 ]
 export const COMPOSER_STYLE_OPTIONS: Array<{

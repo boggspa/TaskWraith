@@ -221,6 +221,12 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // sends this key every time, so this allowlist is the only thing standing
   // between the choice and settings.json.
   'transcriptTextSize',
+  // Same gate again. Unlisted, the chosen column width applies live and is
+  // dropped on the very next appearance patch, because `useAppearance.update()`
+  // sends this key every time. For a WIDTH that also silently un-calibrates the
+  // virtualiser on relaunch: the transcript re-measures the restored column and
+  // the reader sees a layout they did not choose.
+  'transcriptWidth',
   'composerStyle',
   'transcriptFontFamily',
   'composerFontFamily',

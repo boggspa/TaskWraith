@@ -12163,7 +12163,18 @@ button.composer-run-timecode.is-open {
 }
 
 .popout-chat-transcript .transcript-inner {
-  max-width: min(100%, var(--composer-content-max-width));
+  /* Was a second `max-width` declaration, byte-identical to the base rule it
+   * shadowed — inert while the base rule said the same thing, and a silent veto
+   * on the transcript-width terms the moment the base rule stopped. Restated as
+   * the pane TERM at its existing value, so this scope composes exactly like
+   * every other one and Medium is unchanged.
+   *
+   * Left in place rather than deleted: `.popout-chat-transcript` has no producer
+   * in any tracked .ts/.tsx (the chat popout window is `.chat-popout-window`),
+   * so it is either dead or emitted from a shell this repo does not track, and a
+   * grep cannot tell those apart. A no-op declaration is the safe answer to
+   * that ambiguity; deleting it is a separate decision. */
+  --transcript-pane-max-width: var(--composer-content-max-width);
 }
 
 /* 1.0.5-EW33 — File Editor popout: sidebar+main layout.
@@ -13911,6 +13922,51 @@ button.diff-file-row {
     border-color 120ms ease,
     box-shadow 120ms ease;
   animation: transcript-jump-pill-fade-in 180ms ease-out;
+}
+
+/*
+ * Transcript width -> WIDE: the pill has to FIT the gutter lane, not float on
+ * its inner edge.
+ *
+ * `right: var(--chat-side-gutter)` above puts the pill's RIGHT edge exactly
+ * where the reading column's right edge is — which is empty space at Narrow and
+ * Medium, where the column is capped well inside the pane, and is text at Wide,
+ * where `--transcript-column-max-width: 100%` makes the column the whole of
+ * `.transcript-scroll`'s content box. Measured on a 2300px pane: the two edges
+ * coincide and the pill covers ~67px of the line the reader is on, in the main
+ * pane, in a Multiview pane and in a popout alike. There is no horizontal escape
+ * at Wide — the gutter IS the column's — so the affordance has to become one
+ * that fits the lane instead of one that sits over the column.
+ *
+ * 34px, and that number is the `TranscriptUserMessageGutter` rail's. The rail is
+ * the other overlay that lives in this lane, it is 34px, and the Wide rule's own
+ * note in `02-transcript-messages-fx.css` is written around the claim that
+ * `clamp(24px, 4.4vw, 72px)` leaves room for a 34px overlay wherever the rail is
+ * eligible — plus `scrollbar-gutter: stable` on `.transcript-scroll`, which
+ * reserves its own lane outside the content box on top of that. Centring the
+ * 34px square in the gutter (floored at 2px, so a hard-clamped 24px gutter on a
+ * tiny window pushes the pill flush rather than off the pane edge) keeps it
+ * clear of the column at every width the rail is.
+ *
+ * The count goes with the label, and that is the cost. `aria-label` and `title`
+ * still carry "Jump to latest — N new messages", so the number is available to
+ * a screen reader and on hover; it is not on screen. Covering the sentence the
+ * reader is mid-way through is the worse of the two.
+ */
+.app-transcript:has(.transcript-inner[data-transcript-width='wide'])
+  .transcript-jump-to-latest-pill {
+  right: max(2px, calc((var(--chat-side-gutter, 24px) - 34px) / 2));
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  gap: 0;
+  justify-content: center;
+}
+
+.app-transcript:has(.transcript-inner[data-transcript-width='wide'])
+  .transcript-jump-to-latest-pill
+  .transcript-jump-to-latest-text {
+  display: none;
 }
 
 .transcript-jump-to-latest-pill .transcript-jump-to-latest-arrow {

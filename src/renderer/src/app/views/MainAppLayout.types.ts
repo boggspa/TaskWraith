@@ -37,6 +37,7 @@ type MainAppLayoutSettingsTakeoverAppearanceProps = Pick<
   | 'fanoutLaneLayout'
   | 'defaultTranscriptView'
   | 'transcriptTextSize'
+  | 'transcriptWidth'
   | 'composerStyle'
   | 'transcriptFontFamily'
   | 'composerFontFamily'

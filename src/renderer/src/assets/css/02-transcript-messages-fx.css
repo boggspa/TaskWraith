@@ -237,8 +237,17 @@
 }
 .app-transcript.chat-scope-global:not(.welcome-mode) .transcript-inner {
   /* Keep the legacy General Chat reading column narrow without shrinking the
-   * modern composer shell, which also consumes --composer-content-max-width. */
-  max-width: min(100%, 760px);
+   * modern composer shell, which also consumes --composer-content-max-width.
+   *
+   * Expressed as the PANE TERM of `.transcript-inner`'s single `max-width`
+   * rather than as a second `max-width` declaration. As a second declaration it
+   * beat the base rule on specificity, so a transcript-width variable added to
+   * the base rule would have been inert in General Chat — the control doing
+   * nothing in one of the four scopes, with every guard green. As a term it
+   * still wins over the composer cap and still loses to an explicit choice,
+   * which is the intent: 760px is a default reading column, not a ceiling the
+   * user may not raise. */
+  --transcript-pane-max-width: 760px;
 }
 .app-transcript.chat-scope-global .message-bubble.assistant {
   line-height: 1.68;
@@ -4479,12 +4488,97 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
    * the composer (--composer-content-max-width, 850px) and centre it, so resizing
    * the window grows the side gutters instead of widening the chat column. The
    * composer is already centred at this width, so the two line up at the same
-   * column edges. (Was max-width:none → the transcript stretched full-width.) */
-  max-width: min(100%, var(--composer-content-max-width));
+   * column edges. (Was max-width:none → the transcript stretched full-width.)
+   *
+   * Transcript width (Settings → Appearance) composes OVER that cap rather than
+   * retuning it, and the layering is the whole trap. `--composer-content-max-width`
+   * is declared on `.app-transcript`, which CONTAINS the composer — and also the
+   * workspace terminal, its drag divider, the Codex/ChatGPT/Grok tucked rows, the
+   * approval overlay (pinned at cap + 96px) and every welcome surface. Retuning
+   * it to serve a transcript setting moves the user's own text box, and through
+   * `--composer-reserved-height` it feeds back into this scroller's own bottom
+   * padding. So the token is READ here and never written.
+   *
+   * Three terms, innermost first:
+   *   --composer-content-max-width   the pane's composer-aligned cap (850px, or
+   *                                  the popout / Multiview re-expressions).
+   *   --transcript-pane-max-width    a pane's own TRANSCRIPT ceiling where it
+   *                                  differs — General Chat's narrower reading
+   *                                  column, side chat's full bleed. Declared
+   *                                  only by those panes.
+   *   --transcript-column-max-width  the user's chosen width. Declared only by
+   *                                  the two [data-transcript-width] rules below,
+   *                                  so it WINS over a pane ceiling when set: an
+   *                                  explicit Wide should fill General Chat too,
+   *                                  and an explicit Narrow should still be 640
+   *                                  inside a wide side chat.
+   *
+   * At Medium the panel stamps no attribute, nothing declares the outer two, and
+   * this reduces to `min(100%, var(--composer-content-max-width))` — the same
+   * computed value in all four scopes as the declaration it replaced.
+   *
+   * ONE max-width declaration, and it has to stay one. CSS is last-wins within a
+   * block and these rules are the ones most often "fixed" by appending: the
+   * General Chat, side-chat and popout overrides below used to write a SECOND
+   * `max-width` onto this same element, which is exactly how a width control
+   * ships doing nothing in three of the four places a transcript renders. They
+   * now set the pane term instead. */
+  max-width: min(
+    100%,
+    var(
+      --transcript-column-max-width,
+      var(--transcript-pane-max-width, var(--composer-content-max-width))
+    )
+  );
   margin-inline: auto;
   display: flex;
   flex-direction: column;
   gap: var(--space-lg);
+}
+
+/* ============================================================
+ * Transcript width  (settings.transcriptWidth)
+ * ------------------------------------------------------------
+ * Two rules, and Medium is the absence of both. `TranscriptPanel` stamps
+ * `data-transcript-width` on `.transcript-inner` itself and emits NOTHING at
+ * Medium, so a user who never opens the control renders through the untouched
+ * fallback chain above.
+ *
+ * On the ELEMENT, not on `:root`. A `:root` attribute is written by
+ * `useAppearance.applyToDocument`, which runs in the MAIN WINDOW only — a
+ * popped-out chat would keep Medium forever — and one document cannot carry two
+ * values at once, which a Multiview of panes at different widths would need. It
+ * also keeps the width where the number is measured: the ResizeObserver that
+ * feeds the virtualiser's layout epoch observes this same element, so whatever
+ * these rules resolve to is what the estimator is calibrated for.
+ *
+ * Both set the OUTERMOST term only. Neither writes `max-width`, so there is
+ * still exactly one `max-width` declaration for this element anywhere in the
+ * sheets and no cascade to lose.
+ * ============================================================ */
+.transcript-inner[data-transcript-width='narrow'] {
+  --transcript-column-max-width: 640px;
+}
+
+.transcript-inner[data-transcript-width='wide'] {
+  /* 100% of `.transcript-scroll`'s CONTENT box, which is already inset by
+   * `--chat-side-gutter` on both sides — so "uncapped" still leaves the
+   * message-navigation rail its lane. The rail is `position: fixed`, 34px wide,
+   * placed at `contentRect.left - 34`, i.e. inside that padding; it hides itself
+   * when the gap falls under 34px or the scroller under 720px, and
+   * `clamp(24px, 4.4vw, 72px)` only drops below 34px under a ~773px viewport,
+   * where the 720px gate has already hidden it. No explicit reserve is needed
+   * and none is taken: subtracting one here would narrow the column — and move
+   * the measured bucket — at every width.
+   *
+   * That makes this lane the budget every gutter-anchored overlay has to live
+   * inside at Wide, and the jump-to-latest pill is the one that did not: it is
+   * ~130px wide at `right: var(--chat-side-gutter)`, so its right edge sits on
+   * the column's right edge and the rest of it sits on the text. It collapses to
+   * a 34px square centred in this lane under `[data-transcript-width='wide']`,
+   * in `03-composer-welcome-activity.css`. Anything else added here owes the
+   * same. */
+  --transcript-column-max-width: 100%;
 }
 
 /* ============================================================
@@ -4541,6 +4635,34 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--fanout-lane-min)), 1fr));
   align-items: start;
   column-gap: var(--space-md);
+}
+
+/* The cap the warning above says to revisit HAS been raised, by Wide — and this
+ * is the promised revisit, not the rewrite.
+ *
+ * `auto-fit` against a 360px floor yields three tracks from ~1104px of column
+ * and four from ~1476px, both of which an uncapped column clears on an ordinary
+ * window. Nothing else is ready for that. `classifyFanoutLaneSlots` emits only
+ * lead/trail/solo, so a third cell has no slot; `selectTranscriptWindow`'s pair
+ * extension widens the band by exactly one for a lead/trail straddle; and the
+ * pre-paint measurement admits a zero `offsetTop` delta only for a `lead`,
+ * on the stated assumption that exactly ONE row shares the trail's offsetTop —
+ * with three cells per grid row heights are MIS-ATTRIBUTED, not merely
+ * under-counted. `estimatedHeightFor` halves every lane unconditionally, which
+ * is a safe under-estimate at two tracks and a ~1.5x OVER-estimate at three:
+ * the inflated-bottom-spacer / auto-follow-lurch class the file's own constants
+ * exist to prevent.
+ *
+ * So Wide raises the reading column and leaves the lane grid at two tracks. The
+ * floor becomes half the column (minus the one gap between the pair), which two
+ * tracks fill exactly and three can never satisfy: 3 x (100% - gap)/2 + 2 x gap
+ * exceeds 100% for any non-negative gap. `max()` keeps the 360px floor, so a
+ * narrow Wide pane still collapses to one column exactly as it does today.
+ *
+ * N-across is the next slice and this rule is what keeps it a slice rather than
+ * a regression already shipped ahead of it. Delete it there, not here. */
+:root[data-fanout-lane-layout='paired'] .transcript-inner[data-transcript-width='wide'] {
+  --fanout-lane-min: max(360px, calc((100% - var(--space-md)) / 2));
 }
 
 /* Every row spans the column by default — only a lane opts out below. The

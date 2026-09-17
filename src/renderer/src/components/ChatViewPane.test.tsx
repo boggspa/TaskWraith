@@ -219,6 +219,41 @@ describe('chatViewPanePropsEqual', () => {
     ).toBe(true)
   })
 
+  it('re-renders when the Appearance transcript width changes', () => {
+    // Called, not read out of the source. The sibling text-size case above is
+    // pinned behaviourally; the width entry shipped pinned only by a raw-source
+    // `toContain('a.transcriptWidth === b.transcriptWidth &&')`, which a comment
+    // satisfies and which cannot tell `&&` from `||`.
+    //
+    // Inherited from BuildChatViewPropsInput, so TypeScript never asked for it.
+    // Unlisted, a Multiview pane keeps BOTH the old column cap on
+    // `.transcript-inner` and the old estimator calibration until some unrelated
+    // prop happens to move — one pane right, the others silently wrong.
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ transcriptWidth: 'wide' }))).toBe(false)
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: 'narrow' }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(false)
+    // Absence is how every settings file written before this control spells
+    // Medium, so it has to be distinguishable from a chosen width too.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: undefined }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the three above are
+    // this field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptWidth: 'wide' }),
+        makeProps({ transcriptWidth: 'wide' })
+      )
+    ).toBe(true)
+  })
+
   it('re-renders when the chat record identity changes', () => {
     const chat = { appChatId: 'c2' } as unknown as ChatViewPaneProps['chat']
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ chat }))).toBe(false)

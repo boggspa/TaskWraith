@@ -42,21 +42,47 @@
  * `transcriptTextSizeSetting.test.ts` pins that expression EXACTLY (not by
  * containment, which every arithmetic form is a prefix of).
  *
- * The WIDTH axis is still dormant: the measured column bucket lives inside
- * `useTranscriptVirtualization`, below the projection that would need it, so
- * `widthBucket` is 0 until Transcript Width supplies it.
+ * The WIDTH axis is LIVE as of Transcript Width. `TranscriptPanel` runs the
+ * only `widthBucket()` call in the transcript — a bucketed, settled
+ * ResizeObserver on `.transcript-inner` — commits it to state, and mints the
+ * epoch from it; `useTranscriptVirtualization` reads that same value back off
+ * the epoch for `measurementKey` and `geometryKey`. It used to sample its own,
+ * in a scroll handler, into a ref that triggers no render: the key carried a
+ * measured ~10 while this module was handed a hardcoded 0, so every estimate
+ * was calibrated for a 980px column the transcript never rendered at.
  *
- * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` remains exactly identity, so the Default
- * text size is byte-identical to the pre-seam build — but that is now a
- * property of the DEFAULT epoch only, not of the app.
+ * Read that consequence carefully before calling the awakening a regression.
+ * Between the seam landing and Width shipping, the width correction was not
+ * "off", it was WRONG in the safe direction: the main pane's 850px column was
+ * estimated as 980px, i.e. ~13% fewer wrapped lines than the DOM produces.
+ * Waking the axis resolves that column to bucket 10's upper edge (880px) and
+ * leaves a ~3% under-estimate — closer to the truth, still on the safe side,
+ * and not byte-identical to the dormant build for anybody, including a user who
+ * never opens the control. There is no third option: an epoch that kept
+ * reporting 0 at Medium while the cache key reported 10 would be the two-number
+ * lie again, and shipping Wide with the axis dormant is worse still — a 1400px
+ * column estimated as 980px OVER-estimates by ~43%, which is the direction this
+ * module documents as a visible defect.
+ *
+ * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` remains exactly identity — first paint,
+ * every `renderToStaticMarkup` suite, and every caller that passes no epoch at
+ * all. That is a property of the DEFAULT epoch only, not of the app.
  */
 
 /**
  * The column width, in CSS px, that every shipped estimate constant was
- * calibrated at. Note this is NOT a width `.transcript-inner` actually takes:
- * the column is capped at `--composer-content-max-width` (850px). Correcting
- * that calibration is a behaviour CHANGE and is deliberately not attempted
- * here — it belongs with the setting that makes width an input.
+ * calibrated at.
+ *
+ * A MEASUREMENT of where the constants came from, not a tuning knob. It is not
+ * a width `.transcript-inner` takes in any scope — the column runs 760px in
+ * General Chat, 850px in the main pane at Medium, and whatever the pane allows
+ * at Wide — and the correction for that difference is the width term below.
+ * Re-pointing this constant to make one scope resolve to exactly 1 would be a
+ * silent re-tune of `CONTENT_PX_PER_CHAR` for every other scope, and no single
+ * value can make two scopes identity at once (850px buckets to 880, 760px to
+ * 800). Nothing in the suite would catch it either: the only test that reads it
+ * re-derives its expectation FROM it. If it ever does move, it owes a literal
+ * pin and an estimate golden.
  */
 export const LAYOUT_EPOCH_CALIBRATION_WIDTH_PX = 980
 
@@ -145,9 +171,67 @@ export function transcriptLayoutScales(
   const columnWidth = bucket > 0 ? (bucket + 1) * widthBucketPx : LAYOUT_EPOCH_CALIBRATION_WIDTH_PX
   const widthTerm = LAYOUT_EPOCH_CALIBRATION_WIDTH_PX / columnWidth
   return {
-    content: clampScale(fontScale * fontScale * widthTerm),
+    /*
+     * The floor applies to the TEXT term only; the width term multiplies
+     * through and is bounded at the top alone.
+     *
+     * Clamping the PRODUCT from below was safe while the column was capped at
+     * 850px, and stops being safe the moment Transcript Width uncaps it. The
+     * floor's job is to stop a pathological epoch INFLATING the bottom spacer,
+     * which is the over-estimate direction; on the width axis a large bucket
+     * shrinks the term, which is the under-estimate direction the virtualiser
+     * calls safe and absorbs in one anchor-correction pass. Flooring it there
+     * therefore returns MORE than physics asks for — at Wide on a 4K display
+     * with Small text (a ~3436px column, bucket 42) the true term is 0.206 and
+     * a product floor returns 0.25, a 21% over-estimate on every content-scaled
+     * row. Today's 850px cap makes that unreachable, which is why nothing has
+     * ever exercised it.
+     *
+     * `clampScale(fontScale * fontScale)` keeps the floor exactly where it was
+     * doing work: a corrupt or absurd persisted text scale still cannot drive
+     * the content rate to zero. The top clamp still bounds the whole product,
+     * so a 0-width pane mid-unmount (bucket 1, term 6.125) is still capped.
+     */
+    content: Math.min(LAYOUT_EPOCH_MAX_SCALE, clampScale(fontScale * fontScale) * widthTerm),
     chrome: clampScale(fontScale)
   }
+}
+
+/**
+ * The content scale for rows whose content term COUNTS ITEMS rather than
+ * measuring text — the text half of `content`, with the width term left off.
+ *
+ * `tool` is the one such type. `TranscriptVirtualWindow` synthesises its
+ * `contentLength` as `activities.length * TOOL_ACTIVITY_ESTIMATE_CHARS` plus a
+ * per-activity CAPPED output sum, precisely because an `ActivityStack`'s height
+ * is driven by how many activities it has and not by how long their output is —
+ * every body sits inside a bounded collapsed viewport or a click-to-expand row.
+ * A row like that does not re-wrap when the column widens: one activity is one
+ * line at 640px and one line at 2400px. Applying the width term to it is a
+ * category error in both directions — at a 2156px Wide column the estimate drops
+ * ~2.5x while the rendered height barely moves, and at Narrow it inflates by
+ * ~1.36x, which is the bottom-spacer direction.
+ *
+ * Deliberately NOT a third field on `TranscriptLayoutScales`. That type is the
+ * pair of physically distinct multipliers a LAYOUT resolves to, and both of its
+ * members are exactly 1 at identity — a property three shipped assertions pin by
+ * exact object shape. This is a per-ROW-TYPE selection between the two axes of
+ * that pair, so it belongs at the call site that knows the row type.
+ *
+ * Identical to `content` whenever the width bucket is 0, which is every install
+ * at Medium and every `renderToStaticMarkup` suite: the width term is then
+ * exactly 1 and both reduce to `clampScale(fontScale * fontScale)`. So this
+ * changes nothing at Medium, at any text size, by construction rather than by
+ * arithmetic that happens to agree.
+ */
+export function transcriptLayoutWidthInvariantContentScale(
+  epoch: TranscriptLayoutEpoch | null | undefined
+): number {
+  // `fontScale * fontScale`, spelled exactly as `transcriptLayoutScales` spells
+  // it, not `** 2`: the two must be the same IEEE-754 product, not two forms
+  // that round the same way for the three shipped scales.
+  const fontScale = normalizedFontScale(epoch)
+  return clampScale(fontScale * fontScale)
 }
 
 /**
@@ -156,21 +240,27 @@ export function transcriptLayoutScales(
  * EMPTY for the default epoch, so every key stays byte-identical to the
  * pre-seam build. Otherwise it carries BOTH axes of the epoch.
  *
- * The text scale is the axis nothing else can see: the bucket is read off
- * `.transcript-inner`, whose `max-width` is an absolute 850px, so no text-size
- * change can move it, and a cache full of heights measured at the old size
- * would be reused wholesale.
+ * The text scale is the axis nothing else can see: a text-size change does not
+ * move the column the bucket is read from, so without it a cache full of
+ * heights measured at the old size would be reused wholesale.
  *
  * The width bucket is carried too, even though `measurementKey` / `geometryKey`
  * also take a `bucket` argument. An earlier draft omitted it, reasoning that
  * the argument "is the same number as `epoch.widthBucket`" — which was false in
- * that very draft, and enforced by nothing. The two come from different places:
- * the argument is a MEASURED `widthBucket(el.clientWidth)` sampled in a scroll
- * handler, while the epoch is minted in render. Nothing makes them agree, and
- * when they disagree the estimate moves while the key does not — a row then
- * reads back a height measured at the other layout. Repeating the axis here
- * costs a few bytes in a non-default key and makes the key correct on its own
- * terms rather than on an invariant held only by a comment.
+ * that very draft, and enforced by nothing: the argument was a MEASURED
+ * `widthBucket(el.clientWidth)` sampled in a scroll handler while the epoch was
+ * minted in render. Transcript Width made that claim TRUE, and structurally so:
+ * `TranscriptPanel` holds the only `widthBucket(` call in the transcript, and
+ * the virtualiser passes `layoutEpoch.widthBucket` to both keys.
+ *
+ * The axis stays here anyway, and the redundancy is now the point. It costs a
+ * few bytes in a non-default key, it is free at the default one, and it is what
+ * makes the key correct on its OWN terms — so if somebody reintroduces a second
+ * sample, the key separates the two layouts instead of serving one layout's
+ * heights under the other's estimate. Do not remove it because the numbers
+ * currently agree; they currently agree because a source-string guard refuses
+ * the second call site, and guards are easier to delete than defects are to
+ * find.
  */
 export function transcriptLayoutEpochKeySuffix(
   epoch: TranscriptLayoutEpoch | null | undefined
