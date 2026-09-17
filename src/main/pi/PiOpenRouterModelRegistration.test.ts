@@ -346,6 +346,82 @@ describe('writePiOpenRouterModelRegistration', () => {
     expect(config.providers.openrouter.models[0]).not.toHaveProperty('thinkingLevelMap')
   })
 
+  it('registers Pareto as a NON-reasoning paid route', () => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find((model) => model.modelId === 'unbiased/pareto')
+    expect(entry).toEqual({
+      modelId: 'unbiased/pareto',
+      label: 'Pareto',
+      // Same load-bearing shape as Union Alpha: supported_parameters are
+      // max_tokens, response_format, temperature, tool_choice, tools and
+      // top_p — no `reasoning`/`reasoning_effort` for a ladder to drive.
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 262_144,
+      maxTokens: 131_072,
+      cost: { input: 2.5, output: 7.5, cacheRead: 0.25, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('thinkingLevelMap')
+    expect(entry).not.toHaveProperty('reasoningControl')
+
+    const home = isolatedHome()
+    expect(
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: home,
+        modelId: 'unbiased/pareto'
+      })
+    ).toBe(true)
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.openrouter.models[0]).toMatchObject({
+      id: 'unbiased/pareto',
+      name: 'Pareto',
+      api: 'openai-completions',
+      reasoning: false,
+      input: ['text', 'image'],
+      contextWindow: 262_144,
+      maxTokens: 131_072
+    })
+    expect(config.providers.openrouter.models[0]).not.toHaveProperty('thinkingLevelMap')
+  })
+
+  it('registers Jev 1.13 as a NON-reasoning structured decision route', () => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find(
+      (model) => model.modelId === 'typesafe/jev-1.13'
+    )
+    expect(entry).toEqual({
+      modelId: 'typesafe/jev-1.13',
+      label: 'Jev 1.13',
+      // A structured decision model returns typed choices, not prose — no
+      // reasoning axis exists to map. maxTokens and cost are placeholders
+      // while the route is "coming soon": re-verify both at launch.
+      reasoning: false,
+      input: ['text'],
+      contextWindow: 32_000,
+      maxTokens: 8_192,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('thinkingLevelMap')
+    expect(entry).not.toHaveProperty('reasoningControl')
+
+    const home = isolatedHome()
+    expect(
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: home,
+        modelId: 'typesafe/jev-1.13'
+      })
+    ).toBe(true)
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.openrouter.models[0]).toMatchObject({
+      id: 'typesafe/jev-1.13',
+      name: 'Jev 1.13',
+      api: 'openai-completions',
+      reasoning: false,
+      input: ['text'],
+      contextWindow: 32_000,
+      maxTokens: 8_192
+    })
+    expect(config.providers.openrouter.models[0]).not.toHaveProperty('thinkingLevelMap')
+  })
+
   it('leaves Pi’s home untouched for every model outside the curated exception', () => {
     const home = isolatedHome()
 

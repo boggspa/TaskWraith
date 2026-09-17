@@ -296,6 +296,47 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     contextWindow: 262_144,
     maxTokens: 131_072,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Pareto — Unbiased's multimodal composite, released 2026-09-17. Paid
+    // route: $2.50/$7.50 per Mtok with $0.25 cache read, one hosting provider
+    // (no routing fan-out), 30-day retention, prompts not trained on.
+    //
+    // `reasoning: false` for the same reason as Union Alpha above: the
+    // endpoint's supported_parameters are max_tokens, response_format,
+    // temperature, tool_choice, tools and top_p ONLY — no `reasoning` or
+    // `reasoning_effort`, so a ladder here would drive a field the gateway
+    // drops.
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-09-18.
+    modelId: 'unbiased/pareto',
+    label: 'Pareto',
+    reasoning: false,
+    input: ['text', 'image'],
+    contextWindow: 262_144,
+    maxTokens: 131_072,
+    cost: { input: 2.5, output: 7.5, cacheRead: 0.25, cacheWrite: 0 }
+  },
+  {
+    // Jev 1.13 — TypeSafe's first System One structured decision model,
+    // released 2026-09-17. Text in, typed choices out: a decision point, not
+    // a prose generator, so `reasoning: false` is the model's nature, not a
+    // missing parameter map.
+    //
+    // The route is "coming soon" on OpenRouter — listed with no endpoints,
+    // no pricing and no published output ceiling. maxTokens is an 8,192
+    // PLACEHOLDER (already generous for a typed choice) and cost is 0/0 as a
+    // neutral placeholder, NOT a free-route claim: both must be re-verified
+    // against the Models API at launch, and the route 404s until then.
+    //
+    // Sources: OpenRouter model page + FAQ, read 2026-09-18.
+    modelId: 'typesafe/jev-1.13',
+    label: 'Jev 1.13',
+    reasoning: false,
+    input: ['text'],
+    contextWindow: 32_000,
+    maxTokens: 8_192,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }
 ]
 

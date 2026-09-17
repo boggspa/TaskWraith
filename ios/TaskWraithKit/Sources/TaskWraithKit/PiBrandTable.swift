@@ -63,6 +63,13 @@ public enum PiBrandTable {
         // OpenRouter red. Covers the retired Ox Alpha too.
         "openrouter/stealth": Brand(
             label: "Stealth", hueClass: "stealth"),
+        // Unbiased (Pareto) and TypeSafe (Jev): both vendor reds sit in the
+        // palette's most crowded band, so each wears a TaskWraith design
+        // token instead — see Theme.swift / theme.css for the derivation.
+        "openrouter/unbiased": Brand(
+            label: "Unbiased", hueClass: "unbiased"),
+        "openrouter/typesafe": Brand(
+            label: "TypeSafe", hueClass: "typesafe"),
     ]
 
     /// Wire id -> human display label for the curated Pi catalog.
@@ -129,6 +136,8 @@ public enum PiBrandTable {
         "openrouter/sakana/fugu-max": "Fugu Max",
         "openrouter/sakana/fugu-ultra-v2": "Fugu Ultra v2",
         "openrouter/stealth/union-alpha": "Union Alpha",
+        "openrouter/unbiased/pareto": "Pareto",
+        "openrouter/typesafe/jev-1.13": "Jev 1.13",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

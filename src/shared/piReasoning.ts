@@ -204,7 +204,17 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   // `reasoning_effort` (OpenRouter Models API + /endpoints, 2026-09-16). An
   // unlisted id would inherit the 7-stop FULL ladder, so this row is the only
   // thing between the picker and seven stops the gateway silently drops.
-  'openrouter/stealth/union-alpha': UNSUPPORTED
+  'openrouter/stealth/union-alpha': UNSUPPORTED,
+  // Pareto is the same shape as Union Alpha: its supported_parameters are
+  // max_tokens, response_format, temperature, tool_choice, tools and top_p —
+  // neither `reasoning` nor `reasoning_effort` (OpenRouter Models API,
+  // 2026-09-18). Without this row it would inherit the FULL ladder.
+  'openrouter/unbiased/pareto': UNSUPPORTED,
+  // Jev 1.13 is a structured decision model — typed choices, not generated
+  // prose — so a reasoning ladder is meaningless on it even once the route
+  // launches (OpenRouter model page + FAQ, 2026-09-18; parameters are not
+  // yet published while the route is "coming soon").
+  'openrouter/typesafe/jev-1.13': UNSUPPORTED
 }
 
 const FULL: PiReasoningSupport = Object.freeze({

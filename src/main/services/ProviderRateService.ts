@@ -92,6 +92,13 @@ export interface ModelRateEntry {
   /** The provider publishes this model itself at a zero per-token price. */
   freeModel?: true
   /**
+   * The route is listed but its upstream publishes NO price yet (a "coming
+   * soon" launch). Like `subscriptionLane`, zero here is a neutral
+   * placeholder so the id never falls back to another model's rate — it is
+   * not a free-route claim, and the row must be re-verified at launch.
+   */
+  pricingPending?: true
+  /**
    * Marks this row as the provider's fallback for an unmatched model id.
    * `resolveModelRate` prefers it over the positional `models[0]`, so a table
    * may be reordered without silently repricing the provider. Tables with no
@@ -1622,6 +1629,26 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Free stealth preview (verified 2026-09-16); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
+      },
+      {
+        modelId: 'openrouter/unbiased/pareto',
+        inputUsdPerMillion: 2.5,
+        outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.25,
+        sourceUrl: 'https://openrouter.ai/unbiased/pareto',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Paid OpenRouter route, Unbiased-hosted with no routing fan-out (verified 2026-09-18); mirrors the cost block in PiOpenRouterModelRegistration.'
+      },
+      {
+        modelId: 'openrouter/typesafe/jev-1.13',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        pricingPending: true,
+        sourceUrl: 'https://openrouter.ai/typesafe/jev-1.13',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Route listed 2026-09-17 but "coming soon" — OpenRouter publishes no pricing yet. Zero is a neutral placeholder, NOT a free-route claim: re-verify against the Models API at launch before it prices a run.'
       }
     ]
   },

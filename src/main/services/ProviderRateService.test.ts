@@ -424,6 +424,15 @@ describe('BAKED_IN_RATES', () => {
           expect(model.inputUsdPerMillion).toBe(0)
           expect(model.outputUsdPerMillion).toBe(0)
           expect(model.notes, `${model.modelId} must document why it is free`).toMatch(/free/i)
+        } else if (model.pricingPending) {
+          // A "coming soon" route with no published price. Zero is a neutral
+          // placeholder, not a free-route claim — and the row must say where
+          // the real price gets verified at launch.
+          expect(model.inputUsdPerMillion).toBe(0)
+          expect(model.outputUsdPerMillion).toBe(0)
+          expect(model.notes, `${model.modelId} must document the pending price`).toMatch(
+            /re-verify/i
+          )
         } else {
           expect(model.inputUsdPerMillion).toBeGreaterThan(0)
           expect(model.outputUsdPerMillion).toBeGreaterThan(0)

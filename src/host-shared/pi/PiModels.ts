@@ -618,6 +618,41 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 131_072,
     thinking: false,
     images: true
+  },
+  {
+    // Pareto — Unbiased's multimodal composite, released 2026-09-17. A paid
+    // route ($2.50/$7.50 per Mtok, $0.25 cache read) hosted by one provider,
+    // so OpenRouter forwards directly with no routing decision. `thinking`
+    // is FALSE on purpose, same shape as Union Alpha: supported_parameters
+    // are max_tokens, response_format, temperature, tool_choice, tools and
+    // top_p — no `reasoning` or `reasoning_effort` for a ladder to drive.
+    // Verified against the OpenRouter Models API on 2026-09-18.
+    wireId: 'openrouter/unbiased/pareto',
+    upstream: 'openrouter',
+    modelId: 'unbiased/pareto',
+    label: 'Pareto',
+    contextWindow: 262_144,
+    maxOutputTokens: 131_072,
+    thinking: false,
+    images: true
+  },
+  {
+    // Jev 1.13 — TypeSafe's first System One structured decision model,
+    // released 2026-09-17. It returns typed choices rather than free-form
+    // text, so there is no reasoning axis and no image input: text in,
+    // structured decisions out. OpenRouter lists the page with a "coming
+    // soon" banner — no endpoints, pricing or output ceiling yet — so
+    // maxOutputTokens is a PLACEHOLDER (8,192, generous for a typed choice)
+    // to re-verify at launch, and the route will 404 until it goes live.
+    // Sources: OpenRouter model page + FAQ, read 2026-09-18.
+    wireId: 'openrouter/typesafe/jev-1.13',
+    upstream: 'openrouter',
+    modelId: 'typesafe/jev-1.13',
+    label: 'Jev 1.13',
+    contextWindow: 32_000,
+    maxOutputTokens: 8_192,
+    thinking: false,
+    images: false
   }
 ]
 

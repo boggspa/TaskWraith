@@ -1655,6 +1655,12 @@
 .ensemble-above-chip.provider-stealth .ensemble-above-chip-role {
   color: var(--provider-stealth-color);
 }
+.ensemble-above-chip.provider-unbiased .ensemble-above-chip-role {
+  color: var(--provider-unbiased-color);
+}
+.ensemble-above-chip.provider-typesafe .ensemble-above-chip-role {
+  color: var(--provider-typesafe-color);
+}
 .ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
   color: var(--provider-qwen-color);
 }
@@ -1933,6 +1939,12 @@
 }
 .ensemble-above-chip-tooltip.provider-stealth .ensemble-above-chip-tooltip-title {
   color: var(--provider-stealth-color);
+}
+.ensemble-above-chip-tooltip.provider-unbiased .ensemble-above-chip-tooltip-title {
+  color: var(--provider-unbiased-color);
+}
+.ensemble-above-chip-tooltip.provider-typesafe .ensemble-above-chip-tooltip-title {
+  color: var(--provider-typesafe-color);
 }
 .ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
   color: var(--provider-qwen-color);

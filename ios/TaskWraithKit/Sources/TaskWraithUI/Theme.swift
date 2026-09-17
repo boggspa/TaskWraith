@@ -229,6 +229,13 @@ public enum TWTheme {
         // vendor colour: the most saturated gold this band holds, sat between
         // claude and cursor. Mirrors theme.css.
         case "stealth": return 0x9E6C00
+        // Unbiased's vermilion sits in the crowded red band, so Pareto wears
+        // the one vivid slot left at this band's luminance: magenta, dE 11.0
+        // from alibaba. Mirrors theme.css.
+        case "unbiased": return 0xC700E4
+        // TypeSafe's red is spoken for too; emerald reads typed/structured/
+        // safe and sits dE 9.9 from xiaomi, 10.4 from cohere. Mirrors theme.css.
+        case "typesafe": return 0x298367
         default: return chroma1Hex
         }
     }
@@ -268,7 +275,8 @@ public enum TWTheme {
         "google", "pi", "muse", "ensemble", "grok", "alibaba", "qwen", "deep-reinforce", "ornith",
         "ibm", "liquid", "meta", "cohere", "essential", "nvidia", "openbmb", "poolside",
         "deepseek", "zai", "minimax", "mistral", "cerebras", "groq", "openrouter", "xiaomi",
-        "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana", "stealth"
+        "thinkingmachines", "devin", "tencent", "inception", "nexagi", "sakana", "stealth",
+        "unbiased", "typesafe"
     ]
 
     /// The whole table as `provider id -> 0xRRGGBB`, for shipping to the Mac.

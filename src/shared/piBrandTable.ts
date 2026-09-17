@@ -61,7 +61,13 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // every OTHER openrouter route does, and a stealth preview is exactly the
   // row a user needs to pick out of that list. Covers the retired Ox Alpha
   // too, which was the same kind of route.
-  'openrouter/stealth': { label: 'Stealth', hueClass: 'stealth' }
+  'openrouter/stealth': { label: 'Stealth', hueClass: 'stealth' },
+  // Unbiased (Pareto) and TypeSafe (Jev) both ship marks whose brand reds sit
+  // inside the palette's most crowded band, so each wears a TaskWraith design
+  // token at the palette's iso-luminant band instead — see theme.css for the
+  // derivation and dE bookkeeping.
+  'openrouter/unbiased': { label: 'Unbiased', hueClass: 'unbiased' },
+  'openrouter/typesafe': { label: 'TypeSafe', hueClass: 'typesafe' }
 }
 
 /**
@@ -131,7 +137,9 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
   'openrouter/nex-agi/nex-n2.5-pro:free': 'Nex-N2.5-Pro',
   'openrouter/sakana/fugu-max': 'Fugu Max',
   'openrouter/sakana/fugu-ultra-v2': 'Fugu Ultra v2',
-  'openrouter/stealth/union-alpha': 'Union Alpha'
+  'openrouter/stealth/union-alpha': 'Union Alpha',
+  'openrouter/unbiased/pareto': 'Pareto',
+  'openrouter/typesafe/jev-1.13': 'Jev 1.13'
 }
 
 /**

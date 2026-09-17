@@ -60,7 +60,9 @@ describe('piModelPolicyVerdict', () => {
       'nex-agi/nex-n2.5-pro:free',
       'sakana/fugu-max',
       'sakana/fugu-ultra-v2',
-      'stealth/union-alpha'
+      'stealth/union-alpha',
+      'unbiased/pareto',
+      'typesafe/jev-1.13'
     ])
   })
 
@@ -182,7 +184,9 @@ describe('catalog/policy lockstep', () => {
       'openrouter/nex-agi/nex-n2.5-pro:free',
       'openrouter/sakana/fugu-max',
       'openrouter/sakana/fugu-ultra-v2',
-      'openrouter/stealth/union-alpha'
+      'openrouter/stealth/union-alpha',
+      'openrouter/unbiased/pareto',
+      'openrouter/typesafe/jev-1.13'
     ])
   })
 

@@ -38,6 +38,8 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('pi', 'openrouter/cohere/north-mini-code:free')).toBe(256_000)
     expect(resolveContextWindow('pi', 'openrouter/minimax/minimax-m3:free')).toBe(1_048_576)
     expect(resolveContextWindow('pi', 'openrouter/stealth/union-alpha')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/unbiased/pareto')).toBe(262_144)
+    expect(resolveContextWindow('pi', 'openrouter/typesafe/jev-1.13')).toBe(32_000)
     expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling:free')).toBe(1_048_576)
     expect(resolveContextWindow('pi', 'openrouter/thinkingmachines/inkling-small:free')).toBe(
       1_048_576

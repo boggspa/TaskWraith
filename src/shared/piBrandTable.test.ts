@@ -68,6 +68,13 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.hueClass).toBe('stealth')
     expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.label).toBe('Stealth')
     expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.hueClass).toBe('stealth')
+    // Unbiased and TypeSafe (2026-09-17) each get their own override rather
+    // than the generic OpenRouter red — both vendor reds live in the
+    // palette's most crowded band, so they wear design tokens instead.
+    expect(resolvePiUpstreamBrand('openrouter/unbiased/pareto')?.label).toBe('Unbiased')
+    expect(resolvePiUpstreamBrand('openrouter/unbiased/pareto')?.hueClass).toBe('unbiased')
+    expect(resolvePiUpstreamBrand('openrouter/typesafe/jev-1.13')?.label).toBe('TypeSafe')
+    expect(resolvePiUpstreamBrand('openrouter/typesafe/jev-1.13')?.hueClass).toBe('typesafe')
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.label).toBe('Z.ai')
     expect(resolvePiUpstreamBrand('openrouter/z-ai/glm-5.2')?.hueClass).toBe('zai')
     expect(resolvePiUpstreamBrand('openrouter/poolside/laguna-s-2.1')?.label).toBe('Poolside')
@@ -119,6 +126,8 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('V4 Flash')
     expect(resolvePiModelLabel('openrouter/stealth/ox-alpha')).toBe('Ox Alpha')
     expect(resolvePiModelLabel('openrouter/stealth/union-alpha')).toBe('Union Alpha')
+    expect(resolvePiModelLabel('openrouter/unbiased/pareto')).toBe('Pareto')
+    expect(resolvePiModelLabel('openrouter/typesafe/jev-1.13')).toBe('Jev 1.13')
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {

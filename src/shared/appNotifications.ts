@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-16'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-18'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Union Alpha, a free seven-day stealth preview on OpenRouter via Pi, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, Union Alpha, a free seven-day stealth preview on OpenRouter via Pi, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -403,11 +403,30 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         label: 'Pi',
         models: [
           {
-            // Leads the group: the only new story on this lineup. `stealth` is
-            // a real accent override, not the generic OpenRouter red — see
-            // PI_UPSTREAM_BRANDS. The blurb says "no effort axis" on purpose:
-            // every other OpenRouter row on this card advertises a ladder, and
-            // this endpoint has none.
+            // Leads the group: the newest story on this lineup (released
+            // 2026-09-17). `unbiased` is a real accent override — the brand's
+            // vermilion sits in the crowded red band, so it wears the magenta
+            // design token from PI_UPSTREAM_BRANDS. The blurb says "no effort
+            // axis" on purpose: the endpoint advertises no reasoning
+            // parameter.
+            name: 'Pareto (OpenRouter)',
+            blurb:
+              "Unbiased's multimodal frontier composite — 262K with vision, no effort axis, $2.50/$7.50 per Mtok.",
+            accentProvider: 'unbiased'
+          },
+          {
+            // "Coming soon" on OpenRouter: announced 2026-09-17 with no live
+            // endpoint yet, so the blurb says so rather than promising a run.
+            name: 'Jev 1.13 (OpenRouter)',
+            blurb:
+              "TypeSafe's first System One structured decision model — 32K, typed choices not prose. Coming soon.",
+            accentProvider: 'typesafe'
+          },
+          {
+            // `stealth` is a real accent override, not the generic OpenRouter
+            // red — see PI_UPSTREAM_BRANDS. The blurb says "no effort axis" on
+            // purpose: every other OpenRouter row on this card advertises a
+            // ladder, and this endpoint has none.
             name: 'Union Alpha (OpenRouter Free)',
             blurb:
               'A free stealth preview from an anonymous lab - 262K context, vision and tools, no effort axis. 7 days only.',

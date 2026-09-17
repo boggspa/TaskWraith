@@ -334,6 +334,26 @@
    * and 8.88 — roughly six times the palette's tightest existing pair
    * (kimi/meta, dE 1.5). 4.57:1 on white, 4.60:1 on black. */
   --provider-stealth-color: #9E6C00;
+  /* Unbiased (Pareto) ships a vermilion mark that sits dead inside the
+   * palette's most crowded band (sakana #EA0C2D, openrouter #E02948, openbmb
+   * #E22B17), so like xiaomi and thinkingmachines this is a forced departure
+   * to a TaskWraith design token, not a brand value. Magenta is the one vivid
+   * slot the band still holds: a full-chroma sweep at this palette's
+   * iso-luminant band (relative luminance ~0.179) leaves no other vivid hue
+   * with dE >= 8 from every neighbour. #C700E4 clears its nearest, alibaba
+   * (#8C52EF), by dE 11.0 and minimax (#C044A4) by dE 11.2 — seven times the
+   * palette's tightest pair (kimi/meta, dE 1.5). 4.62:1 on white, 4.55:1 on
+   * black, luminance 0.1774. */
+  --provider-unbiased-color: #C700E4;
+  /* TypeSafe (Jev) is the same story: the brand's red is spoken for, so this
+   * is a design token. Emerald reads "typed / structured / safe", which is
+   * exactly what a System One decision model is, and it fills the mid-chroma
+   * gap between xiaomi's pure green and cohere's sage without touching
+   * either: dE 9.9 from xiaomi (#008844), dE 10.2 from groq (#088482), dE
+   * 10.4 from cohere (#5E7C6F). Held at the same luminance band, so it is
+   * 4.63:1 on white and 4.54:1 on black (0.1768), and dE 45 from the Unbiased
+   * magenta it shares a picker section with. */
+  --provider-typesafe-color: #298367;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

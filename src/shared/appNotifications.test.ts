@@ -290,8 +290,10 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
-      // Union Alpha leads: it is the newest story on the card, and the only
-      // one on a clock — OpenRouter lists the stealth preview for seven days.
+      // Pareto and Jev lead: they are the newest story on the card (released
+      // 2026-09-17), and Jev is announced ahead of its OpenRouter launch.
+      'Pareto (OpenRouter)',
+      'Jev 1.13 (OpenRouter)',
       'Union Alpha (OpenRouter Free)',
       'Fugu Max (OpenRouter)',
       'Fugu Ultra v2 (OpenRouter)',
@@ -314,6 +316,12 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      // Both 2026-09-17 routes wear their own brand override: the vendors'
+      // reds sit in the palette's most crowded band, so each carries a
+      // TaskWraith design token instead (magenta for Unbiased, emerald for
+      // TypeSafe) — see PI_UPSTREAM_BRANDS.
+      'unbiased',
+      'typesafe',
       // `stealth` is a brand override for an anonymous namespace rather than a
       // vendor. Without it the row falls back to the generic OpenRouter red,
       // which is the one accent a stealth preview must NOT wear — OpenRouter

@@ -527,7 +527,9 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' },
   { id: 'openrouter/sakana/fugu-max', label: 'Fugu Max' },
   { id: 'openrouter/sakana/fugu-ultra-v2', label: 'Fugu Ultra v2' },
-  { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' }
+  { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' },
+  { id: 'openrouter/unbiased/pareto', label: 'Pareto' },
+  { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 

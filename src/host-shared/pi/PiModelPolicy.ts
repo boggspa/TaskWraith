@@ -138,7 +138,14 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // Released 2026-09-16. A stealth preview: OpenRouter forwards to a single
   // anonymous provider and is not its developer or owner, so there is no
   // first-party seat this route could duplicate.
-  'stealth/union-alpha'
+  'stealth/union-alpha',
+  // Released 2026-09-17. Unbiased hosts Pareto itself — OpenRouter forwards
+  // to the one provider — and TypeSafe's Jev 1.13 is a structured decision
+  // model with no first-party seat in the app either. Jev is "coming soon"
+  // on OpenRouter: admitted now so the row is ready at launch, knowing the
+  // route 404s until then.
+  'unbiased/pareto',
+  'typesafe/jev-1.13'
 ] as const
 
 /**

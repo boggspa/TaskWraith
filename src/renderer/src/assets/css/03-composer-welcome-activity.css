@@ -3187,6 +3187,12 @@
 .welcome-usage-model-dot.provider-stealth,
 .welcome-usage-model-meter-fill.provider-stealth,
 .welcome-usage-bar-segment.provider-stealth { color: var(--provider-stealth-color); }
+.welcome-usage-model-dot.provider-unbiased,
+.welcome-usage-model-meter-fill.provider-unbiased,
+.welcome-usage-bar-segment.provider-unbiased { color: var(--provider-unbiased-color); }
+.welcome-usage-model-dot.provider-typesafe,
+.welcome-usage-model-meter-fill.provider-typesafe,
+.welcome-usage-bar-segment.provider-typesafe { color: var(--provider-typesafe-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -15063,6 +15069,12 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-stealth {
   color: var(--provider-stealth-color, #9e6c00);
+}
+.notification-newadditions-model.provider-unbiased {
+  color: var(--provider-unbiased-color, #c700e4);
+}
+.notification-newadditions-model.provider-typesafe {
+  color: var(--provider-typesafe-color, #298367);
 }
 
 .notification-newadditions-model.provider-groq {

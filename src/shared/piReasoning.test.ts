@@ -68,7 +68,13 @@ describe('resolvePiReasoningSupport', () => {
       // `reasoning_effort`. Dropping its row does not fall back to "no
       // control" — an unlisted id inherits the 7-stop FULL ladder, so the
       // picker would offer seven stops the gateway silently discards.
-      'openrouter/stealth/union-alpha'
+      'openrouter/stealth/union-alpha',
+      // Pareto has the same parameter surface as Union Alpha (no `reasoning`
+      // or `reasoning_effort`), and Jev is a structured decision model with
+      // no reasoning axis at all — both must read UNSUPPORTED, never inherit
+      // the FULL ladder.
+      'openrouter/unbiased/pareto',
+      'openrouter/typesafe/jev-1.13'
     ]) {
       expect(resolvePiReasoningSupport(wireId).kind, wireId).toBe('unsupported')
       expect(resolvePiReasoningSupport(wireId).efforts, wireId).toEqual([])
