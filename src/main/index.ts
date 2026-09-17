@@ -302,6 +302,7 @@ import {
   WorkKeepAwakeAssertion,
   startWorkKeepAwakeMonitor
 } from './WorkKeepAwakeAssertion'
+import { createResumeHostHealthCheck } from './ResumeHostHealthCheck'
 import type {
   McpToolContentBlock,
   McpToolExecutionResult,
@@ -54579,6 +54580,26 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       appVersion: app.getVersion()
     })
+    /**
+     * Wake-up Host re-check. Registered here rather than beside the power
+     * assertions above because it needs the broker, and reads better next to
+     * the thing it probes. See `ResumeHostHealthCheck` for why it probes and
+     * nudges instead of restarting anything: the lifecycle controller's
+     * contract reserves start() for app startup and explicit user action.
+     */
+    const resumeHostHealthCheck = createResumeHostHealthCheck({
+      probeHost: async () => {
+        const projected = await desktopHostBroker.snapshot()
+        return projected.ok ? { ok: true } : { ok: false, error: projected.error }
+      },
+      dropHostConnection: () => desktopHostBroker.close(),
+      nudgeCatalogueRecovery: () => threadCatalogueRecoveryRef?.enqueueAll(),
+      log: (line) => console.log(line)
+    })
+    powerMonitor.on('resume', () => void resumeHostHealthCheck('system resumed'))
+    // Unlock is the moment the user is looking again, and a screen lock alone
+    // can outlive a socket without any suspend event at all.
+    powerMonitor.on('unlock-screen', () => void resumeHostHealthCheck('screen unlocked'))
     const catalogueInventoryListeners = new Set<() => void>()
     const startupThreadCatalogue = installStartupThreadCatalogue({
       quiesceRecovery: async () => {
