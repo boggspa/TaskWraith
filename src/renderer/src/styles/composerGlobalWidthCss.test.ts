@@ -53,10 +53,29 @@ describe('General Chat composer width CSS', () => {
     const tuckedWidth = 'min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px))'
     const staleFallback = 'calc(var(--composer-content-max-width, 980px) - 80px)'
 
-    expect(literalMatchCount(codexCss, tuckedWidth)).toBe(4)
+    // Codex dropped to 2: the merged ensemble/roster/queued frame no longer
+    // carries the hardcoded 80px tucked width — it derives from the
+    // workspace/branch telemetry strip's `--codex-cc-strip-inset` token so
+    // both tucked tabs always share one width (the wider strip width). The
+    // two remaining literals are the solo CX1 `.composer-above-bar` rule's
+    // width + max-width. Grok still owns 4 (solo row + merged stack, each
+    // width + max-width).
+    expect(literalMatchCount(codexCss, tuckedWidth)).toBe(2)
     expect(literalMatchCount(grokCss, tuckedWidth)).toBe(4)
     expect(codexCss).not.toContain(staleFallback)
     expect(grokCss).not.toContain(staleFallback)
+    // The merged frame's width + max-width both derive from the strip inset
+    // token (14px fallback), so the frame and the telemetry strip can never
+    // drift apart again. The defaults live in shard 08 at the transcript
+    // level (the frame renders outside `.composer-surface`), with a
+    // side-chat-pane override tracking the strip's halved inset.
+    expect(
+      literalMatchCount(codexCss, 'calc(100% - (2 * var(--codex-cc-strip-inset, 14px)))')
+    ).toBe(2)
+    expect(codexCss).toContain(
+      '[data-composer-style="codex"] .app-transcript {\n  --codex-cc-strip-inset: 14px;\n}'
+    )
+    expect(codexCss).toContain('.side-chat-pane.app-transcript')
   })
 
   it('keeps the legacy narrower General Chat reading column scoped to transcript content', () => {

@@ -125,12 +125,29 @@ describe('Codex shell — Codex Desktop composer parity CSS', () => {
     expect(section).toContain('--codex-cc-strip-radius: 12px;')
     expect(section).toContain('--codex-cc-strip-overlap: 14px;')
     expect(section).toContain('margin: 0 var(--codex-cc-strip-inset);')
+    // Hairline outline shared with the merged ensemble/roster/queued frame
+    // above the composer: same 1px colour-mix literal as that frame's
+    // border. Dark uses the frame's white-12% hairline; the light-family
+    // mirror uses the frame's light black-12% hairline (shard 09's light
+    // unified-container rule). The tucked edge drops per placement below.
+    expect(section).toContain(
+      '--codex-cc-strip-border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);'
+    )
+    expect(section).toContain(
+      '--codex-cc-strip-border: 1px solid color-mix(in srgb, #000000 12%, transparent);'
+    )
     expect(section).toContain(
       '.app-transcript.welcome-mode\n  .composer-surface\n  .composer-telemetry-row {\n  order: -1;\n  border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;'
+    )
+    expect(section).toContain(
+      'border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;\n  border-bottom: 0;'
     )
     expect(section).toContain('margin-bottom: calc(-1 * var(--codex-cc-strip-overlap));')
     expect(section).toContain(
       '.app-transcript:not(.welcome-mode)\n  .composer-surface\n  .composer-telemetry-row {\n  border-radius: 0 0 var(--codex-cc-strip-radius) var(--codex-cc-strip-radius);'
+    )
+    expect(section).toContain(
+      'border-radius: 0 0 var(--codex-cc-strip-radius) var(--codex-cc-strip-radius);\n  border-top: 0;'
     )
     expect(section).toContain('margin-top: calc(-1 * var(--codex-cc-strip-overlap));')
     // Welcome tab order: workspace (1) · branch zone (2) · tools cluster (3), left-aligned.

@@ -4421,6 +4421,7 @@ oser-orchestration-cell-label {
 /* Palette + geometry (dark). The surface itself becomes invisible. */
 [data-composer-style="codex"] .app-transcript .composer-surface {
   --codex-cc-strip-bg: #212121;
+  --codex-cc-strip-border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
   --codex-cc-strip-text: rgba(255, 255, 255, 0.82);
   --codex-cc-strip-muted: rgba(255, 255, 255, 0.56);
   --codex-cc-strip-hover: rgba(255, 255, 255, 0.07);
@@ -4453,6 +4454,7 @@ oser-orchestration-cell-label {
   .app-transcript
   .composer-surface {
   --codex-cc-strip-bg: #f5f5f5;
+  --codex-cc-strip-border: 1px solid color-mix(in srgb, #000000 12%, transparent);
   --codex-cc-strip-text: rgba(29, 29, 31, 0.82);
   --codex-cc-strip-muted: rgba(29, 29, 31, 0.56);
   --codex-cc-strip-hover: rgba(29, 29, 31, 0.06);
@@ -4543,7 +4545,12 @@ oser-orchestration-cell-label {
   box-sizing: border-box;
   margin: 0 var(--codex-cc-strip-inset);
   min-height: 0;
-  border: 0;
+  /* Hairline outline shared with the merged ensemble/roster/queued frame
+   * above (same 1px colour-mix literal as that frame's border, dark and
+   * light families); the tucked edge is dropped per placement below so
+   * the tab slides under the box with an open seam, exactly like the
+   * frame's border-less tucked bottom. */
+  border: var(--codex-cc-strip-border);
   background: var(--codex-cc-strip-bg);
   color: var(--codex-cc-strip-text);
   gap: 16px;
@@ -4558,6 +4565,7 @@ oser-orchestration-cell-label {
   .composer-telemetry-row {
   order: -1;
   border-radius: var(--codex-cc-strip-radius) var(--codex-cc-strip-radius) 0 0;
+  border-bottom: 0;
   padding: 9px 16px calc(9px + var(--codex-cc-strip-overlap));
   margin-bottom: calc(-1 * var(--codex-cc-strip-overlap));
   justify-content: flex-start;
@@ -4602,6 +4610,7 @@ oser-orchestration-cell-label {
   .composer-surface
   .composer-telemetry-row {
   border-radius: 0 0 var(--codex-cc-strip-radius) var(--codex-cc-strip-radius);
+  border-top: 0;
   padding: calc(9px + var(--codex-cc-strip-overlap)) 16px 9px;
   margin-top: calc(-1 * var(--codex-cc-strip-overlap));
 }

@@ -11656,8 +11656,24 @@
    * overlap the composer's top edge by 10px, z-index 1 so the
    * composer-surface (z-index 2) paints over the overlap and the
    * stack reads as a real "tab tucked under" the composer. */
-  width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
-  max-width: min(calc(100% - 80px), calc(var(--composer-content-max-width, 850px) - 80px));
+  /* Width: the old hardcoded 80px inset is now derived from
+   * `--codex-cc-strip-inset` — twice the strip's per-side margin from
+   * shard 10's "Codex Desktop composer parity" section — so this frame
+   * and the workspace/branch telemetry strip inside the composer
+   * surface below ALWAYS share one width: the wider strip width. The
+   * token defaults at the `.app-transcript` level (this rule's element
+   * renders ABOVE `.composer-surface`, where the token is canonically
+   * defined); the 14px fallback keeps the chatgpt twin and any other
+   * scope on the previous inset. Side-chat panes halve it (rule below)
+   * to track the strip's halved inset there. */
+  width: min(
+    calc(100% - (2 * var(--codex-cc-strip-inset, 14px))),
+    calc(var(--composer-content-max-width, 850px) - (2 * var(--codex-cc-strip-inset, 14px)))
+  );
+  max-width: min(
+    calc(100% - (2 * var(--codex-cc-strip-inset, 14px))),
+    calc(var(--composer-content-max-width, 850px) - (2 * var(--codex-cc-strip-inset, 14px)))
+  );
   align-self: center;
   gap: 0;
   border: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
@@ -11672,6 +11688,23 @@
   z-index: 1;
   margin-bottom: -10px;
   padding-bottom: 14px;
+}
+/* Shared tucked-tab width — the merged frame above borrows the telemetry
+ * strip's inset token, so the defaults must live at a scope the frame can
+ * see: the frame renders in the composer area ABOVE `.composer-surface`,
+ * while the token's canonical home (shard 10, Codex Desktop composer
+ * parity) defines it on the surface for the strip. This transcript-level
+ * default gives the frame the same value; the surface-level rule stays
+ * authoritative for the strip subtree (higher specificity). The
+ * side-chat override mirrors shard 10's surface-level `6px` inset so the
+ * frame keeps tracking the strip in linked-chat panes too. The chatgpt
+ * twin is named here so its stacks follow the same pane geometry. */
+[data-composer-style="codex"] .app-transcript {
+  --codex-cc-strip-inset: 14px;
+}
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+  .side-chat-pane.app-transcript {
+  --codex-cc-strip-inset: 6px;
 }
 /* Neutral above-rows: drop the per-provider purple ::before gradient so the rows
  * show the solid #212121 stack background instead of a purple wash. */
