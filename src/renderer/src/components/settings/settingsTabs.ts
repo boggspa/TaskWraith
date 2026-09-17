@@ -92,7 +92,28 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'app',
     description:
       'Themes, composer shells, fonts, density, motion, transparency, and visual effects.',
-    aliases: ['theme', 'font', 'motion', 'transparency', 'density', 'accessibility', 'composer'],
+    aliases: [
+      'theme',
+      'font',
+      'motion',
+      'transparency',
+      'density',
+      'accessibility',
+      'composer',
+      'transcript',
+      'transcript view',
+      // Bare view, NOT "default transcript view". The full control label would
+      // be the obvious alias and is the wrong one: any alias beginning with
+      // "default" prefix-matches the query "default" at FULL alias weight (80),
+      // which beats the 15-point description hit that used to win it for
+      // General, silently sending /settings default — a user reaching for
+      // dashboard defaults and approval timeouts — to Appearance. The bare term
+      // also wins "view" outright at 100, rather than tying local-servers at 60
+      // on an accident of its own "preview" alias.
+      'view',
+      'transcript text size',
+      'transcript width'
+    ],
     scope: 'global'
   },
   {
