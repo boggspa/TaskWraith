@@ -18,6 +18,8 @@ export type SettingsPanelUpdate = {
   fanoutLaneLayout?: AppSettings['fanoutLaneLayout']
   /** Settings → Appearance default for the per-chat transcript view. */
   defaultTranscriptView?: AppSettings['defaultTranscriptView']
+  /** Settings → Appearance size for transcript message text. */
+  transcriptTextSize?: AppSettings['transcriptTextSize']
   composerStyle?: AppSettings['composerStyle']
   transcriptFontFamily?: AppSettings['transcriptFontFamily']
   composerFontFamily?: AppSettings['composerFontFamily']

@@ -1171,6 +1171,24 @@ describe('MainSanitizers settings patches', () => {
     expect(mixed).not.toHaveProperty('notASettingsKey')
   })
 
+  it('persists transcriptTextSize (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop. For a text SCALE the failure reads as
+    // "the app forgets how big I asked for" — it applies live, survives until
+    // the next launch, and nothing logs.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ transcriptTextSize: 'large' }).transcriptTextSize).toBe('large')
+    expect(sanitizeSettingsPatch({ transcriptTextSize: 'small' }).transcriptTextSize).toBe('small')
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      transcriptTextSize: 'default',
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.transcriptTextSize).toBe('default')
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
+
   it('persists toolIconAccent and userBubbleColor (regression: both were missing from the allowlist)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

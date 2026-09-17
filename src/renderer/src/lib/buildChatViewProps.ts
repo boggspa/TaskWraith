@@ -90,6 +90,7 @@ export interface BuildChatViewPropsInput {
   liveActivityViewport?: boolean
   fanoutLaneLayout?: TranscriptPanelProps['fanoutLaneLayout']
   defaultTranscriptView?: TranscriptPanelProps['defaultTranscriptView']
+  transcriptTextSize?: TranscriptPanelProps['transcriptTextSize']
   onInspectRun?: TranscriptPanelProps['onInspectRun']
   currency?: TranscriptPanelProps['currency']
   currencyOverestimatePercent?: number
@@ -368,6 +369,10 @@ export function buildChatViewProps(input: BuildChatViewPropsInput): TranscriptPa
     liveActivityViewport: input.liveActivityViewport,
     fanoutLaneLayout: input.fanoutLaneLayout,
     defaultTranscriptView: input.defaultTranscriptView,
+    // Declaring it on the input type above WITHOUT this line compiles: the
+    // target prop is optional on TranscriptPanelProps, so every multiview pane
+    // would silently fall back to Default while the main pane resized.
+    transcriptTextSize: input.transcriptTextSize,
     onCopyMessage: input.onCopyMessage,
     onAddMessageToPrompt: input.onAddMessageToPrompt,
     onDeleteMessage: input.onDeleteMessage ?? NOOP,

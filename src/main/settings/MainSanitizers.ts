@@ -216,6 +216,11 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   // diffStatColors above. The renderer's `useAppearance.update()` sends this
   // key in every appearance patch, so the allowlist is the only gate.
   'defaultTranscriptView',
+  // Same gate, same failure shape: unlisted, the chosen text size applies live
+  // and is dropped on the very next appearance patch. `useAppearance.update()`
+  // sends this key every time, so this allowlist is the only thing standing
+  // between the choice and settings.json.
+  'transcriptTextSize',
   'composerStyle',
   'transcriptFontFamily',
   'composerFontFamily',

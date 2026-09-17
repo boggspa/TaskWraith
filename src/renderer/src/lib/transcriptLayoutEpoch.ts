@@ -28,12 +28,27 @@
  * the reader into empty overscan. Under-estimating is absorbed by the
  * anchor-correction pass; over-estimating is a visible defect.
  *
- * Today nothing produces a non-default epoch: the transcript has no text-size
- * setting, and the measured column bucket lives inside
- * `useTranscriptVirtualization`, below the projection that would need it. This
- * module is the seam those two settings plug into, and
- * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` is exactly identity — every estimate and
- * every cache key is byte-identical to the pre-seam build.
+ * The TEXT axis is LIVE. Settings -> Appearance -> Transcript text size feeds
+ * it: `transcriptTextScale` resolves small/default/large to 0.85 / 1 / 1.25 and
+ * `TranscriptPanel` mints the epoch from that one local, on the same render
+ * that stamps `--transcript-font-scale` on `.transcript-inner`. At Large a
+ * `fanoutResult` estimates 400 and the cache-key suffix is `|w0f1.25`.
+ *
+ * If you are about to change how `fontScale` reaches this module, that single
+ * local is the invariant: the number the DOM renders at and the number the
+ * estimator is told MUST be the same value, not two that happen to agree.
+ * Scaling or offsetting it at the mint desyncs them silently — the estimator
+ * then sizes history for a text size the transcript is not rendering.
+ * `transcriptTextSizeSetting.test.ts` pins that expression EXACTLY (not by
+ * containment, which every arithmetic form is a prefix of).
+ *
+ * The WIDTH axis is still dormant: the measured column bucket lives inside
+ * `useTranscriptVirtualization`, below the projection that would need it, so
+ * `widthBucket` is 0 until Transcript Width supplies it.
+ *
+ * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` remains exactly identity, so the Default
+ * text size is byte-identical to the pre-seam build — but that is now a
+ * property of the DEFAULT epoch only, not of the app.
  */
 
 /**

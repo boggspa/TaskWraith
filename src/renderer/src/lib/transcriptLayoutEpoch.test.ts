@@ -47,9 +47,11 @@ function assistantAt(id: string, length: number): ChatMessage {
 
 describe('transcriptLayoutScales', () => {
   it('is exactly identity for the default epoch', () => {
-    // Identity is what makes the seam behaviour-preserving: `x * 1` is exact in
-    // IEEE-754 and Math.round(n) === n for the integer bases, so every estimate
-    // stays byte-identical while nothing produces a non-default epoch.
+    // Identity is what makes the DEFAULT text size behaviour-preserving: `x * 1`
+    // is exact in IEEE-754 and Math.round(n) === n for the integer bases, so
+    // every estimate stays byte-identical whenever the epoch IS the default.
+    // (It no longer always is — Transcript text size drives the fontScale axis
+    // for real; see transcriptTextSizeSetting.test.ts.)
     expect(transcriptLayoutScales(DEFAULT_TRANSCRIPT_LAYOUT_EPOCH)).toEqual({
       content: 1,
       chrome: 1

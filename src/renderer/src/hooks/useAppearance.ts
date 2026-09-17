@@ -8,6 +8,7 @@ import type {
   ThemeAccentStyle,
   ThemeAppearance,
   ThemeCornerStyle,
+  TranscriptTextSize,
   TranscriptView,
   UserBubbleColor,
   VisualEffectStyle
@@ -40,6 +41,7 @@ import {
 import { getLegacyFunFxSettingsFromLocalStorage, isFunFxMode } from '../lib/funFxSettings'
 import { DEFAULT_FANOUT_LANE_LAYOUT, resolveFanoutLaneLayout } from '../lib/fanoutLanePairing'
 import { DEFAULT_TRANSCRIPT_VIEW, resolveTranscriptView } from '../lib/transcriptViewOverride'
+import { DEFAULT_TRANSCRIPT_TEXT_SIZE, resolveTranscriptTextSize } from '../lib/transcriptTextSize'
 import { MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH } from '../lib/panelWidths'
 import { startupSettingsRequest } from '../lib/startupSettingsCache'
 
@@ -82,6 +84,16 @@ export interface AppearanceState {
    * interface and `getInitialState` compile-caught rather than silent.
    */
   defaultTranscriptView: TranscriptView
+  /**
+   * Appearance size for transcript message text.
+   *
+   * REQUIRED here for the same reason `defaultTranscriptView` is, and carried as
+   * the NAME rather than the scale on purpose: the number is resolved once, in
+   * `TranscriptPanel`, by the very `const` that mints the layout epoch. Nothing
+   * upstream of that component ever holds the scale, so nothing upstream can
+   * hand two consumers two different scales.
+   */
+  transcriptTextSize: TranscriptTextSize
   composerStyle: ComposerStyle
   transcriptFontFamily: string
   composerFontFamily: string
@@ -211,6 +223,7 @@ function getInitialState(): AppearanceState {
     promptSurfaceStyle: 'liquid_glass',
     fanoutLaneLayout: DEFAULT_FANOUT_LANE_LAYOUT,
     defaultTranscriptView: DEFAULT_TRANSCRIPT_VIEW,
+    transcriptTextSize: DEFAULT_TRANSCRIPT_TEXT_SIZE,
     composerStyle: 'default',
     transcriptFontFamily: FONT_STACKS.taskwraith,
     composerFontFamily: COMPOSER_FONT_MATCH_TRANSCRIPT,
@@ -313,6 +326,10 @@ export function useAppearance() {
           // default", never a pin. This is the ONE place absence is resolved —
           // every consumer downstream reads a concrete view.
           defaultTranscriptView: resolveTranscriptView(settings.defaultTranscriptView),
+          // Absence resolves to `default` — scale exactly 1, i.e. the size every
+          // estimate constant in the virtualiser was measured at. Resolved HERE
+          // and nowhere else, so no consumer re-decides what "unset" means.
+          transcriptTextSize: resolveTranscriptTextSize(settings.transcriptTextSize),
           composerStyle: settings.composerStyle || 'default',
           transcriptFontFamily: normalizeFontFamily(
             settings.transcriptFontFamily,
@@ -422,6 +439,16 @@ export function useAppearance() {
     // `useTranscriptView`, so an attribute would be a second source of truth
     // that no stylesheet reads — and one a future seam guard could demand
     // everywhere. The absence is a decision, not an oversight.
+    // `transcriptTextSize` deliberately stamps NOTHING here either, and unlike
+    // `defaultTranscriptView` that IS a CSS setting — which makes the omission
+    // worth stating rather than assuming. The scale reaches CSS as an inline
+    // `--transcript-font-scale` on `.transcript-inner`, written by
+    // `TranscriptPanel` from the same `const` it mints the virtualiser's layout
+    // epoch from. Stamping it on `:root` from here instead would put the number
+    // the DOM renders at in a different module, a different function and a
+    // different call stack from the number the height estimator is calibrated
+    // for, coupled by nothing — and this function runs in the MAIN WINDOW only,
+    // so a popped-out chat would take the prop and never the attribute.
     root.setAttribute('data-composer-style', next.composerStyle)
     // NOTE: `data-interface-style` used to mirror the composer shell onto the
     // whole app (transcript/sidebar/message-bubbles). That app-wide repaint was
@@ -615,6 +642,7 @@ export function useAppearance() {
             promptSurfaceStyle: next.promptSurfaceStyle,
             fanoutLaneLayout: next.fanoutLaneLayout,
             defaultTranscriptView: next.defaultTranscriptView,
+            transcriptTextSize: next.transcriptTextSize,
             composerStyle: next.composerStyle,
             transcriptFontFamily: next.transcriptFontFamily,
             composerFontFamily: next.composerFontFamily,

@@ -7837,6 +7837,10 @@ function App(): React.JSX.Element {
       settingsPatch.defaultTranscriptView = next.defaultTranscriptView
       appearance.update({ defaultTranscriptView: next.defaultTranscriptView })
     }
+    if (next.transcriptTextSize !== undefined) {
+      settingsPatch.transcriptTextSize = next.transcriptTextSize
+      appearance.update({ transcriptTextSize: next.transcriptTextSize })
+    }
     if (next.composerStyle !== undefined) {
       settingsPatch.composerStyle = next.composerStyle
       appearance.update({ composerStyle: next.composerStyle })
@@ -30578,6 +30582,7 @@ function App(): React.JSX.Element {
         liveActivityViewport={appearance.liveActivityViewport}
         fanoutLaneLayout={appearance.fanoutLaneLayout}
         defaultTranscriptView={appearance.defaultTranscriptView}
+        transcriptTextSize={appearance.transcriptTextSize}
         copiedId={copiedId}
         copy={copy}
         onOpenSubThread={handleOpenCockpitThread}

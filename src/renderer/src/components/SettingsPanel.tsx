@@ -31,6 +31,7 @@ import type {
   PromptSurfaceStyle,
   FanoutLaneLayout,
   TranscriptView,
+  TranscriptTextSize,
   ComposerStyle,
   ThemeAppearance,
   ThemeCornerStyle,
@@ -74,6 +75,7 @@ import { setFxRatesPerUsd } from '../lib/formatCost'
 import { useUsageSummary } from '../lib/usageSummaryStore'
 import { DEFAULT_FANOUT_LANE_LAYOUT } from '../lib/fanoutLanePairing'
 import { resolveTranscriptView } from '../lib/transcriptViewOverride'
+import { resolveTranscriptTextSize } from '../lib/transcriptTextSize'
 import {
   KEY_COMMAND_DEFINITIONS,
   KEY_COMMAND_GROUPS,
@@ -309,6 +311,7 @@ import {
   PROMPT_SURFACE_OPTIONS,
   FANOUT_LANE_LAYOUT_OPTIONS,
   TRANSCRIPT_VIEW_OPTIONS,
+  TRANSCRIPT_TEXT_SIZE_OPTIONS,
   COMPOSER_STYLE_OPTIONS,
   NATIVE_SUB_AGENT_REQUEST_OPTIONS,
   CODEX_SANDBOX_FALLBACK_OPTIONS,
@@ -354,6 +357,8 @@ interface SettingsPanelProps {
   fanoutLaneLayout?: FanoutLaneLayout
   /** Settings → Appearance default for the per-chat transcript view. */
   defaultTranscriptView?: TranscriptView
+  /** Settings → Appearance size for transcript message text. */
+  transcriptTextSize?: TranscriptTextSize
   liveActivityViewport: boolean
   sidebarOpacity: number
   mainPaneOpacity: number
@@ -503,6 +508,7 @@ interface SettingsPanelProps {
     compactDensity?: boolean
     fanoutLaneLayout?: FanoutLaneLayout
     defaultTranscriptView?: TranscriptView
+    transcriptTextSize?: TranscriptTextSize
     liveActivityViewport?: boolean
     sidebarOpacity?: number
     mainPaneOpacity?: number
@@ -985,6 +991,7 @@ export function SettingsPanel({
   compactDensity,
   fanoutLaneLayout,
   defaultTranscriptView,
+  transcriptTextSize,
   liveActivityViewport,
   sidebarOpacity,
   mainPaneOpacity,
@@ -3325,6 +3332,37 @@ export function SettingsPanel({
                       <small>
                         Where every chat starts. A chat switched to its own view from the
                         composer&rsquo;s view menu keeps that view for the rest of the session.
+                      </small>
+                    </label>
+                    <label className="settings-effects-field">
+                      <span className="settings-field-label">Transcript text size</span>
+                      <select
+                        className="settings-select"
+                        value={resolveTranscriptTextSize(transcriptTextSize)}
+                        onChange={(e) =>
+                          onChange({ transcriptTextSize: e.target.value as TranscriptTextSize })
+                        }
+                      >
+                        {TRANSCRIPT_TEXT_SIZE_OPTIONS.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                      <small>
+                        {/* Straight from the catalogue that owns the three scales, so
+                            this control cannot describe a size the transcript does not
+                            render at. The lookup cannot miss: the value is resolved to
+                            one of exactly these three before it is compared. */}
+                        {
+                          TRANSCRIPT_TEXT_SIZE_OPTIONS.find(
+                            (option) => option.value === resolveTranscriptTextSize(transcriptTextSize)
+                          )?.helper
+                        }
+                      </small>
+                      <small>
+                        Message text only. The composer, the sidebar and Settings keep their
+                        own size.
                       </small>
                     </label>
                   </section>

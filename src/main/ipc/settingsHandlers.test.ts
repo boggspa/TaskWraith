@@ -710,7 +710,8 @@ describe('the appearance projection carries the transcript-view settings', () =>
   const baseSettings = {
     agenticServices: {},
     fanoutLaneLayout: 'stacked',
-    defaultTranscriptView: 'minimal'
+    defaultTranscriptView: 'minimal',
+    transcriptTextSize: 'large'
   } as unknown as AppSettings
 
   it('reaches a utility renderer', () => {
@@ -720,6 +721,10 @@ describe('the appearance projection carries the transcript-view settings', () =>
     // a user who chose one-per-line lanes got two-across in every window but
     // the main one. Fixed alongside, pinned here.
     expect(projected.fanoutLaneLayout).toBe('stacked')
+    // The text size is the one where an omission is worse than a stale value: a
+    // popout that never learns it renders its transcript at another size from
+    // the main window, with nothing on screen saying which is right.
+    expect(projected.transcriptTextSize).toBe('large')
     // Positive control for the negative below: the allowlist really did run.
     expect(projected).not.toHaveProperty('agenticServices')
   })
@@ -732,6 +737,7 @@ describe('the appearance projection carries the transcript-view settings', () =>
     )
     expect(projected.defaultTranscriptView).toBe('minimal')
     expect(projected.fanoutLaneLayout).toBe('stacked')
+    expect(projected.transcriptTextSize).toBe('large')
   })
 
   it('carries absence as absence, never as a pin', () => {
@@ -745,6 +751,7 @@ describe('the appearance projection carries the transcript-view settings', () =>
     )
     expect(projected.defaultTranscriptView).toBeUndefined()
     expect(projected.fanoutLaneLayout).toBeUndefined()
+    expect(projected.transcriptTextSize).toBeUndefined()
     // Positive control: this projection does forward things — it is not empty.
     expect(projected).toHaveProperty('showInspector', false)
 
@@ -757,12 +764,14 @@ describe('the appearance projection carries the transcript-view settings', () =>
       {
         agenticServices: {},
         defaultTranscriptView: 'minimal',
-        fanoutLaneLayout: 'stacked'
+        fanoutLaneLayout: 'stacked',
+        transcriptTextSize: 'large'
       } as unknown as AppSettings,
       { kind: 'utility' },
       pathsEqual
     )
     expect(carried.defaultTranscriptView).toBe('minimal')
     expect(carried.fanoutLaneLayout).toBe('stacked')
+    expect(carried.transcriptTextSize).toBe('large')
   })
 })

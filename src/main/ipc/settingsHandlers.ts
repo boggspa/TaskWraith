@@ -142,6 +142,12 @@ function rendererAppearanceSettings(settings: AppSettings): AppSettings {
     // cast below is why that omission never type-errored.
     fanoutLaneLayout: settings.fanoutLaneLayout,
     defaultTranscriptView: settings.defaultTranscriptView,
+    // The transcript text size MUST be here, and it is the one appearance key
+    // where an omission is worse than a stale value: a popped-out chat that
+    // never learns the size renders its transcript at 1x while its own
+    // virtualiser is calibrated for 1x too — consistent, but a different size
+    // from the main window with no way for the reader to tell which is right.
+    transcriptTextSize: settings.transcriptTextSize,
     composerStyle: settings.composerStyle,
     transcriptFontFamily: settings.transcriptFontFamily,
     composerFontFamily: settings.composerFontFamily,

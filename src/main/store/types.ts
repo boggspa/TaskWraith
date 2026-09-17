@@ -214,6 +214,23 @@ export type FanoutLaneLayout = 'stacked' | 'paired'
  * renderer `lib/transcriptViewFold`, `TranscriptStackCollapse.swift`).
  */
 export type TranscriptView = 'minimal' | 'tools' | 'standard'
+
+/**
+ * How large transcript message text renders, as a NAME rather than a number.
+ *
+ * The three names map to exactly one scale each, in renderer
+ * `lib/transcriptTextSize` — the single place that mapping exists. The token
+ * travels and the number is resolved once, at the one component that both
+ * stamps the CSS variable and mints the virtualiser's layout epoch, so the size
+ * the DOM renders at and the size the height estimator is calibrated for cannot
+ * be two different numbers. Persisting the NUMBER instead would re-open that:
+ * a stored 1.2 and a code default of 1.25 have no way to disagree loudly.
+ *
+ * `default` is today's rendering byte for byte — it resolves to exactly 1,
+ * which is the identity short-circuit in `transcriptLayoutScales` and the empty
+ * cache-key suffix in `transcriptLayoutEpochKeySuffix`.
+ */
+export type TranscriptTextSize = 'small' | 'default' | 'large'
 export type ComposerStyle =
   | 'default'
   | 'codex'
@@ -2808,6 +2825,22 @@ export interface AppSettings {
    * pinned to the old one. Read this before treating "key present" as "user
    * chose". */
   defaultTranscriptView?: TranscriptView
+  /** Appearance size for transcript message text: `small` | `default` | `large`.
+   * Optional, and ABSENT is the common case on upgrade; absence resolves to
+   * `DEFAULT_TRANSCRIPT_TEXT_SIZE` (renderer `lib/transcriptTextSize`), which is
+   * `default` — scale exactly 1, i.e. today's rendering, today's estimates and
+   * today's cache keys.
+   *
+   * Absence is NOT durable here either, for the `fanoutLaneLayout` /
+   * `defaultTranscriptView` reason directly above: `useAppearance.update()`
+   * persists its whole literal, so the first unrelated appearance change
+   * materialises this key at its resolved value. For a TEXT SCALE that has a
+   * sharper consequence than it does for a view: once shipped, essentially
+   * every install is pinned to whatever `default` resolves to now, so moving
+   * that number later is a silent resize for users who never chose a size.
+   * Treat the three scales as frozen, and add a fourth name rather than
+   * re-pointing an existing one. */
+  transcriptTextSize?: TranscriptTextSize
   composerStyle: ComposerStyle
   transcriptFontFamily?: string
   composerFontFamily?: string

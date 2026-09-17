@@ -4447,6 +4447,33 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .transcript-inner {
+  /* Transcript text size (Settings → Appearance).
+   *
+   * Scoped HERE, and the scope is the whole decision. `.transcript-inner` holds
+   * exactly the message rows and the two virtualiser spacers; the composer, the
+   * external-provider import banner, the user-message gutter, the
+   * participant-filter rail and the welcome surfaces are all outside it. One
+   * level up (`.transcript-scroll`) would take the import banner. TWO levels up
+   * (`.app-transcript`) CONTAINS the composer, so it would resize the user's own
+   * text box and with it `--composer-reserved-height` and the transcript's
+   * scroll-under padding. `:root` would resize Settings, every popover and every
+   * modal while leaving the sidebar alone, since `.app-sidebar` re-declares
+   * these four tokens against its own literals.
+   *
+   * `--transcript-font-scale` is an INLINE style, set by `TranscriptPanel` from
+   * the same `const` it mints the virtualiser's layout epoch from. That is why
+   * it is not a `:root` attribute the way `data-fanout-lane-layout` is: an
+   * attribute would put the number CSS renders at in a different module from the
+   * number the height estimator is calibrated for, with nothing but a comment
+   * holding them equal.
+   *
+   * The fallback is 1 and the panel emits NO style attribute at Default, so
+   * every computed value below is `calc(<base> * 1)` — identical to `:root`, and
+   * identical to the build before this setting existed. */
+  --font-size-xs: calc(var(--font-size-xs-base) * var(--transcript-font-scale, 1));
+  --font-size-sm: calc(var(--font-size-sm-base) * var(--transcript-font-scale, 1));
+  --font-size-md: calc(var(--font-size-md-base) * var(--transcript-font-scale, 1));
+  --font-size-lg: calc(var(--font-size-lg-base) * var(--transcript-font-scale, 1));
   width: 100%;
   /* 1.0.6-CRUX44 — cap the transcript + run-summary to the SAME fixed width as
    * the composer (--composer-content-max-width, 850px) and centre it, so resizing

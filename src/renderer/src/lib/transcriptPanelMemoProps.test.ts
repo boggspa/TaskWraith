@@ -112,6 +112,34 @@ describe('transcriptPanelMemoProps', () => {
     ).toBe(true)
   })
 
+  it('invalidates when the Appearance transcript TEXT SIZE changes', () => {
+    // The worst of the three to miss, because the panel resolves this one to a
+    // NUMBER in its own render: that number is both the
+    // `--transcript-font-scale` it stamps on `.transcript-inner` and the
+    // `TranscriptLayoutEpoch.fontScale` every height estimate, the pre-paint
+    // measure pass and every height-cache key are built from. Unlisted, nothing
+    // re-renders on a size change — and "the setting does nothing" is exactly
+    // how that presents, in the MAIN pane and the SIDE CHAT alike, because the
+    // Settings takeover hides `.app-transcript` with `display: none` rather
+    // than unmounting it.
+    const shared = baseProps()
+    expect(transcriptPanelPropsEqual(shared, { ...shared, transcriptTextSize: 'large' })).toBe(false)
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, transcriptTextSize: 'small' },
+        { ...shared, transcriptTextSize: 'large' }
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the two above are
+    // this field moving and not the comparator refusing everything.
+    expect(
+      transcriptPanelPropsEqual(
+        { ...shared, transcriptTextSize: 'large' },
+        { ...shared, transcriptTextSize: 'large' }
+      )
+    ).toBe(true)
+  })
+
   it('re-renders when the fan-out lane layout changes', () => {
     // This key was MISSING from the comparator, excused by a comment claiming
     // its effect is only a `:root` attribute CSS reads outside React. It is

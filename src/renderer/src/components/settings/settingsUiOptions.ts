@@ -14,6 +14,7 @@ import type {
   FanoutLaneLayout,
   NativeSubAgentRequestPolicy,
   PromptSurfaceStyle,
+  TranscriptTextSize,
   TranscriptView,
   VisualEffectStyle
 } from '../../../../main/store/types'
@@ -22,6 +23,7 @@ import appIconRegularThumb from '../../assets/app-icons/regular.png'
 import appIconMonolineThumb from '../../assets/app-icons/monoline.png'
 import appIconGlassThumb from '../../assets/app-icons/glass.png'
 import appIconLightMonolineThumb from '../../assets/app-icons/light-monoline.png'
+import { TRANSCRIPT_TEXT_SCALES } from '../../lib/transcriptTextSize'
 
 export const CONTEXT_TURN_OPTIONS = [0, 2, 4, 6, 8, 10, 12, 16, 20]
 export const clampPaneOpacity = (value: unknown): number => {
@@ -89,6 +91,39 @@ export const TRANSCRIPT_VIEW_OPTIONS: Array<{
     value: 'standard',
     label: 'Standard',
     helper: "Everything renders and expands. Today's transcript."
+  }
+]
+/**
+ * How large transcript message text renders.
+ *
+ * `scale` is READ FROM `TRANSCRIPT_TEXT_SCALES` rather than re-typed, so this
+ * catalogue can describe a size but can never invent a number for it. The
+ * helper text quotes the same figure for the same reason — a hand-written
+ * "25% larger" that drifts from the scale is a lie the reader cannot check.
+ */
+export const TRANSCRIPT_TEXT_SIZE_OPTIONS: Array<{
+  value: TranscriptTextSize
+  label: string
+  helper: string
+  scale: number
+}> = [
+  {
+    value: 'small',
+    label: 'Small',
+    helper: 'Fits more of the conversation on screen.',
+    scale: TRANSCRIPT_TEXT_SCALES.small
+  },
+  {
+    value: 'default',
+    label: 'Default',
+    helper: "Today's transcript, unchanged.",
+    scale: TRANSCRIPT_TEXT_SCALES.default
+  },
+  {
+    value: 'large',
+    label: 'Large',
+    helper: 'Easier to read; fewer messages visible at once.',
+    scale: TRANSCRIPT_TEXT_SCALES.large
   }
 ]
 export const COMPOSER_STYLE_OPTIONS: Array<{

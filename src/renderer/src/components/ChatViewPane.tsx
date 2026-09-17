@@ -249,6 +249,10 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     // here. Unlisted, a pane that is not the focused one keeps rendering the
     // OLD Appearance default until an unrelated prop happens to change.
     a.defaultTranscriptView === b.defaultTranscriptView &&
+    // Inherited the same way, and worse to miss: this one resolves to the
+    // number the pane's own virtualiser is calibrated for, so an unlisted pane
+    // renders AND estimates at the old size while its neighbours move.
+    a.transcriptTextSize === b.transcriptTextSize &&
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&

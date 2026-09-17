@@ -116,11 +116,12 @@ describe('option arrays', () => {
       'NATIVE_SUB_AGENT_REQUEST_OPTIONS',
       'CODEX_SANDBOX_FALLBACK_OPTIONS',
       'FUN_FX_MODES',
-      'TRANSCRIPT_VIEW_OPTIONS'
+      'TRANSCRIPT_VIEW_OPTIONS',
+      'TRANSCRIPT_TEXT_SIZE_OPTIONS'
     ]) {
       expect(names, known).toContain(known)
     }
-    expect(names.length).toBeGreaterThanOrEqual(7)
+    expect(names.length).toBeGreaterThanOrEqual(9)
   })
 
   it('keeps every option value unique within its own list', () => {

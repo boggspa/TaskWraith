@@ -141,6 +141,11 @@ import {
   transcriptLayoutEpochsEqual,
   type TranscriptLayoutEpoch
 } from '../lib/transcriptLayoutEpoch'
+import {
+  transcriptFontScaleStyle,
+  transcriptTextScale,
+  type TranscriptTextSize
+} from '../lib/transcriptTextSize'
 import { selectTranscriptWindow } from '../lib/transcriptWindowGeometry'
 import {
   buildTranscriptUserGutterMarkers,
@@ -735,6 +740,22 @@ export type TranscriptPanelProps = {
    * memoized against a hand-written chain, so an unlisted prop is a setting
    * change the transcript never re-renders for. */
   defaultTranscriptView?: TranscriptView
+  /** `settings.transcriptTextSize` — how large this transcript's message text
+   * renders. Optional for the same reason the two props above are: a caller
+   * that forgets to thread it lands on the size the rest of the app is using.
+   *
+   * THIS PROP IS THE SIZE'S ONLY ENTRANCE, and deliberately carries the NAME,
+   * not the scale. The panel resolves it to a number exactly once, and that one
+   * `const` becomes BOTH the `--transcript-font-scale` stamped on
+   * `.transcript-inner` and the `fontScale` of the `TranscriptLayoutEpoch` every
+   * height estimate, the pre-paint measure pass and every height-cache key are
+   * built from. If those two were ever computed separately the transcript would
+   * be estimated for a size it is not rendering — see `lib/transcriptTextSize`.
+   *
+   * It must also be listed in `TranscriptPanelMemoComparable`, for the reason
+   * `defaultTranscriptView` documents above: unlisted, the size changes in
+   * Settings and this panel never re-renders. */
+  transcriptTextSize?: TranscriptTextSize
   /**
    * 1.0.4-AQ4 — per-message actions on hover.
    *
@@ -2547,6 +2568,7 @@ export const TranscriptPanel = memo(
     liveActivityViewport,
     fanoutLaneLayout,
     defaultTranscriptView,
+    transcriptTextSize,
     onCopyMessage,
     onAddMessageToPrompt,
     onDeleteMessage,
@@ -3770,14 +3792,16 @@ export const TranscriptPanel = memo(
       [currentChat?.ensemble?.activeRound?.lanes, displayMessages]
     )
     /**
-     * The one place the transcript's layout epoch is minted. Identity today:
-     * there is no transcript text-size setting yet, and the measured column
-     * bucket lives inside `useTranscriptVirtualization` (called far below this
-     * projection), so wiring the real width up here is a data-flow change — a
-     * ResizeObserver lifted above the projection, bucketed so a drag does not
-     * re-project on every pixel — that belongs with the setting that needs it.
-     * Both axes resolve to identity, so every estimate and every cache key
-     * below is byte-identical to the pre-epoch build.
+     * The one place the transcript's layout epoch is minted.
+     *
+     * The TEXT SIZE axis is live (Settings -> Appearance -> Transcript text
+     * size). The WIDTH axis is still identity: the measured column bucket lives
+     * inside `useTranscriptVirtualization`, called far below this projection, so
+     * wiring the real width up here is a data-flow change — a ResizeObserver
+     * lifted above the projection, bucketed so a drag does not re-project on
+     * every pixel — that belongs with the setting that needs it. At Default both
+     * axes resolve to identity and every estimate and cache key below is
+     * byte-identical to the pre-epoch build.
      *
      * MEMOISED, and that is not ceremony. The epoch sits raw in two
      * `Object.is`-compared dependency arrays (the heights memo and the
@@ -3789,9 +3813,38 @@ export const TranscriptPanel = memo(
      * literal, which is a NEW object every render. Minting through `useMemo`
      * over the two primitive axes means those settings replace the two scalars
      * below and inherit the stability rather than having to rediscover it.
+     *
+     * Keep this mint the LAST declaration before `const projectedRows =`:
+     * `TranscriptLayoutEpochPlumbing.test.ts` derives the mint's dependency
+     * array from exactly that slice, so a memo inserted between the two is read
+     * as the mint's own deps.
      */
     const transcriptLayoutWidthBucket = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.widthBucket
-    const transcriptLayoutFontScale = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.fontScale
+    /*
+     * THE TEXT-SIZE SEAM. This `const` is the only place the chosen size becomes
+     * a number, and it has exactly two consumers, both directly below:
+     * `transcriptFontScaleVariables` — the inline `--transcript-font-scale` that
+     * `.transcript-inner` renders at — and the layout epoch every height
+     * estimate, the pre-paint measure pass and every height-cache key use.
+     *
+     * One local, read twice, rather than two expressions that agree. A second
+     * resolution here (or a literal in either consumer) is the whole defect
+     * class: the estimator calibrated for one size while the DOM renders
+     * another, with nothing on screen to say so. `transcriptTextSizeSetting`'s
+     * guards refuse a numeric literal on either consumer line for that reason.
+     */
+    const transcriptLayoutFontScale = transcriptTextScale(transcriptTextSize)
+    /*
+     * `undefined` at Default, so React emits no `style` attribute at all and the
+     * transcript's markup stays byte-identical to the build before this setting
+     * existed — matching the identity short-circuits in `transcriptLayoutScales`
+     * and `transcriptLayoutEpochKeySuffix`, which is what keeps the estimates and
+     * the cache keys byte-identical alongside it.
+     */
+    const transcriptFontScaleVariables = useMemo(
+      () => transcriptFontScaleStyle(transcriptLayoutFontScale),
+      [transcriptLayoutFontScale]
+    )
     const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>(
       () => ({ widthBucket: transcriptLayoutWidthBucket, fontScale: transcriptLayoutFontScale }),
       [transcriptLayoutWidthBucket, transcriptLayoutFontScale]
@@ -5014,6 +5067,7 @@ export const TranscriptPanel = memo(
         <div
           className={`transcript-inner${virtualizeEnabled ? ' transcript-virtualized' : ''}`}
           ref={contentRef}
+          style={transcriptFontScaleVariables}
         >
           {virtualizeEnabled && (
             <div

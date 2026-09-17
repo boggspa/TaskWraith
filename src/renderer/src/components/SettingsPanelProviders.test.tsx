@@ -22,7 +22,7 @@ import {
   uncategorizedMcpToolsForSettings
 } from './SettingsPanel'
 import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
-import { TRANSCRIPT_VIEW_OPTIONS } from './settings/settingsUiOptions'
+import { TRANSCRIPT_TEXT_SIZE_OPTIONS, TRANSCRIPT_VIEW_OPTIONS } from './settings/settingsUiOptions'
 import { TASKWRAITH_MCP_TOOLS } from '../../../main/TaskWraithMcpTools'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -177,6 +177,40 @@ describe('SettingsPanel provider cards', () => {
     expect(html).not.toContain('Tool-icon color')
     expect(html).not.toContain('Your chat bubble')
     expect(html).not.toContain('Selected accent')
+  })
+
+  it('renders the transcript text size control on Appearance, from the shared catalogue', () => {
+    // Every other assertion about this control reads SettingsPanel.tsx as a
+    // STRING, so the whole <label> block can be gated behind a condition that
+    // is never true and the entire guard set stays green — the control renders
+    // for nobody while the tests report a shipped setting. This is the only
+    // assertion that it REACHES the Appearance tab and binds the value it was
+    // given, and it is the assertion the Default-transcript-view slice below
+    // already calls "the only assertion that it actually REACHES" for its own
+    // control.
+    const html = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptTextSize: 'large' })} />
+    )
+
+    expect(html).toContain('Transcript text size')
+    // Read from the catalogue, so a second hard-coded copy of the wording
+    // cannot satisfy it.
+    for (const option of TRANSCRIPT_TEXT_SIZE_OPTIONS) {
+      expect(html).toContain(`<option value="${option.value}"`)
+      expect(html).toContain(`>${option.label}</option>`)
+    }
+    // The BINDING, not merely the presence of three options.
+    const large = TRANSCRIPT_TEXT_SIZE_OPTIONS.find((option) => option.value === 'large')!
+    expect(html).toContain(`<option value="large" selected="">${large.label}</option>`)
+
+    // A second value, so the `selected` above is tracking the prop rather than
+    // being the catalogue's own last entry.
+    const small = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', transcriptTextSize: 'small' })} />
+    )
+    const smallOption = TRANSCRIPT_TEXT_SIZE_OPTIONS.find((option) => option.value === 'small')!
+    expect(small).toContain(`<option value="small" selected="">${smallOption.label}</option>`)
+    expect(small).not.toContain(`<option value="large" selected="">`)
   })
 
   it('renders the default transcript view control on Appearance, from the shared catalogue', () => {

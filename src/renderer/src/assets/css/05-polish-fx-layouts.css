@@ -5065,12 +5065,25 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   line-height: 1.22;
 }
 
-.message-markdown-pro h1 { font-size: 1.42rem; }
-.message-markdown-pro h2 { font-size: 1.22rem; }
-.message-markdown-pro h3 { font-size: 1.08rem; }
+/* These six are bare rem and load AFTER the token-based
+ * `.message-markdown h1, h2, h3 { font-size: var(--font-size-md) }` in
+ * 02-transcript-messages-fx.css, so they win inside a message body. Left
+ * unscaled they would be the transcript text size's one visible defect rather
+ * than a cosmetic one: `--font-size-md` at 1.25 is 1.495rem, so an assistant
+ * reply's H1 would render SMALLER than its own paragraphs.
+ *
+ * Multiplying by the same `--transcript-font-scale` the body text takes keeps
+ * every heading/body ratio exactly as it is today at every size — including the
+ * ones that are already below body text at 1x (h3 at 1.08rem, h4–h6 at 1rem);
+ * that is the shipped hierarchy, and this scale must not quietly re-rank it.
+ * The fallback is 1, so a `.message-markdown-pro` rendered outside
+ * `.transcript-inner` (the Settings appearance preview) is untouched. */
+.message-markdown-pro h1 { font-size: calc(1.42rem * var(--transcript-font-scale, 1)); }
+.message-markdown-pro h2 { font-size: calc(1.22rem * var(--transcript-font-scale, 1)); }
+.message-markdown-pro h3 { font-size: calc(1.08rem * var(--transcript-font-scale, 1)); }
 .message-markdown-pro h4,
 .message-markdown-pro h5,
-.message-markdown-pro h6 { font-size: 1rem; }
+.message-markdown-pro h6 { font-size: calc(1rem * var(--transcript-font-scale, 1)); }
 
 .message-markdown-pro ul,
 .message-markdown-pro ol {

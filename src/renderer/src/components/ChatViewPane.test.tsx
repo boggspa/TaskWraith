@@ -195,6 +195,30 @@ describe('chatViewPanePropsEqual', () => {
     ).toBe(true)
   })
 
+  it('re-renders when the Appearance transcript text size changes', () => {
+    // Inherited the same way, and worse to miss than the view default: this one
+    // resolves to the scale the pane's OWN virtualiser is calibrated for, so an
+    // unlisted pane renders AND estimates at the old size while its neighbours
+    // move — one window right, the others silently wrong.
+    expect(chatViewPanePropsEqual(makeProps(), makeProps({ transcriptTextSize: 'large' }))).toBe(
+      false
+    )
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptTextSize: 'small' }),
+        makeProps({ transcriptTextSize: 'large' })
+      )
+    ).toBe(false)
+    // Positive control: unchanged still compares equal, so the two above are
+    // this field and not a blanket `false`.
+    expect(
+      chatViewPanePropsEqual(
+        makeProps({ transcriptTextSize: 'large' }),
+        makeProps({ transcriptTextSize: 'large' })
+      )
+    ).toBe(true)
+  })
+
   it('re-renders when the chat record identity changes', () => {
     const chat = { appChatId: 'c2' } as unknown as ChatViewPaneProps['chat']
     expect(chatViewPanePropsEqual(makeProps(), makeProps({ chat }))).toBe(false)

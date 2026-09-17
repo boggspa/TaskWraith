@@ -110,6 +110,20 @@ export type TranscriptPanelMemoComparable = {
    */
   fanoutLaneLayout?: unknown
   defaultTranscriptView?: unknown
+  /**
+   * Transcript text size. The `fanoutLaneLayout` warning above applies with
+   * full force: the panel resolves this to a NUMBER in its own render, and that
+   * number is both the `--transcript-font-scale` it stamps and the
+   * `TranscriptLayoutEpoch.fontScale` the estimator, the measure pass and every
+   * height cache key are built from. Unlisted, changing the size in Settings
+   * and returning leaves the panel on the old scale — and "the setting does
+   * nothing" is exactly how that presents.
+   *
+   * Note the contrast with `transcriptFontFamily`, which is legitimately NOT
+   * here: that one is only a CSS variable the panel never reads in JS. Copying
+   * that precedent for a font SCALE is the mistake this comment exists to stop.
+   */
+  transcriptTextSize?: unknown
   isGlobal?: unknown
 }
 
@@ -347,6 +361,7 @@ export function transcriptPanelPropsEqual(
     previous.liveActivityViewport === next.liveActivityViewport &&
     previous.fanoutLaneLayout === next.fanoutLaneLayout &&
     previous.defaultTranscriptView === next.defaultTranscriptView &&
+    previous.transcriptTextSize === next.transcriptTextSize &&
     previous.isGlobal === next.isGlobal
   )
 }
