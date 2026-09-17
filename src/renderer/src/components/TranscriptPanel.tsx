@@ -136,6 +136,11 @@ import {
   type VirtualWindow,
   type VirtualWindowBand
 } from '../lib/TranscriptVirtualWindow'
+import {
+  DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+  transcriptLayoutEpochsEqual,
+  type TranscriptLayoutEpoch
+} from '../lib/transcriptLayoutEpoch'
 import { selectTranscriptWindow } from '../lib/transcriptWindowGeometry'
 import {
   buildTranscriptUserGutterMarkers,
@@ -1234,7 +1239,8 @@ function useProjectedTranscriptRows(
   messages: ChatMessage[],
   runBoundaryIds: ReadonlySet<string> | null | undefined,
   unboundedActivityBodies = false,
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  layoutEpoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow[] {
   const cacheRef = useRef<{
     messages: ChatMessage[]
@@ -1242,16 +1248,25 @@ function useProjectedTranscriptRows(
     rowByMessageIndex: Map<number, VirtualRow>
     unboundedActivityBodies: boolean
     pairFanoutLanes: boolean
+    layoutEpoch: TranscriptLayoutEpoch
   } | null>(null)
 
   return useMemo(() => {
-    // Both flags change every fan-out lane row's estimate, so a cache built
-    // under the other value must be discarded whole rather than reused as a
-    // prefix — otherwise flipping the setting leaves the transcript's existing
-    // lanes sized for the layout the user just left.
+    // GLOBAL estimate inputs need all THREE legs: threaded into both projection
+    // functions, named in this dep array, AND compared here before the cache is
+    // trusted. Anything that changes every row at once — the two flags below,
+    // and the layout epoch (column width bucket + text scale) — must be
+    // discarded WHOLE rather than reused as a prefix. Legs 1+2 alone are not a
+    // partial fix, they are a permanent one: a setting flip does not change the
+    // `messages` array identity, so the prefix walk runs to completion, the
+    // tail loop executes zero times, and every cached row object is returned by
+    // reference carrying its old estimate — for good, re-armed on every flush.
+    // The `hasRunBoundary` per-row break below cannot stand in for this: it
+    // works only because that input is PER ROW.
     const cached =
       cacheRef.current?.unboundedActivityBodies === unboundedActivityBodies &&
-      cacheRef.current?.pairFanoutLanes === pairFanoutLanes
+      cacheRef.current?.pairFanoutLanes === pairFanoutLanes &&
+      transcriptLayoutEpochsEqual(cacheRef.current?.layoutEpoch, layoutEpoch)
         ? cacheRef.current
         : null
     if (cached && Array.isArray(messages)) {
@@ -1277,7 +1292,8 @@ function useProjectedTranscriptRows(
           sharedPrefix,
           runBoundaryIds,
           unboundedActivityBodies,
-          pairFanoutLanes
+          pairFanoutLanes,
+          layoutEpoch
         )
         const rowByMessageIndex = new Map<number, VirtualRow>()
         for (const row of rows) rowByMessageIndex.set(row.index, row)
@@ -1286,13 +1302,20 @@ function useProjectedTranscriptRows(
           rows,
           rowByMessageIndex,
           unboundedActivityBodies,
-          pairFanoutLanes
+          pairFanoutLanes,
+          layoutEpoch
         }
         return rows
       }
     }
 
-    const rows = projectRows(messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes)
+    const rows = projectRows(
+      messages,
+      runBoundaryIds,
+      unboundedActivityBodies,
+      pairFanoutLanes,
+      layoutEpoch
+    )
     const rowByMessageIndex = new Map<number, VirtualRow>()
     for (const row of rows) rowByMessageIndex.set(row.index, row)
     cacheRef.current = {
@@ -1300,10 +1323,11 @@ function useProjectedTranscriptRows(
       rows,
       rowByMessageIndex,
       unboundedActivityBodies,
-      pairFanoutLanes
+      pairFanoutLanes,
+      layoutEpoch
     }
     return rows
-  }, [messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes])
+  }, [messages, runBoundaryIds, unboundedActivityBodies, pairFanoutLanes, layoutEpoch])
 }
 
 function offsetGroupedRanges(
@@ -1633,6 +1657,15 @@ export function useTranscriptVirtualization(params: {
    * it never invalidates.
    */
   transcriptView?: TranscriptView
+  /**
+   * The layout the heights in this hook's caches were measured UNDER — column
+   * width bucket + text scale (see `lib/transcriptLayoutEpoch.ts`). Folded into
+   * `measurementKey` and `geometryKey`, so a layout change misses both maps and
+   * correctly falls through to the row's estimate, which the projection above
+   * produced at the SAME epoch. Optional and identity-stable: a caller that
+   * does not pass it gets byte-identical keys.
+   */
+  layoutEpoch?: TranscriptLayoutEpoch
   forcedRowIndex?: number | null
   /**
    * RowKeys currently streaming (assistant / tool / fan-out). Measurement
@@ -1696,6 +1729,7 @@ export function useTranscriptVirtualization(params: {
     onProgrammaticScrollWrite,
     compactDensity,
     transcriptView,
+    layoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
     forcedRowIndex,
     activeLiveRowKeys,
     expandedRowIds,
@@ -1861,11 +1895,12 @@ export function useTranscriptVirtualization(params: {
             bucket,
             expandedRowIds?.has(row.rowKey) ?? false,
             measurementContentVersion(row, activeLiveRowKeys),
-            geometryHeightsRef.current
+            geometryHeightsRef.current,
+            layoutEpoch
           )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKeys, hiddenRowKeys])
+  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKeys, hiddenRowKeys, layoutEpoch])
   heightsRef.current = heights
   const heightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -2197,6 +2232,12 @@ export function useTranscriptVirtualization(params: {
   // stack, so every cached height is wrong by a large margin. Without this the
   // spacers stay sized for the pre-flip rows and the reader gets a scroll jump
   // with blank gaps where the tall rows used to be.
+  // `layoutEpoch` deliberately does NOT join this effect: it is folded into
+  // `measurementKey` and `geometryKey` instead, so a layout change MISSES both
+  // maps rather than emptying them — exactly how the width bucket has always
+  // worked. Density and view are here only because they are absent from those
+  // keys. Adding the epoch too would throw away every height the reader may
+  // scroll back to at the old layout for no invalidation benefit.
   useEffect(() => {
     if (!enabled) return
     measurementsRef.current.clear()
@@ -2353,10 +2394,11 @@ export function useTranscriptVirtualization(params: {
         row.rowKey,
         measurementContentVersion(row, activeLiveRowKeys),
         bucket,
-        expandedRowIds?.has(row.rowKey) ?? false
+        expandedRowIds?.has(row.rowKey) ?? false,
+        layoutEpoch
       )
       geometryHeightsRef.current.set(
-        geometryKey(row.rowKey, bucket, expandedRowIds?.has(row.rowKey) ?? false),
+        geometryKey(row.rowKey, bucket, expandedRowIds?.has(row.rowKey) ?? false, layoutEpoch),
         slot
       )
       const prev = measurements.get(key)
@@ -2413,6 +2455,7 @@ export function useTranscriptVirtualization(params: {
     forcedRowIndex,
     getUserScrollGestureLive,
     hiddenRowKeys,
+    layoutEpoch,
     measureTick,
     onProgrammaticScrollWrite,
     rowsStructuralKey,
@@ -3726,11 +3769,39 @@ export const TranscriptPanel = memo(
         ),
       [currentChat?.ensemble?.activeRound?.lanes, displayMessages]
     )
+    /**
+     * The one place the transcript's layout epoch is minted. Identity today:
+     * there is no transcript text-size setting yet, and the measured column
+     * bucket lives inside `useTranscriptVirtualization` (called far below this
+     * projection), so wiring the real width up here is a data-flow change — a
+     * ResizeObserver lifted above the projection, bucketed so a drag does not
+     * re-project on every pixel — that belongs with the setting that needs it.
+     * Both axes resolve to identity, so every estimate and every cache key
+     * below is byte-identical to the pre-epoch build.
+     *
+     * MEMOISED, and that is not ceremony. The epoch sits raw in two
+     * `Object.is`-compared dependency arrays (the heights memo and the
+     * pre-paint measure effect), so a fresh object each render re-runs the
+     * measure pass every render — the pass whose own comment calls it
+     * deliberately invalidation-driven. Today's value is a frozen module
+     * constant and would be stable by accident; the moment Transcript Width or
+     * Text Size supplies a real value, the obvious edit is an inline object
+     * literal, which is a NEW object every render. Minting through `useMemo`
+     * over the two primitive axes means those settings replace the two scalars
+     * below and inherit the stability rather than having to rediscover it.
+     */
+    const transcriptLayoutWidthBucket = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.widthBucket
+    const transcriptLayoutFontScale = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH.fontScale
+    const transcriptLayoutEpoch = useMemo<TranscriptLayoutEpoch>(
+      () => ({ widthBucket: transcriptLayoutWidthBucket, fontScale: transcriptLayoutFontScale }),
+      [transcriptLayoutWidthBucket, transcriptLayoutFontScale]
+    )
     const projectedRows = useProjectedTranscriptRows(
       displayMessages,
       null,
       liveActivityViewport === false,
-      pairFanoutLanes
+      pairFanoutLanes,
+      transcriptLayoutEpoch
     )
     const projectedRowLookup = useMemo(() => {
       const byRowKey = new Map<string, VirtualRow>()
@@ -4347,6 +4418,7 @@ export const TranscriptPanel = memo(
       getUserScrollGestureLive,
       onProgrammaticScrollWrite,
       compactDensity,
+      layoutEpoch: transcriptLayoutEpoch,
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKeys,
       expandedRowIds: expandedRowIdsWithLiveViewports,

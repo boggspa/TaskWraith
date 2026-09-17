@@ -21,6 +21,12 @@
  */
 
 import type { ChatMessage } from '../../../main/store/types'
+import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
+import {
+  DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
+  transcriptLayoutEpochKeySuffix,
+  transcriptLayoutScales
+} from './transcriptLayoutEpoch'
 import { nextRowOccurrence, transcriptRowKey } from './transcriptRowKey'
 import { isGuestParticipantReplyMessage } from '../components/GuestParticipantReplyCardModel'
 import { isEnsembleFanoutResultMessage } from '../components/EnsembleFanoutResultCardModel'
@@ -336,14 +342,47 @@ export function estimatedHeightFor(
   contentLength = 0,
   /** True while the `paired` fan-out lane layout is active — see the halving
    * note below. */
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /**
+   * The layout the estimate is being made FOR — column width bucket + text
+   * scale. Every constant above was measured at one width and one text size,
+   * so without this the whole estimate layer is frozen at that one layout (see
+   * `transcriptLayoutEpoch.ts`). Defaults to identity: at
+   * `DEFAULT_TRANSCRIPT_LAYOUT_EPOCH` both scales are exactly 1, `x * 1` is
+   * exact in IEEE-754 and `Math.round(n) === n` for the integer bases and caps,
+   * so every number this returns is byte-identical to the pre-epoch estimator.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): number {
-  const base = ESTIMATED_ROW_HEIGHT_PX[rowType]
+  const scales = transcriptLayoutScales(epoch, WIDTH_BUCKET_PX)
+  const base = Math.round(ESTIMATED_ROW_HEIGHT_PX[rowType] * scales.chrome)
+  /*
+   * `VIEWPORT_CLAMPED_ESTIMATE_CAP_PX` does NOT take the CONTENT scale, and
+   * that is the load-bearing half of this seam. The clamped types' bodies sit
+   * behind a CSS px `max-height`, which does not grow with text size or shrink
+   * with column width — only their identity header wraps. Scaling that ceiling
+   * alongside the content rate would inflate those rows by roughly the content
+   * scale, which is the phantom-bottom-spacer / auto-follow lurch this very
+   * constant was created to prevent.
+   *
+   * It is floored at `base` all the same. The ceiling bounds the BODY; `base`
+   * is the row's own furniture, which does scale with text size. Left as a
+   * bare 360 the two invert: `fanoutResult` scales past it at fontScale 1.125
+   * (320 * 1.125 = 360), `threadMessage` at 1.2 and `return` at ~1.286, after
+   * which `Math.min(360, Math.max(base, ...))` returns exactly 360 at EVERY
+   * content length — chrome scaling silently dead, and the estimate pinned
+   * BELOW the row's own header. Flooring keeps the ceiling above the furniture
+   * without ever letting content push past it. All three bases (280/300/320)
+   * sit under 360, so at identity this is the bare constant, unchanged.
+   */
   const scaleCap = VIEWPORT_CLAMPED_TYPES.has(rowType)
-    ? VIEWPORT_CLAMPED_ESTIMATE_CAP_PX
-    : CONTENT_SCALE_CAP_PX
+    ? Math.max(VIEWPORT_CLAMPED_ESTIMATE_CAP_PX, base)
+    : Math.round(CONTENT_SCALE_CAP_PX * scales.content)
   const scaled = CONTENT_SCALED_TYPES.has(rowType)
-    ? Math.min(scaleCap, Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR)))
+    ? Math.min(
+        scaleCap,
+        Math.max(base, Math.round(contentLength * CONTENT_PX_PER_CHAR * scales.content))
+      )
     : base
   /*
    * Paired lanes share a grid row, so two of them cost ONE row's height. The
@@ -368,7 +407,7 @@ export function estimatedHeightFor(
     pairFanoutLanes && (rowType === 'fanoutResult' || rowType === 'return')
       ? Math.round(scaled / 2)
       : scaled
-  return laid + (hasRunBoundary ? RUN_BOUNDARY_HEIGHT_PX : 0)
+  return laid + (hasRunBoundary ? Math.round(RUN_BOUNDARY_HEIGHT_PX * scales.chrome) : 0)
 }
 
 /**
@@ -385,7 +424,11 @@ export function projectRows(
   messages: ChatMessage[],
   runBoundaryIds?: ReadonlySet<string> | null,
   unboundedActivityBodies = false,
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /** See `estimatedHeightFor`. Must match the epoch passed to
+   * `projectRowsAfterSharedPrefix`, or a full re-projection and a streaming
+   * re-projection would disagree about every row's height. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow[] {
   if (!Array.isArray(messages)) return []
   const rows: VirtualRow[] = []
@@ -398,7 +441,8 @@ export function projectRows(
       runBoundaryIds,
       unboundedActivityBodies,
       pairFanoutLanes,
-      nextRowOccurrence(occurrences, message?.id)
+      nextRowOccurrence(occurrences, message?.id),
+      epoch
     )
     if (row) rows.push(row)
   }
@@ -433,7 +477,15 @@ export function projectRowsAfterSharedPrefix(
   sharedPrefix: number,
   runBoundaryIds?: ReadonlySet<string> | null,
   unboundedActivityBodies = false,
-  pairFanoutLanes = false
+  pairFanoutLanes = false,
+  /**
+   * See `estimatedHeightFor`. This function REUSES prefix row objects by
+   * reference, so it cannot re-estimate them: the caller must discard its cache
+   * whole when the epoch changes rather than reusing a prefix built at the old
+   * layout. A global layout input is not per-row, so there is no
+   * `hasRunBoundary`-style per-row break that could rescue it here.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow[] {
   const rows = cachedRows.filter((row) => row.index < sharedPrefix)
   const occurrences = new Map<string, number>()
@@ -445,7 +497,8 @@ export function projectRowsAfterSharedPrefix(
       runBoundaryIds,
       unboundedActivityBodies,
       pairFanoutLanes,
-      nextRowOccurrence(occurrences, messages[index]?.id)
+      nextRowOccurrence(occurrences, messages[index]?.id),
+      epoch
     )
     if (row) rows.push(row)
   }
@@ -493,7 +546,10 @@ export function projectRow(
   /** True while the `paired` fan-out lane layout is active. */
   pairFanoutLanes = false,
   /** This message id's ordinal within the list — see `transcriptRowKey`. */
-  occurrence = 0
+  occurrence = 0,
+  /** See `estimatedHeightFor`. The only production entry point into the whole
+   * estimate calibration is this function, so the epoch has to arrive here. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): VirtualRow | null {
   if (!message || typeof message.id !== 'string') return null
   const rowType = classifyRowType(message)
@@ -529,7 +585,13 @@ export function projectRow(
     index,
     rowType,
     contentVersion: contentVersion(message),
-    estimatedHeight: estimatedHeightFor(rowType, hasRunBoundary, contentLength, pairFanoutLanes),
+    estimatedHeight: estimatedHeightFor(
+      rowType,
+      hasRunBoundary,
+      contentLength,
+      pairFanoutLanes,
+      epoch
+    ),
     hasRunBoundary
   }
 }
@@ -549,9 +611,22 @@ export function measurementKey(
   rowKey: string,
   rowContentVersion: string,
   bucket: number,
-  expanded: boolean
+  expanded: boolean,
+  /**
+   * The layout the measurement was taken UNDER. `bucket` and this epoch are
+   * NOT the same number and nothing makes them so: `bucket` is a MEASURED
+   * `widthBucket(el.clientWidth)` sampled in a scroll handler, the epoch is
+   * minted in render. So the suffix carries BOTH of the epoch's axes rather
+   * than trusting that the caller's `bucket` already covers the width one. The
+   * text axis is the one nothing else can see at all — the bucket is read off
+   * `.transcript-inner`, whose `max-width` is an absolute 850px, so no
+   * text-size change can ever move it and every cached height would be reused
+   * at the wrong size. The suffix is EMPTY at the default epoch, so this key is
+   * byte-identical to the pre-epoch one.
+   */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): string {
-  return `${rowKey}|${rowContentVersion}|${bucket}|${expanded ? 1 : 0}`
+  return `${rowKey}|${rowContentVersion}|${bucket}|${expanded ? 1 : 0}${transcriptLayoutEpochKeySuffix(epoch)}`
 }
 
 /**
@@ -617,8 +692,17 @@ export function isActiveLiveRowKey(rowKey: string, activeLiveRowKeys?: ActiveLiv
  * WITHOUT the content version. The "last height this row measured at this
  * geometry" fallback lives under it (see getRowHeight).
  */
-export function geometryKey(rowKey: string, bucket: number, expanded: boolean): string {
-  return `${rowKey}|${bucket}|${expanded ? 1 : 0}`
+export function geometryKey(
+  rowKey: string,
+  bucket: number,
+  expanded: boolean,
+  /** See `measurementKey`. This map is the WORSE of the two to serve stale: it
+   * has no content version, so without the epoch it keeps returning heights
+   * measured at the old text scale even for rows whose content has since
+   * changed. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
+): string {
+  return `${rowKey}|${bucket}|${expanded ? 1 : 0}${transcriptLayoutEpochKeySuffix(epoch)}`
 }
 
 /**
@@ -642,11 +726,17 @@ export function getRowHeight(
   bucket: number,
   expanded: boolean,
   rowContentVersion: string = row.contentVersion,
-  geometryHeights?: ReadonlyMap<string, number>
+  geometryHeights?: ReadonlyMap<string, number>,
+  /** See `measurementKey`. Both cache lookups are keyed under it, so tier 3
+   * (`row.estimatedHeight`) is what a layout change correctly falls through to
+   * — and that estimate must have been projected at the SAME epoch. */
+  epoch: TranscriptLayoutEpoch = DEFAULT_TRANSCRIPT_LAYOUT_EPOCH
 ): number {
-  const measured = measurements.get(measurementKey(row.rowKey, rowContentVersion, bucket, expanded))
+  const measured = measurements.get(
+    measurementKey(row.rowKey, rowContentVersion, bucket, expanded, epoch)
+  )
   if (typeof measured === 'number' && Number.isFinite(measured) && measured >= 0) return measured
-  const lastAtGeometry = geometryHeights?.get(geometryKey(row.rowKey, bucket, expanded))
+  const lastAtGeometry = geometryHeights?.get(geometryKey(row.rowKey, bucket, expanded, epoch))
   if (
     typeof lastAtGeometry === 'number' &&
     Number.isFinite(lastAtGeometry) &&
