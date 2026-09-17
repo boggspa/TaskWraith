@@ -11689,6 +11689,20 @@
   margin-bottom: -10px;
   padding-bottom: 14px;
 }
+/* Joined welcome stack: when the frame renders directly above the tucked
+ * telemetry strip (welcome mode, the strip's top corners flattened in shard
+ * 10), the tuck-under padding band below the last row no longer hides under
+ * the composer surface — it reads as a dead gap between the frame's rows
+ * and the strip. The seam is already structural (the frame's flat,
+ * borderless bottom abuts the strip's kept top border), and the strip's own
+ * fill continues the frame tone into the box, so the band adds nothing but
+ * dead space. Drop it in this configuration only; the started-thread
+ * tuck-under keeps the band, as does any frame-less surface. */
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
+  padding-bottom: 0;
+}
 /* Shared tucked-tab width — the merged frame above borrows the telemetry
  * strip's inset token, so the defaults must live at a scope the frame can
  * see: the frame renders in the composer area ABOVE `.composer-surface`,

@@ -4570,6 +4570,29 @@ oser-orchestration-cell-label {
   margin-bottom: calc(-1 * var(--codex-cc-strip-overlap));
   justify-content: flex-start;
 }
+/* Joined welcome stack: the merged ensemble/roster/queued frame renders as
+ * the previous sibling of .composer-surface, and its flat, borderless
+ * bottom already abuts this strip (shard 08 drops the frame's tuck-under
+ * padding band in this configuration). Flatten the strip's top corners so
+ * the pair reads as ONE continuous stacked tab; the kept top border draws
+ * the single hairline seam, mirroring the frame's internal row separators.
+ * Without the frame above, the strip keeps its rounded tucked-tab top. */
+[data-composer-style="codex"]
+  .app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-primary-stack:has(
+    > .composer-above-bar-stack:has(
+      :is(
+        .ensemble-above-row,
+        .queued-messages-above-row,
+        .ensemble-roster-preset-picker.is-compact
+      )
+    )
+  )
+  .composer-surface
+  .composer-telemetry-row {
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
 /* A zone can be empty (a global chat has no workspace switcher; a welcome
  * chat without a repo has no branch picker) and would still spend the row's
  * 16px gap, floating the tools cluster in from the tab's left edge. */

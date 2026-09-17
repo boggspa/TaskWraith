@@ -76,6 +76,15 @@ describe('General Chat composer width CSS', () => {
       '[data-composer-style="codex"] .app-transcript {\n  --codex-cc-strip-inset: 14px;\n}'
     )
     expect(codexCss).toContain('.side-chat-pane.app-transcript')
+    // Welcome join: with the merged frame rendering directly above the
+    // tucked strip, the frame drops its 14px tuck-under padding band in
+    // welcome mode (it read as a dead gap between the frame's rows and the
+    // strip) so the pair forms one continuous stacked tab; shard 10
+    // flattens the strip's top corners to match. The started-thread
+    // tuck-under keeps the band, as does any frame-less surface.
+    expect(codexCss).toContain(
+      '.app-transcript.welcome-mode:not(.multiview-pane-transcript)\n  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {\n  padding-bottom: 0;'
+    )
   })
 
   it('keeps the legacy narrower General Chat reading column scoped to transcript content', () => {
