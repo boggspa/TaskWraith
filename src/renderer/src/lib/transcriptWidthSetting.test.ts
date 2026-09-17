@@ -9,8 +9,11 @@ import {
   type VirtualRowType
 } from './TranscriptVirtualWindow'
 import {
+  FANOUT_LANE_COLUMN_GAP_PX,
+  FANOUT_LANE_MIN_PX,
   LAYOUT_EPOCH_CALIBRATION_WIDTH_PX,
   LAYOUT_EPOCH_MIN_SCALE,
+  fanoutLaneTracksForColumnPx,
   transcriptLayoutEpochKeySuffix,
   transcriptLayoutScales,
   type TranscriptLayoutEpoch
@@ -1004,41 +1007,71 @@ describe('the column composes over the pane caps, and the composer never moves',
     )
   })
 
-  it('holds the fan-out lane grid at two tracks under Wide', () => {
-    // Wide raises the cap the grid's own standing comment says to revisit
-    // before it "quietly goes three-across". Nothing downstream is ready:
-    // `classifyFanoutLaneSlots` emits only lead/trail/solo, the window's pair
-    // extension widens the band by exactly one, and the pre-paint measurement
-    // admits a zero offsetTop delta only for a lead — with three cells per grid
-    // row heights are MIS-ATTRIBUTED, and the unconditional halving in
-    // `estimatedHeightFor` becomes a ~1.5x OVER-estimate. N-across is the next
-    // slice; this rule is what keeps it a slice instead of a regression already
-    // shipped ahead of it.
-    const guards = allCssRules().filter(
-      (rule) =>
-        rule.selector.includes(`${TRANSCRIPT_WIDTH_ATTRIBUTE}='wide'`) &&
-        declares(rule.body, '--fanout-lane-min') > 0
-    )
-    expect(guards.map((rule) => `${rule.file} ${rule.selector}`)).toEqual([
-      `02-transcript-messages-fx.css :root[data-fanout-lane-layout='paired'] .transcript-inner[${TRANSCRIPT_WIDTH_ATTRIBUTE}='wide']`
+  it('lets the fan-out lane grid use the whole Wide column, from ONE floor', () => {
+    /*
+     * The two-across containment this replaces. Wide used to override
+     * `--fanout-lane-min` to half the column so a third track could never be
+     * satisfied, because nothing downstream could place, window, measure or
+     * estimate a third cell. All four now derive the track count from the
+     * layout epoch, so the override is gone — and the thing worth guarding
+     * flipped from "the override exists, exactly so" to "no width-scoped
+     * declarer exists at all, and the one floor there is says what JS thinks it
+     * says".
+     */
+    const declarers = allCssRules().filter((rule) => declares(rule.body, '--fanout-lane-min') > 0)
+    // NON-VACUITY FIRST. An empty `declarers` would satisfy the negative below
+    // for the wrong reason — a renamed property, a moved sheet, a broken walk.
+    expect(declarers.map((rule) => `${rule.file} ${rule.selector}`)).toEqual([
+      "02-transcript-messages-fx.css :root[data-fanout-lane-layout='paired'] .transcript-inner"
     ])
-    // Half the column minus the single gap: two tracks fill it exactly and
-    // three can never satisfy it, for any non-negative gap. `max()` keeps the
-    // 360px floor so a narrow Wide pane still collapses to one column.
-    expect(guards[0].body.replace(/\s+/g, '')).toBe(
-      '--fanout-lane-min:max(360px,calc((100%-var(--space-md))/2));'
+    // THE NEGATIVE: no rule may re-floor the tracks under a width scope, which
+    // is the shape a "put the containment back" change takes.
+    expect(
+      declarers.filter((rule) => rule.selector.includes(TRANSCRIPT_WIDTH_ATTRIBUTE)),
+      'a width-scoped lane floor is the two-across containment, reintroduced'
+    ).toEqual([])
+
+    const grid = declarers[0]
+    // EXACTLY ONCE, matched whole. CSS is last-wins, so a second declaration in
+    // the same rule would be the live one while this assertion read the first,
+    // and `toContain('--fanout-lane-min: 360px')` is satisfied by
+    // `--fanout-lane-min: 360px000` and by a second declaration after it.
+    expect(declares(grid.body, '--fanout-lane-min')).toBe(1)
+    expect(/--fanout-lane-min:\s*([^;]+);/.exec(grid.body)?.[1].trim()).toBe(
+      // DERIVED from the JS constant, not re-typed beside it. The estimator and
+      // the slot classifier compute the track count from `FANOUT_LANE_MIN_PX`;
+      // if the two halves part company the grid lays out a different number of
+      // cards than every row was estimated and slotted for.
+      `${FANOUT_LANE_MIN_PX}px`
     )
-    // Positive control: the base paired grid is still auto-fit against the
-    // plain floor, so this is a scoped tightening and not a rewrite of the
-    // two-across model.
-    const grid = allCssRules().find(
-      (rule) => rule.selector === ":root[data-fanout-lane-layout='paired'] .transcript-inner"
+    expect(declares(grid.body, 'grid-template-columns')).toBe(1)
+    expect(/grid-template-columns:\s*([^;]+);/.exec(grid.body)?.[1].trim()).toBe(
+      'repeat(auto-fit, minmax(min(100%, var(--fanout-lane-min)), 1fr))'
     )
-    expect(grid).toBeDefined()
-    expect((grid as CssRule).body).toContain('--fanout-lane-min: 360px')
-    expect((grid as CssRule).body).toContain(
-      'grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--fanout-lane-min)), 1fr))'
+    // The gap term of the same arithmetic. JS models the `:root` value.
+    expect(declares(grid.body, 'column-gap')).toBe(1)
+    expect(/column-gap:\s*([^;]+);/.exec(grid.body)?.[1].trim()).toBe('var(--space-md)')
+    const rootSpace = allCssRules().find(
+      (rule) => rule.file === 'theme.css' && rule.selector === ':root'
     )
+    expect(rootSpace, 'theme.css :root').toBeDefined()
+    expect(/(^|[;{])\s*--space-md:\s*([^;]+);/.exec((rootSpace as CssRule).body)?.[2].trim()).toBe(
+      `${FANOUT_LANE_COLUMN_GAP_PX}px`
+    )
+  })
+
+  it('agrees with the grid about where each track boundary is', () => {
+    // The CSS comment states the forward form (two tracks at 732px, three at
+    // ~1104px, four at ~1476px); `fanoutLaneTracksForColumnPx` states the
+    // inverse. Both are pinned as literals in `fanoutLaneTracks.test.ts`; this
+    // is the crossing check that the numbers are the SAME numbers.
+    for (const tracks of [1, 2, 3, 4, 5]) {
+      const exact = tracks * FANOUT_LANE_MIN_PX + (tracks - 1) * FANOUT_LANE_COLUMN_GAP_PX
+      expect(fanoutLaneTracksForColumnPx(exact), `${tracks} tracks at ${exact}px`).toBe(tracks)
+      expect(fanoutLaneTracksForColumnPx(exact - 1), `${tracks - 1} tracks at ${exact - 1}px`).toBe(
+        Math.max(1, tracks - 1)
+      )
+    }
   })
 })
 

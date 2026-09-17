@@ -25,6 +25,7 @@ import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
 import {
   DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
   transcriptLayoutEpochKeySuffix,
+  transcriptLayoutLaneTracks,
   transcriptLayoutScales,
   transcriptLayoutWidthInvariantContentScale
 } from './transcriptLayoutEpoch'
@@ -446,27 +447,57 @@ export function estimatedHeightFor(
       )
     : base
   /*
-   * Paired lanes share a grid row, so two of them cost ONE row's height. The
-   * estimate is halved for EVERY fan-out / return lane row rather than only for
-   * the paired ones, and that is deliberate: pairing depends on a row's
-   * NEIGHBOURS, and `useProjectedRows` reuses row objects for an unchanged
-   * prefix — so a neighbour-sensitive estimate would go stale the moment an
-   * appended lane turned the previous `solo` into a `lead`. Halving
-   * unconditionally keeps the estimate a pure function of the row itself, at
-   * the cost of under-estimating an unpaired lane by half a row.
+   * Lane cards share a grid row, so N of them cost ONE row's height. The
+   * estimate is divided for EVERY fan-out / return lane row rather than only
+   * for the ones that actually share a row, and that is deliberate: which cells
+   * share a row depends on a row's NEIGHBOURS, and `useProjectedTranscriptRows`
+   * reuses row objects for an unchanged prefix — so a neighbour-sensitive
+   * estimate would go stale the moment an appended lane turned the previous
+   * `solo` into a `lead`. Dividing unconditionally keeps the estimate a pure
+   * function of (this row, the layout epoch), at the cost of under-estimating a
+   * lane that ends up spanning the column.
+   *
+   * N IS DERIVED FROM THE EPOCH, which is what keeps that purity while the
+   * count stops being 2. The epoch is a global, per-render value every row is
+   * already estimated under, and `useProjectedTranscriptRows` already compares
+   * it BY VALUE before trusting its cache — so this adds no neighbour
+   * dependency, no new projection-cache leg and no new `useMemo` dependency. A
+   * track count taken from anywhere else would need all three.
    *
    * Under-estimating is the safe direction here. An OVER-estimate inflates the
    * bottom spacer, `scrollHeight` balloons, and auto-follow's snap lurches into
    * empty overscan — the exact defect VIEWPORT_CLAMPED_ESTIMATE_CAP_PX exists to
    * prevent. An under-estimate is absorbed by the anchor-correction pass on the
-   * first measurement.
+   * first measurement. `transcriptLayoutLaneTracks` is never SMALLER than the
+   * count CSS lays out (the bucket resolves to its upper edge), so this division
+   * can only err in the safe direction — see the direction argument there.
+   *
+   * At the default epoch this is exactly `Math.round(scaled / 2)`, the value
+   * expression it replaces: Medium gates the width bucket to 0, bucket 0
+   * resolves to the 980px calibration width, and 980px fits two 360px tracks.
+   * `transcriptEstimateGoldens.test.ts` holds the literal pre-seam numbers.
    *
    * `return` mirrors `fanoutResult` once pairing admits return slots into the
-   * shared grid (same `pairFanoutLanes` gate).
+   * shared grid (same `pairFanoutLanes` gate). `fleetWave` cards pair in the
+   * grid but have no `VirtualRowType` of their own — they classify as `system`
+   * — so they are NOT divided, today or here. That disagreement between pairing
+   * and estimation predates this slice: bringing them in needs a row type,
+   * which is a projection change, not an estimate one.
+   *
+   * KNOWN, AND THIS SLICE MAKES IT WORSE. N of them share one grid row while N
+   * undivided estimates are summed, so a Fleet run OVER-estimates by the track
+   * count — the inflated-bottom-spacer / auto-follow-lurch direction this
+   * module's constants exist to prevent. Before this slice the two-track
+   * containment pinned that error at a fixed 2x; removing the containment lets
+   * it scale with the column — 5x at a 2156px Wide column, ~14x at 6K. It is
+   * bounded (the spacer is over-long, never negative) and it self-corrects on
+   * measurement, but it is a regression in magnitude, not a neutral carry-over,
+   * and the honest fix is the row type.
    */
+  const laneTracks = transcriptLayoutLaneTracks(epoch)
   const laid =
     pairFanoutLanes && (rowType === 'fanoutResult' || rowType === 'return')
-      ? Math.round(scaled / 2)
+      ? Math.round(scaled / laneTracks)
       : scaled
   return laid + (hasRunBoundary ? Math.round(RUN_BOUNDARY_HEIGHT_PX * scales.chrome) : 0)
 }

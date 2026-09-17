@@ -83,6 +83,12 @@
  * 800). Nothing in the suite would catch it either: the only test that reads it
  * re-derives its expectation FROM it. If it ever does move, it owes a literal
  * pin and an estimate golden.
+ *
+ * It now decides a SECOND thing: the lane track count at Medium, which is 2
+ * only because 980px fits exactly two 360px tracks. Re-pointing it to anything
+ * at or above 1104 would make the estimator size Medium's lanes three-across
+ * while the DOM still lays out two. `fanoutLaneTracks.test.ts` pins that with
+ * literals rather than re-derivations, so the move would red.
  */
 export const LAYOUT_EPOCH_CALIBRATION_WIDTH_PX = 980
 
@@ -151,15 +157,118 @@ function clampScale(value: number): number {
 }
 
 /**
+ * The column width, in CSS px, that an epoch stands for.
+ *
+ * ONE resolution, read by both consumers — the content width term below and the
+ * lane track count. A second spelling of `(bucket + 1) * widthBucketPx` is a
+ * second effective column that can drift from the one the content rate uses,
+ * and then the estimator divides a row by a track count derived from a width it
+ * was not sized for.
+ *
+ * The bucket resolves to its UPPER edge — `(bucket + 1) * WIDTH_BUCKET_PX` — on
+ * purpose. Every bucket spans 80px of real width, and assuming the widest
+ * column in the bucket yields the SMALLEST rate, i.e. the under-estimate
+ * direction the virtualiser calls safe. Bucket 0 is the "not measured" sentinel
+ * (and the gated value at Medium) and resolves to the calibration width, which
+ * is wider than every column Medium can produce — 850px in the main pane, 760px
+ * in General Chat, `min(850px, calc(100% - 28px))` in a Multiview pane — so the
+ * upper-edge argument holds there too.
+ */
+export function transcriptLayoutColumnWidthPx(
+  epoch: TranscriptLayoutEpoch | null | undefined,
+  widthBucketPx = 80
+): number {
+  const bucket = normalizedWidthBucket(epoch)
+  return bucket > 0 ? (bucket + 1) * widthBucketPx : LAYOUT_EPOCH_CALIBRATION_WIDTH_PX
+}
+
+/**
+ * The fan-out lane grid's track floor, in CSS px — the JS half of
+ * `--fanout-lane-min` in `02-transcript-messages-fx.css`.
+ *
+ * A re-typed CSS number, which `transcriptWidth.ts` refuses to export for its
+ * own caps and for a good reason. It is admitted here because the track count
+ * has to be known at ESTIMATE time, where there is no element to measure and no
+ * computed style to read (the renderer suites are `renderToStaticMarkup` with
+ * no jsdom), and because the alternative — reading the count off the DOM — is
+ * the second width sample the whole width seam exists to refuse. The pairing is
+ * held by a CSS guard in `transcriptWidthSetting.test.ts` that DERIVES the
+ * expected declaration from this constant rather than re-typing it.
+ */
+export const FANOUT_LANE_MIN_PX = 360
+
+/**
+ * The gap between lane tracks, in CSS px — `column-gap: var(--space-md)` on the
+ * same grid rule.
+ *
+ * `--space-md` is 12px at `:root` and 8px under `[data-compact="true"]`, and
+ * this models the 12px one. The epoch has no density axis and this slice does
+ * not give it one, because the 80px width BUCKET dominates the 4px difference:
+ * the two gap values disagree about the track count only for effective columns
+ * inside [728,732), [1096,1104), [1464,1476), … and the effective column is
+ * always a multiple of 80 (or the 980px calibration width), none of which lands
+ * in any of those bands below ~2960px of column. Above that the two differ by
+ * at most one track out of eight or more, which moves an estimate by ~12%.
+ */
+export const FANOUT_LANE_COLUMN_GAP_PX = 12
+
+/**
+ * How many fan-out lane cards the epoch's column fits side by side.
+ *
+ * The CSS grid is `repeat(auto-fit, minmax(min(100%, var(--fanout-lane-min)), 1fr))`
+ * with `column-gap: var(--space-md)`, so `k` tracks need
+ * `k * FANOUT_LANE_MIN_PX + (k - 1) * gap` of column, which inverts to
+ * `floor((column + gap) / (FANOUT_LANE_MIN_PX + gap))`. The grid's own comment
+ * confirms the forward form: two tracks at 732px, three at ~1104px, four at
+ * ~1476px.
+ *
+ * DIRECTION. `transcriptLayoutColumnWidthPx` resolves the bucket to its upper
+ * edge, so the effective column is never narrower than the real one and this
+ * count is therefore never SMALLER than the number of tracks CSS lays out. The
+ * estimator divides a lane row by it, so an over-count is an UNDER-estimate —
+ * the direction `TranscriptVirtualWindow` calls safe and absorbs in one
+ * anchor-correction pass. An under-count would inflate the bottom spacer, which
+ * is the auto-follow lurch its caps exist to prevent. Deriving this from a
+ * measured `clientWidth`, or from the bucket's LOWER edge, flips that.
+ *
+ * The floor of 1 is load-bearing: a degenerate epoch (bucket 1 — a 0-width pane
+ * mid-unmount — resolves to a 160px column) would otherwise yield 0 tracks and
+ * an estimate of `Infinity`, the unbounded bottom spacer `LAYOUT_EPOCH_MIN_SCALE`
+ * and `LAYOUT_EPOCH_MAX_SCALE` were written against.
+ */
+export function transcriptLayoutLaneTracks(
+  epoch: TranscriptLayoutEpoch | null | undefined,
+  widthBucketPx = 80
+): number {
+  return fanoutLaneTracksForColumnPx(transcriptLayoutColumnWidthPx(epoch, widthBucketPx))
+}
+
+/**
+ * The track count for a literal column width — the arithmetic half of
+ * `transcriptLayoutLaneTracks`, split out so the track BOUNDARIES can be pinned
+ * directly. The effective column an epoch resolves to is always a multiple of
+ * the bucket step (or the calibration width), so no epoch can land exactly on
+ * 732 / 1104 / 1476 and the off-by-one that drops the `+ gap` numerator term is
+ * invisible from the epoch side.
+ */
+export function fanoutLaneTracksForColumnPx(columnPx: number): number {
+  if (!Number.isFinite(columnPx) || columnPx <= 0) return 1
+  return Math.max(
+    1,
+    Math.floor(
+      (columnPx + FANOUT_LANE_COLUMN_GAP_PX) / (FANOUT_LANE_MIN_PX + FANOUT_LANE_COLUMN_GAP_PX)
+    )
+  )
+}
+
+/**
  * Resolve an epoch to its two multipliers. Exactly `{ content: 1, chrome: 1 }`
  * for the default epoch, and `content === chrome === 1` is what makes the
  * estimator byte-identical: `x * 1` is exact in IEEE-754 for every finite `x`,
  * and `Math.round(n) === n` for the integer bases and caps.
  *
- * The bucket resolves to its UPPER edge — `(bucket + 1) * WIDTH_BUCKET_PX` — on
- * purpose. Every bucket spans 80px of real width, and assuming the widest
- * column in the bucket yields the SMALLEST rate, i.e. the under-estimate
- * direction the virtualiser calls safe.
+ * The width term reads `transcriptLayoutColumnWidthPx`; see there for why the
+ * bucket resolves to its upper edge.
  */
 export function transcriptLayoutScales(
   epoch: TranscriptLayoutEpoch | null | undefined,
@@ -168,7 +277,7 @@ export function transcriptLayoutScales(
   const fontScale = normalizedFontScale(epoch)
   const bucket = normalizedWidthBucket(epoch)
   if (fontScale === 1 && bucket === 0) return IDENTITY_TRANSCRIPT_LAYOUT_SCALES
-  const columnWidth = bucket > 0 ? (bucket + 1) * widthBucketPx : LAYOUT_EPOCH_CALIBRATION_WIDTH_PX
+  const columnWidth = transcriptLayoutColumnWidthPx(epoch, widthBucketPx)
   const widthTerm = LAYOUT_EPOCH_CALIBRATION_WIDTH_PX / columnWidth
   return {
     /*

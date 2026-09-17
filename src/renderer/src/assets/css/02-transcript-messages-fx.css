@@ -4618,9 +4618,40 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  *
  * `min(100%, var(--fanout-lane-min))` rather than the bare floor so a container
  * narrower than the floor itself still yields one usable track instead of
- * overflowing. Three tracks would need ~1240px; `.transcript-inner` is capped at
- * `--composer-content-max-width` (850px), so two is the real ceiling — if that
- * cap is ever raised, revisit this before the grid quietly goes three-across.
+ * overflowing.
+ *
+ * THE TRACK COUNT IS UNCAPPED, and everything downstream now derives it rather
+ * than assuming two. `auto-fit` against the 360px floor yields three tracks from
+ * ~1104px of column, four from ~1476px, and an uncapped Wide column clears both
+ * on an ordinary window. The JS half computes the same number from the
+ * transcript's layout epoch — `transcriptLayoutLaneTracks`, which inverts this
+ * rule's own arithmetic, `floor((column + gap) / (360 + gap))` — and feeds it to
+ * the slot classifier and to the height estimator. That count is derived from
+ * the epoch's bucket, which resolves to its UPPER edge, so JS can read one track
+ * MORE than the browser lays out for a column in the ~64px band below a
+ * threshold. Two consequences, stated as they actually present:
+ *
+ *   - the estimate under-estimates, which is the safe direction the module's
+ *     constants are chosen for;
+ *   - the slot map groups cells in Ns the browser does not honour, so a grid row
+ *     can end up PART-FILLED: a card at one track width with empty column beside
+ *     it. That is the shape `solo` exists to refuse, and in the band it is
+ *     reachable. It is cosmetic — no height is mis-attributed, because
+ *     `admitsMeasuredRowDelta` reads the slot rather than the count and admits a
+ *     zero only for a `lead`, which is true of the DOM whatever N the browser
+ *     chose — and it self-corrects the moment the column leaves the band.
+ *
+ * A part-filled row is also reachable OUTSIDE the band, and by design: a
+ * trailing group of two or more keeps its cells rather than spanning, so seven
+ * lanes at five tracks end as five + two. The alternative — spanning the whole
+ * trailing group — would re-slot up to N-1 PREDECESSORS on every appended lane,
+ * charging the measure-rewrite budget on the hot streaming path. A lone trailing
+ * card still spans, which is why this reduces to today at two tracks.
+ *
+ * If you change the floor or the gap here, change `FANOUT_LANE_MIN_PX` /
+ * `FANOUT_LANE_COLUMN_GAP_PX` in `transcriptLayoutEpoch.ts` with them —
+ * `transcriptWidthSetting.test.ts` derives the expected declaration below from
+ * those two constants and will red if the two halves part company.
  * ============================================================ */
 :root[data-fanout-lane-layout='paired'] .transcript-inner {
   /* Track floor, and therefore the width at which pairing switches itself off.
@@ -4637,46 +4668,34 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   column-gap: var(--space-md);
 }
 
-/* The cap the warning above says to revisit HAS been raised, by Wide — and this
- * is the promised revisit, not the rewrite.
- *
- * `auto-fit` against a 360px floor yields three tracks from ~1104px of column
- * and four from ~1476px, both of which an uncapped column clears on an ordinary
- * window. Nothing else is ready for that. `classifyFanoutLaneSlots` emits only
- * lead/trail/solo, so a third cell has no slot; `selectTranscriptWindow`'s pair
- * extension widens the band by exactly one for a lead/trail straddle; and the
- * pre-paint measurement admits a zero `offsetTop` delta only for a `lead`,
- * on the stated assumption that exactly ONE row shares the trail's offsetTop —
- * with three cells per grid row heights are MIS-ATTRIBUTED, not merely
- * under-counted. `estimatedHeightFor` halves every lane unconditionally, which
- * is a safe under-estimate at two tracks and a ~1.5x OVER-estimate at three:
- * the inflated-bottom-spacer / auto-follow-lurch class the file's own constants
- * exist to prevent.
- *
- * So Wide raises the reading column and leaves the lane grid at two tracks. The
- * floor becomes half the column (minus the one gap between the pair), which two
- * tracks fill exactly and three can never satisfy: 3 x (100% - gap)/2 + 2 x gap
- * exceeds 100% for any non-negative gap. `max()` keeps the 360px floor, so a
- * narrow Wide pane still collapses to one column exactly as it does today.
- *
- * N-across is the next slice and this rule is what keeps it a slice rather than
- * a regression already shipped ahead of it. Delete it there, not here. */
-:root[data-fanout-lane-layout='paired'] .transcript-inner[data-transcript-width='wide'] {
-  --fanout-lane-min: max(360px, calc((100% - var(--space-md)) / 2));
-}
+/* Wide's two-track containment rule stood here — an override that forced
+ * `--fanout-lane-min` to half the column so three tracks could never be
+ * satisfied. It existed because the slot model emitted only lead/trail/solo,
+ * the window's band extension stepped by exactly one, the pre-paint measurement
+ * admitted a zero offsetTop delta only for a `lead`, and the estimator halved
+ * unconditionally. All four now derive the track count instead of assuming two,
+ * so the containment is gone and Wide uses the width it was given. Do not
+ * reintroduce a width-scoped `--fanout-lane-min`: the guard in
+ * `transcriptWidthSetting.test.ts` refuses one by name. */
 
-/* Every row spans the column by default — only a lane opts out below. The
+/* Every row spans the column by default — only a lane cell opts out below. The
  * virtualiser's spacers are matched by this too, which they must be: a spacer
  * confined to one column would let a collapsed run of rows sit beside live
- * content. */
+ * content. It is also what makes the band extension in `selectTranscriptWindow`
+ * load-bearing rather than tidy: a spacer forces a fresh grid row, so cutting a
+ * grid row at a band edge shifts the COLUMN PHASE of every lane below it. */
 :root[data-fanout-lane-layout='paired'] .transcript-inner > * {
   grid-column: 1 / -1;
 }
 
-/* A paired lane takes one cell. `solo` is deliberately absent: an unpaired lane
- * keeps the span above, so an odd lane count (three scouts, five workers — the
- * common shape, not an edge case) ends in a full-width card rather than a
- * half-width one with a hole beside it. */
+/* A lane CELL takes one grid cell. `solo` is deliberately absent: a lane with no
+ * neighbours to share a row with keeps the span above, so a run that does not
+ * divide by the track count (three scouts, five workers — the common shape, not
+ * an edge case) ends in a full-width card rather than a lone 1/N-wide one with
+ * an empty 1/N beside it. A trailing group of TWO OR MORE cells keeps its cells
+ * and simply leaves the last grid row partly empty, which is what every grid of
+ * cards looks like; only a group of one spans. At two tracks those two rules
+ * coincide, which is what keeps Medium byte-identical. */
 :root[data-fanout-lane-layout='paired']
   .transcript-inner
   > .transcript-message-block[data-fanout-slot='lead'],
@@ -4690,7 +4709,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
  * adjacent cards from the same calling run. Fill the grid cell (message-group
  * normally shrink-wraps its children) and leave more room for the exact
  * close-out seat strip by reducing the right column to glyph + open affordance
- * in a two-across pair. A solo/odd Fleet card keeps its full State label. */
+ * in a shared grid row. A full-span Fleet card keeps its full State label.
+ *
+ * The two selectors mean different things and both are correct at N tracks. The
+ * first keys on the mere PRESENCE of the attribute, i.e. "this is a lane at all"
+ * — `solo` included, because a spanning lane still has to fill its row. The
+ * second keys on the two CELL values, i.e. "this card is narrower than the
+ * column", which is true for every cell of a multi-cell grid row and false for a
+ * span. Neither enumerates column indices, which is why neither needed touching
+ * when the count stopped being two. */
 :root[data-fanout-lane-layout='paired']
   .transcript-message-block[data-fanout-slot]
   .fleet-wave-message,

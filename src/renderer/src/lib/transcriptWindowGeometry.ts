@@ -43,15 +43,27 @@ export function selectTranscriptWindow(input: TranscriptWindowGeometryInput): Vi
     endIndex = Math.min(input.heights.length, Math.max(endIndex, input.previous.endIndex))
   }
 
-  // A CSS grid pair is one measured vertical band. Cutting it in half moves
-  // the surviving cell and changes its height, which invalidates that very
-  // selection. Include both members even when the lead has a zero-height slot.
+  // A CSS grid row of lane cells is ONE measured vertical band. Cutting it in
+  // half moves the surviving cells and changes their heights, which invalidates
+  // that very selection — and it is worse than a one-cell defect: both spacers
+  // carry `grid-column: 1 / -1`, so the spacer that replaces the missing cells
+  // forces a fresh grid row and shifts the COLUMN PHASE of every lane below it
+  // until a full-span row resets it. Include the whole grid row even when the
+  // leading cells have a zero-height slot.
+  //
+  // `lead` is exactly "a sibling follows me on this grid row", so the row
+  // boundaries are where a `lead` does NOT precede: walk out to them. A single
+  // step is enough at two tracks and at no other count, which is why this is a
+  // loop rather than the pair of `if`s it replaced. Both are bounded by the
+  // track count (a group's last cell is a `trail` or a `solo`) and by the row
+  // list itself, so a stale or inconsistent slot map cannot spin either one.
+  const rowCount = input.heights.length
   const slotAt = (index: number): FanoutLaneSlot | undefined => {
     const key = input.rows?.[index]?.rowKey
     return key === undefined ? undefined : input.fanoutLaneSlots?.get(key)
   }
-  if (slotAt(startIndex) === 'trail' && slotAt(startIndex - 1) === 'lead') startIndex -= 1
-  if (slotAt(endIndex - 1) === 'lead' && slotAt(endIndex) === 'trail') endIndex += 1
+  while (startIndex > 0 && slotAt(startIndex - 1) === 'lead') startIndex -= 1
+  while (endIndex < rowCount && slotAt(endIndex - 1) === 'lead') endIndex += 1
 
   return {
     startIndex,

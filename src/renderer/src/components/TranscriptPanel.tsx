@@ -139,6 +139,7 @@ import {
 import {
   DEFAULT_TRANSCRIPT_LAYOUT_EPOCH,
   transcriptLayoutEpochsEqual,
+  transcriptLayoutLaneTracks,
   type TranscriptLayoutEpoch
 } from '../lib/transcriptLayoutEpoch'
 import {
@@ -248,9 +249,11 @@ import { ParallelResultViewportHeader } from './ParallelResultViewportHeader'
 import { EnsembleFanoutResultCard } from './EnsembleFanoutResultCard'
 import { EnsembleSideMessageMeta } from './EnsembleSideMessageMeta'
 import {
+  admitsMeasuredRowDelta,
   classifyCompactFanoutLaneRows,
   classifyFanoutLaneSlots,
   resolveFanoutLaneLayout,
+  FANOUT_LANE_SLOT_DATASET_KEY,
   type FanoutLaneSlot
 } from '../lib/fanoutLanePairing'
 import { buildFanoutLaneJumpTargets } from '../lib/fanoutLaneJumpTargets'
@@ -2496,18 +2499,25 @@ export function useTranscriptVirtualization(params: {
           ? blockElsRef.current.get(mountedRows[i + 1].rowKey)
           : spacerBottom
       const slot = nextEl && nextEl.isConnected ? nextEl.offsetTop - el.offsetTop : el.offsetHeight
-      // A paired fan-out lane's LEAD cell sits BESIDE its trail cell, so the two
-      // share an offsetTop and the delta is legitimately 0 — the pair's whole
-      // height lands on the trail row, and lead + trail still sum to exactly the
-      // space the pair occupies. For every other row type a non-positive slot
-      // means "this row has no layout box to measure" (a display:none block, an
-      // element mid-unmount) and must be skipped, so the zero is admitted only
-      // where the layout genuinely produces one. Admitting it everywhere would
-      // silently zero real rows; rejecting it here would leave the lead on its
-      // ESTIMATE while the trail already carries the pair — counting the band
-      // one-and-a-half times and inflating the bottom spacer.
-      const isPairLead = el.dataset.fanoutSlot === 'lead'
-      if (!(slot > 0) && !(isPairLead && slot === 0)) continue
+      // A lane cell that is not the last of its grid row sits BESIDE the next
+      // one, so the two share an offsetTop and the delta is legitimately 0 —
+      // the grid row's whole height lands on the cell that CLOSES it, and the
+      // row's cells still sum to exactly the space the row occupies. For every
+      // other row type a non-positive slot means "this row has no layout box to
+      // measure" (a display:none block, an element mid-unmount) and must be
+      // skipped. Admitting a zero everywhere would silently zero real rows;
+      // rejecting it for a cell would leave that cell on its ESTIMATE while the
+      // closing cell already carries the band — counting the band one-and-a-half
+      // times and inflating the bottom spacer.
+      //
+      // The rule lives in `admitsMeasuredRowDelta` rather than inline, and the
+      // reason is the shape of this file's testability: no renderer suite can
+      // reach this effect (`renderToStaticMarkup`, no jsdom, so nothing has an
+      // `offsetTop`), and the shipped inline form — `=== 'lead'` — therefore had
+      // no test of any kind while it was silently wrong at more than two
+      // tracks. The dataset property name is derived from the attribute the JSX
+      // stamps, so the two cannot drift.
+      if (!admitsMeasuredRowDelta(slot, el.dataset[FANOUT_LANE_SLOT_DATASET_KEY])) continue
       const isActiveLiveRow = isActiveLiveRowKey(row.rowKey, activeLiveRowKeys)
       const key = measurementKey(
         row.rowKey,
@@ -3868,10 +3878,8 @@ export const TranscriptPanel = memo(
     // the measurement pass — so all three can never disagree about whether the
     // transcript is currently pairing lanes.
     const pairFanoutLanes = resolveFanoutLaneLayout(fanoutLaneLayout) === 'paired'
-    const fanoutLaneSlots = useMemo(
-      () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes),
-      [displayMessages, pairFanoutLanes]
-    )
+    // The slot map itself is minted below the layout epoch, because how many
+    // lane cells share a grid row is derived from the column the epoch carries.
     // Independent of the pairing setting: a six-plus round is over-tall in the
     // stacked layout too, so the compact band derives from the run alone.
     const compactFanoutLaneRows = useMemo(
@@ -4110,6 +4118,35 @@ export const TranscriptPanel = memo(
       liveActivityViewport === false,
       pairFanoutLanes,
       transcriptLayoutEpoch
+    )
+    /*
+     * HOW MANY LANE CARDS SHARE A GRID ROW — derived from the epoch, never
+     * chosen, and read from the SAME object the estimator divides by.
+     *
+     * There is no setting for this and there must not be: the grid is
+     * `auto-fit` against a 360px track floor, so the browser already decides
+     * the count from the column, and a number the user could set would be a
+     * second opinion about a layout the DOM has already committed to.
+     *
+     * Reading it off the epoch rather than measuring again is what keeps it ONE
+     * number. The epoch is the transcript's only width, it is already compared
+     * by value before the projection cache is trusted, and it is already this
+     * component's single `widthBucket(` sample — so the slot map, the height
+     * estimate and both cache keys move together or not at all. A second
+     * measurement here would also make the grouping and the estimate two
+     * numbers that merely agree, which is the defect the width seam exists to
+     * make unrepresentable.
+     *
+     * At Medium this is always 2: `transcriptWidthLayoutBucket` gates the
+     * measured bucket to 0 there, bucket 0 resolves to the 980px calibration
+     * width, and `floor((980 + 12) / (360 + 12))` is 2 — the same count the
+     * two-across model hard-coded. `fanoutLaneTracks.test.ts` pins that at the
+     * assumed column and at every real Medium column.
+     */
+    const fanoutLaneTracks = transcriptLayoutLaneTracks(transcriptLayoutEpoch)
+    const fanoutLaneSlots = useMemo(
+      () => classifyFanoutLaneSlots(displayMessages, pairFanoutLanes, fanoutLaneTracks),
+      [displayMessages, pairFanoutLanes, fanoutLaneTracks]
     )
     const projectedRowLookup = useMemo(() => {
       const byRowKey = new Map<string, VirtualRow>()

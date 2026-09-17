@@ -1771,6 +1771,56 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html.match(/data-fanout-slot="trail"/g)).toHaveLength(1)
   })
 
+  it('spans a lane with no row to share, rather than leaving a hole beside it', () => {
+    // THE NEGATIVE THE LANE GRID RESTS ON, and which had no DOM-level guard.
+    // The CSS spans every child of `.transcript-inner` and opts ONLY the two
+    // CELL values back out, so an unpaired lane keeps the full column purely by
+    // not carrying `lead` or `trail`. A model that stamped a cell slot on every
+    // lane would pass every other lane assertion in this file while shipping
+    // the half-width-card-with-a-hole defect the `solo` rule exists to refuse.
+    const spanLane = (id: string, order: number, content: string): ChatMessage => ({
+      id,
+      role: 'assistant',
+      content,
+      timestamp: `2026-08-15T00:4${order}:00.000Z`,
+      metadata: {
+        kind: 'ensembleParticipant',
+        ensembleRoundId: 'round-span-lane',
+        ensembleParticipantId: id,
+        ensembleLaneId: `lane-${id}`,
+        ensembleLaneIntent: 'write',
+        ensembleProvider: 'codex',
+        ensembleRole: id,
+        ensembleOrder: order,
+        ensembleFanoutWaveId: 'span-wave',
+        ensembleFanoutCategory: 'user'
+      }
+    })
+
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          fanoutLaneLayout: 'paired',
+          messages: [
+            spanLane('span-1', 1, 'SPAN_LANE_ONE'),
+            spanLane('span-2', 2, 'SPAN_LANE_TWO'),
+            spanLane('span-3', 3, 'SPAN_LANE_THREE')
+          ]
+        })}
+      />
+    )
+
+    // Three lanes at the two tracks a renderToStaticMarkup suite always
+    // resolves to: one shared grid row, then one spanning card.
+    expect(html.match(/data-fanout-slot="solo"/g)).toHaveLength(1)
+    // Positive controls in the same markup, proving the matcher can fire on a
+    // cell value and that the run really did pair.
+    expect(html.match(/data-fanout-slot="lead"/g)).toHaveLength(1)
+    expect(html.match(/data-fanout-slot="trail"/g)).toHaveLength(1)
+    expect(html.match(/data-fanout-slot="/g)).toHaveLength(3)
+  })
+
   it('folds a settled fan-out wave to a stage-aware handle when the next turn begins', () => {
     const roundId = 'round-persisted-fanout'
     const roundMessages: ChatMessage[] = [

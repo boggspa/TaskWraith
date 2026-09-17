@@ -37,6 +37,7 @@ import {
   decideScrollerBoxRefresh,
   type VirtualRow
 } from './TranscriptVirtualWindow'
+import type { TranscriptLayoutEpoch } from './transcriptLayoutEpoch'
 
 // --- fixtures -------------------------------------------------------------
 
@@ -349,23 +350,65 @@ describe('TranscriptVirtualWindow', () => {
       expect(estimatedHeightFor('tool', false, 100000)).toBe(CONTENT_SCALE_CAP_PX)
     })
 
-    it('halves a fan-out lane estimate while the paired layout shares a grid row', () => {
-      // Two paired lanes occupy ONE row, so two half estimates must sum to the
-      // band they really cost. Anything larger inflates the bottom spacer and
-      // brings back the auto-follow lurch the cap above exists to prevent.
-      const stacked = estimatedHeightFor('fanoutResult', false, 100000)
-      const paired = estimatedHeightFor('fanoutResult', false, 100000, true)
-      expect(paired).toBe(Math.round(stacked / 2))
-      expect(paired * 2).toBe(stacked)
+    it('divides a lane estimate by the tracks the epoch fits, as LITERAL heights', () => {
+      /*
+       * N lane cards occupy ONE grid row, so N divided estimates must sum to
+       * the band they really cost. Anything larger inflates the bottom spacer
+       * and brings back the auto-follow lurch the cap above exists to prevent.
+       *
+       * LITERALS, at NON-DEFAULT epochs, and that is the whole point of this
+       * table. The predecessor asserted `paired * 2 === stacked` at the default
+       * epoch — which stays true forever if the divisor is hard-coded back to
+       * 2, and which the estimate goldens already record is false off the even
+       * saturation point. A pin that cannot tell a derived N from a constant 2
+       * is not a pin on the derivation.
+       */
+      const at = (bucket: number): TranscriptLayoutEpoch => ({ widthBucket: bucket, fontScale: 1 })
+      // bucket 0 — Medium, first paint, every renderToStaticMarkup suite: 980px
+      // of assumed column, two tracks. The two-across numbers, unchanged.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, false, at(0))).toBe(360)
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(0))).toBe(180)
+      expect(estimatedHeightFor('return', false, 100000, true, at(0))).toBe(180)
+      // bucket 8 — a 640px Narrow column, ONE track. The lane spans, so the
+      // divided estimate is the stacked one: the 2x under-estimate the shipped
+      // unconditional halving produced at Narrow is gone.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(8))).toBe(360)
+      expect(estimatedHeightFor('return', false, 100000, true, at(8))).toBe(360)
+      expect(estimatedHeightFor('fanoutResult', false, 300, true, at(8))).toBe(320)
+      // bucket 14 — a ~1179px Wide column, THREE tracks. Note the rounding is
+      // real: 320 / 3 is 106.67.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(14))).toBe(120)
+      expect(estimatedHeightFor('fanoutResult', false, 300, true, at(14))).toBe(107)
+      expect(estimatedHeightFor('return', false, 300, true, at(14))).toBe(93)
+      // bucket 26 — a ~2156px Wide column, FIVE tracks. The shipped halving was
+      // a 2.5x OVER-estimate here, which is the dangerous direction.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(26))).toBe(72)
+      expect(estimatedHeightFor('return', false, 300, true, at(26))).toBe(56)
+      // 4K and 6K columns.
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(42))).toBe(40)
+      expect(estimatedHeightFor('fanoutResult', false, 100000, true, at(68))).toBe(26)
     })
 
-    it('halves a sub-thread return estimate while the paired layout shares a grid row', () => {
-      // Once pairing stamps return slots alongside fan-out lanes, a paired
-      // return must contribute half a row — same invariant as fanoutResult.
-      const stacked = estimatedHeightFor('return', false, 100000)
-      const paired = estimatedHeightFor('return', false, 100000, true)
-      expect(paired).toBe(Math.round(stacked / 2))
-      expect(paired * 2).toBe(stacked)
+    it('leaves the UNDIVIDED estimate alone at every epoch, paired or not', () => {
+      // The gate's positive control: widening the column must not move the
+      // stacked estimate, or the division has leaked out of its branch.
+      for (const bucket of [0, 8, 14, 26, 42, 68]) {
+        const epoch: TranscriptLayoutEpoch = { widthBucket: bucket, fontScale: 1 }
+        expect(estimatedHeightFor('fanoutResult', false, 100000, false, epoch), `b${bucket}`).toBe(
+          360
+        )
+        expect(estimatedHeightFor('return', false, 300, false, epoch), `b${bucket}`).toBe(280)
+      }
+    })
+
+    it('keeps a degenerate epoch finite rather than dividing by zero tracks', () => {
+      // Bucket 1 is a 0-width pane mid-unmount: a 160px assumed column, which
+      // fits no whole track. A zero divisor would make the estimate Infinity
+      // and the bottom spacer unbounded.
+      const degenerate: TranscriptLayoutEpoch = { widthBucket: 1, fontScale: 1 }
+      const estimate = estimatedHeightFor('fanoutResult', false, 100000, true, degenerate)
+      expect(Number.isFinite(estimate)).toBe(true)
+      expect(estimate).toBe(360)
     })
 
     it('leaves every other row type alone under the paired layout', () => {
