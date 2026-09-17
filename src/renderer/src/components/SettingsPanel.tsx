@@ -379,6 +379,7 @@ interface SettingsPanelProps {
   hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
   /** Settings → General toggle: collapse older Ensemble rounds into cards. */
   ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+  keepAwakeWhileWorking?: AppSettings['keepAwakeWhileWorking']
   /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
   maxWaveAgents?: AppSettings['maxWaveAgents']
   /**
@@ -523,6 +524,7 @@ interface SettingsPanelProps {
     hostAutoCompactEnabled?: AppSettings['hostAutoCompactEnabled']
     /** Settings → General toggle: collapse older Ensemble rounds into cards. */
     ensembleCollapseOlderRounds?: AppSettings['ensembleCollapseOlderRounds']
+    keepAwakeWhileWorking?: AppSettings['keepAwakeWhileWorking']
     /** Settings → General: max workers accepted by `delegate_wave` (2–64, default 8). */
     maxWaveAgents?: AppSettings['maxWaveAgents']
     /**
@@ -995,6 +997,7 @@ export function SettingsPanel({
   composerContinuationAiEnabled,
   hostAutoCompactEnabled,
   ensembleCollapseOlderRounds,
+  keepAwakeWhileWorking,
   maxWaveAgents,
   dashboardStatPrefs,
   welcomeHeatmapPrefs,
@@ -3701,6 +3704,24 @@ export function SettingsPanel({
                   most recent and any in-progress round stay open). Click a round card to reveal its
                   full transcript. Turn this off to always show every round expanded, like the
                   classic flat transcript.
+                </p>
+              </div>
+
+              <div className="settings-group">
+                <label className="settings-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={keepAwakeWhileWorking !== false}
+                    onChange={(e) => onChange({ keepAwakeWhileWorking: e.target.checked })}
+                  />
+                  <span>Keep this Mac awake while agents are working</span>
+                </label>
+                <p className="settings-hint">
+                  Stops the Mac going to sleep while a run or round is in flight, so a long job
+                  survives an unattended night. The display still sleeps and the screen still locks
+                  on your normal schedule — only system sleep is held off, and only while work is
+                  actually running. Closing the lid, or choosing Sleep yourself, still sleeps the
+                  Mac: macOS does not let any app override those.
                 </p>
               </div>
 

@@ -83,7 +83,22 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     label: 'General',
     group: 'app',
     description: 'Core app behavior, dashboard defaults, approval timeouts, and maintenance.',
-    aliases: ['behavior', 'system', 'timeouts', 'currency', 'dashboard', 'desktop'],
+    // 'sleep', 'keep awake' and 'power' carry the keep-awake toggle. None of
+    // the three appears anywhere else in this table, and the only near-miss is
+    // Devices' 'push wake.' in its DESCRIPTION, which scores 15 against the 60
+    // an alias gets for containing 'wake' — so /settings sleep and
+    // /settings awake both land here rather than on the phone-pairing tab.
+    aliases: [
+      'behavior',
+      'system',
+      'timeouts',
+      'currency',
+      'dashboard',
+      'desktop',
+      'sleep',
+      'keep awake',
+      'power'
+    ],
     scope: 'global'
   },
   {

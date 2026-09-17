@@ -1882,6 +1882,32 @@ describe('MainSanitizers settings patches', () => {
     }
     expect(consolidateAgenticWorkspaceGrants([canvasRow])).toEqual([canvasRow])
   })
+
+  it('persists keepAwakeWhileWorking (SETTINGS_PATCH_KEYS guard)', () => {
+    // Same allowlist, same silent drop — and here the drop is invisible in a
+    // way the others are not. The toggle would appear to work for the rest of
+    // the session and then be gone at the next launch, which is exactly when
+    // the overnight round it was meant to protect is running.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(sanitizeSettingsPatch({ keepAwakeWhileWorking: false }).keepAwakeWhileWorking).toBe(false)
+    expect(sanitizeSettingsPatch({ keepAwakeWhileWorking: true }).keepAwakeWhileWorking).toBe(true)
+    // A non-boolean is coerced rather than dropped, matching its General-tab
+    // neighbours: an absent key and a `false` key mean different things here,
+    // so silently discarding a malformed one would read as "defaults to on".
+    expect(
+      sanitizeSettingsPatch({ keepAwakeWhileWorking: 0 } as unknown as Partial<AppSettings>)
+        .keepAwakeWhileWorking
+    ).toBe(false)
+    // The negative needs the positive above it in the same test: an allowlist
+    // that dropped EVERYTHING would satisfy `not.toHaveProperty` on its own.
+    const mixed = sanitizeSettingsPatch({
+      keepAwakeWhileWorking: true,
+      notASettingsKey: 1
+    } as unknown as Partial<AppSettings>)
+    expect(mixed.keepAwakeWhileWorking).toBe(true)
+    expect(mixed).not.toHaveProperty('notASettingsKey')
+  })
 })
 
 describe('AntiGravity opt-in admission (S0b settings-aware gate)', () => {

@@ -121,4 +121,45 @@ describe('resolveSettingsTabFromSlashArg', () => {
       })
     ).toBe('providers')
   })
+
+  it('routes the keep-awake queries to General by MATCH, not by fallback', () => {
+    // The disarming runs the OTHER way here, and getting it backwards is the
+    // easy mistake: the tab under test IS 'behavior', so the sibling tests'
+    // `defaultTab: 'behavior'` would make every line below pass without a
+    // single alias existing. Force the no-match answer to 'appearance' instead.
+    const opts = { settingsTabs: SETTINGS_TABS, defaultTab: 'appearance' as const }
+
+    // Positive control for the disarming itself: an unmatched query must reach
+    // 'appearance'. If this ever returns 'behavior', the rest of this test is
+    // vacuous.
+    expect(resolveSettingsTabFromSlashArg('zzzz no such settings tab', opts)).toBe('appearance')
+
+    expect(resolveSettingsTabFromSlashArg('sleep', opts)).toBe('behavior')
+    expect(resolveSettingsTabFromSlashArg('keep awake', opts)).toBe('behavior')
+    expect(resolveSettingsTabFromSlashArg('awake', opts)).toBe('behavior')
+    expect(resolveSettingsTabFromSlashArg('power', opts)).toBe('behavior')
+    // 'wake' is the contested one: Devices' description ends 'and push wake.',
+    // which is a real 15-point hit. The alias must out-score it, not tie it.
+    expect(resolveSettingsTabFromSlashArg('wake', opts)).toBe('behavior')
+  })
+
+  it('wins the keep-awake queries on score, not on the alphabetical tie-break', () => {
+    // 'behavior' already LOSES ties to 'appearance' ascending, so the sibling
+    // Appearance test needed a rename and this one does not. What it does need
+    // is proof against the tabs that could tie from the other side: give
+    // General a last-sorting id and it must still win every query.
+    const relabelled = SETTINGS_TABS.map((tab) =>
+      tab.id === 'behavior' ? { ...tab, id: 'zzzz-behavior' as typeof tab.id } : tab
+    )
+    const opts = { settingsTabs: relabelled, defaultTab: 'appearance' as const }
+
+    // Positive control: the rename really is in effect.
+    expect(resolveSettingsTabFromSlashArg('timeouts', opts)).toBe('zzzz-behavior')
+
+    expect(resolveSettingsTabFromSlashArg('sleep', opts)).toBe('zzzz-behavior')
+    expect(resolveSettingsTabFromSlashArg('keep awake', opts)).toBe('zzzz-behavior')
+    expect(resolveSettingsTabFromSlashArg('awake', opts)).toBe('zzzz-behavior')
+    expect(resolveSettingsTabFromSlashArg('power', opts)).toBe('zzzz-behavior')
+    expect(resolveSettingsTabFromSlashArg('wake', opts)).toBe('zzzz-behavior')
+  })
 })

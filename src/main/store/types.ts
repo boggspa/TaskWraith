@@ -2859,6 +2859,15 @@ export interface AppSettings {
    * files default to the collapsed-card behaviour. Set false to restore
    * the flat per-message transcript. */
   ensembleCollapseOlderRounds?: boolean
+  /** Settings → General toggle: hold a `prevent-app-suspension` power
+   * assertion while local agent work is running, so an idle-sleep timer cannot
+   * suspend the app — and the Host with it — part way through a round. The
+   * display still sleeps and the screen still locks; only system suspension is
+   * blocked, and only while work is actually in flight. Defaults to true,
+   * because the failure it prevents (a long round suspended unattended) costs
+   * far more than the idle watts it spends. A closed lid or a user-requested
+   * sleep remains an OS-level ceiling that no assertion can override. */
+  keepAwakeWhileWorking?: boolean
   /**
    * Settings → General: max workers accepted by `delegate_wave` (clamped
    * 2–64; default 8). Structural ceiling is DELEGATE_WAVE_MAX_WORKERS (64),

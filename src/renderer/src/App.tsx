@@ -7724,6 +7724,9 @@ function App(): React.JSX.Element {
     if (next.ensembleCollapseOlderRounds !== undefined) {
       settingsPatch.ensembleCollapseOlderRounds = next.ensembleCollapseOlderRounds
     }
+    if (next.keepAwakeWhileWorking !== undefined) {
+      settingsPatch.keepAwakeWhileWorking = next.keepAwakeWhileWorking
+    }
     if (next.maxWaveAgents !== undefined) {
       settingsPatch.maxWaveAgents = next.maxWaveAgents
     }

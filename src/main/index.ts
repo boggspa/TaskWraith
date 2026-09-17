@@ -298,6 +298,10 @@ import {
   remoteProjectionSnapshotThrottleMsForStreaming
 } from './RemoteBridgePerfTuning'
 import { createRemoteBridgeRunEventInterestFilter } from './RemoteBridgeRunEventFilter'
+import {
+  WorkKeepAwakeAssertion,
+  startWorkKeepAwakeMonitor
+} from './WorkKeepAwakeAssertion'
 import type {
   McpToolContentBlock,
   McpToolExecutionResult,
@@ -9427,6 +9431,33 @@ function hasEnsembleHostAdmissionWork(): boolean {
   const occupancy = ensembleHostAdmissionRuntime.snapshot().occupancy
   return occupancy.active > 0 || occupancy.queued > 0
 }
+
+/**
+ * The same three signals `window-all-closed` uses to decide that work must
+ * outlive the last window, reused to decide the Mac must stay awake for it.
+ * Deliberately a second expression rather than a shared helper: the
+ * headless-continuity combination is pinned by source-reading tests
+ * (`WindowCloseHeadlessContinuity.test.ts`), and folding the two together
+ * would red them for a refactor that buys nothing.
+ */
+function hasActiveLocalAgentWork(): boolean {
+  return (
+    getActiveTaskWraithThreadCount() > 0 ||
+    hasActiveStreamingTaskWraithRun() ||
+    hasEnsembleHostAdmissionWork()
+  )
+}
+
+/**
+ * Second, independent power assertion (see `WorkKeepAwakeAssertion`): the
+ * remote one above tracks paired phones, this one tracks work the user
+ * started here. Neither may release the other's blocker id.
+ */
+const workKeepAwakeAssertion = new WorkKeepAwakeAssertion({
+  powerSaveBlocker,
+  log: (message) => console.log(message)
+})
+let stopWorkKeepAwakeMonitor: (() => void) | null = null
 
 function hasLiveProviderTransportForHostAdmission(runId: string): boolean {
   const session = runManager.get(runId)
@@ -47181,6 +47212,16 @@ if (isGeminiMcpBridgeProcess) {
     })
     powerMonitor.on('lock-screen', () => renewRemotePowerAssertion('screen locked'))
     powerMonitor.on('resume', () => renewRemotePowerAssertion('system resumed'))
+    stopWorkKeepAwakeMonitor = startWorkKeepAwakeMonitor(workKeepAwakeAssertion, {
+      hasActiveWork: hasActiveLocalAgentWork,
+      // Read fresh each tick: there is no settings-changed event in main, and
+      // absent means ON so an older settings file is not read as an opt-out.
+      isEnabled: () => AppStore.getSettings().keepAwakeWhileWorking !== false
+    })
+    // A forced sleep can invalidate the blocker id without telling us, so the
+    // work assertion needs the same repair-on-wake the remote one gets.
+    powerMonitor.on('lock-screen', () => workKeepAwakeAssertion.renew('screen locked'))
+    powerMonitor.on('resume', () => workKeepAwakeAssertion.renew('system resumed'))
 
     /*
      * 1.0.5-EW35 — Currency sub-slice (c): kick off the live FX
@@ -56342,6 +56383,9 @@ if (isGeminiMcpBridgeProcess) {
       activityReportingServiceRef?.stop()
       activityReportingServiceRef = null
       releaseRemotePowerAssertion()
+      stopWorkKeepAwakeMonitor?.()
+      stopWorkKeepAwakeMonitor = null
+      workKeepAwakeAssertion.release()
       if (stallReconcilerInterval) {
         clearInterval(stallReconcilerInterval)
         stallReconcilerInterval = null

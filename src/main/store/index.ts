@@ -2412,6 +2412,7 @@ const defaultSettings: AppSettings = {
   closeoutAiSummaryEnabled: true,
   hostAutoCompactEnabled: true,
   ensembleCollapseOlderRounds: true,
+  keepAwakeWhileWorking: true,
   /** Settings → General Max Wave Agents (clamped 2–64 on read/write).
    *  A literal because `defaultSettings` is the shipped settings shape, not a
    *  computed one; kept in step with shared/fleetWave's DEFAULT_MAX_WAVE_AGENTS

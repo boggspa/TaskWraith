@@ -1603,6 +1603,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               composerContinuationAiEnabled={settings?.composerContinuationAiEnabled}
               hostAutoCompactEnabled={settings?.hostAutoCompactEnabled}
               ensembleCollapseOlderRounds={settings?.ensembleCollapseOlderRounds}
+              keepAwakeWhileWorking={settings?.keepAwakeWhileWorking}
               maxWaveAgents={settings?.maxWaveAgents}
               dashboardStatPrefs={settings?.dashboardStatPrefs}
               welcomeHeatmapPrefs={settings?.welcomeHeatmapPrefs}

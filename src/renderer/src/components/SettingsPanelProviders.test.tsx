@@ -2591,4 +2591,44 @@ describe('user MCP server name/audit helpers', () => {
     expect(toml).toContain('Authorization = "[stored in TaskWraith settings]"')
     expect(toml).not.toContain('Bearer ${DOCS_TOKEN}')
   })
+  it('renders the keep-awake toggle on General and binds it to the setting', () => {
+    // Same reason the transcript-text-size slice above gives: every other
+    // assertion about this control reads SettingsPanel.tsx as a STRING, so the
+    // whole <label> can sit behind a never-true condition and stay green while
+    // rendering for nobody. This is the only assertion that it REACHES the
+    // General tab.
+    const on = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior', keepAwakeWhileWorking: true })} />
+    )
+    expect(on).toContain('Keep this Mac awake while agents are working')
+    expect(on).toContain('type="checkbox" checked=""')
+
+    // The BINDING, not merely the presence of a checkbox: an explicit false
+    // must render unchecked.
+    const off = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({ activeTab: 'behavior', keepAwakeWhileWorking: false })}
+      />
+    )
+    expect(off).toContain('Keep this Mac awake while agents are working')
+    const offRow = off.slice(0, off.indexOf('Keep this Mac awake while agents are working'))
+    expect(offRow.slice(-220)).not.toContain('checked=""')
+
+    // Absent means ON, matching `defaultSettings` — a settings file written
+    // before this shipped must not read as an opt-out.
+    const absent = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'behavior' })} />
+    )
+    const absentRow = absent.slice(
+      0,
+      absent.indexOf('Keep this Mac awake while agents are working')
+    )
+    expect(absentRow.slice(-220)).toContain('checked=""')
+
+    // It is a GENERAL control: it must not leak onto Appearance.
+    const appearance = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'appearance', keepAwakeWhileWorking: true })} />
+    )
+    expect(appearance).not.toContain('Keep this Mac awake while agents are working')
+  })
 })

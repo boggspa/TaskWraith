@@ -240,6 +240,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'composerContinuationAiEnabled',
   'hostAutoCompactEnabled',
   'ensembleCollapseOlderRounds',
+  'keepAwakeWhileWorking',
   'maxWaveAgents',
   'modelUsagePanelView',
   'modelUsageExternalUsage',
@@ -2000,6 +2001,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('ensembleCollapseOlderRounds' in sanitized) {
       const value = sanitized.ensembleCollapseOlderRounds
       sanitized.ensembleCollapseOlderRounds = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('keepAwakeWhileWorking' in sanitized) {
+      const value = sanitized.keepAwakeWhileWorking
+      sanitized.keepAwakeWhileWorking = typeof value === 'boolean' ? value : Boolean(value)
     }
     if ('maxWaveAgents' in sanitized) {
       // Settings → General: cap delegate_wave batch size (default 8, clamp 2–64).
