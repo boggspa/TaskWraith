@@ -2699,6 +2699,99 @@ describe('HostNodeDomainPorts', () => {
     await domain.shutdown()
   })
 
+  it('16+1 regression: an unrelated thread.record.persist completes while a 17th start is queued', async () => {
+    // M2 slice 3 — the standalone 16+1 interference regression, MODULE LEVEL
+    // (the lifecycle is unwired and TASKWRAITH_HOST_QUEUED_START stays off,
+    // so this pins the pure admission/persist composition, never the
+    // wired-path evidence M2's exit requires). The saturation mode
+    // host_queue_16_active_1_queued names sixteen active Host-native runs
+    // with a 17th start QUEUED; the regression property is that an unrelated
+    // Desktop thread.record.persist is admitted and completes anyway —
+    // consuming no queue slot, queueing as no waiter, and needing no release
+    // from the queue. §1.1 is unratified, so this asserts the SHAPE only, no
+    // millisecond bound. RED-FIRST: if the persist were ever serialized
+    // behind a queued start, then at inflight 16 with the single waiter
+    // slot taken its admission would refuse as host_saturated — this test
+    // fails immediately, deterministically.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const runThreads = Array.from({ length: 17 }, () =>
+      store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    )
+    for (const thread of runThreads) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const persistThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 16,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000
+    })
+
+    // Sixteen active Host-native runs, held by the fake provider.
+    for (const [index, thread] of runThreads.slice(0, 16).entries()) {
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            `run-active-${index + 1}`,
+            { threadId: thread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    }
+    // The 17th start queues — the regression condition itself.
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-queued-17',
+        { threadId: runThreads[16].appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    )
+
+    // The unrelated Desktop persist: admitted and completed anyway.
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '11111111-1111-4111-8111-161616161616',
+      record: persistThread
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-16-plus-1',
+      { threadId: persistThread.appChatId },
+      { ...descriptor, expectedRevision: persistThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    // It consumed nothing: occupancy is exactly as before, and the 17th is
+    // still queued — the unrelated work neither jumped nor drained the queue.
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+
+    // The queue itself is unharmed: releasing admits the 17th normally.
+    releaseRun()
+    await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await domain.shutdown()
+  })
+
   it('rejects queued composer.send on shutdown instead of dropping the waiter', async () => {
     const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
     const registered = store.registerWorkspace({ path: workspace })
