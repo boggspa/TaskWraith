@@ -79,9 +79,34 @@ import type { HostNodeProvider } from './HostNodeProvider'
 import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 import { createHostNodeRunAdmission, type HostNodeRunAdmission } from './HostNodeRunAdmission'
+import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
 const HOST_RESUME_FALLBACK_MAX_CHARS = 16_000
+
+/**
+ * M2 gate for the queued-start lifecycle. Default OFF.
+ * Only the exact token `1` enables. Enabling is a harness decision.
+ */
+export const TASKWRAITH_HOST_QUEUED_START_ENV = 'TASKWRAITH_HOST_QUEUED_START'
+
+export function isHostQueuedStartEnabled(
+  env: NodeJS.ProcessEnv | NodeJS.Dict<string | undefined> = process.env
+): boolean {
+  return env[TASKWRAITH_HOST_QUEUED_START_ENV] === '1'
+}
+
+type HostQueuedStartLifecycle = ReturnType<typeof createHostNodeQueuedStartLifecycle>
+
+function resolveQueuedStartLifecycle(
+  options: HostNodeDomainPortsOptions
+): HostQueuedStartLifecycle | null {
+  const enabled = options.hostQueuedStartEnabled ?? isHostQueuedStartEnabled()
+  if (!enabled) return null
+  if (options.queuedStartLifecycle) return options.queuedStartLifecycle
+  return (options.createQueuedStartLifecycle ?? createHostNodeQueuedStartLifecycle)()
+}
+
 /**
  * Bounded grace for a provider run to durably persist its start. A single
  * microtask was not enough: providers that await session resume, auth, or
@@ -161,6 +186,18 @@ export interface HostNodeDomainPortsOptions {
   readonly maxQueuedStarts?: number
   /** Optional recorder for control_response and round_start span telemetry. Absence is safe. */
   readonly workSpanRecorder?: WorkSpanRecorder
+  /**
+   * M2: when true, DomainPorts consults the queued-start lifecycle on
+   * composer.send admission/start and run.cancel. Default is
+   * TASKWRAITH_HOST_QUEUED_START === '1' (OFF). Tests inject the boolean so
+   * they do not mutate process.env. An injected lifecycle is ignored while
+   * the gate is off.
+   */
+  readonly hostQueuedStartEnabled?: boolean
+  /** Test seam: a pre-built lifecycle. Ignored unless the gate is on. */
+  readonly queuedStartLifecycle?: HostQueuedStartLifecycle
+  /** Test seam: factory consulted only when the gate is on and no instance was given. */
+  readonly createQueuedStartLifecycle?: () => HostQueuedStartLifecycle
 }
 
 type AuthOperation = {
@@ -425,6 +462,8 @@ export class HostNodeDomainPorts {
     )
   }
   private readonly runAdmission: HostNodeRunAdmission
+  /** Null while TASKWRAITH_HOST_QUEUED_START is off — the shipping path. */
+  private readonly queuedStartLifecycle: HostQueuedStartLifecycle | null
   /** Last offer set per provider that actually named runnable models. */
   private readonly lastKnownRunnableOffers = new Map<string, HostProviderOffersProjection>()
   /** Threads already told a send was validated against last-known offers. */
@@ -513,6 +552,7 @@ export class HostNodeDomainPorts {
         : {}),
       ...(options.maxQueuedStarts !== undefined ? { maxQueuedStarts: options.maxQueuedStarts } : {})
     })
+    this.queuedStartLifecycle = resolveQueuedStartLifecycle(options)
     this.profileRecordExecutor = new HostProfileRecordCommandExecutor({
       ...(options.profilePath ? { profilePath: options.profilePath } : {}),
       store: options.store,
@@ -823,6 +863,7 @@ export class HostNodeDomainPorts {
       }))
     }
     this.runAdmission.beginShutdown()
+    this.queuedStartLifecycle?.beginShutdown()
     this.shutdownPromise = this.awaitShutdown()
     return this.shutdownPromise
   }
@@ -1014,6 +1055,12 @@ export class HostNodeDomainPorts {
       const chatId = this.chatIdForCommandThread(command.target.threadId)
       try {
         const expectedWorkId = decoded.value.arguments.expectedWorkId
+        if (this.queuedStartLifecycle) {
+          this.queuedStartLifecycle.cancel({
+            commandId: typeof expectedWorkId === 'string' ? expectedWorkId : command.commandId,
+            threadId: command.target.threadId
+          })
+        }
         const cancelledQueued = this.runAdmission.cancelQueued({
           threadId: command.target.threadId,
           ...(typeof expectedWorkId === 'string' ? { commandId: expectedWorkId } : {})
@@ -1153,26 +1200,73 @@ export class HostNodeDomainPorts {
 
     const roundStartedAt = this.controlResponseStartedAt()
     const roundChatId = this.chatIdForCommandThread(command.target.threadId)
+    if (this.queuedStartLifecycle) {
+      const reserved = this.queuedStartLifecycle.reserve({
+        commandId: command.commandId,
+        threadId: command.target.threadId,
+        fingerprint: command.idempotencyKey
+      })
+      if (reserved.kind === 'refused') {
+        return failed('host_shutting_down', 'Host is shutting down; the run was not started.')
+      }
+      if (reserved.kind === 'conflict') {
+        return failed('run_identity_conflict', reserved.reason)
+      }
+    }
     const admission = await this.runAdmission.acquire({
       commandId: command.commandId,
       threadId: command.target.threadId
     })
     if (admission.kind === 'rejected') {
+      this.queuedStartLifecycle?.cancel({
+        commandId: command.commandId,
+        threadId: command.target.threadId
+      })
       return failed(admission.errorCode, admission.errorMessage)
     }
     const lease = admission.lease
+    if (this.queuedStartLifecycle) {
+      const claimed = await this.queuedStartLifecycle.claim(command.commandId, lease)
+      if (claimed.kind !== 'claimed') {
+        if (claimed.leaseCustody === 'caller') lease.release()
+        if (claimed.reason === 'host_shutting_down') {
+          return failed('host_shutting_down', 'Host is shutting down; the run was not started.')
+        }
+        return failed('run_not_started')
+      }
+    }
 
-    let completion: ReturnType<typeof provider.run>
+    let completion: ReturnType<typeof provider.run> | undefined
     try {
-      completion = provider.run({
-        runId: command.commandId,
-        threadId: command.target.threadId,
-        prompt,
-        ...(profileThread && (thread.providerId === 'kimi' || thread.providerId === 'mistral')
-          ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
-          : {}),
-        target
-      })
+      if (this.queuedStartLifecycle) {
+        const started = await this.queuedStartLifecycle.executeStart(command.commandId, () => {
+          completion = provider.run({
+            runId: command.commandId,
+            threadId: command.target.threadId,
+            prompt,
+            ...(profileThread && (thread.providerId === 'kimi' || thread.providerId === 'mistral')
+              ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
+              : {}),
+            target
+          })
+        })
+        if (started.kind === 'failed') throw started.error
+        if (started.kind !== 'started') {
+          throw new Error(
+            started.kind === 'skipped' ? started.reason : `queued start ${started.kind}`
+          )
+        }
+      } else {
+        completion = provider.run({
+          runId: command.commandId,
+          threadId: command.target.threadId,
+          prompt,
+          ...(profileThread && (thread.providerId === 'kimi' || thread.providerId === 'mistral')
+            ? { resumeFallbackPrompt: buildResumeFallbackPrompt(profileThread, prompt) }
+            : {}),
+          target
+        })
+      }
     } catch (error) {
       lease.release()
       // The provider's refusal is the only actionable fact the user gets
@@ -1185,6 +1279,11 @@ export class HostNodeDomainPorts {
         ) ?? undefined
       this.terminalizeRejectedStart(command.commandId, command.target.threadId, reason)
       return failed('run_not_started', reason)
+    }
+    if (!completion) {
+      lease.release()
+      this.terminalizeRejectedStart(command.commandId, command.target.threadId)
+      return failed('run_not_started')
     }
     // End at synchronous dispatch return, not queue insertion, not a throw
     // from provider.run, and not persisted-start.
@@ -1210,6 +1309,11 @@ export class HostNodeDomainPorts {
     void tracked.finally(() => {
       this.runCompletions.delete(command.commandId)
       this.runThreads.delete(command.commandId)
+      if (this.queuedStartLifecycle) {
+        this.queuedStartLifecycle.providerRunEnded(command.commandId, {
+          kind: 'provider_ended'
+        })
+      }
       lease.release()
     })
     if (!(await this.awaitPersistedStart(command.commandId, command.target.threadId, prompt))) {
@@ -1680,6 +1784,7 @@ export class HostNodeDomainPorts {
   }> {
     this.fullAccessGrants.clear()
     this.runAdmission.beginShutdown()
+    this.queuedStartLifecycle?.beginShutdown()
     const cancelledRuns = this.runPort.cancelAll()
     const completions = [...this.runCompletions.values()]
     await Promise.all([this.registry.shutdown(), this.interactions.shutdown()])

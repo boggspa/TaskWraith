@@ -31,7 +31,12 @@ import type {
   HostNodeProviderRunRequest
 } from './HostNodeProvider'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
-import { HostNodeDomainPorts } from './HostNodeDomainPorts'
+import {
+  HostNodeDomainPorts,
+  TASKWRAITH_HOST_QUEUED_START_ENV,
+  isHostQueuedStartEnabled
+} from './HostNodeDomainPorts'
+import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
 import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
 import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 
@@ -3587,6 +3592,169 @@ describe('HostNodeDomainPorts', () => {
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
       releaseRun()
+    })
+  })
+
+  describe('TASKWRAITH_HOST_QUEUED_START (M2 first consumer)', () => {
+    it('is off by default: absent, empty, and every value other than the exact token 1', () => {
+      expect(isHostQueuedStartEnabled({})).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '0' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'false' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'true' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: 'on' })).toBe(false)
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '1 ' })).toBe(false)
+    })
+
+    it('is on only for the exact token 1', () => {
+      expect(isHostQueuedStartEnabled({ [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' })).toBe(true)
+    })
+
+    it('consults the queued-start lifecycle on composer.send admission when the gate is on', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const reserve = vi.spyOn(lifecycle, 'reserve')
+      const claim = vi.spyOn(lifecycle, 'claim')
+      const executeStart = vi.spyOn(lifecycle, 'executeStart')
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-queued-start-on',
+            { threadId: thread.appChatId },
+            { text: 'admit' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(reserve).toHaveBeenCalledWith({
+        commandId: 'run-queued-start-on',
+        threadId: thread.appChatId,
+        fingerprint: 'key-run-queued-start-on'
+      })
+      expect(claim).toHaveBeenCalledWith(
+        'run-queued-start-on',
+        expect.objectContaining({
+          commandId: 'run-queued-start-on',
+          threadId: thread.appChatId
+        })
+      )
+      expect(executeStart).toHaveBeenCalledWith('run-queued-start-on', expect.any(Function))
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('does not construct or consult the queued-start lifecycle when the gate is off', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
+      })
+      const queuedStartLifecycle = {
+        reserve() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        claim() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        cancel() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        executeStart() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        beginShutdown() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        }
+      } as unknown as ReturnType<typeof createHostNodeQueuedStartLifecycle>
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: false,
+        createQueuedStartLifecycle,
+        queuedStartLifecycle
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-queued-start-off',
+            { threadId: thread.appChatId },
+            { text: 'baseline' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('constructs the lifecycle factory when the gate is on and no instance is injected', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const createQueuedStartLifecycle = vi.fn(() => createHostNodeQueuedStartLifecycle())
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        createQueuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-queued-start-factory',
+            { threadId: thread.appChatId },
+            { text: 'admit' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('wires the flag reader and lifecycle consult in DomainPorts (red if the consumer is deleted)', () => {
+      const src = readFileSync(join(__dirname, 'HostNodeDomainPorts.ts'), 'utf8')
+      expect(src).toContain('isHostQueuedStartEnabled')
+      expect(src).toContain('createHostNodeQueuedStartLifecycle')
+      expect(src).toMatch(/queuedStartLifecycle\.reserve\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.claim\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.executeStart\(/)
+      expect(src).toMatch(/queuedStartLifecycle\.cancel\(/)
     })
   })
 })
