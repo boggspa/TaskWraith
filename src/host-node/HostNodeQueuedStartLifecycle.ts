@@ -1,5 +1,5 @@
 /**
- * M2 preparation — queued-start lifecycle state machine (UNWIRED).
+ * M2 preparation — queued-start lifecycle state machine.
  *
  * Amendment A1.3 of docs/performance/independent-threads-programme.md: a
  * Host-native `composer.send` must be able to acknowledge `queued`, wait
@@ -9,11 +9,17 @@
  * before `registerCancel`) and across a Host restart.
  *
  * This module is that lifecycle as a pure, injectable state machine. It owns
- * no transport, no receipt store and no provider port; the integration lines
- * (HostNodeDomainPorts ~:1022-1039 admission/start, HostNodeProfileRunPort
- * :340/:384-391/:434-440 begin/registerCancel/cancel at baseline) belong to
- * @IntegrationOwner behind the future flag TASKWRAITH_HOST_QUEUED_START
- * (default OFF). Nothing imports this module yet.
+ * no transport, no receipt store and no provider port. HostNodeDomainPorts is
+ * the first production caller (value import at :82; constructed by
+ * resolveQueuedStartLifecycle at :101-107 when the gate is on). The gate is
+ * TASKWRAITH_HOST_QUEUED_START, read by isHostQueuedStartEnabled at :93-97;
+ * only the exact token `1` enables, default OFF. DomainPorts consults this
+ * lifecycle on composer.send admission/start (:1203-1258) and run.cancel
+ * (:1058-1063). That DomainPorts half of the @IntegrationOwner hand-off is
+ * done. The HostNodeProfileRunPort half is not: beginRun (:336), phase
+ * update (:381-396), and publishRunEvent (:432) still do not consult this
+ * module. The flag remains default OFF; enabling by default is a harness
+ * decision, never a code one.
  *
  * Contract points the amendment pins and this module enforces:
  * - `reserve` happens BEFORE any acknowledgement and is idempotent per
