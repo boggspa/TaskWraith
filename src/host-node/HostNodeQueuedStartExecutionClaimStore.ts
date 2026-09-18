@@ -10,9 +10,10 @@
  * Absence is stronger than presence. A caller-pinned epoch governs which
  * existing journal may accept new claims, but the epoch alone cannot detect a
  * rollback to an older valid prefix. This store therefore never declares
- * durable absence coverage. A later receipt-bound recovery-head contract must
- * add that authority before lifecycle reopen may classify work unclaimed. This
- * module is deliberately not wired into production yet.
+ * durable absence coverage. `list` may stop at an optional recovery-head
+ * sequence so a later receipt contract can bound the read; the truncated
+ * prefix is still not absence proof. This module is deliberately not wired
+ * into production yet.
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -89,11 +90,21 @@ export interface HostNodeQueuedStartExecutionClaimStoreOptions {
   readonly journalIo?: HostNodeQueuedStartExecutionClaimJournalIo
 }
 
+export interface HostQueuedStartExecutionClaimListOptions {
+  /**
+   * Inclusive claim sequence to stop at. `0` returns no claims (header only).
+   * Omit to read and verify the whole journal. The bound truncates the read;
+   * it does not make absence decidable.
+   */
+  readonly recoveryHeadSequence?: number
+}
+
 export interface HostNodeQueuedStartExecutionClaimStore extends HostQueuedStartExecutionClaimStore {
   /** Writer epoch for future receipt + recovery-head binding; not absence proof alone. */
   readonly coverageEpoch: string
   /** Absolute journal path, exposed for diagnostics and focused recovery tests. */
   readonly path: string
+  list(options?: HostQueuedStartExecutionClaimListOptions): readonly HostQueuedStartExecutionClaim[]
 }
 
 const DEFAULT_JOURNAL_IO: HostNodeQueuedStartExecutionClaimJournalIo = {
@@ -261,7 +272,65 @@ type LoadedJournal = {
   readonly claims: Map<string, HostQueuedStartExecutionClaim>
 }
 
-function loadJournal(path: string): LoadedJournal {
+function resolveRecoveryHeadSequence(
+  options: HostQueuedStartExecutionClaimListOptions | undefined
+): number | undefined {
+  if (options === undefined) return undefined
+  if (!options || typeof options !== 'object' || Array.isArray(options)) {
+    throw new Error('Invalid queued-start execution claim list options')
+  }
+  const keys = Object.keys(options)
+  if (keys.length > 1 || (keys.length === 1 && keys[0] !== 'recoveryHeadSequence')) {
+    throw new Error('Invalid queued-start execution claim list options')
+  }
+  if (options.recoveryHeadSequence === undefined) return undefined
+  if (
+    typeof options.recoveryHeadSequence !== 'number' ||
+    !Number.isSafeInteger(options.recoveryHeadSequence) ||
+    options.recoveryHeadSequence < 0
+  ) {
+    throw new Error('Invalid queued-start recovery-head sequence')
+  }
+  return options.recoveryHeadSequence
+}
+
+function journalLinesForRead(source: string, recoveryHeadSequence: number | undefined): string[] {
+  if (recoveryHeadSequence === undefined) {
+    if (!source.endsWith('\n')) {
+      throw new Error('Queued-start execution claim journal has a torn tail')
+    }
+    const lines = source.slice(0, -1).split('\n')
+    if (
+      lines.length === 0 ||
+      lines.some((line) => Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES)
+    ) {
+      throw new Error('Queued-start execution claim journal line is invalid')
+    }
+    return lines
+  }
+
+  // Header is line 0; claim sequences are 1-based. Bound 0 reads the header only.
+  const needed = recoveryHeadSequence + 1
+  const completeLines = source.endsWith('\n')
+    ? source.slice(0, -1).split('\n')
+    : source.split('\n').slice(0, -1)
+  if (completeLines.length === 0) {
+    throw new Error('Queued-start execution claim journal line is invalid')
+  }
+  if (!source.endsWith('\n') && completeLines.length < needed) {
+    throw new Error('Queued-start execution claim journal has a torn tail')
+  }
+  const lines = completeLines.slice(0, Math.min(completeLines.length, needed))
+  if (lines.some((line) => Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES)) {
+    throw new Error('Queued-start execution claim journal line is invalid')
+  }
+  return lines
+}
+
+function loadJournal(
+  path: string,
+  options?: { readonly recoveryHeadSequence?: number }
+): LoadedJournal {
   const before = lstatSync(path)
   assertSafeFileStat(before)
   const beforeIdentity = fileIdentity(before)
@@ -273,16 +342,7 @@ function loadJournal(path: string): LoadedJournal {
       throw new Error('Queued-start execution claim journal changed before read')
     }
     const source = readFileSync(fd, 'utf8')
-    if (!source.endsWith('\n')) {
-      throw new Error('Queued-start execution claim journal has a torn tail')
-    }
-    const lines = source.slice(0, -1).split('\n')
-    if (
-      lines.length === 0 ||
-      lines.some((line) => Buffer.byteLength(line, 'utf8') > MAX_LINE_BYTES)
-    ) {
-      throw new Error('Queued-start execution claim journal line is invalid')
-    }
+    const lines = journalLinesForRead(source, options?.recoveryHeadSequence)
     const header = parseHeader(JSON.parse(lines[0]))
     const claims = new Map<string, HostQueuedStartExecutionClaim>()
     let previousDigest = header.digest
@@ -486,22 +546,35 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
     }
   }
 
-  list(): readonly HostQueuedStartExecutionClaim[] {
+  list(
+    options?: HostQueuedStartExecutionClaimListOptions
+  ): readonly HostQueuedStartExecutionClaim[] {
+    const recoveryHeadSequence = resolveRecoveryHeadSequence(options)
     if (this.poisoned) {
       throw new Error('Queued-start execution claim journal is unavailable')
     }
     try {
-      const loaded = loadJournal(this.path)
-      if (
-        loaded.coverageEpoch !== this.coverageEpoch ||
-        !sameFile(loaded.identity, this.identity) ||
-        loaded.lastDigest !== this.lastDigest ||
-        loaded.nextSequence !== this.nextSequence
-      ) {
+      const loaded = loadJournal(
+        this.path,
+        recoveryHeadSequence === undefined ? undefined : { recoveryHeadSequence }
+      )
+      if (loaded.coverageEpoch !== this.coverageEpoch) {
         throw new Error('Queued-start execution claim journal changed before listing')
       }
-      this.claims = loaded.claims
-      return [...this.claims.values()].map((claim) => ({ ...claim }))
+      if (recoveryHeadSequence === undefined) {
+        if (
+          !sameFile(loaded.identity, this.identity) ||
+          loaded.lastDigest !== this.lastDigest ||
+          loaded.nextSequence !== this.nextSequence
+        ) {
+          throw new Error('Queued-start execution claim journal changed before listing')
+        }
+        this.claims = loaded.claims
+        return [...this.claims.values()].map((claim) => ({ ...claim }))
+      }
+      // A prefix read must not replace the writer cursor or require the tail
+      // to match this instance's identity. The bound is not absence proof.
+      return [...loaded.claims.values()].map((claim) => ({ ...claim }))
     } catch (error) {
       this.poisoned = true
       throw error

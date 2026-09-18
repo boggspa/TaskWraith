@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   chmodSync,
   existsSync,
   mkdtempSync,
@@ -519,5 +520,65 @@ describe('HostNodeQueuedStartExecutionClaimStore', () => {
     expect(() => store.record(claim({ claimedAt: 999 }))).toThrow()
     expect(store.declaresDurableCoverage).toBe(false)
     expect(existsSync(join(dir, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME))).toBe(false)
+  })
+
+  it('truncates list at the recovery-head sequence bound', () => {
+    const dir = dataDir('recovery-head')
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    const first = claim({ commandId: 'command-1', claimedAt: 1 })
+    const second = claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 })
+    const third = claim({ commandId: 'command-3', threadId: 'thread-3', claimedAt: 3 })
+    const fourth = claim({ commandId: 'command-4', threadId: 'thread-4', claimedAt: 4 })
+    store.record(first)
+    store.record(second)
+    store.record(third)
+    store.record(fourth)
+
+    expect(store.list()).toEqual([first, second, third, fourth])
+    expect(store.list({})).toEqual([first, second, third, fourth])
+    expect(store.list({ recoveryHeadSequence: 0 })).toEqual([])
+    expect(store.list({ recoveryHeadSequence: 2 })).toEqual([first, second])
+    expect(store.list({ recoveryHeadSequence: 4 })).toEqual([first, second, third, fourth])
+    expect(store.list({ recoveryHeadSequence: 99 })).toEqual([first, second, third, fourth])
+    expect(store.declaresDurableCoverage).toBe(false)
+
+    const fifth = claim({ commandId: 'command-5', threadId: 'thread-5', claimedAt: 5 })
+    store.record(fifth)
+    expect(store.list()).toEqual([first, second, third, fourth, fifth])
+    expect(store.list({ recoveryHeadSequence: 2 })).toEqual([first, second])
+  })
+
+  it('does not parse past a recovery-head sequence bound', () => {
+    const dir = dataDir('recovery-head-tail')
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    const first = claim({ commandId: 'command-1', claimedAt: 1 })
+    const second = claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 })
+    store.record(first)
+    store.record(second)
+    appendFileSync(store.path, 'this is not a claim line\n{"kind":"claim"}\n')
+
+    expect(store.declaresDurableCoverage).toBe(false)
+    expect(store.list({ recoveryHeadSequence: 2 })).toEqual([first, second])
+    expect(() => store.list()).toThrow()
+  })
+
+  it('rejects an invalid recovery-head sequence without poisoning the journal', () => {
+    const dir = dataDir('recovery-head-invalid')
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    store.record(claim())
+    expect(() => store.list({ recoveryHeadSequence: -1 })).toThrow(/recovery-head/i)
+    expect(() => store.list({ recoveryHeadSequence: 1.5 })).toThrow(/recovery-head/i)
+    expect(() => store.list({ recoveryHeadSequence: Number.NaN })).toThrow(/recovery-head/i)
+    expect(store.list()).toEqual([claim()])
+    expect(store.declaresDurableCoverage).toBe(false)
   })
 })
