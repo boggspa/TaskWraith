@@ -2706,9 +2706,9 @@ describe('HostNodeDomainPorts', () => {
 
   it('16+1 regression: an unrelated thread.record.persist completes while a 17th start is queued', async () => {
     // M2 slice 3 — the standalone 16+1 interference regression, MODULE LEVEL
-    // (the lifecycle is unwired and TASKWRAITH_HOST_QUEUED_START stays off,
-    // so this pins the pure admission/persist composition, never the
-    // wired-path evidence M2's exit requires). The saturation mode
+    // (this test keeps TASKWRAITH_HOST_QUEUED_START off, so it pins the
+    // pure admission/persist composition, never the wired-path evidence
+    // M2's exit requires). The saturation mode
     // host_queue_16_active_1_queued names sixteen active Host-native runs
     // with a 17th start QUEUED; the regression property is that an unrelated
     // Desktop thread.record.persist is admitted and completes anyway —
@@ -2794,6 +2794,105 @@ describe('HostNodeDomainPorts', () => {
     // The queue itself is unharmed: releasing admits the 17th normally.
     releaseRun()
     await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await domain.shutdown()
+  })
+
+  it('16+1 regression under wired queued-start (flag ON): an unrelated thread.record.persist completes while a 17th start is queued', async () => {
+    // M2 exit evidence — same occupancy/persist shape as the module-level
+    // 16+1, against WIRED DomainPorts with the gate ON. Tests inject
+    // hostQueuedStartEnabled so they do not mutate process.env. The default
+    // remains OFF. RED-FIRST: dropping hostQueuedStartEnabled (injected
+    // lifecycle is ignored while the gate is off) means reserve is never
+    // called, so the 17-call pin fails immediately.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const runThreads = Array.from({ length: 17 }, () =>
+      store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    )
+    for (const thread of runThreads) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const persistThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const lifecycle = createHostNodeQueuedStartLifecycle()
+    const reserve = vi.spyOn(lifecycle, 'reserve')
+    const claim = vi.spyOn(lifecycle, 'claim')
+    const executeStart = vi.spyOn(lifecycle, 'executeStart')
+    const createQueuedStartLifecycle = vi.fn(() => lifecycle)
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      maxConcurrentRuns: 16,
+      maxQueuedStarts: 1,
+      shutdownTimeoutMs: 1_000,
+      hostQueuedStartEnabled: true,
+      createQueuedStartLifecycle
+    })
+    expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+
+    for (const [index, thread] of runThreads.slice(0, 16).entries()) {
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            `run-wired-active-${index + 1}`,
+            { threadId: thread.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    }
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-wired-queued-17',
+        { threadId: runThreads[16].appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() =>
+      expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    )
+    expect(reserve).toHaveBeenCalledTimes(17)
+    expect(claim).toHaveBeenCalledTimes(16)
+    expect(executeStart).toHaveBeenCalledTimes(16)
+
+    const descriptor = publishHostThreadRecordTransfer({
+      profilePath: domainOptions.profilePath,
+      transferId: '22222222-2222-4222-8222-161616161616',
+      record: persistThread
+    })
+    const persist = desktopCommand(
+      'thread.record.persist',
+      'cmd-persist-16-plus-1-wired',
+      { threadId: persistThread.appChatId },
+      { ...descriptor, expectedRevision: persistThread.persistenceRevision ?? 0 }
+    )
+    expect(domain.evaluateAuthority(desktopContext, persist)).toEqual({ decision: 'allow' })
+    await expect(
+      domain.executeCommand(desktopContext, persist, { id: 'desktop-target' })
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'thread_record_persisted' })
+
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 16, queued: 1 })
+    expect(reserve).toHaveBeenCalledTimes(17)
+    expect(claim).toHaveBeenCalledTimes(16)
+    expect(executeStart).toHaveBeenCalledTimes(16)
+    expect(
+      reserve.mock.calls.some((call) => call[0].commandId === 'cmd-persist-16-plus-1-wired')
+    ).toBe(false)
+
+    releaseRun()
+    await expect(queued).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    expect(claim).toHaveBeenCalledTimes(17)
+    expect(executeStart).toHaveBeenCalledTimes(17)
     await domain.shutdown()
   })
 
