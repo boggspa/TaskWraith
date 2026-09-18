@@ -14,18 +14,21 @@
  * resolveQueuedStartLifecycle at :101-107 when the gate is on). The gate is
  * TASKWRAITH_HOST_QUEUED_START, read by isHostQueuedStartEnabled at :93-97;
  * only the exact token `1` enables, default OFF. DomainPorts consults this
- * lifecycle on composer.send admission/start (:1203-1258) and run.cancel
- * (:1058-1063). That DomainPorts half of the @IntegrationOwner hand-off is
+ * lifecycle on composer.send admission/start (:1210-1265) and run.cancel
+ * (:1066-1070). That DomainPorts half of the @IntegrationOwner hand-off is
  * done. HostNodeProfileRunPort consults this module on beginRun
  * (`providerRunStarted` + `markStarted`) and on a forward phase update
  * (`markStarted`, monotonic) when the same gate is on and a lifecycle is
  * attached; an injected instance is ignored while the gate is off.
- * registerCancel / cancelThread / publishRunEvent still do not consult this
- * module (cancel registration is the run-sealing path; wiring it here without
- * DomainPorts treating latch delivery as success would report
- * run_not_cancellable after a successful cancel). DomainPorts still
- * constructs ProfileRunPort at :563 without passing the lifecycle — that
- * one-line attachment is the remaining production hop. The flag remains
+ * DomainPorts attaches its own resolved instance at ProfileRunPort
+ * construction (:564) — the same object, not a factory and not a second
+ * construction — so beginRun/phase-update consult the reservation
+ * DomainPorts reserved/claimed. registerCancel / cancelThread /
+ * publishRunEvent still do not consult this module. Wiring registerCancel
+ * on ProfileRunPort without treating latch delivery as success would
+ * report run_not_cancellable (HostNodeDomainPorts.ts:1089) after
+ * DomainPorts run.cancel had already called lifecycle.cancel and then
+ * cancelThread. That remaining skip is deliberate. The flag remains
  * default OFF; enabling by default is a harness decision, never a code one.
  *
  * Contract points the amendment pins and this module enforces:

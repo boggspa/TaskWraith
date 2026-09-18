@@ -3854,6 +3854,66 @@ describe('HostNodeDomainPorts', () => {
       expect(src).toMatch(/queuedStartLifecycle\.claim\(/)
       expect(src).toMatch(/queuedStartLifecycle\.executeStart\(/)
       expect(src).toMatch(/queuedStartLifecycle\.cancel\(/)
+      const ctorStart = src.indexOf('this.runPort = new HostNodeProfileRunPort')
+      const ctor = src.slice(ctorStart, src.indexOf('this.interactions', ctorStart))
+      expect(src).toMatch(
+        /const queuedStartLifecycle = this\.queuedStartLifecycle\s*\n\s*this\.runPort = new HostNodeProfileRunPort/
+      )
+      expect(ctor).toMatch(/\.\.\.\(queuedStartLifecycle\s*\?/)
+      expect(ctor).toContain('hostQueuedStartEnabled: true')
+      expect(ctor).not.toContain('createQueuedStartLifecycle')
+    })
+
+    it('when the gate is on, ProfileRunPort receives the same Domain-owned lifecycle instance', async () => {
+      const { domainOptions } = open()
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const createQueuedStartLifecycle = vi.fn(() => lifecycle)
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        createQueuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBe(lifecycle)
+      expect(Reflect.get(domain, 'queuedStartLifecycle')).toBe(lifecycle)
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBe(
+        Reflect.get(domain, 'queuedStartLifecycle')
+      )
+      await domain.shutdown()
+    })
+
+    it('when the gate is off, DomainPorts passes no lifecycle to ProfileRunPort', async () => {
+      const { domainOptions } = open()
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
+      })
+      const queuedStartLifecycle = {
+        reserve() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        claim() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        cancel() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        executeStart() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        },
+        beginShutdown() {
+          throw new Error('lifecycle must not be consulted while the gate is off')
+        }
+      } as unknown as ReturnType<typeof createHostNodeQueuedStartLifecycle>
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: false,
+        createQueuedStartLifecycle,
+        queuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      expect(Reflect.get(domain, 'queuedStartLifecycle')).toBeNull()
+      expect(Reflect.get(domain.runPort, 'queuedStartLifecycle')).toBeNull()
+      await domain.shutdown()
     })
   })
 })

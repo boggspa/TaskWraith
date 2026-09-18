@@ -560,6 +560,7 @@ export class HostNodeDomainPorts {
         ? { workSpanRecorder: options.workSpanRecorder, now: this.now }
         : {})
     })
+    const queuedStartLifecycle = this.queuedStartLifecycle
     this.runPort = new HostNodeProfileRunPort({
       hostRunOrigin: options.hostRunOrigin,
       runIdsPreflighted: Boolean(options.runLocator),
@@ -568,7 +569,13 @@ export class HostNodeDomainPorts {
       ...(options.permissionConsentAuthority
         ? { permissionConsentAuthority: options.permissionConsentAuthority }
         : {}),
-      fullAccessGrants: this.fullAccessGrants
+      fullAccessGrants: this.fullAccessGrants,
+      ...(queuedStartLifecycle
+        ? {
+            hostQueuedStartEnabled: true,
+            queuedStartLifecycle
+          }
+        : {})
     })
     this.interactions = new HostNodeInteractionRegistry({
       timeoutMs: options.interactionTimeoutMs,
