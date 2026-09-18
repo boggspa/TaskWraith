@@ -72,6 +72,77 @@ describe('ExecutionGraphParentStop', () => {
     ])
   })
 
+  it('signals the parent transport when owned-graph cancellation never settles', async () => {
+    const cancelParentTransport = vi.fn(async () => true)
+    let strandedCancelSeen = false
+    const result = await stopParentRunAndOwnedExecutions(
+      { parentRunId: 'parent-run', parentThreadId: 'parent-chat' },
+      {
+        claimParentCancellation: () => true,
+        cancelParentPrompts: () => {},
+        coordinator: {
+          listExecutions: () => [
+            {
+              executionId: 'graph-one',
+              state: 'running',
+              owner: {
+                threadId: 'parent-chat',
+                seatId: 'parent-seat',
+                initiatingRunId: 'parent-run'
+              }
+            }
+          ],
+          // Never settles — a wedged graph coordinator, which before the
+          // deadline left the provider running and the Stop IPC pending.
+          cancelExecution: () => {
+            strandedCancelSeen = true
+            return new Promise<void>(() => {})
+          }
+        },
+        cancelParentTransport,
+        graphCancellationTimeoutMs: 0
+      }
+    )
+
+    expect(strandedCancelSeen).toBe(true)
+    expect(cancelParentTransport).toHaveBeenCalledOnce()
+    expect(result).toMatchObject({
+      accepted: true,
+      parentCancelled: true,
+      graphCancellationTimedOut: true
+    })
+    expect(result.graphCancellation).toBeUndefined()
+  })
+
+  it('does not report a timeout when owned-graph cancellation settles in time', async () => {
+    const result = await stopParentRunAndOwnedExecutions(
+      { parentRunId: 'parent-run', parentThreadId: 'parent-chat' },
+      {
+        claimParentCancellation: () => true,
+        cancelParentPrompts: () => {},
+        coordinator: {
+          listExecutions: () => [
+            {
+              executionId: 'graph-one',
+              state: 'running',
+              owner: {
+                threadId: 'parent-chat',
+                seatId: 'parent-seat',
+                initiatingRunId: 'parent-run'
+              }
+            }
+          ],
+          cancelExecution: async () => {}
+        },
+        cancelParentTransport: async () => true,
+        graphCancellationTimeoutMs: 10_000
+      }
+    )
+
+    expect(result.graphCancellationTimedOut).toBeUndefined()
+    expect(result.graphCancellation?.cancelledExecutionIds).toEqual(['graph-one'])
+  })
+
   it('does nothing when the exact parent terminal intent cannot be fenced', async () => {
     const cancelParentTransport = vi.fn(async () => true)
     const result = await stopParentRunAndOwnedExecutions(
