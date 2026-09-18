@@ -1,6 +1,403 @@
 {
   "digest": "sha256:5d78bd19819ed12188430c07720909a97445e699411c4aea038cf37377487559",
   "toolCount": 225,
+  "antigravityOptIn": {
+    "digest": "sha256:9e085ba27c0dce7c08499b533a49af9ca364680d0e6bbabfe727d7c22f843478",
+    "changedPaths": [
+      {
+        "path": "$.agent_delegation_role.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.approval_status.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.cancel_active_run.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.create_handoff_card.inputSchema.properties.recommendedProvider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.delegate_to_subthread.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.delegate_wave.inputSchema.properties.workers.items.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.ensemble_bossman_control.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.ensemble_bossman_control.inputSchema.properties.replacement.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.ensemble_roster_edit.inputSchema.properties.participant.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.ensemble_roster_edit.inputSchema.properties.preset.properties.participants.items.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.list_active_runs.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.provider_auth_status.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.provider_usage_status.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      },
+      {
+        "path": "$.raw_provider_events.inputSchema.properties.provider.enum",
+        "from": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin"
+        ],
+        "to": [
+          "codex",
+          "claude",
+          "kimi",
+          "cursor",
+          "grok",
+          "ollama",
+          "pi",
+          "mistral",
+          "muse",
+          "devin",
+          "antigravity"
+        ]
+      }
+    ]
+  },
   "tools": {
     "agent_delegation_role": {
       "annotations": {

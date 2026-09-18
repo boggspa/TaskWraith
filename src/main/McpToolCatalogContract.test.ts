@@ -3,8 +3,11 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import type { Options } from 'prettier'
-import { beforeAll, describe, expect, it } from 'vitest'
-import { resetAntigravityGeminiApiKeyConfiguredProbeForTests } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { afterEach, beforeAll, describe, expect, it } from 'vitest'
+import {
+  resetAntigravityGeminiApiKeyConfiguredProbeForTests,
+  setAntigravityGeminiApiKeyConfiguredProbe
+} from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 
 /**
@@ -39,13 +42,21 @@ import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
  * would leave the golden unformatted and put `format:ratchet` in the red after
  * every legitimate update.
  *
- * Determinism: the catalogue is not pure. `selectableProviderIds()` is called
- * with no settings at ~15 sites and consults the live Gemini-API-key probe, so
- * `antigravity` joins those provider enums on a machine where a key is
- * configured. Under vitest the probe keeps its fail-closed default because
- * `index.ts` never wires it; `beforeAll` re-asserts that explicitly so the
- * golden cannot depend on ambient machine state. The antigravity opt-in surface
- * is therefore deliberately NOT covered here.
+ * TWO STATES ARE PINNED, because the catalogue is not pure.
+ * `selectableProviderIds()` is called with no settings at ~15 sites and
+ * consults the live Gemini-API-key probe, so `antigravity` joins those provider
+ * enums on a machine where a key is configured — the contract an agent receives
+ * depends on machine state.
+ *
+ *   1. `tools` is the fail-closed base: the probe default `() => false`, which
+ *      is what vitest sees because `index.ts` never wires it. `beforeAll`
+ *      re-asserts it so the golden cannot drift with ambient state.
+ *   2. `antigravityOptIn.changedPaths` is the DELTA to the probe-true state,
+ *      not a second full capture. A second capture would double a 306KB file
+ *      to say one thing, and the delta says that thing far more directly: the
+ *      opt-in must append `antigravity` to provider enums and do NOTHING else.
+ *      An opt-in that reworded a description, added a tool, or touched a
+ *      non-enum leaf reds here even if every recorded path still matched.
  */
 
 const require = createRequire(import.meta.url)
@@ -58,7 +69,14 @@ const GOLDEN_PATH = fileURLToPath(
   new URL('./McpToolCatalogContract.generated.json', import.meta.url)
 )
 
+const ANTIGRAVITY_PROVIDER_ID = 'antigravity'
+
 type Json = unknown
+interface LeafChange {
+  path: string
+  from: Json
+  to: Json
+}
 
 /** Sort object keys recursively; array ORDER is contract and is preserved. */
 function canonicalize(value: Json): Json {
@@ -90,12 +108,63 @@ function canonicalTools(): Record<string, Json> {
   return out
 }
 
-function digestOf(tools: Record<string, Json>): string {
-  return `sha256:${createHash('sha256').update(JSON.stringify(tools)).digest('hex')}`
+function isPlainObject(value: Json): value is Record<string, Json> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+/** An enum/required list is one contract value, so report it whole rather than per index. */
+function isPrimitiveArray(value: Json): boolean {
+  return Array.isArray(value) && value.every((item) => item === null || typeof item !== 'object')
+}
+
+function leafChanges(before: Json, after: Json, path: string): LeafChange[] {
+  if (JSON.stringify(before) === JSON.stringify(after)) return []
+  if (isPrimitiveArray(before) && isPrimitiveArray(after))
+    return [{ path, from: before, to: after }]
+  if (Array.isArray(before) && Array.isArray(after)) {
+    const out: LeafChange[] = []
+    for (let index = 0; index < Math.max(before.length, after.length); index += 1) {
+      out.push(...leafChanges(before[index], after[index], `${path}[${index}]`))
+    }
+    return out
+  }
+  if (isPlainObject(before) && isPlainObject(after)) {
+    const out: LeafChange[] = []
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])].sort()
+    for (const key of keys) out.push(...leafChanges(before[key], after[key], `${path}.${key}`))
+    return out
+  }
+  return [{ path, from: before, to: after }]
+}
+
+function digestOf(value: Json): string {
+  return `sha256:${createHash('sha256').update(JSON.stringify(value)).digest('hex')}`
+}
+
+/** Capture the catalogue with the Gemini-API-key probe forced on, then restore it. */
+function toolsWithAntigravityOptIn(): Record<string, Json> {
+  setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+  try {
+    return canonicalTools()
+  } finally {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+  }
+}
+
+function antigravityChangedPaths(): LeafChange[] {
+  const base = canonicalTools()
+  const optIn = toolsWithAntigravityOptIn()
+  return leafChanges(base, optIn, '$')
 }
 
 describe('TaskWraith MCP tool contract', () => {
   beforeAll(() => {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+  })
+
+  afterEach(() => {
+    // Belt and braces: a leaked probe would silently rewrite the base capture
+    // for every test after it, which is exactly the class of bug this file exists to catch.
     resetAntigravityGeminiApiKeyConfiguredProbeForTests()
   })
 
@@ -106,12 +175,42 @@ describe('TaskWraith MCP tool contract', () => {
     expect(JSON.stringify(canonicalTools())).toEqual(JSON.stringify(canonicalTools()))
   })
 
+  it('changes only provider enums when the antigravity opt-in is active', () => {
+    const changes = antigravityChangedPaths()
+
+    // NOT VACUOUS: if the opt-in stopped reaching the catalogue at all, an
+    // "every change looks right" assertion over an empty list would pass while
+    // proving nothing. Pin that the surface actually moves first.
+    expect(changes.length, 'antigravity opt-in changed nothing in the catalogue').toBeGreaterThan(0)
+
+    const base = canonicalTools()
+    const optIn = toolsWithAntigravityOptIn()
+    expect(Object.keys(optIn), 'opt-in must not add or remove tools').toEqual(Object.keys(base))
+
+    for (const change of changes) {
+      expect(Array.isArray(change.from), `non-array leaf changed at ${change.path}`).toBe(true)
+      // The opt-in is an APPEND to a provider enum and nothing else: same values
+      // in the same order, with antigravity added at the end.
+      expect(change.to, `unexpected opt-in change at ${change.path}`).toEqual([
+        ...(change.from as Json[]),
+        ANTIGRAVITY_PROVIDER_ID
+      ])
+      expect(change.path, `opt-in touched a non-enum leaf at ${change.path}`).toMatch(/\.enum$/)
+    }
+  })
+
   it('matches the recorded contract', async () => {
     const tools = canonicalTools()
     const digest = digestOf(tools)
+    const changedPaths = antigravityChangedPaths()
+    const antigravityOptIn = { digest: digestOf(changedPaths), changedPaths }
 
     if (process.env.UPDATE_MCP_CONTRACT === '1') {
-      const serialized = `${JSON.stringify({ digest, toolCount: Object.keys(tools).length, tools }, null, 2)}\n`
+      const serialized = `${JSON.stringify(
+        { digest, toolCount: Object.keys(tools).length, antigravityOptIn, tools },
+        null,
+        2
+      )}\n`
       const options = (await prettier.resolveConfig(GOLDEN_PATH)) ?? {}
       writeFileSync(
         GOLDEN_PATH,
@@ -128,6 +227,7 @@ describe('TaskWraith MCP tool contract', () => {
     const golden = JSON.parse(readFileSync(GOLDEN_PATH, 'utf8')) as {
       digest: string
       toolCount: number
+      antigravityOptIn: { digest: string; changedPaths: LeafChange[] }
       tools: Record<string, Json>
     }
 
@@ -151,5 +251,13 @@ describe('TaskWraith MCP tool contract', () => {
 
     expect(golden.toolCount).toBe(current.length)
     expect(digest).toBe(golden.digest)
+
+    // The opt-in surface drifts independently of the base: a provider added to
+    // LIVE_SELECTABLE_PROVIDER_IDS moves both, but a change to the antigravity
+    // admission rule moves only this.
+    expect(antigravityOptIn.changedPaths, 'antigravity opt-in surface changed').toEqual(
+      golden.antigravityOptIn.changedPaths
+    )
+    expect(antigravityOptIn.digest).toBe(golden.antigravityOptIn.digest)
   })
 })
