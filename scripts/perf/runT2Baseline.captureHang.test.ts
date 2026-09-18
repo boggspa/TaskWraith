@@ -7,8 +7,12 @@ const {
   childTerminationRecord,
   abortExitCode,
   createT2HostWindowSampler,
-  DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS
+  DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS,
+  verifyT2PairedLightAloneCoverage,
+  declareT2RunReplayBases
 } = require('./runT2Baseline.cjs')
+const { generatePerfFixture } = require('./fixtureGenerator.cjs')
+const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
 const src = readFileSync(new URL('./runT2Baseline.cjs', import.meta.url), 'utf8')
 
 describe('T2 capture hang guards (source pins)', () => {
@@ -329,5 +333,142 @@ describe('T2 host window sampler (T9c)', () => {
     // The run-level T9b fold is untouched and still precedes the report end.
     expect(code).toContain('const hostSpanEvidence = await collectT2HostSpanEvidence({')
     expect(code).toContain('report.hostSpans = hostSpanEvidence.record')
+  })
+})
+
+/**
+ * Wave-3 light_alone wiring (fence-final Ruling 2): the launcher must
+ * PRODUCE the derived fixture and ENFORCE the identity on a live run — a
+ * guard only the suite can trip does not protect the measurement. Behaviour
+ * pins for the two exported helpers plus the wiring source pins; the
+ * CLI-level red-first pins live in perfHarness.test.ts.
+ */
+describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
+  function pairedFixture() {
+    return generatePerfFixture({ workload: 'light_beside_large', seed: 42, scaleDown: 40 })
+  }
+
+  function pairedResultWithLightPlan(plannedEvents: number | null) {
+    const fixture = pairedFixture()
+    const lightChatId = fixture.chats[0].appChatId
+    return {
+      fixture,
+      result: {
+        alone: {
+          run: {
+            evidence: {
+              windows: [
+                {
+                  repetition: 0,
+                  lanes: plannedEvents === null ? [] : [{ chatId: lightChatId, plannedEvents }]
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+
+  it('verifies the paired alone leg replayed exactly the derived light half', () => {
+    const { fixture, result } = pairedResultWithLightPlan(
+      deriveLightAloneFixture(pairedFixture()).replaySchedule.length
+    )
+    const ok = verifyT2PairedLightAloneCoverage(result, fixture)
+    expect(ok.ok).toBe(true)
+    expect(ok.derivedLightAlone.lightAloneDerivation).toMatchObject({
+      basis: 'light_half_of_paired_fixture',
+      sourceWorkload: 'light_beside_large'
+    })
+  })
+
+  it('refuses a pair whose alone leg replayed anything else (live element 2b)', () => {
+    const derived = deriveLightAloneFixture(pairedFixture())
+    const { fixture, result } = pairedResultWithLightPlan(derived.replaySchedule.length - 1)
+    const wrongCount = verifyT2PairedLightAloneCoverage(result, fixture)
+    expect(wrongCount.ok).toBe(false)
+    expect(wrongCount.reasons[0]).toContain('setup drift')
+
+    const missingLane = verifyT2PairedLightAloneCoverage(
+      pairedResultWithLightPlan(null).result,
+      fixture
+    )
+    expect(missingLane.ok).toBe(false)
+
+    const noWindows = verifyT2PairedLightAloneCoverage(
+      { alone: { run: { evidence: {} } } },
+      fixture
+    )
+    expect(noWindows.ok).toBe(false)
+    expect(noWindows.reasons[0]).toContain('no observed windows')
+  })
+
+  it('declares whole_schedule by default and NEVER overwrites a driver-declared basis', () => {
+    // The Addition-1 pin: a blanket whole_schedule stamp would fabricate
+    // over the seeded-tail driver's truthful declaration from the other
+    // direction. A pre-declared basis is preserved byte-for-byte.
+    const run = {
+      evidence: {
+        populations: [
+          { role: 'light', chatId: 'light' },
+          {
+            role: 'heavy',
+            chatId: 'heavy',
+            replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+          }
+        ]
+      }
+    }
+    declareT2RunReplayBases(run)
+    expect(run.evidence.populations[0].replay).toEqual({ basis: 'whole_schedule' })
+    expect(run.evidence.populations[1].replay).toEqual({
+      basis: 'seeded_tail',
+      seededRecordBytes: 40_011_706
+    })
+  })
+
+  it('derives the fixture before fingerprinting, on light-alone only (wiring pins)', () => {
+    const code = src
+    const generateAt = code.indexOf('const generatedFixture = generatePerfFixture({')
+    const deriveAt = code.indexOf(
+      'pairingRole === ' + "'light-alone' && generatedFixture.chats.length >= 2"
+    )
+    const fingerprintAt = code.indexOf('const fingerprint = fixtureFingerprint(fixture)')
+    expect(generateAt).toBeGreaterThan(-1)
+    expect(deriveAt).toBeGreaterThan(generateAt)
+    expect(fingerprintAt).toBeGreaterThan(deriveAt)
+    // The deriver is dependency-injectable so a test can make it diverge.
+    expect(code).toContain('options.lightAloneFixtureDeriver')
+    // --paired-runs is unaffected: the derivation is keyed on pairingRole,
+    // which is null there, so the shared full-fixture fingerprint stands.
+    expect(code).toContain('pairingRole is null there')
+  })
+
+  it('enforces the identity live at construction and refuses on divergence (wiring pins)', () => {
+    const code = src
+    expect(code).toContain('assertLightAloneFixtureIdentity(fixture, generatedFixture)')
+    expect(code).toContain('T2_LIGHT_ALONE_DERIVATION_DIVERGED')
+    // The assert runs only when a derivation actually happened.
+    expect(code).toContain('if (fixture !== generatedFixture) {')
+  })
+
+  it('carries the derivation provenance into the artifact (wiring pins)', () => {
+    const code = src
+    expect(code).toContain('lightAloneDerivation: fixture.lightAloneDerivation ?? null')
+    // The paired alone leg carries the same construction provenance.
+    expect(code).toContain('report.pairedRuns.lightAlone.lightAloneDerivation')
+  })
+
+  it('verifies the paired coverage and excludes a drifted pair (wiring pins)', () => {
+    const code = src
+    expect(code).toContain('verifyT2PairedLightAloneCoverage(pairedReplayResult, fixture)')
+    expect(code).toContain('pairingOk: pairing.ok === true && lightAloneReasons.length === 0')
+    expect(code).toContain('pairing.ok && lightAloneReasons.length === 0 ? [pairing.pair] : []')
+  })
+
+  it('declares replay bases on the runner evidence descriptor (wiring pins)', () => {
+    const code = src
+    expect(code).toContain('declareT2RunReplayBases(report.runEvidence)')
+    expect(code).toContain('if (population.replay === undefined) {')
   })
 })

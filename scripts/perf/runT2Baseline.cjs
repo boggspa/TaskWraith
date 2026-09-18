@@ -75,7 +75,9 @@ const {
   MATRIX_SAMPLING,
   cellReachability,
   createInterferenceReport,
-  environmentRecord
+  environmentRecord,
+  deriveLightAloneFixture,
+  assertLightAloneFixtureIdentity
 } = require('./interferenceMatrix.cjs')
 const { buildT2RunEvidence } = require('./t2RunEvidence.cjs')
 const { runT2WindowedReplay } = require('./t2WindowOrchestration.cjs')
@@ -1161,6 +1163,77 @@ function pairedRunRecord(result) {
 }
 
 /**
+ * Element 2(b) of the light_alone wiring (fence-final Ruling 2), live on
+ * the paired path: the alone leg must have replayed EXACTLY the derived
+ * light half — the same construction the standalone --role=light-alone
+ * path derives — or the pair measures setup drift, not interference. The
+ * alone leg's schedule is the light lane's by adapter construction; this
+ * checks the OBSERVED driver result against the derivation, so a pair
+ * whose alone leg replayed anything else is refused in production, not
+ * just in the suite (the :919-924 paired-basis refusal is the model).
+ *
+ * @param {object} pairedReplayResult — the t2PairedRuns adapter result
+ * @param {object} fixture — the full paired fixture both legs share
+ * @returns {{ ok: true } | { ok: false, reasons: string[] }}
+ */
+function verifyT2PairedLightAloneCoverage(pairedReplayResult, fixture) {
+  const reasons = []
+  let derivedLightAlone = null
+  try {
+    derivedLightAlone = deriveLightAloneFixture(fixture)
+  } catch (error) {
+    return {
+      ok: false,
+      reasons: [String(error && error.message ? error.message : error).slice(0, 200)]
+    }
+  }
+  const lightChatId = fixture.chats[0].appChatId
+  // The driver's lane plan is its schedule array, terminal sentinel
+  // included (concurrentReplayLanes.cjs: plannedEvents = lane.schedule.length).
+  const expectedLightEvents = derivedLightAlone.replaySchedule.length
+  const windows = pairedReplayResult?.alone?.run?.evidence?.windows
+  if (!Array.isArray(windows)) {
+    reasons.push(
+      'light-alone leg carried no observed windows to verify against the derived fixture'
+    )
+  } else {
+    for (const [index, window] of windows.entries()) {
+      const lightLane = Array.isArray(window?.lanes)
+        ? window.lanes.find((lane) => lane?.chatId === lightChatId)
+        : null
+      if (!lightLane || lightLane.plannedEvents !== expectedLightEvents) {
+        reasons.push(
+          `light-alone leg planned ${lightLane ? lightLane.plannedEvents : 'no'} light events in repetition ${index}, not the derived light half's ${expectedLightEvents} — the pair would measure setup drift, not interference`
+        )
+      }
+    }
+  }
+  return reasons.length === 0 ? { ok: true, derivedLightAlone } : { ok: false, reasons }
+}
+
+/**
+ * Fence-final replay-basis declarations (A1.53 Ruling 1) on the runner's
+ * own run-evidence descriptor, PER POPULATION and DEFAULTING: a basis the
+ * replay driver already declared is NEVER overwritten — stamping
+ * whole_schedule over the seeded-tail driver's truthful declaration would
+ * be the fabricated-declaration failure from the other direction. Every
+ * driver today replays its lane's whole schedule, so an undeclared
+ * population defaults to whole_schedule; a driver that replays a bounded
+ * tail declares seeded_tail with that lane's seeded record bytes.
+ *
+ * @param {object} run — the buildT2RunEvidence descriptor (mutated in place)
+ */
+function declareT2RunReplayBases(run) {
+  const populations = run?.evidence?.populations
+  if (!Array.isArray(populations)) return
+  for (const population of populations) {
+    if (population.replay === undefined) {
+      population.replay = { basis: 'whole_schedule' }
+    }
+  }
+}
+
+/**
  * The force/reap facts `terminateExactChild` returns, in the shape the report
  * and the progress journal carry them.
  *
@@ -1411,7 +1484,9 @@ Options:
   --cell=<canonical>                Canonical matrix cell (<history>/<chats>/<path>/<mix>/<saturation>) for the
                                     crossThread host-span fold and the run-evidence descriptor; --launch
                                     REFUSES without it (see --accept-unfolded-cross-thread)
-  --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared
+  --role=<light-alone|light-beside> Pairing role this run measures; omitted → run identity left undeclared.
+                                    light-alone on a paired workload replays the derived light-half fixture
+                                    (deriveLightAloneFixture) — name a small/1 cell for it
   --build-id=<id>                   Operator-named build identity for pairing; omitted → left undeclared
   --accept-in-process-host        Measure the in-process Host deliberately when the external Host
                                   cannot resolve. Without it the launch refuses rather than
@@ -1618,12 +1693,45 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined
   })
 
-  const fixture = generatePerfFixture({
+  const generatedFixture = generatePerfFixture({
     workload,
     seed,
     lean: Boolean(args.lean),
     scaleDown
   })
+
+  // Wall 2c — the light_alone reachability wiring (fence-final Ruling 2). A
+  // standalone --role=light-alone run on a PAIRED workload (two or more
+  // chats) replays the fixture's light half BY CONSTRUCTION —
+  // deriveLightAloneFixture, the same split the lanes driver makes — never
+  // whatever the workload happens to produce. Everything downstream
+  // (fingerprint, the cell guard, materialize, the lanes, the run-evidence
+  // descriptor) then describes the fixture that ACTUALLY replays.
+  // --paired-runs is deliberately unaffected: pairingRole is null there
+  // (refused with --paired-runs), the alone leg runs the same light half by
+  // lane selection, and pairing requires the shared full-fixture
+  // fingerprint — so the single-chat refusal below needs no carve-out.
+  const lightAloneDeriver =
+    typeof options.lightAloneFixtureDeriver === 'function'
+      ? options.lightAloneFixtureDeriver
+      : deriveLightAloneFixture
+  const fixture =
+    pairingRole === 'light-alone' && generatedFixture.chats.length >= 2
+      ? lightAloneDeriver(generatedFixture)
+      : generatedFixture
+  // Element 2 of the same ruling, live at launch time: a derivation that
+  // stopped being the light half of this fixture refuses the run in
+  // production, not just in the suite.
+  if (fixture !== generatedFixture) {
+    const identity = assertLightAloneFixtureIdentity(fixture, generatedFixture)
+    if (!identity.ok) {
+      const identityErr = new Error(
+        `Refusing --role=light-alone: the derived fixture is not the light half of the generated fixture (${identity.reasons.join('; ')}). The pair would measure setup drift, not interference.`
+      )
+      identityErr.code = 'T2_LIGHT_ALONE_DERIVATION_DIVERGED'
+      throw identityErr
+    }
+  }
   const fingerprint = fixtureFingerprint(fixture)
 
   // Does the fixture support the history label its cell claims? Nothing
@@ -1768,7 +1876,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     totals: fixture.totals,
     shape: fixture.shape,
     replayEventCount: fixture.replaySchedule.length,
-    mode
+    mode,
+    // Provenance when this run's fixture is the derived light half of a
+    // paired fixture (fence-final Ruling 2): null for a directly generated
+    // fixture, the derivation block when Wall 2c rewrote it — a reader can
+    // always tell a derived fixture from a coincidental lookalike, and a
+    // run that dropped it is refused outright.
+    lightAloneDerivation: fixture.lightAloneDerivation ?? null
   }
   report.launchPlan = {
     shellCommand: spawnPlan.shellCommand,
@@ -2879,11 +2993,16 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
   if (pairedReplayResult) {
     const pairing = pairedReplayResult.pairing
-    const pairs = pairing.ok ? [pairing.pair] : []
+    // Element 2(b), live: the alone leg must have replayed exactly the
+    // derived light half, verified against the OBSERVED driver result — a
+    // guard the live run trips, not just the suite (the :919-924 model).
+    const lightAloneCoverage = verifyT2PairedLightAloneCoverage(pairedReplayResult, fixture)
+    const lightAloneReasons = lightAloneCoverage.ok ? [] : lightAloneCoverage.reasons
+    const pairs = pairing.ok && lightAloneReasons.length === 0 ? [pairing.pair] : []
     report.pairedRuns = {
       paired: true,
-      pairingOk: pairing.ok === true,
-      reasons: pairing.ok ? [] : pairing.reasons,
+      pairingOk: pairing.ok === true && lightAloneReasons.length === 0,
+      reasons: [...(pairing.ok ? [] : pairing.reasons), ...lightAloneReasons],
       lightAloneRole: pairedReplayResult.alone.pairingRole,
       lightBesideRole: pairedReplayResult.beside.pairingRole,
       aloneEvidenceEligible: pairedReplayResult.alone.evidenceEligible,
@@ -2892,6 +3011,16 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       // run, and it was the only artifact that carried the alone half.
       lightAlone: pairedRunRecord(pairedReplayResult.alone),
       lightBeside: pairedRunRecord(pairedReplayResult.beside)
+    }
+    // The paired alone leg replays the same light half by lane selection;
+    // carry the construction provenance so the artifact shows it (the alone
+    // leg's replay schedule is byte-identical to
+    // deriveLightAloneFixture(fixture).replaySchedule, pinned by test).
+    if (report.pairedRuns.lightAlone !== null) {
+      report.pairedRuns.lightAlone.lightAloneDerivation =
+        lightAloneCoverage.ok === true
+          ? lightAloneCoverage.derivedLightAlone.lightAloneDerivation
+          : deriveLightAloneFixture(fixture).lightAloneDerivation
     }
     report.pairs = pairs
     const cell = parseCellName(crossThreadCell)
@@ -3001,6 +3130,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }),
     launched: willLaunch
   }).run
+  // Fence-final declarations (A1.53 Ruling 1): how each population's
+  // windows were actually replayed, declared per population and defaulting
+  // — a basis the driver already declared is never overwritten (the
+  // seeded-tail driver stamps seeded_tail with its seeded record bytes).
+  declareT2RunReplayBases(report.runEvidence)
 
   const reportPath = path.join(artifactDir, 'perf-t2-report.json')
   const planPath = path.join(artifactDir, 'perf-t2-launch-plan.json')
@@ -3147,6 +3281,8 @@ module.exports = {
   abortExitCode,
   childTerminationRecord,
   pairedRunRecord,
+  verifyT2PairedLightAloneCoverage,
+  declareT2RunReplayBases,
   parseArgs,
   runT2BaselineCli
 }

@@ -5279,6 +5279,130 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     ).rejects.toThrow(/--cell must be a canonical matrix cell name/)
   })
 
+  it('derives the light-half fixture on a standalone light-alone run (red-first wiring)', async () => {
+    // The wave-3 reachability wiring (fence-final Ruling 2): --role=light-alone
+    // on a paired workload must PRODUCE the derived fixture, carry its
+    // provenance, and declare the replay basis. Every assertion below reds if
+    // the launcher stops calling deriveLightAloneFixture — the failure class
+    // that kept light_beside_large correct-but-unrunnable.
+    const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.cjs')
+    const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
+    const flags = { workload: 'light_beside_large', seed: 42, lean: false, scaleDown: 1 }
+    const full = generatePerfFixture(flags)
+    const derived = deriveLightAloneFixture(full)
+    const result = await runT2BaselineCli(
+      [
+        '--workload=light_beside_large',
+        '--role=light-alone',
+        '--cell=small/1/warm/codex_profiles_solo_ensemble_mesh/none',
+        '--scale-down=1',
+        '--dry-run',
+        '--instance-id=perfT2LightAlone',
+        `--home=${path.join(tmpdir(), 'tw-t2-light-alone')}`
+      ],
+      { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+    )
+    expect(result.ok).toBe(true)
+    // The fingerprint is of the fixture that ACTUALLY replays — the derived
+    // light half, never the whole generated fixture.
+    expect(result.fingerprint).toBe(fixtureFingerprint(derived))
+    expect(result.fingerprint).not.toBe(fixtureFingerprint(full))
+
+    const report = result.report
+    // Work1's acceptance block: provenance present and exact.
+    expect(report.fixture.lightAloneDerivation).toMatchObject({
+      basis: 'light_half_of_paired_fixture',
+      sourceWorkload: 'light_beside_large',
+      sourceChatCount: 2,
+      lightChatId: full.chats[0].appChatId
+    })
+    expect(report.fixture.totals.messageCount).toBe(41)
+    expect(report.fixture.totals.chatCount).toBe(1)
+    expect(report.fixture.totals.toolActivityCount).toBeNull()
+    expect(report.fixture.shape).toBeNull()
+    expect(report.fixture.replayEventCount).toBe(86)
+    // The descriptor declares one light population with a truthful basis.
+    const populations = report.runEvidence.evidence.populations
+    expect(populations).toHaveLength(1)
+    expect(populations[0]).toMatchObject({
+      role: 'light',
+      chatId: full.chats[0].appChatId,
+      replay: { basis: 'whole_schedule' }
+    })
+  })
+
+  it('refuses a light-alone run against a large cell (the derived shape is small)', async () => {
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=light_beside_large',
+          '--role=light-alone',
+          '--cell=large/2/warm/codex_profiles_solo_ensemble_mesh/none',
+          '--scale-down=1',
+          '--dry-run',
+          '--instance-id=perfT2LightAloneLarge',
+          `--home=${path.join(tmpdir(), 'tw-t2-light-alone-large')}`
+        ],
+        { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+      )
+    ).rejects.toThrow(/under the large pin's floor/)
+  })
+
+  it('keeps the full fixture and a null derivation on a light-beside run', async () => {
+    const { generatePerfFixture, fixtureFingerprint } = require('./fixtureGenerator.cjs')
+    const full = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 42,
+      lean: false,
+      scaleDown: 1
+    })
+    const result = await runT2BaselineCli(
+      [
+        '--workload=light_beside_large',
+        '--role=light-beside',
+        '--cell=large/2/warm/codex_profiles_solo_ensemble_mesh/none',
+        '--scale-down=1',
+        '--dry-run',
+        '--instance-id=perfT2LightBeside',
+        `--home=${path.join(tmpdir(), 'tw-t2-light-beside')}`
+      ],
+      { repoRoot: path.resolve(__dirname, '..', '..'), forceIsolated: true, platform: 'darwin' }
+    )
+    expect(result.ok).toBe(true)
+    expect(result.fingerprint).toBe(fixtureFingerprint(full))
+    expect(result.report.fixture.lightAloneDerivation).toBeNull()
+    expect(result.report.runEvidence.evidence.populations).toHaveLength(2)
+  })
+
+  it('refuses the run when the derivation diverges from the light half (live element 2)', async () => {
+    // A guard only the suite can trip does not protect the measurement: a
+    // deriver that stops producing the light half must refuse the launch.
+    const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
+    await expect(
+      runT2BaselineCli(
+        [
+          '--workload=light_beside_large',
+          '--role=light-alone',
+          '--cell=small/1/warm/codex_profiles_solo_ensemble_mesh/none',
+          '--scale-down=1',
+          '--dry-run',
+          '--instance-id=perfT2LightAloneDiverged',
+          `--home=${path.join(tmpdir(), 'tw-t2-light-alone-diverged')}`
+        ],
+        {
+          repoRoot: path.resolve(__dirname, '..', '..'),
+          forceIsolated: true,
+          platform: 'darwin',
+          lightAloneFixtureDeriver: (fixture: Parameters<typeof deriveLightAloneFixture>[0]) => {
+            const derived = deriveLightAloneFixture(fixture)
+            derived.replaySchedule = derived.replaySchedule.slice(1)
+            return derived
+          }
+        }
+      )
+    ).rejects.toThrow(/not the light half of the generated fixture/)
+  })
+
   it('P2b: an abort that arrives before the spawn refuses the launch outright', async () => {
     // The owed behavioural half of b8cd33b13. `process.once('SIGINT')` plus an
     // `{ once: true }` abort listener meant a signal during fixture build or
