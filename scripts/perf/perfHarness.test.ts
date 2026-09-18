@@ -5230,6 +5230,28 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
       ok: false,
       reason: expect.stringContaining('hard maxBytes')
     })
+
+    // The light_alone launch gate (fence-final Ruling 2): the baseline cell
+    // is small/1 because the light HALF of light_beside_large is small-shaped
+    // by construction — measured here on the same non-lean generated shape
+    // the evidentiary launch must use. If the light half ever breaches the
+    // hard bound this pin reds and the cell/pin tier re-opens; small's
+    // maxBytes is never relaxed to fit.
+    const lightHalfShapeOf = (scaleDown: number) => {
+      const fixture = generatePerfFixture({
+        workload: 'light_beside_large',
+        seed: 42,
+        lean: false,
+        scaleDown
+      })
+      const lightChat = fixture.chats[0]
+      return {
+        messages: lightChat.messages.length,
+        bytes: Buffer.byteLength(JSON.stringify([lightChat]))
+      }
+    }
+    expect(checkFixtureSatisfiesHistory('small', lightHalfShapeOf(1)).ok).toBe(true)
+    expect(checkFixtureSatisfiesHistory('large', lightHalfShapeOf(1)).ok).toBe(false)
     expect(HISTORY_PIN_MIN_FRACTION).toBeGreaterThan(0)
     expect(HISTORY_PIN_MIN_FRACTION).toBeLessThan(1)
 

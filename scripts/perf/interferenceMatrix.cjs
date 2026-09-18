@@ -500,6 +500,161 @@ function cellReachability(cell) {
   return { reachable: missingCapability.length === 0, missingCapability }
 }
 
+/**
+ * The light-alone baseline cell answering a light-beside cell (fence-final
+ * Ruling 2). History and chat count are DERIVED, never tuned: the baseline
+ * fixture is the beside fixture's light half by construction
+ * (deriveLightAloneFixture), and that half is small-shaped — tens of
+ * messages, well under small's hard 1 MiB maxBytes, and orders under
+ * large's floors — so the answering cell is `small/1/<same path, mix,
+ * saturation>`. The identity and legality tests regenerate the light half
+ * and red if it ever stops being small-legal; relaxing a guard bound to
+ * keep it legal is REFUSED outright (a cell/pin-tier decision, not a bound
+ * adjustment).
+ */
+function lightAloneCellFor(besideCell) {
+  const check = validateMatrixCell(besideCell)
+  if (!check.ok) {
+    throw new Error(`invalid matrix cell: ${check.errors.join('; ')}`)
+  }
+  const cell = {
+    history: 'small',
+    chats: 1,
+    path: check.cell.path,
+    mix: check.cell.mix,
+    saturation: check.cell.saturation
+  }
+  return { ...cell, name: cellName(cell), ...cellReachability(cell) }
+}
+
+/**
+ * The light half of a paired fixture, BY CONSTRUCTION (fence-final Ruling
+ * 2): the light-alone baseline is the same generated fixture restricted to
+ * its light chat — the first chat, mirroring the lanes driver's population
+ * mapping (t2WindowOrchestration.cjs: first fixture chat is light) — with
+ * that chat's schedule events plus the terminal sentinel replicated
+ * verbatim, exactly the schedule the light lane itself replays. Never a
+ * separately-tuned workload that happens to look similar: identity with
+ * the beside run's fixture is asserted by
+ * assertLightAloneFixtureIdentity, and a divergence reds the harness
+ * self-test M1's automated-check list requires.
+ *
+ * Totals are recomputed only where an exact source exists (the original
+ * per-chat run-history entry); per-chat tool activity accounting lives in
+ * the generator, so `toolActivityCount` is null — unmeasured, never a
+ * recomputed guess. The source workload's shape metadata is carried under
+ * `lightAloneDerivation` as provenance; the top-level shape fields are
+ * null because they would misdescribe a one-chat fixture.
+ */
+function deriveLightAloneFixture(fixture) {
+  if (!isPlainObject(fixture) || !Array.isArray(fixture.chats) || fixture.chats.length < 2) {
+    throw new Error('a paired fixture with a light and a heavy chat required')
+  }
+  if (!Array.isArray(fixture.replaySchedule)) {
+    throw new Error('fixture replaySchedule must be an array')
+  }
+  const lightChat = fixture.chats[0]
+  if (
+    !isPlainObject(lightChat) ||
+    typeof lightChat.appChatId !== 'string' ||
+    !lightChat.appChatId
+  ) {
+    throw new Error('the light chat (chats[0]) requires a non-empty appChatId')
+  }
+  const lightEvents = []
+  const terminal = []
+  for (const event of fixture.replaySchedule) {
+    if (!isPlainObject(event)) throw new Error('fixture replay events must be objects')
+    if (event.appChatId === undefined) terminal.push(event)
+    else if (event.appChatId === lightChat.appChatId) lightEvents.push(event)
+  }
+  const lightRunHistory = Array.isArray(fixture.totals?.runHistoryByChat)
+    ? (fixture.totals.runHistoryByChat.find((entry) => entry?.appChatId === lightChat.appChatId) ??
+      null)
+    : null
+  const totals = isPlainObject(fixture.totals)
+    ? {
+        ...fixture.totals,
+        chatCount: 1,
+        messageCount: Array.isArray(lightChat.messages) ? lightChat.messages.length : null,
+        seatCount: Array.isArray(lightChat.ensemble?.participants)
+          ? lightChat.ensemble.participants.length
+          : null,
+        runCount: lightRunHistory?.runCount ?? null,
+        activeRunCount: lightRunHistory?.activeRunCount ?? null,
+        linkedRoundIdCount: lightRunHistory?.linkedRoundIdCount ?? null,
+        maxRunsPerChat: lightRunHistory?.runCount ?? null,
+        maxLinkedRoundIdsPerChat: lightRunHistory?.linkedRoundIdCount ?? null,
+        runSerializedBytes: lightRunHistory?.serializedBytes ?? null,
+        runHistoryByChat: lightRunHistory ? [lightRunHistory] : [],
+        toolActivityCount: null
+      }
+    : fixture.totals
+  return {
+    ...fixture,
+    chats: [lightChat],
+    replaySchedule: [...lightEvents, ...terminal],
+    totals,
+    shape: null,
+    unscaledShape: null,
+    lightAloneDerivation: {
+      basis: 'light_half_of_paired_fixture',
+      sourceWorkload: typeof fixture.workload === 'string' ? fixture.workload : null,
+      sourceChatCount: fixture.chats.length,
+      sourceShape: fixture.shape ?? null,
+      sourceUnscaledShape: fixture.unscaledShape ?? null,
+      lightChatId: lightChat.appChatId,
+      totalsBasis:
+        'recomputed only from the original per-chat run-history entry; toolActivityCount is generator accounting and stays null',
+      terminalEventCountNamesSourceSchedule: true
+    }
+  }
+}
+
+/** Canonical JSON with sorted object keys: key ORDER never aliases content. */
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`
+  if (isPlainObject(value)) {
+    return `{${Object.keys(value)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`)
+      .join(',')}}`
+  }
+  return JSON.stringify(value)
+}
+
+/**
+ * The M1 pairing self-test the cells never supplied (fence-final Ruling 2):
+ * the light-alone run's fixture must BE the light half of the light-beside
+ * run's fixture, or the §1.1 delta measures setup drift instead of
+ * interference. Compared as canonical JSON with `generatedAt` excluded —
+ * runtime generation time identifies no bytes (fixtureFingerprint's rule).
+ *
+ * @returns {{ ok: true } | { ok: false, reasons: string[] }}
+ */
+function assertLightAloneFixtureIdentity(aloneFixture, besideFixture) {
+  let expected
+  try {
+    expected = deriveLightAloneFixture(besideFixture)
+  } catch (error) {
+    return {
+      ok: false,
+      reasons: [String(error && error.message ? error.message : error).slice(0, 200)]
+    }
+  }
+  if (!isPlainObject(aloneFixture)) {
+    return { ok: false, reasons: ['light-alone fixture required'] }
+  }
+  const normalize = (fixture) => canonicalJson({ ...fixture, generatedAt: null })
+  if (normalize(aloneFixture) !== normalize(expected)) {
+    return {
+      ok: false,
+      reasons: ['light-alone fixture diverges from the light half of the paired fixture']
+    }
+  }
+  return { ok: true }
+}
+
 function fixtureVersionsKey(value) {
   if (!isPlainObject(value) || Object.keys(value).length === 0) return null
   const entries = Object.entries(value).sort(([a], [b]) => a.localeCompare(b))
@@ -1019,6 +1174,9 @@ module.exports = {
   SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES,
   normalizeReplayDeclaration,
   replayBasisForChat,
+  lightAloneCellFor,
+  deriveLightAloneFixture,
+  assertLightAloneFixtureIdentity,
   validateMatrixCell,
   cellName,
   parseCellName,

@@ -14,9 +14,15 @@ const {
   REPLAY_BASES,
   SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES,
   normalizeReplayDeclaration,
-  replayBasisForChat
+  replayBasisForChat,
+  lightAloneCellFor,
+  deriveLightAloneFixture,
+  assertLightAloneFixtureIdentity,
+  checkFixtureSatisfiesHistory
 } = require('./interferenceMatrix.cjs')
 const { sampleHostSpans, normalizeHostSpanSnapshot } = require('./collectors/hostSpans.cjs')
+const { generatePerfFixture } = require('./fixtureGenerator.cjs')
+const { splitFixtureScheduleByChat } = require('./t2WindowOrchestration.cjs')
 
 function environment() {
   const collect = vi.fn(() => ({
@@ -500,5 +506,126 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
     expect(replayBasisForChat([{ chatId: 'c' }], 'other')).toBeNull()
     expect(replayBasisForChat(null, 'c')).toBeNull()
     expect(replayBasisForChat([{ chatId: 'c', replay: { basis: 'bogus' } }], 'c')).toBeNull()
+  })
+})
+
+/**
+ * The `light_alone` cell (fence-final Ruling 2): the full-scale light-alone
+ * baseline G-X never legally had. Its fixture is the light half of
+ * light_beside_large BY CONSTRUCTION — the same generation restricted to
+ * its first chat, never a separately-tuned workload — and the identity
+ * assertion reds when the two diverge. Legality falls out of the measured
+ * shape: small-shaped (tens of messages, well under the hard 1 MiB bound),
+ * so the answering cell is small/1/<same path, mix, saturation>. Relaxing
+ * a guard bound to keep it legal is refused outright.
+ */
+describe('light_alone cell (fence-final Ruling 2)', () => {
+  const BESIDE_CELL = {
+    history: 'large',
+    chats: 2,
+    path: 'warm',
+    mix: 'codex_profiles_solo_ensemble_mesh',
+    saturation: 'none'
+  }
+
+  function pairedFixture(scaleDown: number) {
+    return generatePerfFixture({ workload: 'light_beside_large', seed: 42, scaleDown })
+  }
+
+  it('answers a light-beside cell with small/1 on the same path, mix and saturation', () => {
+    const alone = lightAloneCellFor(BESIDE_CELL)
+    expect(alone.name).toBe('small/1/warm/codex_profiles_solo_ensemble_mesh/none')
+    expect(alone.reachable).toBe(true)
+    expect(alone.missingCapability).toEqual([])
+    expect(() => lightAloneCellFor({ ...BESIDE_CELL, history: 'huge' })).toThrow(
+      /invalid matrix cell/
+    )
+  })
+
+  it('derives the light half exactly the way the lanes driver splits it', () => {
+    const fixture = pairedFixture(40)
+    const derived = deriveLightAloneFixture(fixture)
+    const lightId = fixture.chats[0].appChatId
+
+    expect(derived.chats).toEqual([fixture.chats[0]])
+    // Mirror-equivalence with the lanes driver's own split (terminal sentinel
+    // replicated verbatim): the schedule the cell replays is byte-identical
+    // to the schedule the beside run's light lane replays.
+    expect(derived.replaySchedule).toEqual(splitFixtureScheduleByChat(fixture)[lightId])
+
+    // Totals are recomputed only from the exact per-chat sources; generator
+    // accounting that has none stays null rather than being fabricated.
+    const lightRunHistory = fixture.totals.runHistoryByChat.find(
+      (entry: { appChatId: string }) => entry.appChatId === lightId
+    )
+    expect(derived.totals.chatCount).toBe(1)
+    expect(derived.totals.messageCount).toBe(fixture.chats[0].messages.length)
+    expect(derived.totals.runHistoryByChat).toEqual([lightRunHistory])
+    expect(derived.totals.runCount).toBe(lightRunHistory.runCount)
+    expect(derived.totals.toolActivityCount).toBeNull()
+    expect(derived.shape).toBeNull()
+    expect(derived.unscaledShape).toBeNull()
+    expect(derived.lightAloneDerivation).toMatchObject({
+      basis: 'light_half_of_paired_fixture',
+      sourceWorkload: 'light_beside_large',
+      sourceChatCount: 2,
+      lightChatId: lightId
+    })
+  })
+
+  it('passes identity on the true derivation and reds on any divergence', () => {
+    const fixture = pairedFixture(40)
+    expect(assertLightAloneFixtureIdentity(deriveLightAloneFixture(fixture), fixture)).toEqual({
+      ok: true
+    })
+
+    // A same-count mutation must not alias: flip one message id.
+    const tamperedChat = deriveLightAloneFixture(fixture)
+    tamperedChat.chats = [
+      { ...tamperedChat.chats[0], messages: tamperedChat.chats[0].messages.slice() }
+    ]
+    tamperedChat.chats[0].messages[0] = {
+      ...tamperedChat.chats[0].messages[0],
+      id: 'tampered-message-id'
+    }
+    const chatDrift = assertLightAloneFixtureIdentity(tamperedChat, fixture)
+    expect(chatDrift.ok).toBe(false)
+    expect(chatDrift.reasons[0]).toContain('diverges')
+
+    // A dropped schedule event is drift too — identical fixtures AND windows.
+    const tamperedSchedule = deriveLightAloneFixture(fixture)
+    tamperedSchedule.replaySchedule = tamperedSchedule.replaySchedule.slice(1)
+    expect(assertLightAloneFixtureIdentity(tamperedSchedule, fixture).ok).toBe(false)
+
+    // A single-chat "beside" fixture cannot define a pairing at all.
+    const singleChat = { ...fixture, chats: [fixture.chats[0]] }
+    expect(assertLightAloneFixtureIdentity(singleChat, singleChat).ok).toBe(false)
+    expect(assertLightAloneFixtureIdentity(null, fixture).ok).toBe(false)
+  })
+
+  it('keeps the generated light half small-legal at full scale, non-lean (the launch gate)', () => {
+    // Boss's gate, measured on the real generator at the evidentiary flags:
+    // non-lean, seed 42, scale-down 1. If this ever reds, the cell/pin tier
+    // decision re-opens — small's maxBytes is never relaxed to fit.
+    const fixture = generatePerfFixture({
+      workload: 'light_beside_large',
+      seed: 42,
+      lean: false,
+      scaleDown: 1
+    })
+    const lightChat = fixture.chats[0]
+    const lightShape = {
+      messages: lightChat.messages.length,
+      bytes: Buffer.byteLength(JSON.stringify([lightChat]))
+    }
+    expect(lightShape.messages).toBe(41)
+    expect(lightShape.bytes).toBeLessThan(1024 * 1024)
+    expect(checkFixtureSatisfiesHistory('small', lightShape).ok).toBe(true)
+    expect(checkFixtureSatisfiesHistory('large', lightShape).ok).toBe(false)
+    // A1.49's observed light lane: 85 chat events plus the terminal sentinel.
+    expect(
+      fixture.replaySchedule.filter((event) => event.appChatId === lightChat.appChatId)
+    ).toHaveLength(85)
+    expect(deriveLightAloneFixture(fixture).replaySchedule).toHaveLength(86)
   })
 })
