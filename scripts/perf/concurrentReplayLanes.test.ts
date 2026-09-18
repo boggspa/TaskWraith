@@ -1,19 +1,33 @@
+import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { runConcurrentReplayLanes, percentileSummary } = require('./concurrentReplayLanes.cjs')
+const {
+  runConcurrentReplayLanes,
+  percentileSummary,
+  planLaneReplay,
+  measureSeededRecordBytes,
+  SEEDED_TAIL_MESSAGE_COUNT
+} = require('./concurrentReplayLanes.cjs')
 const {
   pairRuns,
   createInterferenceReport,
   environmentRecord,
-  assertPairedRunCompatibility
+  assertPairedRunCompatibility,
+  SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES
 } = require('./interferenceMatrix.cjs')
 const {
   resolveWorkloadShape,
   generatePerfFixture,
   fixtureFingerprint
 } = require('./fixtureGenerator.cjs')
+const { toPersistedChatRecord } = require('./materializeUserData.cjs')
+const { DEFAULT_BATCH_SIZE } = require('./replayDriver.cjs')
+
+const here = dirname(fileURLToPath(import.meta.url))
 
 /** In-memory page adapter that records the exact cross-chat call order. */
 function fakeApi(callLog: string[] = []) {
@@ -350,6 +364,160 @@ describe('large_history fixture profile (M1 A1.2 Appendix A pin)', () => {
     expect(fixtureFingerprint(first)).toBe(fixtureFingerprint(second))
     const other = generatePerfFixture({ workload: 'large_history', seed: 9999, scaleDown: 200 })
     expect(fixtureFingerprint(other)).not.toBe(fixtureFingerprint(first))
+  })
+})
+
+function depthLane(role: string, chatId: string, depth: number) {
+  return {
+    role,
+    chatId,
+    schedule: laneSchedule(chatId, depth),
+    chats: [laneChat(chatId, depth)]
+  }
+}
+
+function recordingApi() {
+  const saves: Array<{ chatId: string; messageCount: number }> = []
+  const inner = fakeApi()
+  return {
+    saves,
+    async getChat(chatId: string) {
+      return inner.getChat(chatId)
+    },
+    async saveChat(record: Record<string, unknown>) {
+      saves.push({
+        chatId: record.appChatId as string,
+        messageCount: Array.isArray(record.messages) ? record.messages.length : 0
+      })
+      return inner.saveChat(record)
+    }
+  }
+}
+
+describe('seeded-tail replay driver (A1.52 item 1 producer)', () => {
+  it('pins the tail length to one prefix batch and the threshold to the matrix constant', () => {
+    expect(SEEDED_TAIL_MESSAGE_COUNT).toBe(DEFAULT_BATCH_SIZE)
+    expect(SEEDED_TAIL_MESSAGE_COUNT).toBe(8)
+    expect(SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES).toBe(16 * 1024 * 1024)
+    const src = readFileSync(join(here, 'concurrentReplayLanes.cjs'), 'utf8')
+    expect(src).toContain('SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES')
+    expect(src).toContain("basis: 'seeded_tail'")
+    expect(src).toContain('planLaneReplay')
+    // Production default is the imported matrix constant, not a test-only floor.
+    expect(src).toMatch(
+      /options\.seededTailMinSeededRecordBytes === undefined\s*\n\s*\? SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES/
+    )
+  })
+
+  it('measures the materialized seed as toPersistedChatRecord compact JSON, not a constant', () => {
+    const first = laneChat('heavy-chat', 20)
+    const second = { ...first, title: 'different-title-for-bytes' }
+    const firstBytes = measureSeededRecordBytes(first)
+    const secondBytes = measureSeededRecordBytes(second)
+    expect(firstBytes).toBe(
+      Buffer.byteLength(JSON.stringify(toPersistedChatRecord(first)), 'utf8')
+    )
+    expect(secondBytes).not.toBe(firstBytes)
+    const withMeta = { ...first, _perfMeta: { toolActivityCount: 99, pad: 'x'.repeat(50) } }
+    expect(measureSeededRecordBytes(withMeta)).toBe(firstBytes)
+  })
+
+  it('never declares seeded_tail on the light lane, even when the record would admit it', () => {
+    const planned = planLaneReplay(depthLane('light', 'light-chat', 20), {
+      seededTailMinSeededRecordBytes: 1
+    })
+    expect(planned.basis).toBe('whole_schedule')
+    expect(planned.seededTail).toBeNull()
+    expect(planned.schedule).toHaveLength(21)
+    expect(planned.rewindMessageCount).toBe(0)
+  })
+
+  it('does not declare seeded_tail below the 16 MiB threshold (Ruling 1(c))', () => {
+    const planned = planLaneReplay(depthLane('heavy', 'heavy-chat', 20))
+    expect(planned.seededRecordBytes).toBeLessThan(SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES)
+    expect(planned.basis).toBe('whole_schedule')
+    expect(planned.seededTail).toBeNull()
+    expect(planned.schedule).toHaveLength(21)
+  })
+
+  it('rewinds heavy to depth-minus-tail and records checkable seededTail provenance', () => {
+    const lane = depthLane('heavy', 'heavy-chat', 20)
+    const planned = planLaneReplay(lane, { seededTailMinSeededRecordBytes: 1 })
+    const bytes = measureSeededRecordBytes(lane.chats[0])
+    expect(planned.basis).toBe('seeded_tail')
+    expect(planned.seedDepth).toBe(20)
+    expect(planned.rewindMessageCount).toBe(12)
+    expect(planned.seededRecordBytes).toBe(bytes)
+    expect(planned.seededTail).toEqual({
+      chatId: 'heavy-chat',
+      seedDepth: 20,
+      seededRecordBytes: bytes,
+      firstSeq: 1,
+      lastSeq: 21,
+      tailEventCount: planned.schedule.length
+    })
+    expect(planned.seededTail.tailEventCount).toBe(1 + 8)
+    const prefixes = planned.schedule
+      .filter((event: { kind: string }) => event.kind !== 'seed_chat')
+      .map((event: { messageIndex: number }) => event.messageIndex)
+    expect(prefixes).toEqual([13, 14, 15, 16, 17, 18, 19, 20])
+  })
+
+  it('emits the producer declaration on populations and rewinds the first tail save, not to message 1', async () => {
+    const api = recordingApi()
+    const light = depthLane('light', 'light-chat', 20)
+    const heavy = depthLane('heavy', 'heavy-chat', 20)
+    const result = await runConcurrentReplayLanes({
+      lanes: [light, heavy],
+      api,
+      seed: 4242,
+      windowMs: 60_000,
+      diagnosticOnly: true,
+      repetitions: 1,
+      seededTailMinSeededRecordBytes: 1,
+      ...runMetadata()
+    })
+    const populations = result.run.evidence.populations
+    const heavyBytes = measureSeededRecordBytes(heavy.chats[0])
+    const heavyTail = {
+      chatId: 'heavy-chat',
+      seedDepth: 20,
+      seededRecordBytes: heavyBytes,
+      firstSeq: 1,
+      lastSeq: 21,
+      tailEventCount: 9
+    }
+    // Exact shape, not toMatchObject: light has no replay field (defaults to
+    // whole_schedule); heavy carries the producer declaration. That asymmetry
+    // is the ruling. Out-of-scope t2PairedRuns/t2RunEvidence pins stay {role,
+    // chatId} on under-threshold fixtures because those never take this branch.
+    expect(populations).toEqual([
+      { role: 'light', chatId: 'light-chat' },
+      {
+        role: 'heavy',
+        chatId: 'heavy-chat',
+        replay: { basis: 'seeded_tail', seededRecordBytes: heavyBytes },
+        materializedSeed: {
+          chatId: 'heavy-chat',
+          seedDepth: 20,
+          seededRecordBytes: heavyBytes
+        },
+        seededTail: heavyTail
+      }
+    ])
+
+    const heavyWindow = result.run.evidence.windows[0].lanes.find(
+      (item: { role: string }) => item.role === 'heavy'
+    )
+    expect(heavyWindow.plannedEvents).toBe(heavyTail.tailEventCount)
+    expect(heavyWindow.completedEvents).toBe(heavyTail.tailEventCount)
+    expect(heavyWindow.plannedEvents).toBeLessThan(21)
+
+    const heavySaves = api.saves.filter((entry) => entry.chatId === 'heavy-chat')
+    expect(heavySaves[0].messageCount).toBe(20)
+    expect(heavySaves[1].messageCount).toBe(13)
+    expect(heavySaves[1].messageCount).not.toBe(1)
+    expect(heavySaves.map((entry) => entry.messageCount)).toEqual([20, 13, 14, 15, 16, 17, 18, 19, 20])
   })
 })
 

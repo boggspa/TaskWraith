@@ -35,20 +35,179 @@
  * A timer cannot preempt synchronously blocking adapter or event-loop work.
  */
 
-const { applyReplayEvent } = require('./replayDriver.cjs')
+const { applyReplayEvent, DEFAULT_BATCH_SIZE } = require('./replayDriver.cjs')
 const { createPrng } = require('./fixtureGenerator.cjs')
 const {
   MATRIX_SAMPLING,
   RUN_EVIDENCE_VERSION,
+  SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES,
   cellName,
   validateRunEvidence
 } = require('./interferenceMatrix.cjs')
+const { toPersistedChatRecord } = require('./materializeUserData.cjs')
 
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
 
+/** Bounded tail in messages from the seeded head. Matches one prefix batch. */
+const SEEDED_TAIL_MESSAGE_COUNT = DEFAULT_BATCH_SIZE
+
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function laneChatOf(lane) {
+  if (!isPlainObject(lane) || !Array.isArray(lane.chats)) return null
+  const match = lane.chats.find((chat) => isPlainObject(chat) && chat.appChatId === lane.chatId)
+  return match || (isPlainObject(lane.chats[0]) ? lane.chats[0] : null)
+}
+
+/** Compact JSON bytes of the persisted seed — matches materialize's record. */
+function measureSeededRecordBytes(chat) {
+  if (!isPlainObject(chat)) return 0
+  return Buffer.byteLength(JSON.stringify(toPersistedChatRecord(chat)), 'utf8')
+}
+
+function eventPrefixEnd(event, chat) {
+  if (!isPlainObject(event) || !isPlainObject(chat)) return null
+  const messages = Array.isArray(chat.messages) ? chat.messages : []
+  if (event.kind === 'seed_chat') return messages.length
+  if (typeof event.messageId === 'string' && event.messageId) {
+    const idx = messages.findIndex((message) => message && message.id === event.messageId)
+    return idx < 0 ? null : idx + 1
+  }
+  if (Number.isSafeInteger(event.messageIndex) && event.messageIndex >= 0) {
+    return Math.min(messages.length, event.messageIndex)
+  }
+  return null
+}
+
+function copyEvent(event) {
+  return { ...event }
+}
+
+function seqRange(schedule) {
+  const seqs = schedule.map((event) => event && event.seq).filter((seq) => Number.isSafeInteger(seq))
+  if (seqs.length === 0) return { firstSeq: null, lastSeq: null }
+  return { firstSeq: seqs[0], lastSeq: seqs[seqs.length - 1] }
+}
+
+function wholeLanePlan(lane, chat, seededRecordBytes) {
+  const schedule = Array.isArray(lane.schedule) ? lane.schedule.map(copyEvent) : []
+  const { firstSeq, lastSeq } = seqRange(schedule)
+  return {
+    basis: 'whole_schedule',
+    seededRecordBytes,
+    seedDepth: Array.isArray(chat && chat.messages) ? chat.messages.length : 0,
+    rewindMessageCount: 0,
+    tailEventCount: schedule.length,
+    firstSeq,
+    lastSeq,
+    seededTail: null,
+    schedule
+  }
+}
+
+function boundScheduleToTail(schedule, chat, rewindMessageCount) {
+  const seedEvents = []
+  const tail = []
+  const terminalEvents = []
+  let tailStarted = false
+  for (const event of schedule) {
+    if (event.kind === 'seed_chat') {
+      seedEvents.push(event)
+      continue
+    }
+    if (event.kind === 'schedule_complete') {
+      terminalEvents.push(event)
+      continue
+    }
+    const end = eventPrefixEnd(event, chat)
+    if (end === null) {
+      if (tailStarted) tail.push(event)
+      continue
+    }
+    if (end > rewindMessageCount) {
+      tailStarted = true
+      tail.push(event)
+    }
+  }
+  return [...seedEvents, ...tail, ...terminalEvents]
+}
+
+/**
+ * Plan one lane's replay. Light always walks the whole schedule. Heavy walks
+ * a bounded tail only when the materialized seed is at/above the 16 MiB
+ * snapshot threshold — below it seeded-tail is inadmissible (Ruling 1(c)).
+ */
+function planLaneReplay(lane, options = {}) {
+  const chat = laneChatOf(lane)
+  const seededRecordBytes = measureSeededRecordBytes(chat)
+  const minBytes =
+    options.seededTailMinSeededRecordBytes === undefined
+      ? SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES
+      : options.seededTailMinSeededRecordBytes
+  const tailMessages =
+    options.seededTailMessageCount === undefined
+      ? SEEDED_TAIL_MESSAGE_COUNT
+      : options.seededTailMessageCount
+
+  if (!isPlainObject(lane) || lane.role === 'light' || !chat) {
+    return wholeLanePlan(lane || {}, chat, seededRecordBytes)
+  }
+  if (!Number.isSafeInteger(minBytes) || seededRecordBytes < minBytes) {
+    return wholeLanePlan(lane, chat, seededRecordBytes)
+  }
+  const depth = Array.isArray(chat.messages) ? chat.messages.length : 0
+  if (!Number.isSafeInteger(tailMessages) || tailMessages <= 0 || depth <= tailMessages) {
+    return wholeLanePlan(lane, chat, seededRecordBytes)
+  }
+
+  const rewindMessageCount = depth - tailMessages
+  const schedule = Array.isArray(lane.schedule) ? lane.schedule : []
+  const bounded = boundScheduleToTail(schedule, chat, rewindMessageCount)
+  const constructionKept = bounded.filter(
+    (event) => event.kind !== 'seed_chat' && event.kind !== 'schedule_complete'
+  )
+  if (constructionKept.length === 0) return wholeLanePlan(lane, chat, seededRecordBytes)
+
+  const copied = bounded.map(copyEvent)
+  const { firstSeq, lastSeq } = seqRange(copied)
+  const tailEventCount = copied.length
+  return {
+    basis: 'seeded_tail',
+    seededRecordBytes,
+    seedDepth: depth,
+    rewindMessageCount,
+    tailEventCount,
+    firstSeq,
+    lastSeq,
+    seededTail: {
+      chatId: lane.chatId,
+      seedDepth: depth,
+      seededRecordBytes,
+      firstSeq,
+      lastSeq,
+      tailEventCount
+    },
+    schedule: copied
+  }
+}
+
+function populationReplayFields(planned, chatId) {
+  if (!planned || planned.basis !== 'seeded_tail') return {}
+  return {
+    replay: {
+      basis: 'seeded_tail',
+      seededRecordBytes: planned.seededRecordBytes
+    },
+    materializedSeed: {
+      chatId,
+      seedDepth: planned.seedDepth,
+      seededRecordBytes: planned.seededRecordBytes
+    },
+    seededTail: planned.seededTail
+  }
 }
 
 /** Nearest-rank percentiles, matching the recorder's convention. */
@@ -648,11 +807,23 @@ async function runConcurrentReplayLanes(options) {
   }
   const clock = makeClock(options.nowMs)
   clock() // Invalid initial clocks are refused before any chat is owned or mutated.
-  const lanes = options.lanes.map((lane) => ({
-    ...lane,
-    schedule: lane.schedule.map((event) => ({ ...event })),
-    chats: [...(lane.chats || [])]
-  }))
+  const planOptions = {
+    ...(options.seededTailMinSeededRecordBytes === undefined
+      ? {}
+      : { seededTailMinSeededRecordBytes: options.seededTailMinSeededRecordBytes }),
+    ...(options.seededTailMessageCount === undefined
+      ? {}
+      : { seededTailMessageCount: options.seededTailMessageCount })
+  }
+  const lanes = options.lanes.map((lane) => {
+    const planned = planLaneReplay(lane, planOptions)
+    return {
+      ...lane,
+      schedule: planned.schedule.map((event) => ({ ...event })),
+      chats: [...(lane.chats || [])],
+      replayPlan: planned
+    }
+  })
   const ownership = reserveChats(options.api, lanes)
   const aggregates = lanes.map((lane) => ({
     lane,
@@ -772,7 +943,11 @@ async function runConcurrentReplayLanes(options) {
       status,
       diagnosticOnly: options.diagnosticOnly === true,
       lightChatId: light.lane.chatId,
-      populations: lanes.map((lane) => ({ role: lane.role, chatId: lane.chatId })),
+      populations: lanes.map((lane) => ({
+        role: lane.role,
+        chatId: lane.chatId,
+        ...populationReplayFields(lane.replayPlan, lane.chatId)
+      })),
       windows
     }
   }
@@ -873,6 +1048,10 @@ if (require.main === module) {
 module.exports = {
   drainBudgetMs,
   LANE_ROLES,
+  SEEDED_TAIL_MESSAGE_COUNT,
+  measureSeededRecordBytes,
+  eventPrefixEnd,
+  planLaneReplay,
   percentileSummary,
   runConcurrentReplayLanes,
   runDryRun
