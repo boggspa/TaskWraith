@@ -33,7 +33,10 @@
  *   Cross-identity cancellation is rejected without touching state.
  * - `markStarted` retains the caller's durable-start evidence in memory: it
  *   survives immediate finish/cancel; a late success after timeout or any
- *   terminal outcome is fenced (ignored + counted), never un-settles.
+ *   terminal outcome is fenced (ignored + counted), never un-settles. The
+ *   witness is also PUBLISHED through `onStarted` at record time — the
+ *   short start publication, independent of the terminal outcome (the wire
+ *   `phase: 'started'` rides status `pending` until settlement).
  * - `beginShutdown` stops new reservations/claims, settles unclaimed AND
  *   claimed-but-undispatched reservations as `host_shutting_down` (releasing
  *   their capacity — nothing else would ever settle them), and drains
@@ -235,6 +238,18 @@ export type HostQueuedStartReopenOutcome =
 
 export interface HostQueuedStartLifecycleOptions {
   readonly executionClaimStore?: HostQueuedStartExecutionClaimStore
+  /**
+   * Short start publication (M2 slice 2), notified EXACTLY ONCE per
+   * reservation at the moment `markStarted` records the durable-start
+   * witness — independently of the terminal outcome, which may arrive much
+   * later or never. The wire contract already carries `phase: 'started'`
+   * riding status `pending` (hostProtocol.ts); the integration publishes
+   * that existing phase from this hook rather than waiting for receipt
+   * settlement. A publication that only landed with the terminal outcome
+   * would be the current behaviour wearing a new name. Errors are
+   * contained and counted like onTerminal's.
+   */
+  readonly onStarted?: (reservation: HostQueuedStartReservationView) => void
   /** Observer notified exactly once per reservation at terminal settle. */
   readonly onTerminal?: (
     reservation: HostQueuedStartReservationView,
@@ -657,8 +672,20 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         fencedLateStarts += 1
         return { kind: 'fenced' }
       }
+      const firstStartEvidence = record.startedEvidence === false
       record.startedEvidence = true
       record.phase = 'started'
+      if (firstStartEvidence && options.onStarted) {
+        // Short start publication: the durable-start witness is published at
+        // record time, not at receipt settlement. Monotonic evidence makes
+        // it exactly-once by construction — a repeated witness never
+        // re-publishes, and a fenced late witness never publishes at all.
+        try {
+          options.onStarted(record.view)
+        } catch {
+          callbackErrors += 1
+        }
+      }
       return { kind: 'recorded' }
     },
 

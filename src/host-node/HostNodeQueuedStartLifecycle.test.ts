@@ -45,8 +45,10 @@ async function admittedLifecycle(
   return { admission, lifecycle, lease: admitted.lease }
 }
 
-async function claimedLifecycle() {
-  const lifecycle = createHostNodeQueuedStartLifecycle()
+async function claimedLifecycle(
+  options: NonNullable<Parameters<typeof createHostNodeQueuedStartLifecycle>[0]> = {}
+) {
+  const lifecycle = createHostNodeQueuedStartLifecycle(options)
   lifecycle.reserve(reserveInput())
   const holder = fakeLease('cmd-1')
   const claim = await lifecycle.claim('cmd-1', holder.lease)
@@ -163,6 +165,78 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
     // A late duplicate witness after terminalization is fenced and counted.
     expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'fenced' })
     expect(lifecycle.stats().fencedLateStarts).toBe(1)
+  })
+
+  it('publishes start evidence WITHOUT waiting for a terminal outcome', async () => {
+    // M2 slice 2 red-first: deleting the onStarted call in markStarted reds
+    // this test — and a publication that only landed with the terminal
+    // outcome would be the current behaviour wearing a new name.
+    const startedPhases: Array<{
+      commandId: string
+      phase: string
+      startedEvidence: boolean
+      terminalOutcome: string | null
+    }> = []
+    const terminalOutcomes: string[] = []
+    const { lifecycle } = await claimedLifecycle({
+      onStarted: (view) =>
+        startedPhases.push({
+          commandId: view.commandId,
+          phase: view.phase,
+          startedEvidence: view.startedEvidence,
+          terminalOutcome: view.terminalOutcome
+        }),
+      onTerminal: (view, outcome) => terminalOutcomes.push(`${view.commandId}:${outcome}`)
+    })
+    await lifecycle.executeStart('cmd-1', () => {})
+
+    expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'recorded' })
+    // Published NOW: no settle, no receipt, no terminal outcome anywhere.
+    expect(startedPhases).toEqual([
+      { commandId: 'cmd-1', phase: 'started', startedEvidence: true, terminalOutcome: null }
+    ])
+    expect(terminalOutcomes).toEqual([])
+
+    // The terminal publication still arrives later, exactly once, through
+    // its own seam — the two publications are independent by construction.
+    expect(lifecycle.settle('cmd-1', 'completed')).toBe(true)
+    expect(terminalOutcomes).toEqual(['cmd-1:completed'])
+    expect(startedPhases).toHaveLength(1)
+  })
+
+  it('publishes start evidence exactly once and never for a fenced witness', async () => {
+    let publications = 0
+    const { lifecycle } = await claimedLifecycle({
+      onStarted: () => {
+        publications += 1
+      }
+    })
+    await lifecycle.executeStart('cmd-1', () => {})
+
+    expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'recorded' })
+    // A repeated witness before terminalization stays monotonic evidence,
+    // never a second publication.
+    expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'recorded' })
+    expect(publications).toBe(1)
+
+    expect(lifecycle.settle('cmd-1', 'completed')).toBe(true)
+    expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'fenced' })
+    expect(publications).toBe(1)
+  })
+
+  it('contains a throwing start-publication observer without losing the evidence', async () => {
+    const { lifecycle } = await claimedLifecycle({
+      onStarted: () => {
+        throw new Error('receipt store offline')
+      }
+    })
+    await lifecycle.executeStart('cmd-1', () => {})
+
+    expect(lifecycle.markStarted('cmd-1')).toEqual({ kind: 'recorded' })
+    const view = lifecycle.getReservation('cmd-1')
+    expect(view?.startedEvidence).toBe(true)
+    expect(view?.phase).toBe('started')
+    expect(lifecycle.stats().callbackErrors).toBe(1)
   })
 
   it('shutdown_no_late_spawn', async () => {
