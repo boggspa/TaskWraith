@@ -33,6 +33,7 @@ import type {
   HostPermissionConsentExpectedSelection
 } from '../host-runtime/HostPermissionConsent'
 import { isEnsembleSeatProvider } from '../shared/retiredProviders'
+import type { HostQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
 
 export interface HostNodeRunEventSink {
   publish(target: HostRunEventTarget, event: HostProviderRunEvent): void
@@ -76,6 +77,38 @@ export interface HostNodeProfileRunPortOptions {
   readonly events: HostNodeRunEventSink
   readonly permissionConsentAuthority?: HostPermissionConsentAuthorityPort
   readonly fullAccessGrants?: Pick<HostFullAccessGrantRegistry, 'matches'>
+  /**
+   * M2: when true, this port consults the queued-start lifecycle on beginRun
+   * (`providerRunStarted` + `markStarted`) and on a forward phase update
+   * (`markStarted`, monotonic). Default is TASKWRAITH_HOST_QUEUED_START === '1'
+   * (OFF). Tests inject the boolean so they do not mutate process.env. An
+   * injected lifecycle is ignored while the gate is off. This port does not
+   * construct a lifecycle of its own — the Domain-owned instance must be
+   * attached; auto-constructing would be a second instance whose reservations
+   * never see DomainPorts' reserve/claim/executeStart.
+   */
+  readonly hostQueuedStartEnabled?: boolean
+  /** Composer/test seam: a pre-built lifecycle. Ignored unless the gate is on. */
+  readonly queuedStartLifecycle?: HostQueuedStartLifecycle
+  /** Test seam: factory consulted only when the gate is on and no instance was given. */
+  readonly createQueuedStartLifecycle?: () => HostQueuedStartLifecycle
+}
+
+const HOST_QUEUED_START_ENV = 'TASKWRAITH_HOST_QUEUED_START'
+
+function isHostQueuedStartEnabled(
+  env: NodeJS.ProcessEnv | NodeJS.Dict<string | undefined> = process.env
+): boolean {
+  return env[HOST_QUEUED_START_ENV] === '1'
+}
+
+function resolveQueuedStartLifecycle(
+  options: HostNodeProfileRunPortOptions
+): HostQueuedStartLifecycle | null {
+  const enabled = options.hostQueuedStartEnabled ?? isHostQueuedStartEnabled()
+  if (!enabled) return null
+  if (options.queuedStartLifecycle) return options.queuedStartLifecycle
+  return options.createQueuedStartLifecycle?.() ?? null
 }
 
 type ActiveRun = {
@@ -238,8 +271,11 @@ function phaseRank(phase: HostProviderRunUpdate['phase']): number {
 export class HostNodeProfileRunPort implements HostProviderRunPort {
   private readonly active = new Map<string, ActiveRun>()
   private readonly begunLocations = new Map<string, string>()
+  private readonly queuedStartLifecycle: HostQueuedStartLifecycle | null
 
-  constructor(private readonly options: HostNodeProfileRunPortOptions) {}
+  constructor(private readonly options: HostNodeProfileRunPortOptions) {
+    this.queuedStartLifecycle = resolveQueuedStartLifecycle(options)
+  }
 
   getThread(threadId: string): HostProviderRunThread | null {
     if (!isCanonicalId(threadId)) return null
@@ -375,6 +411,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       phase: 'starting',
       cancelInvoked: false
     })
+    this.consultQueuedStartBegin(normalized.runId)
     return { kind: 'started' as const }
   }
 
@@ -394,6 +431,7 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
       phase: normalized.phase
     })
     active.phase = normalized.phase
+    this.consultQueuedStartPhase(normalized.runId)
   }
 
   finishRun(input: HostProviderRunFinish): void {
@@ -491,6 +529,27 @@ export class HostNodeProfileRunPort implements HostProviderRunPort {
   hasBegun(runId: string, threadId: string): boolean {
     const active = this.active.get(runId)
     return Boolean(active && active.threadId === threadId)
+  }
+
+  private consultQueuedStartBegin(runId: string): void {
+    const lifecycle = this.queuedStartLifecycle
+    if (!lifecycle) return
+    try {
+      lifecycle.providerRunStarted(runId)
+      lifecycle.markStarted(runId)
+    } catch {
+      // A lifecycle observer must not un-begin a persisted run.
+    }
+  }
+
+  private consultQueuedStartPhase(runId: string): void {
+    const lifecycle = this.queuedStartLifecycle
+    if (!lifecycle) return
+    try {
+      lifecycle.markStarted(runId)
+    } catch {
+      // Phase publication must not fail the run update.
+    }
   }
 
   private threadIdForStoredRun(runId: string): string | null {

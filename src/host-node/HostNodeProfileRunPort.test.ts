@@ -22,6 +22,8 @@ import {
 } from '../shared/kimiModels'
 import { HostNodeProfileRunPort } from './HostNodeProfileRunPort'
 import { resolveHostNodeCodexPosture } from './HostNodeCodexProvider'
+import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
+import type { HostNodeRunAdmissionLease } from './HostNodeRunAdmission'
 
 const paths: string[] = []
 
@@ -982,6 +984,224 @@ describe('HostNodeProfileRunPort', () => {
       expect(runs.find((run) => run.runId === 'run-done')?.warningSummaries ?? []).toEqual([])
       expect(runs.find((run) => run.runId === 'run-stopped')?.warningSummaries ?? []).toEqual([])
       expect(store.getThread(threadId)?.messages ?? []).toEqual([])
+    })
+  })
+
+  describe('queued-start lifecycle consult (M2 slice 6)', () => {
+    function fakeLease(commandId: string, threadId: string): HostNodeRunAdmissionLease {
+      return {
+        commandId,
+        threadId,
+        release() {
+          return undefined
+        }
+      }
+    }
+
+    function throwingLifecycle() {
+      const boom = () => {
+        throw new Error('lifecycle must not be consulted while the gate is off')
+      }
+      return {
+        providerRunStarted: boom,
+        markStarted: boom
+      }
+    }
+
+    it('consults the queued-start lifecycle on beginRun when the gate is on', async () => {
+      const { store, threadId } = openStore()
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      lifecycle.reserve({ commandId: 'run-on', threadId, fingerprint: 'fp-run-on' })
+      await lifecycle.claim('run-on', fakeLease('run-on', threadId))
+      await lifecycle.executeStart('run-on', () => undefined)
+      const providerRunStarted = vi.spyOn(lifecycle, 'providerRunStarted')
+      const markStarted = vi.spyOn(lifecycle, 'markStarted')
+      const port = new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined },
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      expect(
+        port.beginRun({
+          runId: 'run-on',
+          threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+      ).toEqual({ kind: 'started' })
+      expect(providerRunStarted).toHaveBeenCalledWith('run-on')
+      expect(markStarted).toHaveBeenCalledWith('run-on')
+      expect(lifecycle.getReservation('run-on')?.providerRunBegan).toBe(true)
+      expect(lifecycle.getReservation('run-on')?.startedEvidence).toBe(true)
+      expect(lifecycle.getReservation('run-on')?.phase).toBe('started')
+    })
+
+    it('consults markStarted on a forward phase update when the gate is on', async () => {
+      const { store, threadId } = openStore()
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      lifecycle.reserve({ commandId: 'run-phase', threadId, fingerprint: 'fp-run-phase' })
+      await lifecycle.claim('run-phase', fakeLease('run-phase', threadId))
+      await lifecycle.executeStart('run-phase', () => undefined)
+      const port = new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined },
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      port.beginRun({
+        runId: 'run-phase',
+        threadId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        startedAt: '2026-08-24T05:00:00.000Z'
+      })
+      const markStarted = vi.spyOn(lifecycle, 'markStarted')
+      port.updateRun({
+        runId: 'run-phase',
+        phase: 'streaming',
+        updatedAt: '2026-08-24T05:00:01.000Z'
+      })
+      expect(markStarted).toHaveBeenCalledWith('run-phase')
+    })
+
+    it('does not construct or consult the queued-start lifecycle when the gate is off', () => {
+      const { store, threadId } = openStore()
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
+      })
+      const port = new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined },
+        hostQueuedStartEnabled: false,
+        createQueuedStartLifecycle,
+        queuedStartLifecycle: throwingLifecycle() as never
+      })
+      expect(
+        port.beginRun({
+          runId: 'run-off',
+          threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+      ).toEqual({ kind: 'started' })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      port.updateRun({
+        runId: 'run-off',
+        phase: 'streaming',
+        updatedAt: '2026-08-24T05:00:01.000Z'
+      })
+      expect(port.registerCancel('run-off', () => undefined)).toEqual({ kind: 'registered' })
+      port.finishRun({
+        runId: 'run-off',
+        status: 'completed',
+        finishedAt: '2026-08-24T05:00:02.000Z',
+        warningSummaries: []
+      })
+      expect(store.getThread(threadId)?.runs?.[0]).toMatchObject({
+        runId: 'run-off',
+        status: 'completed'
+      })
+    })
+
+    it('still reaches termination when the gate is on (beginRun consult does not wedge the run)', async () => {
+      const { store, threadId } = openStore()
+      const events: HostProviderRunEvent[] = []
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      lifecycle.reserve({ commandId: 'run-term', threadId, fingerprint: 'fp-run-term' })
+      await lifecycle.claim('run-term', fakeLease('run-term', threadId))
+      await lifecycle.executeStart('run-term', () => undefined)
+      const port = new HostNodeProfileRunPort({
+        store,
+        events: { publish: (_target, event) => events.push(event) },
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      expect(
+        port.beginRun({
+          runId: 'run-term',
+          threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+      ).toEqual({ kind: 'started' })
+      port.updateRun({
+        runId: 'run-term',
+        phase: 'streaming',
+        updatedAt: '2026-08-24T05:00:01.000Z'
+      })
+      expect(port.registerCancel('run-term', () => undefined)).toEqual({ kind: 'registered' })
+      port.publishRunEvent(
+        { id: 'host-client-1' },
+        {
+          type: 'run.content',
+          runId: 'run-term',
+          threadId,
+          text: 'bounded output',
+          at: '2026-08-24T05:00:02.000Z'
+        }
+      )
+      port.finishRun({
+        runId: 'run-term',
+        status: 'completed',
+        finishedAt: '2026-08-24T05:00:03.000Z',
+        warningSummaries: []
+      })
+      expect(store.getThread(threadId)?.runs?.[0]).toMatchObject({
+        runId: 'run-term',
+        status: 'completed'
+      })
+      expect(events).toEqual([expect.objectContaining({ type: 'run.content' })])
+    })
+
+    it('does not auto-construct a second lifecycle when the gate is on and none is attached', () => {
+      const { store, threadId } = openStore()
+      const createQueuedStartLifecycle = vi.fn(() => {
+        throw new Error('factory should not run unless provided as the attached seam')
+      })
+      const port = new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined },
+        hostQueuedStartEnabled: true
+      })
+      expect(
+        port.beginRun({
+          runId: 'run-unattached',
+          threadId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          startedAt: '2026-08-24T05:00:00.000Z'
+        })
+      ).toEqual({ kind: 'started' })
+      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+    })
+
+    it('constructs the lifecycle factory when the gate is on and no instance is injected', () => {
+      const { store } = openStore()
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const createQueuedStartLifecycle = vi.fn(() => lifecycle)
+      new HostNodeProfileRunPort({
+        store,
+        events: { publish: () => undefined },
+        hostQueuedStartEnabled: true,
+        createQueuedStartLifecycle
+      })
+      expect(createQueuedStartLifecycle).toHaveBeenCalledTimes(1)
+    })
+
+    it('wires beginRun consult in ProfileRunPort (red if the consumer is deleted)', () => {
+      const src = readFileSync(join(__dirname, 'HostNodeProfileRunPort.ts'), 'utf8')
+      expect(src).toContain('consultQueuedStartBegin')
+      expect(src).toContain('consultQueuedStartPhase')
+      expect(src).toMatch(/lifecycle\.providerRunStarted\(/)
+      expect(src).toMatch(/lifecycle\.markStarted\(/)
+      expect(src).toContain('hostQueuedStartEnabled')
+      expect(src).toMatch(/if \(!enabled\) return null/)
+      expect(src).toMatch(/this\.queuedStartLifecycle = resolveQueuedStartLifecycle/)
+      expect(src).not.toMatch(/createHostNodeQueuedStartLifecycle\(/)
     })
   })
 })

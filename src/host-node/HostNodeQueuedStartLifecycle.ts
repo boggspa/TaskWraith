@@ -16,10 +16,17 @@
  * only the exact token `1` enables, default OFF. DomainPorts consults this
  * lifecycle on composer.send admission/start (:1203-1258) and run.cancel
  * (:1058-1063). That DomainPorts half of the @IntegrationOwner hand-off is
- * done. The HostNodeProfileRunPort half is not: beginRun (:336), phase
- * update (:381-396), and publishRunEvent (:432) still do not consult this
- * module. The flag remains default OFF; enabling by default is a harness
- * decision, never a code one.
+ * done. HostNodeProfileRunPort consults this module on beginRun
+ * (`providerRunStarted` + `markStarted`) and on a forward phase update
+ * (`markStarted`, monotonic) when the same gate is on and a lifecycle is
+ * attached; an injected instance is ignored while the gate is off.
+ * registerCancel / cancelThread / publishRunEvent still do not consult this
+ * module (cancel registration is the run-sealing path; wiring it here without
+ * DomainPorts treating latch delivery as success would report
+ * run_not_cancellable after a successful cancel). DomainPorts still
+ * constructs ProfileRunPort at :563 without passing the lifecycle — that
+ * one-line attachment is the remaining production hop. The flag remains
+ * default OFF; enabling by default is a harness decision, never a code one.
  *
  * Contract points the amendment pins and this module enforces:
  * - `reserve` happens BEFORE any acknowledgement and is idempotent per
@@ -864,3 +871,5 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
 
   return api
 }
+
+export type HostQueuedStartLifecycle = ReturnType<typeof createHostNodeQueuedStartLifecycle>
