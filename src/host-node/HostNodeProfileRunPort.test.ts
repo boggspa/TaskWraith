@@ -1157,11 +1157,8 @@ describe('HostNodeProfileRunPort', () => {
       expect(events).toEqual([expect.objectContaining({ type: 'run.content' })])
     })
 
-    it('does not auto-construct a second lifecycle when the gate is on and none is attached', () => {
+    it('still begins a run when the gate is on and no lifecycle is attached', () => {
       const { store, threadId } = openStore()
-      const createQueuedStartLifecycle = vi.fn(() => {
-        throw new Error('factory should not run unless provided as the attached seam')
-      })
       const port = new HostNodeProfileRunPort({
         store,
         events: { publish: () => undefined },
@@ -1176,7 +1173,6 @@ describe('HostNodeProfileRunPort', () => {
           startedAt: '2026-08-24T05:00:00.000Z'
         })
       ).toEqual({ kind: 'started' })
-      expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
     })
 
     it('constructs the lifecycle factory when the gate is on and no instance is injected', () => {
@@ -1201,6 +1197,9 @@ describe('HostNodeProfileRunPort', () => {
       expect(src).toContain('hostQueuedStartEnabled')
       expect(src).toMatch(/if \(!enabled\) return null/)
       expect(src).toMatch(/this\.queuedStartLifecycle = resolveQueuedStartLifecycle/)
+      // Load-bearing no-auto-construct pin: resolveQueuedStartLifecycle has no
+      // internal factory fallback, and this source must not grow one. A vi.fn
+      // never passed to the constructor cannot prove that.
       expect(src).not.toMatch(/createHostNodeQueuedStartLifecycle\(/)
     })
   })
