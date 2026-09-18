@@ -73,10 +73,15 @@ function laneChatOf(lane) {
   return match || (isPlainObject(lane.chats[0]) ? lane.chats[0] : null)
 }
 
-/** Compact JSON bytes of the persisted seed — matches materialize's record. */
+/**
+ * Compact JSON bytes of the persisted seed, matching materializePerfUserData's
+ * default on-disk write (`pretty=false`): `${JSON.stringify(persisted)}\n`.
+ * The load-bearing pin is the disk-stat test in concurrentReplayLanes.test.ts;
+ * do not re-derive the expected value there from this same serializer.
+ */
 function measureSeededRecordBytes(chat) {
   if (!isPlainObject(chat)) return 0
-  return Buffer.byteLength(JSON.stringify(toPersistedChatRecord(chat)), 'utf8')
+  return Buffer.byteLength(`${JSON.stringify(toPersistedChatRecord(chat))}\n`, 'utf8')
 }
 
 function eventPrefixEnd(event, chat) {

@@ -1,5 +1,6 @@
-import { readFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it, vi } from 'vitest'
@@ -24,7 +25,7 @@ const {
   generatePerfFixture,
   fixtureFingerprint
 } = require('./fixtureGenerator.cjs')
-const { toPersistedChatRecord } = require('./materializeUserData.cjs')
+const { materializePerfUserData } = require('./materializeUserData.cjs')
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -409,17 +410,44 @@ describe('seeded-tail replay driver (A1.52 item 1 producer)', () => {
     )
   })
 
-  it('measures the materialized seed as toPersistedChatRecord compact JSON, not a constant', () => {
+  it('measures the materialized seed as content-dependent bytes, not a constant', () => {
     const first = laneChat('heavy-chat', 20)
     const second = { ...first, title: 'different-title-for-bytes' }
     const firstBytes = measureSeededRecordBytes(first)
     const secondBytes = measureSeededRecordBytes(second)
-    expect(firstBytes).toBe(
-      Buffer.byteLength(JSON.stringify(toPersistedChatRecord(first)), 'utf8')
-    )
     expect(secondBytes).not.toBe(firstBytes)
     const withMeta = { ...first, _perfMeta: { toolActivityCount: 99, pad: 'x'.repeat(50) } }
     expect(measureSeededRecordBytes(withMeta)).toBe(firstBytes)
+  })
+
+  it('pins driver-measured seededRecordBytes against the chat file actually written on disk', () => {
+    const fixture = generatePerfFixture({
+      workload: 'dual_run',
+      seed: 42,
+      lean: true,
+      scaleDown: 8
+    })
+    const dir = mkdtempSync(join(tmpdir(), 'seeded-record-disk-'))
+    try {
+      materializePerfUserData({
+        workload: 'dual_run',
+        fixture,
+        userDataDir: dir,
+        mode: 'future_v2'
+      })
+      expect(fixture.chats.length).toBeGreaterThan(0)
+      for (const chat of fixture.chats) {
+        const filePath = join(dir, 'chats', `${chat.appChatId}.json`)
+        // Raw file bytes — not JSON.parse + re-stringify, which would replay
+        // the same serializer the measure already uses and hide a persist-path
+        // divergence (the tautology this pin exists to close).
+        const onDisk = readFileSync(filePath)
+        expect(onDisk.byteLength).toBe(statSync(filePath).size)
+        expect(measureSeededRecordBytes(chat)).toBe(onDisk.byteLength)
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   it('never declares seeded_tail on the light lane, even when the record would admit it', () => {
