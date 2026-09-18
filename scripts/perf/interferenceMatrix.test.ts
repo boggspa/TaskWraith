@@ -10,7 +10,11 @@ const {
   pairRuns,
   environmentRecord,
   createInterferenceReport,
-  validateInterferenceReport
+  validateInterferenceReport,
+  REPLAY_BASES,
+  SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES,
+  normalizeReplayDeclaration,
+  replayBasisForChat
 } = require('./interferenceMatrix.cjs')
 const { sampleHostSpans, normalizeHostSpanSnapshot } = require('./collectors/hostSpans.cjs')
 
@@ -351,5 +355,150 @@ describe('main work spans and unsupported Host perf polling', () => {
 
   it('is exported by the collector barrel without launching or attaching', () => {
     expect(require('./collectors/index.cjs').sampleHostSpans).toBe(sampleHostSpans)
+  })
+})
+
+/**
+ * Fence-final replay bases (A1.53 Ruling 1, the lifted A1.49 fence): the
+ * completeness rule judges each lane against its DECLARED plan — tail-vs-
+ * tail for a seeded lane, plan-vs-plan for a whole one — and the paired-
+ * coverage rule requires the paired LIGHT lanes to share one basis while
+ * the beside run's heavy lane legitimately differs. Seeded-tail is
+ * admissible only at or above the 16 MiB snapshot threshold; below it the
+ * regimes measurably differ, so the declaration is refused.
+ */
+describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
+  /** Work3's measured seeded-record size at production 27k depth. */
+  const SEEDED_RECORD_BYTES = 40_011_706
+
+  function evidenceWithReplay(role: string, replayByChat: Record<string, unknown>) {
+    const base = evidence(role)
+    base.populations = base.populations.map((population: Record<string, unknown>) =>
+      replayByChat[population.chatId as string] !== undefined
+        ? { ...population, replay: replayByChat[population.chatId as string] }
+        : population
+    )
+    return base
+  }
+
+  it('defaults an absent declaration to whole_schedule so legacy evidence keeps validating', () => {
+    expect(normalizeReplayDeclaration(undefined)).toEqual({
+      ok: true,
+      replay: { basis: 'whole_schedule', seededRecordBytes: null }
+    })
+    expect(pairRuns(run('light-alone'), run('light-beside')).ok).toBe(true)
+  })
+
+  it('refuses malformed declarations and unknown bases', () => {
+    expect(normalizeReplayDeclaration('seeded_tail').ok).toBe(false)
+    expect(normalizeReplayDeclaration({ basis: 'partial' }).ok).toBe(false)
+    expect(normalizeReplayDeclaration({ basis: 'seeded_tail' }).ok).toBe(false)
+    expect(
+      normalizeReplayDeclaration({ basis: 'whole_schedule', seededRecordBytes: 'big' }).ok
+    ).toBe(false)
+  })
+
+  it('admits seeded-tail only at or above the 16 MiB snapshot threshold', () => {
+    expect(SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES).toBe(16 * 1024 * 1024)
+    expect(
+      normalizeReplayDeclaration({
+        basis: 'seeded_tail',
+        seededRecordBytes: SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES
+      }).ok
+    ).toBe(true)
+    const below = normalizeReplayDeclaration({
+      basis: 'seeded_tail',
+      seededRecordBytes: SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES - 1
+    })
+    expect(below.ok).toBe(false)
+    expect(below.reason).toContain('inadmissible')
+    // The measured production case: 40,011,706 seeded record bytes at 27k depth.
+    expect(
+      normalizeReplayDeclaration({ basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES })
+        .ok
+    ).toBe(true)
+  })
+
+  it('accepts the asymmetric pairing: light whole, heavy seeded-tail', () => {
+    // The fence-final pairing exactly: the light lane's events fit whole in
+    // both runs; the beside run's heavy lane takes the seeded tail. The
+    // paired-coverage rule must not call that incomplete.
+    const result = pairRuns(
+      run('light-alone'),
+      run('light-beside', {
+        signals: { roundStartMs: { count: 3, p50: 5, p95: 35, p99: 55 } },
+        evidence: evidenceWithReplay('light-beside', {
+          heavy: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+        })
+      })
+    )
+    expect(result.ok).toBe(true)
+    expect(result.pair.deltas).toEqual({ roundStartMs: { p50: -5, p95: 15, p99: 25 } })
+  })
+
+  it('refuses a seeded-tail heavy lane declared below the threshold', () => {
+    const result = pairRuns(
+      run('light-alone'),
+      run('light-beside', {
+        evidence: evidenceWithReplay('light-beside', {
+          heavy: { basis: 'seeded_tail', seededRecordBytes: 5_497_079 }
+        })
+      })
+    )
+    expect(result.ok).toBe(false)
+    expect(result.reasons.join(' ')).toContain('inadmissible')
+  })
+
+  it('refuses paired light lanes whose bases differ', () => {
+    const result = pairRuns(
+      run('light-alone', {
+        evidence: evidenceWithReplay('light-alone', {
+          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+        })
+      }),
+      run('light-beside')
+    )
+    expect(result.ok).toBe(false)
+    expect(result.reasons.join(' ')).toContain('paired light replay bases differ')
+  })
+
+  it('compares tail-vs-tail when both light lanes are seeded, never mixed', () => {
+    const result = pairRuns(
+      run('light-alone', {
+        evidence: evidenceWithReplay('light-alone', {
+          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+        })
+      }),
+      run('light-beside', {
+        evidence: evidenceWithReplay('light-beside', {
+          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES },
+          heavy: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+        })
+      })
+    )
+    expect(result.ok).toBe(true)
+  })
+
+  it('resolves a population basis by chat id and nothing else', () => {
+    expect(REPLAY_BASES).toEqual(['whole_schedule', 'seeded_tail'])
+    expect(replayBasisForChat([{ chatId: 'c', role: 'light' }], 'c')).toEqual({
+      basis: 'whole_schedule',
+      seededRecordBytes: null
+    })
+    expect(
+      replayBasisForChat(
+        [
+          {
+            chatId: 'c',
+            role: 'heavy',
+            replay: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+          }
+        ],
+        'c'
+      )
+    ).toEqual({ basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES })
+    expect(replayBasisForChat([{ chatId: 'c' }], 'other')).toBeNull()
+    expect(replayBasisForChat(null, 'c')).toBeNull()
+    expect(replayBasisForChat([{ chatId: 'c', replay: { basis: 'bogus' } }], 'c')).toBeNull()
   })
 })

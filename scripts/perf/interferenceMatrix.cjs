@@ -20,6 +20,23 @@
  * Appendix A specifies; the pairing role (`light-alone` vs `light-beside`)
  * is a property of the RUN, not the cell, so one cell produces paired
  * reports and the §1.1 deltas are computed between them.
+ *
+ * REPLAY BASES (fence-final, A1.53 Ruling 1): a lane's measured windows are
+ * produced either by replaying its whole schedule or by seeding at depth
+ * and replaying a bounded tail. The coverage counters cannot tell the two
+ * apart — a completed tail and a completed schedule both read
+ * started === completed === planned — so the difference is a FIELD, never an
+ * inference: `evidence.populations[]` may declare
+ * `replay: { basis, seededRecordBytes }`, 'whole_schedule' (the legacy
+ * default when absent) or 'seeded_tail'. Seeded-tail is admissible only at
+ * or above the 16 MiB journal snapshot threshold: below it the two regimes
+ * measurably produce different journal state (the under-threshold control),
+ * so a seeded-tail declaration there is refused. Completeness then judges
+ * each lane against its DECLARED plan — tail-vs-tail for a seeded lane,
+ * plan-vs-plan for a whole one — and the paired-coverage rule requires the
+ * paired LIGHT lanes to share one basis while the beside run's heavy lane
+ * legitimately differs (the alone run has no heavy lane to compare it
+ * against: the asymmetry is threshold-keyed, not a preference).
  */
 
 const {
@@ -202,6 +219,90 @@ const CONTROL_ACTIONS = Object.freeze([
  * thread, same fixtures, same build, same window.
  */
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
+
+/**
+ * Replay bases (fence-final, A1.53 Ruling 1): how a population's measured
+ * windows were produced. 'whole_schedule' replays the lane's full schedule;
+ * 'seeded_tail' seeds the chat at depth and replays a bounded tail.
+ */
+const REPLAY_BASES = Object.freeze(['whole_schedule', 'seeded_tail'])
+
+/**
+ * Seeded-tail admissibility threshold, in seeded-record bytes. Mirrors
+ * SNAPSHOT_BYTE_THRESHOLD in src/main/store/chatJournal.ts:143 — the 16 MiB
+ * journal compaction boundary the fence-final measurement keyed on (per-save
+ * counters match across the regimes above it; below it they do not, so
+ * seeded-tail evidence is inadmissible there). If either side changes
+ * without the other, the matrix validates a stale threshold and
+ * admissibility silently escapes the schema.
+ */
+const SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES = 16 * 1024 * 1024
+
+/**
+ * Normalize one population's optional replay declaration. Absent means
+ * 'whole_schedule' — exactly what every pre-fence-final descriptor meant, so
+ * legacy evidence keeps validating without a version bump. Present-but-
+ * malformed fails closed, and a seeded-tail declaration carries the seeded
+ * record bytes it was admitted on so the threshold check is re-derivable
+ * from the artifact, never assumed.
+ *
+ * @returns {{ ok: true, replay: { basis: string, seededRecordBytes: number|null } }
+ *         | { ok: false, reason: string }}
+ */
+function normalizeReplayDeclaration(replay) {
+  if (replay === undefined) {
+    return { ok: true, replay: { basis: 'whole_schedule', seededRecordBytes: null } }
+  }
+  if (!isPlainObject(replay)) {
+    return { ok: false, reason: 'replay must be an object when present' }
+  }
+  if (!REPLAY_BASES.includes(replay.basis)) {
+    return { ok: false, reason: `replay.basis must be one of ${REPLAY_BASES.join('|')}` }
+  }
+  if (replay.basis === 'seeded_tail') {
+    if (!Number.isSafeInteger(replay.seededRecordBytes) || replay.seededRecordBytes < 0) {
+      return {
+        ok: false,
+        reason: 'seeded_tail requires the seeded record bytes it was admitted on'
+      }
+    }
+    if (replay.seededRecordBytes < SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES) {
+      return {
+        ok: false,
+        reason: `seeded-tail is inadmissible below the 16 MiB snapshot byte threshold (fence-final Ruling 1(c): the regimes measure different journal state there)`
+      }
+    }
+    return {
+      ok: true,
+      replay: { basis: 'seeded_tail', seededRecordBytes: replay.seededRecordBytes }
+    }
+  }
+  if (
+    replay.seededRecordBytes !== undefined &&
+    (!Number.isSafeInteger(replay.seededRecordBytes) || replay.seededRecordBytes < 0)
+  ) {
+    return {
+      ok: false,
+      reason: 'replay.seededRecordBytes must be a non-negative safe integer when present'
+    }
+  }
+  return {
+    ok: true,
+    replay: {
+      basis: 'whole_schedule',
+      seededRecordBytes: replay.seededRecordBytes ?? null
+    }
+  }
+}
+
+/** Resolve one population's replay basis by chat id; null when unresolvable. */
+function replayBasisForChat(populations, chatId) {
+  if (!Array.isArray(populations) || typeof chatId !== 'string') return null
+  const population = populations.find((item) => item?.chatId === chatId)
+  if (!isPlainObject(population)) return null
+  const check = normalizeReplayDeclaration(population.replay)
+  return check.ok ? check.replay : null
+}
 
 const HISTORY_SET = new Set(HISTORY_SIZES)
 const PATH_SET = new Set(PATH_STATES)
@@ -493,6 +594,11 @@ function validateRunEvidence(run) {
       errors.push('invalid or duplicate measured population')
       continue
     }
+    const replayCheck = normalizeReplayDeclaration(population.replay)
+    if (!replayCheck.ok) {
+      errors.push(`invalid replay declaration for ${population.chatId}: ${replayCheck.reason}`)
+      continue
+    }
     ids.add(population.chatId)
     if (population.role === 'light') {
       if (light !== null) errors.push('exactly one light population required')
@@ -639,6 +745,28 @@ function pairRuns(lightAlone, lightBeside) {
   }
   if (lightAlone.evidence?.lightChatId !== lightBeside.evidence?.lightChatId) {
     reasons.push('paired runs must measure the same identified light population')
+  }
+  // Paired coverage is basis-aware (fence-final): the paired LIGHT lanes
+  // must share one replay basis, so a whole-schedule window is never
+  // compared against a seeded-tail one — and when both are seeded the
+  // coverage comparison below reads tail-vs-tail, exactly what it should.
+  // The beside run's HEAVY lane carries no such constraint: the alone run
+  // has no heavy lane to compare it against, which is the threshold-keyed
+  // asymmetry the fence-final ruling measured.
+  const aloneLightReplay = replayBasisForChat(
+    lightAlone.evidence?.populations,
+    lightAlone.evidence?.lightChatId
+  )
+  const besideLightReplay = replayBasisForChat(
+    lightBeside.evidence?.populations,
+    lightBeside.evidence?.lightChatId
+  )
+  if (aloneLightReplay === null || besideLightReplay === null) {
+    reasons.push('paired runs must carry a resolvable light replay basis')
+  } else if (aloneLightReplay.basis !== besideLightReplay.basis) {
+    reasons.push(
+      `paired light replay bases differ: ${aloneLightReplay.basis} vs ${besideLightReplay.basis}`
+    )
   }
   const aloneWindows = lightAlone.evidence?.windows
   const besideWindows = lightBeside.evidence?.windows
@@ -887,6 +1015,10 @@ module.exports = {
   SATURATION_DESCRIPTIONS,
   CONTROL_ACTIONS,
   PAIRING_ROLES,
+  REPLAY_BASES,
+  SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES,
+  normalizeReplayDeclaration,
+  replayBasisForChat,
   validateMatrixCell,
   cellName,
   parseCellName,
