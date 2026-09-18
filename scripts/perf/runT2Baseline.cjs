@@ -1234,6 +1234,36 @@ function declareT2RunReplayBases(run) {
 }
 
 /**
+ * Carry the replay basis a replay DRIVER truthfully declared on its own
+ * populations onto the runner's rebuilt run-evidence descriptor. The
+ * descriptor is rebuilt from fixtureChatIds (buildT2RunEvidence), which
+ * drops the driver's declarations — so without this carry the defaulting
+ * loop above stamps whole_schedule over a real seeded_tail: the
+ * fabricated-declaration failure arriving through a rebuild, not a loop.
+ * Matched by chatId, never by index — index alignment between a driver
+ * result and a descriptor rebuilt from fixtureChatIds is an assumption
+ * that holds until the day it does not. Deep-copied, so the descriptor
+ * never aliases live driver state (the builder's own posture for windows).
+ *
+ * @param {object} run — the buildT2RunEvidence descriptor (mutated in place)
+ * @param {object|null} windowedReplayResult — the lanes-driver result, when any
+ */
+function carryT2DriverReplayBases(run, windowedReplayResult) {
+  const populations = run?.evidence?.populations
+  const driverPopulations = windowedReplayResult?.run?.evidence?.populations
+  if (!Array.isArray(populations) || !Array.isArray(driverPopulations)) return
+  for (const population of populations) {
+    if (population.replay !== undefined) continue
+    const declared = driverPopulations.find(
+      (driverPopulation) => driverPopulation?.chatId === population.chatId
+    )
+    if (declared?.replay !== undefined) {
+      population.replay = JSON.parse(JSON.stringify(declared.replay))
+    }
+  }
+}
+
+/**
  * The force/reap facts `terminateExactChild` returns, in the shape the report
  * and the progress journal carry them.
  *
@@ -3130,6 +3160,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }),
     launched: willLaunch
   }).run
+  // Carry the driver's truthful replay declarations across the rebuild
+  // (buildT2RunEvidence rebuilds populations from fixtureChatIds and drops
+  // them), THEN default: undeclared populations are whole_schedule today,
+  // and a driver-declared seeded_tail survives intact.
+  carryT2DriverReplayBases(report.runEvidence, windowedReplayResult)
   // Fence-final declarations (A1.53 Ruling 1): how each population's
   // windows were actually replayed, declared per population and defaulting
   // — a basis the driver already declared is never overwritten (the
@@ -3283,6 +3318,7 @@ module.exports = {
   pairedRunRecord,
   verifyT2PairedLightAloneCoverage,
   declareT2RunReplayBases,
+  carryT2DriverReplayBases,
   parseArgs,
   runT2BaselineCli
 }

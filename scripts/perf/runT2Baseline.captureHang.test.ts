@@ -9,7 +9,8 @@ const {
   createT2HostWindowSampler,
   DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS,
   verifyT2PairedLightAloneCoverage,
-  declareT2RunReplayBases
+  declareT2RunReplayBases,
+  carryT2DriverReplayBases
 } = require('./runT2Baseline.cjs')
 const { generatePerfFixture } = require('./fixtureGenerator.cjs')
 const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
@@ -425,6 +426,92 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
       basis: 'seeded_tail',
       seededRecordBytes: 40_011_706
     })
+  })
+
+  it('carries a driver-declared seeded_tail across the descriptor rebuild (the drop fix)', () => {
+    // RED if the carry is removed: without it the rebuild drops the driver's
+    // declaration and the defaulting loop stamps whole_schedule over a real
+    // seeded_tail — the fabrication this slice exists to prevent. The pin
+    // fails on a DROPPED declaration, not merely an overwritten one.
+    const run = {
+      evidence: {
+        populations: [
+          { role: 'light', chatId: 'light' },
+          { role: 'heavy', chatId: 'heavy' }
+        ]
+      }
+    }
+    const driverResult = {
+      run: {
+        evidence: {
+          populations: [
+            { role: 'light', chatId: 'light' },
+            {
+              role: 'heavy',
+              chatId: 'heavy',
+              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+            }
+          ]
+        }
+      }
+    }
+    carryT2DriverReplayBases(run, driverResult)
+    declareT2RunReplayBases(run)
+    expect(run.evidence.populations[1].replay).toEqual({
+      basis: 'seeded_tail',
+      seededRecordBytes: 40_011_706
+    })
+    expect(run.evidence.populations[0].replay).toEqual({ basis: 'whole_schedule' })
+    // The carried declaration is a copy, never an alias of live driver state.
+    expect(run.evidence.populations[1].replay).not.toBe(
+      driverResult.run.evidence.populations[1].replay
+    )
+  })
+
+  it('matches driver declarations by chatId, never by index', () => {
+    const run = {
+      evidence: {
+        populations: [
+          { role: 'heavy', chatId: 'heavy' },
+          { role: 'light', chatId: 'light' }
+        ]
+      }
+    }
+    const driverResult = {
+      run: {
+        evidence: {
+          populations: [
+            { role: 'light', chatId: 'light' },
+            {
+              role: 'heavy',
+              chatId: 'heavy',
+              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+            }
+          ]
+        }
+      }
+    }
+    carryT2DriverReplayBases(run, driverResult)
+    expect(run.evidence.populations[0].replay).toEqual({
+      basis: 'seeded_tail',
+      seededRecordBytes: 40_011_706
+    })
+    // The undeclared light lane stays undeclared until the defaulting loop.
+    expect(run.evidence.populations[1].replay).toBeUndefined()
+    // A null driver result carries nothing and cannot throw.
+    expect(() => carryT2DriverReplayBases(run, null)).not.toThrow()
+  })
+
+  it('carries driver declarations BEFORE the defaulting loop (wiring pins)', () => {
+    const code = src
+    const buildAt = code.indexOf('report.runEvidence = buildT2RunEvidence({')
+    const carryAt = code.indexOf(
+      'carryT2DriverReplayBases(report.runEvidence, windowedReplayResult)'
+    )
+    const declareAt = code.indexOf('declareT2RunReplayBases(report.runEvidence)')
+    expect(buildAt).toBeGreaterThan(-1)
+    expect(carryAt).toBeGreaterThan(buildAt)
+    expect(declareAt).toBeGreaterThan(carryAt)
   })
 
   it('derives the fixture before fingerprinting, on light-alone only (wiring pins)', () => {
