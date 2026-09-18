@@ -17,6 +17,9 @@ const { generatePerfFixture } = require('./fixtureGenerator.cjs')
 const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
 const src = readFileSync(new URL('./runT2Baseline.cjs', import.meta.url), 'utf8')
 
+/** Synthetic 40 MiB payload above the 16 MiB seeded-tail floor — not a measured record size. */
+const ABOVE_THRESHOLD_BYTES = 40 * 1024 * 1024
+
 describe('T2 capture hang guards (source pins)', () => {
   it('bounds in-flight heap_snapshot with the remaining capture budget', () => {
     expect(src).toContain('function remainingCaptureBudgetMs()')
@@ -416,7 +419,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
           {
             role: 'heavy',
             chatId: 'heavy',
-            replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+            replay: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
           }
         ]
       }
@@ -425,7 +428,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
     expect(run.evidence.populations[0].replay).toEqual({ basis: 'whole_schedule' })
     expect(run.evidence.populations[1].replay).toEqual({
       basis: 'seeded_tail',
-      seededRecordBytes: 40_011_706
+      seededRecordBytes: ABOVE_THRESHOLD_BYTES
     })
   })
 
@@ -450,7 +453,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
             {
               role: 'heavy',
               chatId: 'heavy',
-              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+              replay: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
             }
           ]
         }
@@ -460,7 +463,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
     declareT2RunReplayBases(run)
     expect(run.evidence.populations[1].replay).toEqual({
       basis: 'seeded_tail',
-      seededRecordBytes: 40_011_706
+      seededRecordBytes: ABOVE_THRESHOLD_BYTES
     })
     expect(run.evidence.populations[0].replay).toEqual({ basis: 'whole_schedule' })
     // The carried declaration is a copy, never an alias of live driver state.
@@ -486,7 +489,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
             {
               role: 'heavy',
               chatId: 'heavy',
-              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 }
+              replay: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
             }
           ]
         }
@@ -495,7 +498,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
     carryT2DriverPopulationFields(run, driverResult)
     expect(run.evidence.populations[0].replay).toEqual({
       basis: 'seeded_tail',
-      seededRecordBytes: 40_011_706
+      seededRecordBytes: ABOVE_THRESHOLD_BYTES
     })
     // The undeclared light lane stays undeclared until the defaulting loop.
     expect(run.evidence.populations[1].replay).toBeUndefined()
@@ -524,16 +527,16 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
             {
               role: 'heavy',
               chatId: 'heavy',
-              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 },
+              replay: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES },
               materializedSeed: {
                 chatId: 'heavy',
                 seedDepth: 27_001,
-                seededRecordBytes: 40_011_706
+                seededRecordBytes: ABOVE_THRESHOLD_BYTES
               },
               seededTail: {
                 chatId: 'heavy',
                 seedDepth: 27_001,
-                seededRecordBytes: 40_011_706,
+                seededRecordBytes: ABOVE_THRESHOLD_BYTES,
                 firstSeq: 26_994,
                 lastSeq: 27_001,
                 tailEventCount: 9
@@ -548,16 +551,16 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
     }
     carryT2DriverPopulationFields(run, driverResult)
     const heavy = run.evidence.populations[1]
-    expect(heavy.replay).toEqual({ basis: 'seeded_tail', seededRecordBytes: 40_011_706 })
+    expect(heavy.replay).toEqual({ basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES })
     expect(heavy.materializedSeed).toEqual({
       chatId: 'heavy',
       seedDepth: 27_001,
-      seededRecordBytes: 40_011_706
+      seededRecordBytes: ABOVE_THRESHOLD_BYTES
     })
     expect(heavy.seededTail).toEqual({
       chatId: 'heavy',
       seedDepth: 27_001,
-      seededRecordBytes: 40_011_706,
+      seededRecordBytes: ABOVE_THRESHOLD_BYTES,
       firstSeq: 26_994,
       lastSeq: 27_001,
       tailEventCount: 9

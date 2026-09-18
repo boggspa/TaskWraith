@@ -374,8 +374,8 @@ describe('main work spans and unsupported Host perf polling', () => {
  * regimes measurably differ, so the declaration is refused.
  */
 describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
-  /** Work3's measured seeded-record size at production 27k depth. */
-  const SEEDED_RECORD_BYTES = 40_011_706
+  /** Synthetic 40 MiB payload above the 16 MiB seeded-tail floor — not a measured record size. */
+  const ABOVE_THRESHOLD_BYTES = 40 * 1024 * 1024
 
   function evidenceWithReplay(role: string, replayByChat: Record<string, unknown>) {
     const base = evidence(role)
@@ -418,9 +418,9 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
     })
     expect(below.ok).toBe(false)
     expect(below.reason).toContain('inadmissible')
-    // The measured production case: 40,011,706 seeded record bytes at 27k depth.
+    expect(ABOVE_THRESHOLD_BYTES).toBeGreaterThan(SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES)
     expect(
-      normalizeReplayDeclaration({ basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES })
+      normalizeReplayDeclaration({ basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES })
         .ok
     ).toBe(true)
   })
@@ -434,7 +434,7 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
       run('light-beside', {
         signals: { roundStartMs: { count: 3, p50: 5, p95: 35, p99: 55 } },
         evidence: evidenceWithReplay('light-beside', {
-          heavy: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+          heavy: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
         })
       })
     )
@@ -447,7 +447,10 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
       run('light-alone'),
       run('light-beside', {
         evidence: evidenceWithReplay('light-beside', {
-          heavy: { basis: 'seeded_tail', seededRecordBytes: 5_497_079 }
+          heavy: {
+            basis: 'seeded_tail',
+            seededRecordBytes: SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES - 1
+          }
         })
       })
     )
@@ -459,7 +462,7 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
     const result = pairRuns(
       run('light-alone', {
         evidence: evidenceWithReplay('light-alone', {
-          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+          light: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
         })
       }),
       run('light-beside')
@@ -472,13 +475,13 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
     const result = pairRuns(
       run('light-alone', {
         evidence: evidenceWithReplay('light-alone', {
-          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+          light: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
         })
       }),
       run('light-beside', {
         evidence: evidenceWithReplay('light-beside', {
-          light: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES },
-          heavy: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+          light: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES },
+          heavy: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
         })
       })
     )
@@ -497,12 +500,12 @@ describe('fence-final replay bases (tail-vs-tail, asymmetric)', () => {
           {
             chatId: 'c',
             role: 'heavy',
-            replay: { basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES }
+            replay: { basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES }
           }
         ],
         'c'
       )
-    ).toEqual({ basis: 'seeded_tail', seededRecordBytes: SEEDED_RECORD_BYTES })
+    ).toEqual({ basis: 'seeded_tail', seededRecordBytes: ABOVE_THRESHOLD_BYTES })
     expect(replayBasisForChat([{ chatId: 'c' }], 'other')).toBeNull()
     expect(replayBasisForChat(null, 'c')).toBeNull()
     expect(replayBasisForChat([{ chatId: 'c', replay: { basis: 'bogus' } }], 'c')).toBeNull()
