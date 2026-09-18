@@ -317,6 +317,70 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
     ])
   })
 
+  it('passes a recovery-head bound to list so reopen does not read past it', async () => {
+    // M2 recovery-head wiring red-first: changing reopen to a bare store.list()
+    // (or dropping recoveryHeadSequence from the call) reds this test. The
+    // bound is inclusive and 1-based; 0 is header-only. Truncation is not
+    // absence proof — coverage is still declared here, and claims inside the
+    // bound stay indeterminate.
+    const listedArgs: unknown[] = []
+    const allClaims: HostQueuedStartExecutionClaim[] = [
+      { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1', claimedAt: 1 },
+      { commandId: 'cmd-2', threadId: 'thread-b', fingerprint: 'fp-2', claimedAt: 2 },
+      { commandId: 'cmd-3', threadId: 'thread-c', fingerprint: 'fp-3', claimedAt: 3 }
+    ]
+    const store: HostQueuedStartExecutionClaimStore = {
+      declaresDurableCoverage: true,
+      record() {
+        // Recovery-only fixture: this test reads evidence without writing a claim.
+      },
+      list(options) {
+        listedArgs.push(options)
+        const bound = options?.recoveryHeadSequence
+        if (bound === undefined) return allClaims
+        return allClaims.slice(0, bound)
+      }
+    }
+    const lifecycle = createHostNodeQueuedStartLifecycle({ executionClaimStore: store })
+    const candidates = [
+      { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1' },
+      { commandId: 'cmd-2', threadId: 'thread-b', fingerprint: 'fp-2' },
+      { commandId: 'cmd-3', threadId: 'thread-c', fingerprint: 'fp-3' }
+    ]
+    const truncated = await lifecycle.reopen(candidates, { recoveryHeadSequence: 2 })
+    expect(listedArgs).toEqual([{ recoveryHeadSequence: 2 }])
+    expect(truncated).toEqual([
+      { commandId: 'cmd-1', outcome: 'indeterminate', resubmittable: null },
+      { commandId: 'cmd-2', outcome: 'indeterminate', resubmittable: null },
+      {
+        commandId: 'cmd-3',
+        outcome: 'host_shutting_down',
+        resubmittable: { newIdRequired: true }
+      }
+    ])
+
+    listedArgs.length = 0
+    const headerOnly = await lifecycle.reopen(candidates, { recoveryHeadSequence: 0 })
+    expect(listedArgs).toEqual([{ recoveryHeadSequence: 0 }])
+    expect(headerOnly).toEqual([
+      {
+        commandId: 'cmd-1',
+        outcome: 'host_shutting_down',
+        resubmittable: { newIdRequired: true }
+      },
+      {
+        commandId: 'cmd-2',
+        outcome: 'host_shutting_down',
+        resubmittable: { newIdRequired: true }
+      },
+      {
+        commandId: 'cmd-3',
+        outcome: 'host_shutting_down',
+        resubmittable: { newIdRequired: true }
+      }
+    ])
+  })
+
   it('rejects a cross-identity cancel without touching the reservation', async () => {
     const { lifecycle } = await claimedLifecycle()
     const cancel = lifecycle.cancel({ commandId: 'cmd-1', threadId: 'thread-other' })

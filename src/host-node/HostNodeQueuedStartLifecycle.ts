@@ -51,7 +51,11 @@
  *   `host_shutting_down` and may be resubmitted under a NEW id. Absence is
  *   proof only when the store declares durable coverage and its listing is
  *   well-formed; any same-command claim, even under a different identity,
- *   is conflicting evidence. Queue payloads are never replayed.
+ *   is conflicting evidence. Queue payloads are never replayed. `reopen`
+ *   always calls `list({ recoveryHeadSequence })` so a supplied inclusive
+ *   1-based bound truncates the read (`0` is header-only). The bound does
+ *   not make absence decidable; `declaresDurableCoverage` stays the store's
+ *   contract and this module must not flip it.
  *
  * Terminal outcomes map onto EXISTING transport codes only — no new wire
  * error codes (seat decoders are allowlists): see
@@ -112,13 +116,23 @@ export interface HostQueuedStartExecutionClaim {
  * Execution-claim store port. The in-memory default below is for tests and
  * this unwired slice; the file-backed store arrives with integration.
  * `record` must be durable before `claim` resolves; `list` is consulted only
- * by `reopen`.
+ * by `reopen`, which always passes `{ recoveryHeadSequence }` (omit the
+ * number to read the whole journal).
  */
+export interface HostQueuedStartExecutionClaimListOptions {
+  /**
+   * Inclusive 1-based claim sequence to stop at. `0` returns no claims
+   * (header only). Omit to read the whole journal. The bound truncates the
+   * read; it does not make absence decidable.
+   */
+  readonly recoveryHeadSequence?: number
+}
+
 export interface HostQueuedStartExecutionClaimStore {
   record(claim: HostQueuedStartExecutionClaim): void | Promise<void>
-  list():
-    | readonly HostQueuedStartExecutionClaim[]
-    | Promise<readonly HostQueuedStartExecutionClaim[]>
+  list(
+    options?: HostQueuedStartExecutionClaimListOptions
+  ): readonly HostQueuedStartExecutionClaim[] | Promise<readonly HostQueuedStartExecutionClaim[]>
   /**
    * Declare true ONLY when `record` is durable across Host restarts and
    * `list` reads that same durable domain for every command this lifecycle
@@ -139,8 +153,14 @@ export function createInMemoryExecutionClaimStore(): HostQueuedStartExecutionCla
     record(claim) {
       claims.push(claim)
     },
-    list() {
-      return claims.slice()
+    list(options?: HostQueuedStartExecutionClaimListOptions) {
+      const bound = options?.recoveryHeadSequence
+      if (bound === undefined) return claims.slice()
+      if (typeof bound !== 'number' || !Number.isSafeInteger(bound) || bound < 0) {
+        throw new Error('Invalid queued-start recovery-head sequence')
+      }
+      // Claim sequences are 1-based and inclusive; 0 is header-only.
+      return claims.slice(0, bound)
     }
   }
 }
@@ -338,7 +358,8 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
   providerRunEnded(commandId: string, evidence: HostQueuedStartEndEvidence): boolean
   beginShutdown(): void
   reopen(
-    candidates: readonly { commandId: string; threadId: string; fingerprint: string }[]
+    candidates: readonly { commandId: string; threadId: string; fingerprint: string }[],
+    listOptions?: HostQueuedStartExecutionClaimListOptions
   ): Promise<HostQueuedStartReopenOutcome[]>
   getReservation(commandId: string): HostQueuedStartReservationView | undefined
   stats(): {
@@ -753,7 +774,8 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
     },
 
     async reopen(
-      candidates: readonly { commandId: string; threadId: string; fingerprint: string }[]
+      candidates: readonly { commandId: string; threadId: string; fingerprint: string }[],
+      listOptions?: HostQueuedStartExecutionClaimListOptions
     ): Promise<HostQueuedStartReopenOutcome[]> {
       shuttingDown = true
       // Absence-based classification is only as strong as the evidence
@@ -771,7 +793,12 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
       }
       if (covered) {
         try {
-          const listed = await store.list()
+          // Always pass the bound object so list({ recoveryHeadSequence })
+          // has a production caller. Inclusive 1-based; 0 is header-only.
+          // Truncation is not absence proof — coverage still has to be declared.
+          const listed = await store.list({
+            recoveryHeadSequence: listOptions?.recoveryHeadSequence
+          })
           if (Array.isArray(listed)) {
             const ids = new Set<string>()
             let malformed = false
