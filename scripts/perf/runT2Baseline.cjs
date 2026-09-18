@@ -1158,6 +1158,12 @@ function pairedRunRecord(result) {
     unsupported: run.unsupported === true,
     evidenceEligible: result.evidenceEligible === true,
     signals: run.signals && typeof run.signals === 'object' ? run.signals : null,
+    // Per-lane measured cost, verbatim and deep-copied (never an alias of
+    // driver state). Signals stay light-only by design; the heavy lane's
+    // applyLatencyMs lives HERE — otherwise the per-event at-depth cost the
+    // calibration run exists to produce dies in memory and the run measures
+    // nothing a reader can find.
+    lanes: Array.isArray(result.lanes) ? JSON.parse(JSON.stringify(result.lanes)) : [],
     windows: evidence && Array.isArray(evidence.windows) ? evidence.windows : []
   }
 }
@@ -1234,31 +1240,41 @@ function declareT2RunReplayBases(run) {
 }
 
 /**
- * Carry the replay basis a replay DRIVER truthfully declared on its own
- * populations onto the runner's rebuilt run-evidence descriptor. The
- * descriptor is rebuilt from fixtureChatIds (buildT2RunEvidence), which
- * drops the driver's declarations — so without this carry the defaulting
- * loop above stamps whole_schedule over a real seeded_tail: the
- * fabricated-declaration failure arriving through a rebuild, not a loop.
- * Matched by chatId, never by index — index alignment between a driver
- * result and a descriptor rebuilt from fixtureChatIds is an assumption
- * that holds until the day it does not. Deep-copied, so the descriptor
- * never aliases live driver state (the builder's own posture for windows).
+ * Carry the population fields a replay DRIVER truthfully emitted onto the
+ * runner's rebuilt run-evidence descriptor — FIELD-COMPLETE BY CONSTRUCTION.
+ * The descriptor is rebuilt from fixtureChatIds (buildT2RunEvidence), which
+ * drops whatever the driver measured; without this carry the defaulting
+ * loop stamps whole_schedule over a real seeded_tail and every provenance
+ * block vanishes: the fabricated-declaration failure arriving through a
+ * rebuild, not a loop. This is the same drop fixed THREE times in one
+ * programme week (declaration, then provenance), so the carry is NOT an
+ * allowlist of the fields we already knew about — an allowlist is wrong
+ * again silently the day the driver emits a fourth. Every own-enumerable
+ * field the driver population carries and the descriptor does NOT already
+ * hold is copied; a field the descriptor already holds is never touched
+ * (the per-field form of the original `continue` guard, so neither side
+ * can stamp the other in either direction). Matched by chatId, never by
+ * index — index alignment between a driver result and a fixtureChatIds
+ * rebuild is an assumption that holds until the day it does not.
+ * Deep-copied, so the descriptor never aliases live driver state (the
+ * builder's own posture for windows).
  *
  * @param {object} run — the buildT2RunEvidence descriptor (mutated in place)
  * @param {object|null} windowedReplayResult — the lanes-driver result, when any
  */
-function carryT2DriverReplayBases(run, windowedReplayResult) {
+function carryT2DriverPopulationFields(run, windowedReplayResult) {
   const populations = run?.evidence?.populations
   const driverPopulations = windowedReplayResult?.run?.evidence?.populations
   if (!Array.isArray(populations) || !Array.isArray(driverPopulations)) return
   for (const population of populations) {
-    if (population.replay !== undefined) continue
     const declared = driverPopulations.find(
       (driverPopulation) => driverPopulation?.chatId === population.chatId
     )
-    if (declared?.replay !== undefined) {
-      population.replay = JSON.parse(JSON.stringify(declared.replay))
+    if (!declared || typeof declared !== 'object' || Array.isArray(declared)) continue
+    for (const [field, value] of Object.entries(declared)) {
+      if (population[field] === undefined) {
+        population[field] = JSON.parse(JSON.stringify(value))
+      }
     }
   }
 }
@@ -3013,6 +3029,15 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       windowOutcomes: windowedTotals.outcomes,
       completedEvents: windowedTotals.completedEvents,
       failedEvents: windowedTotals.failedEvents,
+      // Per-lane measured cost, verbatim and deep-copied (never an alias of
+      // driver state). Signals stay light-only by design; the heavy lane's
+      // applyLatencyMs lives HERE (and in pairedRunRecord for the paired
+      // path). The calibration run's reason to exist — the first at-depth
+      // per-event cost datum — is read from this block, so a lane metric
+      // that dies in memory is a run that measured nothing.
+      lanes: Array.isArray(windowedReplayResult.lanes)
+        ? JSON.parse(JSON.stringify(windowedReplayResult.lanes))
+        : [],
       stallTimeoutMs: replayStallTimeoutMs,
       progressIsAuthoritativeEvidence: false,
       evidenceEligible: windowedReplayResult.evidenceEligible,
@@ -3160,11 +3185,13 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
         }),
     launched: willLaunch
   }).run
-  // Carry the driver's truthful replay declarations across the rebuild
+  // Carry the driver's measured population fields across the rebuild
   // (buildT2RunEvidence rebuilds populations from fixtureChatIds and drops
-  // them), THEN default: undeclared populations are whole_schedule today,
-  // and a driver-declared seeded_tail survives intact.
-  carryT2DriverReplayBases(report.runEvidence, windowedReplayResult)
+  // them), FIELD-COMPLETE BY CONSTRUCTION — replay, materializedSeed,
+  // seededTail, and anything the driver emits tomorrow, never an allowlist.
+  // THEN default: undeclared populations are whole_schedule today, and a
+  // driver-declared seeded_tail survives intact with its provenance.
+  carryT2DriverPopulationFields(report.runEvidence, windowedReplayResult)
   // Fence-final declarations (A1.53 Ruling 1): how each population's
   // windows were actually replayed, declared per population and defaulting
   // — a basis the driver already declared is never overwritten (the
@@ -3318,7 +3345,7 @@ module.exports = {
   pairedRunRecord,
   verifyT2PairedLightAloneCoverage,
   declareT2RunReplayBases,
-  carryT2DriverReplayBases,
+  carryT2DriverPopulationFields,
   parseArgs,
   runT2BaselineCli
 }

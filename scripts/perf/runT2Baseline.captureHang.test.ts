@@ -10,7 +10,8 @@ const {
   DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS,
   verifyT2PairedLightAloneCoverage,
   declareT2RunReplayBases,
-  carryT2DriverReplayBases
+  carryT2DriverPopulationFields,
+  pairedRunRecord
 } = require('./runT2Baseline.cjs')
 const { generatePerfFixture } = require('./fixtureGenerator.cjs')
 const { deriveLightAloneFixture } = require('./interferenceMatrix.cjs')
@@ -455,7 +456,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
         }
       }
     }
-    carryT2DriverReplayBases(run, driverResult)
+    carryT2DriverPopulationFields(run, driverResult)
     declareT2RunReplayBases(run)
     expect(run.evidence.populations[1].replay).toEqual({
       basis: 'seeded_tail',
@@ -491,7 +492,7 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
         }
       }
     }
-    carryT2DriverReplayBases(run, driverResult)
+    carryT2DriverPopulationFields(run, driverResult)
     expect(run.evidence.populations[0].replay).toEqual({
       basis: 'seeded_tail',
       seededRecordBytes: 40_011_706
@@ -499,19 +500,147 @@ describe('T2 light_alone wiring (fence-final Ruling 2, wave 3)', () => {
     // The undeclared light lane stays undeclared until the defaulting loop.
     expect(run.evidence.populations[1].replay).toBeUndefined()
     // A null driver result carries nothing and cannot throw.
-    expect(() => carryT2DriverReplayBases(run, null)).not.toThrow()
+    expect(() => carryT2DriverPopulationFields(run, null)).not.toThrow()
+  })
+
+  it('carries EVERY driver-emitted population field, not an allowlist (completeness red-first)', () => {
+    // The third iteration of one defect: declaration dropped, then
+    // provenance dropped. RED if the carry ever goes back to naming fields —
+    // this driver population emits a field nobody allowlisted, and it must
+    // survive anyway. Completeness is pinned, not the three known names.
+    const run = {
+      evidence: {
+        populations: [
+          { role: 'light', chatId: 'light' },
+          { role: 'heavy', chatId: 'heavy' }
+        ]
+      }
+    }
+    const driverResult = {
+      run: {
+        evidence: {
+          populations: [
+            { role: 'light', chatId: 'light' },
+            {
+              role: 'heavy',
+              chatId: 'heavy',
+              replay: { basis: 'seeded_tail', seededRecordBytes: 40_011_706 },
+              materializedSeed: {
+                chatId: 'heavy',
+                seedDepth: 27_001,
+                seededRecordBytes: 40_011_706
+              },
+              seededTail: {
+                chatId: 'heavy',
+                seedDepth: 27_001,
+                seededRecordBytes: 40_011_706,
+                firstSeq: 26_994,
+                lastSeq: 27_001,
+                tailEventCount: 9
+              },
+              // A field nobody designed for: the allowlist trap. If the
+              // carry ever names fields, this one dies silently.
+              futureDriverField: { nested: [1, 2, 3] }
+            }
+          ]
+        }
+      }
+    }
+    carryT2DriverPopulationFields(run, driverResult)
+    const heavy = run.evidence.populations[1]
+    expect(heavy.replay).toEqual({ basis: 'seeded_tail', seededRecordBytes: 40_011_706 })
+    expect(heavy.materializedSeed).toEqual({
+      chatId: 'heavy',
+      seedDepth: 27_001,
+      seededRecordBytes: 40_011_706
+    })
+    expect(heavy.seededTail).toEqual({
+      chatId: 'heavy',
+      seedDepth: 27_001,
+      seededRecordBytes: 40_011_706,
+      firstSeq: 26_994,
+      lastSeq: 27_001,
+      tailEventCount: 9
+    })
+    expect(heavy.futureDriverField).toEqual({ nested: [1, 2, 3] })
+    expect(heavy.seededTail).not.toBe(driverResult.run.evidence.populations[1].seededTail)
+    // A field the descriptor ALREADY holds is never touched, even when the
+    // driver's value differs — neither side stamps the other.
+    const held = {
+      evidence: {
+        populations: [{ role: 'light', chatId: 'light', replay: { basis: 'whole_schedule' } }]
+      }
+    }
+    carryT2DriverPopulationFields(held, driverResult)
+    expect(held.evidence.populations[0].replay).toEqual({ basis: 'whole_schedule' })
   })
 
   it('carries driver declarations BEFORE the defaulting loop (wiring pins)', () => {
     const code = src
     const buildAt = code.indexOf('report.runEvidence = buildT2RunEvidence({')
     const carryAt = code.indexOf(
-      'carryT2DriverReplayBases(report.runEvidence, windowedReplayResult)'
+      'carryT2DriverPopulationFields(report.runEvidence, windowedReplayResult)'
     )
     const declareAt = code.indexOf('declareT2RunReplayBases(report.runEvidence)')
     expect(buildAt).toBeGreaterThan(-1)
     expect(carryAt).toBeGreaterThan(buildAt)
     expect(declareAt).toBeGreaterThan(carryAt)
+  })
+
+  it('surfaces per-lane measured cost on the runner report blocks (calibration datum)', () => {
+    // RED if the heavy lane's apply cost stops reaching the artifact: the
+    // calibration run reads report.windowedReplay.lanes (single-role leg)
+    // and the paired path's pairedRunRecord.lanes — light-only signals are
+    // by design, so these blocks are where heavy cost lives.
+    const driverResult = {
+      pairingRole: 'light-beside',
+      run: {
+        role: 'light-beside',
+        windowMs: 120_000,
+        repetitions: 3,
+        evidence: { status: 'complete', windows: [] },
+        signals: { 'light.applyLatencyMs': { count: 9, p50: 1, p95: 2, p99: 3 } }
+      },
+      evidenceEligible: true,
+      lanes: [
+        {
+          role: 'light',
+          chatId: 'light',
+          eventsApplied: 86,
+          eventsTotal: 258,
+          eventFailures: 0,
+          censored: false,
+          applyLatencyMs: { count: 258, p50: 4, p95: 9, p99: 12 }
+        },
+        {
+          role: 'heavy',
+          chatId: 'heavy',
+          eventsApplied: 9,
+          eventsTotal: 27,
+          eventFailures: 0,
+          censored: false,
+          applyLatencyMs: { count: 27, p50: 1_400, p95: 2_100, p99: 2_600 }
+        }
+      ]
+    }
+    const record = pairedRunRecord(driverResult)
+    expect(record.lanes).toHaveLength(2)
+    expect(record.lanes[1].applyLatencyMs).toEqual({
+      count: 27,
+      p50: 1_400,
+      p95: 2_100,
+      p99: 2_600
+    })
+    // Deep-copied, never an alias of live driver state.
+    expect(record.lanes[1]).not.toBe(driverResult.lanes[1])
+    expect(record.lanes[1].applyLatencyMs).not.toBe(driverResult.lanes[1].applyLatencyMs)
+    // A null lanes array degrades to empty, never a throw or a fabrication.
+    expect(
+      pairedRunRecord({ run: { role: 'light-beside', evidence: {} }, lanes: undefined }).lanes
+    ).toEqual([])
+
+    const code = src
+    expect(code).toContain('lanes: Array.isArray(windowedReplayResult.lanes)')
   })
 
   it('derives the fixture before fingerprinting, on light-alone only (wiring pins)', () => {
