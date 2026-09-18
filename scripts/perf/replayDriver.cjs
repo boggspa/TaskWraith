@@ -11,6 +11,7 @@
  * recorded as explicit unsupported — never invented.
  */
 
+/** Replay write batching only. Does not govern measurement tail length (SEEDED_TAIL_MESSAGE_COUNT). */
 const DEFAULT_BATCH_SIZE = 8
 
 /**

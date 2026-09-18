@@ -25,7 +25,6 @@ const {
   fixtureFingerprint
 } = require('./fixtureGenerator.cjs')
 const { toPersistedChatRecord } = require('./materializeUserData.cjs')
-const { DEFAULT_BATCH_SIZE } = require('./replayDriver.cjs')
 
 const here = dirname(fileURLToPath(import.meta.url))
 
@@ -395,11 +394,12 @@ function recordingApi() {
 }
 
 describe('seeded-tail replay driver (A1.52 item 1 producer)', () => {
-  it('pins the tail length to one prefix batch and the threshold to the matrix constant', () => {
-    expect(SEEDED_TAIL_MESSAGE_COUNT).toBe(DEFAULT_BATCH_SIZE)
+  it('pins the seeded-tail length as an independent published floor, not a batching constant', () => {
     expect(SEEDED_TAIL_MESSAGE_COUNT).toBe(8)
     expect(SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES).toBe(16 * 1024 * 1024)
     const src = readFileSync(join(here, 'concurrentReplayLanes.cjs'), 'utf8')
+    expect(src).toMatch(/SEEDED_TAIL_MESSAGE_COUNT\s*=\s*8\b/)
+    expect(src).not.toMatch(/SEEDED_TAIL_MESSAGE_COUNT\s*=\s*DEFAULT_BATCH_SIZE/)
     expect(src).toContain('SEEDED_TAIL_MIN_SEEDED_RECORD_BYTES')
     expect(src).toContain("basis: 'seeded_tail'")
     expect(src).toContain('planLaneReplay')

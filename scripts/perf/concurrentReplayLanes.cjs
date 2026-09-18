@@ -35,7 +35,7 @@
  * A timer cannot preempt synchronously blocking adapter or event-loop work.
  */
 
-const { applyReplayEvent, DEFAULT_BATCH_SIZE } = require('./replayDriver.cjs')
+const { applyReplayEvent } = require('./replayDriver.cjs')
 const { createPrng } = require('./fixtureGenerator.cjs')
 const {
   MATRIX_SAMPLING,
@@ -49,8 +49,19 @@ const { toPersistedChatRecord } = require('./materializeUserData.cjs')
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
 
-/** Bounded tail in messages from the seeded head. Matches one prefix batch. */
-const SEEDED_TAIL_MESSAGE_COUNT = DEFAULT_BATCH_SIZE
+/**
+ * Seeded-tail length in messages from the seeded head. Independent of
+ * DEFAULT_BATCH_SIZE (replay write batching): A1.51 forbids coupling a
+ * transport constant to a measurement policy — changing how many messages the
+ * driver writes per batch must not silently change what the programme measures.
+ *
+ * 8 is a PROVISIONAL FLOOR, not a measured bound. The quantity that should
+ * determine it — at-depth per-event cost — has never been measured in this
+ * tree. Work1 bounded that a tail of 8 fits a 120 s window with 3–6× margin
+ * under every cost model short of pathological; raise it from the calibration
+ * run's measured at-depth cost. Do not treat 8 as the answer.
+ */
+const SEEDED_TAIL_MESSAGE_COUNT = 8
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
