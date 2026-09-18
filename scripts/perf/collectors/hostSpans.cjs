@@ -32,6 +32,15 @@
  * getMainPerfSnapshot IPC through a caller-supplied renderer
  * Runtime.evaluate session; absent spans stay unsupported.
  *
+ * WINDOWED EVIDENCE (A1.52 close-out): the runner samples the Host snapshot
+ * file DURING replay, one accepted read per writer capture, and
+ * aggregateHostWindowSamples buckets those reads into the lanes driver's
+ * observed role/window bounds. Lag stays per-capture and self-describing
+ * (observedForMs + windowBasis + configuredIntervalMs, A1.51); work spans,
+ * being cumulative and percentile-bearing, are reported only as subtractable
+ * counter deltas per window, so a paired run's light-alone and light-beside
+ * phases no longer fold into one combined number.
+ *
  * WIRING STATUS: the legacy section providers are dependency-injected closures.
  * Production wiring (main's `workSpans` snapshot section, Host's
  * HostPerfSnapshot meter) is @IntegrationOwner work gated on the live
@@ -695,6 +704,304 @@ function cellNameSafe(cell) {
   return cellName(cell)
 }
 
+/**
+ * Per-role/window Host evidence (A1.52 close-out: "sampling during each
+ * role/window", building on A1.51's per-write lag basis).
+ *
+ * The defect this closes: Host snapshots were read once after replay/capture,
+ * so the transported lag window covered capture-phase quiet time and the
+ * cumulative work-span aggregates combined the paired light-alone and
+ * light-beside phases into one number. The runner now samples the Host
+ * snapshot file DURING replay (createT2HostWindowSampler) and this pure
+ * step buckets the accepted reads into the lanes driver's OBSERVED windows
+ * ({ role, repetition, startedAtMs, endedAtMs }) — never a re-derived
+ * schedule, so the A1.49 fence and MATRIX_SAMPLING stay untouched.
+ *
+ * Two bases, each self-describing (A1.51's percentileSampleCount rule):
+ * - lag: 'per_capture_samples'. Each in-window capture keeps its own
+ *   observedForMs / windowBasis / configuredIntervalMs verbatim; the
+ *   across-capture aggregates name their statistic (maxAcrossMs is the
+ *   greatest per-capture maxMs, p95AcrossMs the nearest-rank p95 across
+ *   per-capture p95Ms values). No percentile is ever pooled across captures.
+ * - workSpans: 'cumulative_counter_delta'. Work-span aggregates are
+ *   cumulative since Host boot and percentiles do not subtract, so a window
+ *   carries ONLY the subtractable fields (counters, exact offered counters,
+ *   per-kind/resource count/totalMs/bytes/fallbackCount, per-chat
+ *   count/totalMs) between the first and last in-window samples;
+ *   percentiles are excluded with a named reason rather than diffed into a
+ *   number that would misdescribe its own basis.
+ *
+ * Fail-closed: a non-monotonic counter (negative delta) refuses the window's
+ * whole delta block with a named marker; a window with fewer than two
+ * in-window samples carries an explicit marker instead of a fabricated
+ * delta; malformed input refuses the aggregation outright.
+ */
+const HOST_WINDOW_EVIDENCE_SCHEMA_VERSION = 1
+const HOST_WINDOW_LAG_BASIS = 'per_capture_samples'
+const HOST_WINDOW_DELTA_BASIS = 'cumulative_counter_delta'
+/** Subtractable aggregate fields; percentiles are deliberately absent. */
+const SPAN_DELTA_AGGREGATE_FIELDS = Object.freeze(['count', 'totalMs', 'bytes', 'fallbackCount'])
+const SPAN_DELTA_CHAT_FIELDS = Object.freeze(['count', 'totalMs'])
+
+function nearestRank95(values) {
+  const sorted = [...values].sort((a, b) => a - b)
+  return sorted[Math.max(0, Math.ceil(0.95 * sorted.length) - 1)]
+}
+
+function deltaCounterFields(from, to, fields, label, problems, out) {
+  for (const field of fields) {
+    const fromPresent = isFiniteNumber(from[field])
+    const toPresent = isFiniteNumber(to[field])
+    if (!fromPresent && !toPresent) continue // unmeasured is not zero
+    const delta = (toPresent ? to[field] : 0) - (fromPresent ? from[field] : 0)
+    if (delta < 0) {
+      problems.push(`${label}.${field}`)
+      continue
+    }
+    out[field] = delta
+  }
+}
+
+function deltaKeyedMaps(fromMap, toMap, fields, label, problems) {
+  const out = {}
+  const from = isPlainObject(fromMap) ? fromMap : {}
+  const to = isPlainObject(toMap) ? toMap : {}
+  for (const key of new Set([...Object.keys(from), ...Object.keys(to)])) {
+    const a = isPlainObject(from[key]) ? from[key] : {}
+    const b = isPlainObject(to[key]) ? to[key] : {}
+    const entry = {}
+    let nonzero = false
+    for (const field of fields) {
+      const av = isFiniteNumber(a[field]) ? a[field] : 0
+      const bv = isFiniteNumber(b[field]) ? b[field] : 0
+      const delta = bv - av
+      if (delta < 0) {
+        problems.push(`${label}.${key}.${field}`)
+        break
+      }
+      entry[field] = delta
+      if (delta > 0) nonzero = true
+    }
+    // A zero-activity key is omitted, so an absent kind/resource/chat reads
+    // as "nothing recorded in this window" — which the cumulative diff
+    // proves — never as "not measured".
+    if (nonzero) out[key] = entry
+  }
+  return out
+}
+
+function sampleByChatTruncated(sample) {
+  return (
+    sample.truncation?.byChat === true ||
+    sample.workSpans?.hostSnapshot?.truncation?.byChat === true
+  )
+}
+
+function deltaWindowWorkSpans(fromSample, toSample) {
+  const problems = []
+  const from = fromSample.workSpans
+  const to = toSample.workSpans
+  const counters = {}
+  deltaCounterFields(
+    from,
+    to,
+    [...SPAN_COUNTER_FIELDS, ...SPAN_COUNTER_OPTIONAL_FIELDS],
+    'counters',
+    problems,
+    counters
+  )
+  let exact = null
+  if (isPlainObject(from.exact) || isPlainObject(to.exact)) {
+    exact = {}
+    deltaCounterFields(
+      isPlainObject(from.exact) ? from.exact : {},
+      isPlainObject(to.exact) ? to.exact : {},
+      SPAN_OFFERED_FIELDS,
+      'exact',
+      problems,
+      exact
+    )
+    for (const label of ['byKind', 'byResource']) {
+      const fromMap = isPlainObject(from.exact) ? from.exact[label] : undefined
+      const toMap = isPlainObject(to.exact) ? to.exact[label] : undefined
+      if (!isPlainObject(fromMap) && !isPlainObject(toMap)) continue
+      exact[label] = deltaKeyedMaps(fromMap, toMap, SPAN_OFFERED_FIELDS, `exact.${label}`, problems)
+    }
+  }
+  const byKind = deltaKeyedMaps(
+    from.byKind,
+    to.byKind,
+    SPAN_DELTA_AGGREGATE_FIELDS,
+    'byKind',
+    problems
+  )
+  const byResource = deltaKeyedMaps(
+    from.byResource,
+    to.byResource,
+    SPAN_DELTA_AGGREGATE_FIELDS,
+    'byResource',
+    problems
+  )
+  let byChat
+  if (sampleByChatTruncated(fromSample) || sampleByChatTruncated(toSample)) {
+    byChat = { unsupported: 'transport_attribution_truncated' }
+  } else {
+    byChat = {}
+    const fromChats = isPlainObject(from.byChat) ? from.byChat : {}
+    const toChats = isPlainObject(to.byChat) ? to.byChat : {}
+    for (const chatId of new Set([...Object.keys(fromChats), ...Object.keys(toChats)])) {
+      const kinds = deltaKeyedMaps(
+        fromChats[chatId],
+        toChats[chatId],
+        SPAN_DELTA_CHAT_FIELDS,
+        `byChat.${chatId}`,
+        problems
+      )
+      if (Object.keys(kinds).length > 0) byChat[chatId] = kinds
+    }
+  }
+  if (problems.length > 0) {
+    return { unsupported: `window_delta_non_monotonic: ${problems[0]}` }
+  }
+  return {
+    basis: HOST_WINDOW_DELTA_BASIS,
+    from: { sequence: fromSample.sequence, capturedAt: fromSample.capturedAt },
+    to: { sequence: toSample.sequence, capturedAt: toSample.capturedAt },
+    counters,
+    exact,
+    byKind,
+    byResource,
+    byChat,
+    percentiles: 'excluded_not_subtractable'
+  }
+}
+
+function aggregateWindowLag(inWindow) {
+  const captures = []
+  let unobservedCount = 0
+  const intervals = new Set()
+  for (const entry of inWindow) {
+    const lag = entry.sample.eventLoopLag
+    if (!isPlainObject(lag) || typeof lag.unsupported === 'string') {
+      unobservedCount += 1
+      continue
+    }
+    if (isFiniteNumber(lag.configuredIntervalMs)) intervals.add(lag.configuredIntervalMs)
+    captures.push({
+      capturedAt: entry.sample.capturedAt,
+      observedForMs: lag.observedForMs,
+      p50Ms: lag.p50Ms,
+      p95Ms: lag.p95Ms,
+      p99Ms: lag.p99Ms,
+      maxMs: lag.maxMs,
+      meanMs: lag.meanMs
+    })
+  }
+  return {
+    basis: HOST_WINDOW_LAG_BASIS,
+    sampleCount: captures.length,
+    unobservedCount,
+    observedForMs: captures.reduce((sum, capture) => sum + capture.observedForMs, 0),
+    windowBasis: HOST_LAG_WINDOW_BASIS,
+    configuredIntervalMs: intervals.size === 1 ? [...intervals][0] : null,
+    maxAcrossMs: captures.length > 0 ? Math.max(...captures.map((capture) => capture.maxMs)) : null,
+    p95AcrossMs:
+      captures.length > 0 ? nearestRank95(captures.map((capture) => capture.p95Ms)) : null,
+    acrossBasis: {
+      maxAcrossMs: 'max_of_per_capture_maxMs',
+      p95AcrossMs: 'nearest_rank_p95_of_per_capture_p95Ms'
+    },
+    captures
+  }
+}
+
+/**
+ * Bucket accepted Host snapshot reads (readHostPerfSnapshotFile results, in
+ * acceptance order with strictly increasing sequence) into observed replay
+ * windows. Returns { ok: true, evidence } or { ok: false, reason }.
+ */
+function aggregateHostWindowSamples(options) {
+  if (!isPlainObject(options)) return { ok: false, reason: 'options required' }
+  const { samples, windows } = options
+  if (!Array.isArray(samples)) return { ok: false, reason: 'samples must be an array' }
+  if (!Array.isArray(windows)) return { ok: false, reason: 'windows must be an array' }
+  const normalized = []
+  for (const [index, sample] of samples.entries()) {
+    if (!isPlainObject(sample)) return { ok: false, reason: `samples[${index}] must be an object` }
+    if (!Number.isSafeInteger(sample.sequence) || sample.sequence <= 0) {
+      return { ok: false, reason: `samples[${index}].sequence must be a positive safe integer` }
+    }
+    if (index > 0 && sample.sequence <= normalized[index - 1].sample.sequence) {
+      return { ok: false, reason: `samples[${index}].sequence is not strictly increasing` }
+    }
+    const capturedAtMs = typeof sample.capturedAt === 'string' ? Date.parse(sample.capturedAt) : NaN
+    if (!Number.isFinite(capturedAtMs)) {
+      return { ok: false, reason: `samples[${index}].capturedAt must be an ISO timestamp` }
+    }
+    if (!isPlainObject(sample.workSpans)) {
+      return { ok: false, reason: `samples[${index}].workSpans must be an object` }
+    }
+    normalized.push({ sample, capturedAtMs })
+  }
+  const evidenceWindows = []
+  for (const [index, window] of windows.entries()) {
+    if (!isPlainObject(window)) return { ok: false, reason: `windows[${index}] must be an object` }
+    if (typeof window.role !== 'string' || window.role.length === 0) {
+      return { ok: false, reason: `windows[${index}].role must be a non-empty string` }
+    }
+    if (!Number.isSafeInteger(window.repetition) || window.repetition < 0) {
+      return { ok: false, reason: `windows[${index}].repetition must be a non-negative integer` }
+    }
+    const record = {
+      role: window.role,
+      repetition: window.repetition,
+      outcome: typeof window.outcome === 'string' ? window.outcome : null,
+      reason: typeof window.reason === 'string' ? window.reason : null,
+      startedAtMs: isFiniteNumber(window.startedAtMs) ? window.startedAtMs : null,
+      endedAtMs: isFiniteNumber(window.endedAtMs) ? window.endedAtMs : null
+    }
+    if (
+      record.startedAtMs === null ||
+      record.endedAtMs === null ||
+      record.startedAtMs >= record.endedAtMs
+    ) {
+      evidenceWindows.push({
+        ...record,
+        lag: { unsupported: 'window_bounds_unavailable' },
+        workSpans: { unsupported: 'window_bounds_unavailable' }
+      })
+      continue
+    }
+    const inWindow = normalized.filter(
+      (entry) => entry.capturedAtMs >= record.startedAtMs && entry.capturedAtMs <= record.endedAtMs
+    )
+    evidenceWindows.push({
+      ...record,
+      lag: aggregateWindowLag(inWindow),
+      workSpans:
+        inWindow.length >= 2
+          ? deltaWindowWorkSpans(inWindow[0].sample, inWindow[inWindow.length - 1].sample)
+          : {
+              unsupported: 'window_delta_requires_two_in_window_samples',
+              inWindowSampleCount: inWindow.length
+            }
+    })
+  }
+  return {
+    ok: true,
+    evidence: {
+      schemaVersion: HOST_WINDOW_EVIDENCE_SCHEMA_VERSION,
+      basis: {
+        lag: HOST_WINDOW_LAG_BASIS,
+        workSpans: HOST_WINDOW_DELTA_BASIS,
+        attribution:
+          'accepted Host samples bucketed by capturedAt within the lanes driver observed window bounds'
+      },
+      windows: evidenceWindows
+    }
+  }
+}
+
 const HOST_PERF_UNSPECIFIED = 'host_perf_transport_unspecified'
 
 /** Reader freshness bound: outside ±this window the file is not evidence. */
@@ -1029,10 +1336,14 @@ module.exports = {
   SPAN_COUNTER_FIELDS,
   SPAN_COUNTER_OPTIONAL_FIELDS,
   CROSS_THREAD_SCHEMA_VERSION,
+  HOST_WINDOW_EVIDENCE_SCHEMA_VERSION,
+  HOST_WINDOW_LAG_BASIS,
+  HOST_WINDOW_DELTA_BASIS,
   normalizeWorkSpanSection,
   validateCrossThreadBlock,
   sampleWorkSpanSections,
   applyCrossThreadToMetrics,
+  aggregateHostWindowSamples,
   normalizeHostSpanSnapshot,
   readHostPerfSnapshotFile,
   sampleHostSpans

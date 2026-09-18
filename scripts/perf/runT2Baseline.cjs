@@ -63,7 +63,9 @@ const {
   sampleMainPersistenceStats,
   applyPersistenceStatsToMetrics,
   sampleHostSpans,
-  applyCrossThreadToMetrics
+  readHostPerfSnapshotFile,
+  applyCrossThreadToMetrics,
+  aggregateHostWindowSamples
 } = require('./collectors/index.cjs')
 const { probeHostBootstrapIdentity } = require('./hostWelcomeProbe.cjs')
 const {
@@ -678,6 +680,217 @@ async function collectT2HostSpanEvidence(options) {
   record.qualified = true
   record.folded = true
   return { ok: true, record }
+}
+
+/**
+ * Poll cadence for the windowed Host sampler. The Host writer publishes one
+ * snapshot per HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS (5 s); polling at 1 s
+ * observes each new capture within a second of publication without adding
+ * load to any measured process (the read runs on the runner's own loop).
+ */
+const DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS = 1_000
+
+/**
+ * T9c — windowed Host snapshot sampler (A1.52 close-out: "sampling during
+ * each role/window", the second remaining M1 measurement item).
+ *
+ * The defect (ledger verbatim): "Host snapshots are still collected once
+ * after replay/capture, so lag may cover quiet time and work spans combine
+ * paired roles." This sampler is the during-replay half of the repair: it
+ * pins the live Host identity ONCE (the same authenticated welcome probe as
+ * T9b, out-of-band — never the snapshot file), then reads the Host snapshot
+ * file on an unref'd timer for the whole replay, keeping ONE accepted read
+ * per writer sequence (strictly increasing — the pin already confines reads
+ * to a single Host incarnation, so a non-increasing sequence is refused and
+ * counted, never delta'd). Refusals are counted by marker, never thrown:
+ * a missed sample is not a failed run, and the post-replay T9b collection
+ * still makes its own independent qualification call.
+ *
+ * Measurement posture: the poll touches only the snapshot FILE from the
+ * runner process — no CDP traffic on the measured renderer/main loop (the
+ * reason the main section is still sampled after replay, per T9a/T9b). The
+ * runner-side bucketing into the lanes driver's OBSERVED windows happens in
+ * aggregateHostWindowSamples; this sampler never derives a schedule, so the
+ * A1.49 fence and MATRIX_SAMPLING stay untouched.
+ *
+ * TOKEN CONTAINMENT: identical to collectT2HostSpanEvidence — only the
+ * bounded identity fields (instanceId/generation/pid/bootEpoch) are copied
+ * out of the probe result; token, tokenPath, socketPath never enter the
+ * summary.
+ *
+ * @param {object} options
+ * @param {string} options.userDataPath
+ * @param {string} options.hostPerfSnapshotPath — the armed artifact path
+ * @param {string[]} options.requiredChatIds
+ * @param {Function} [options.probe] — DI override for probeHostBootstrapIdentity
+ * @param {Function} [options.read] — DI override for readHostPerfSnapshotFile
+ * @param {object} [options.fs] / [options.connect] / [options.sleep] — probe DI
+ * @param {Function} [options.nowMs] / [options.maxWaitMs] / [options.intervalMs]
+ * @param {number} [options.welcomeTimeoutMs]
+ * @param {object} [options.snapshotFs] — collector fs DI
+ * @param {Function} [options.now] — Date-returning clock for read freshness
+ * @param {number} [options.maxAgeMs]
+ * @param {number} [options.pollIntervalMs]
+ * @param {object} [options.timers] — { setInterval, clearInterval } DI
+ */
+function createT2HostWindowSampler(options) {
+  const probe = typeof options.probe === 'function' ? options.probe : probeHostBootstrapIdentity
+  const read = typeof options.read === 'function' ? options.read : readHostPerfSnapshotFile
+  const pollIntervalMs =
+    Number.isSafeInteger(options.pollIntervalMs) && options.pollIntervalMs > 0
+      ? options.pollIntervalMs
+      : DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS
+  const timers =
+    options.timers &&
+    typeof options.timers.setInterval === 'function' &&
+    typeof options.timers.clearInterval === 'function'
+      ? options.timers
+      : {
+          setInterval: (callback, ms) => setInterval(callback, ms),
+          clearInterval: (handle) => clearInterval(handle)
+        }
+  const isObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+  const summary = {
+    status: 'created',
+    marker: null,
+    expectedIdentity: null,
+    pollIntervalMs,
+    polls: 0,
+    accepted: 0,
+    duplicateSequence: 0,
+    nonMonotonicSequence: 0,
+    refusals: {},
+    lastRefusal: null,
+    firstSequence: null,
+    lastSequence: null
+  }
+  /** @type {Array<object>} accepted reads, strictly increasing sequence */
+  const samples = []
+  let handle = null
+
+  function noteRefusal(marker) {
+    const bounded = String(marker).slice(0, 200)
+    summary.refusals[bounded] = (summary.refusals[bounded] || 0) + 1
+    summary.lastRefusal = bounded
+  }
+
+  async function arm() {
+    if (summary.status !== 'created') return summary.status === 'sampling'
+    const probed = await probe({
+      userDataPath: options.userDataPath,
+      ...(options.fs === undefined ? {} : { fs: options.fs }),
+      ...(options.connect === undefined ? {} : { connect: options.connect }),
+      ...(options.sleep === undefined ? {} : { sleep: options.sleep }),
+      ...(options.nowMs === undefined ? {} : { nowMs: options.nowMs }),
+      ...(options.maxWaitMs === undefined ? {} : { maxWaitMs: options.maxWaitMs }),
+      ...(options.intervalMs === undefined ? {} : { intervalMs: options.intervalMs }),
+      ...(options.welcomeTimeoutMs === undefined ? {} : { timeoutMs: options.welcomeTimeoutMs })
+    })
+    if (!isObject(probed) || probed.ok !== true || !isObject(probed.expectedIdentity)) {
+      const stage = isObject(probed) && probed.stage === 'welcome' ? 'welcome' : 'discovery'
+      const reason =
+        isObject(probed) && typeof probed.reason === 'string'
+          ? probed.reason
+          : 'probe_invalid_result'
+      summary.status = 'degraded'
+      summary.marker = `host_window_${stage}_unavailable: ${reason}`.slice(0, 200)
+      return false
+    }
+    const pin = probed.expectedIdentity
+    summary.expectedIdentity = {
+      instanceId: pin.instanceId,
+      generation: pin.generation,
+      pid: pin.pid,
+      ...(pin.bootEpoch === undefined ? {} : { bootEpoch: pin.bootEpoch })
+    }
+    summary.status = 'sampling'
+    return true
+  }
+
+  async function sampleOnce() {
+    if (summary.status !== 'sampling') return false
+    summary.polls += 1
+    let result
+    try {
+      result = await read({
+        ...(options.hostPerfSnapshotPath === undefined
+          ? {}
+          : { hostPerfSnapshotPath: options.hostPerfSnapshotPath }),
+        expectedIdentity: summary.expectedIdentity,
+        requiredChatIds: Array.isArray(options.requiredChatIds) ? options.requiredChatIds : [],
+        ...(options.snapshotFs === undefined ? {} : { fs: options.snapshotFs }),
+        ...(options.now === undefined ? {} : { now: options.now }),
+        ...(options.maxAgeMs === undefined ? {} : { maxAgeMs: options.maxAgeMs })
+      })
+    } catch (error) {
+      noteRefusal(
+        `host_window_sample_threw: ${String(error && error.message ? error.message : error)}`
+      )
+      return false
+    }
+    if (!isObject(result)) {
+      noteRefusal('host_window_sample_invalid: read_result')
+      return false
+    }
+    if (typeof result.unsupported === 'string') {
+      noteRefusal(result.unsupported)
+      return false
+    }
+    if (!Number.isSafeInteger(result.sequence) || result.sequence <= 0) {
+      noteRefusal('host_window_sample_invalid: sequence')
+      return false
+    }
+    if (summary.lastSequence !== null && result.sequence === summary.lastSequence) {
+      summary.duplicateSequence += 1
+      return false
+    }
+    if (summary.lastSequence !== null && result.sequence < summary.lastSequence) {
+      summary.nonMonotonicSequence += 1
+      return false
+    }
+    if (summary.firstSequence === null) summary.firstSequence = result.sequence
+    summary.lastSequence = result.sequence
+    summary.accepted += 1
+    samples.push(result)
+    return true
+  }
+
+  async function start() {
+    const armed = await arm()
+    if (!armed || handle !== null) return summary.status === 'sampling'
+    const created = timers.setInterval(() => {
+      // A tick must never reject into the runner's event loop; sampleOnce
+      // already converts every failure into a counted marker.
+      sampleOnce().catch(() => {})
+    }, pollIntervalMs)
+    handle = created ?? true
+    if (handle !== true && typeof handle.unref === 'function') {
+      try {
+        handle.unref()
+      } catch {
+        /* an exotic injected timer stays armed; liveness cost, never correctness */
+      }
+    }
+    return true
+  }
+
+  function stop() {
+    if (handle !== null) {
+      const current = handle
+      handle = null
+      if (current !== true) {
+        try {
+          timers.clearInterval(current)
+        } catch {
+          /* a broken injected seam cannot throw into teardown */
+        }
+      }
+    }
+    if (summary.status === 'sampling') summary.status = 'stopped'
+    return { ...summary, refusals: { ...summary.refusals }, samples }
+  }
+
+  return { start, sampleOnce, stop, summary: () => ({ ...summary }) }
 }
 
 /**
@@ -1577,6 +1790,9 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   // stale Host bundle; hostSpans carries the qualification call, ruling P4).
   report.hostBundlePreflight = null
   report.hostSpans = null
+  // T9c: per-role/window Host samples collected DURING replay (A1.52's second
+  // remaining M1 measurement item). Null until a windowed launch wires it.
+  report.hostSpanWindows = null
 
   const progressJournal = willLaunch
     ? createT2ProgressJournal({
@@ -1707,6 +1923,10 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   let windowedReplayResult = null
   /** @type {object|null} — paired-run adapter result when --paired-runs selects both roles */
   let pairedReplayResult = null
+  /** @type {object|null} — T9c during-replay Host window sampler (windowed launches only) */
+  let hostWindowSampler = null
+  /** @type {object|null} — its stop() summary: counters plus the accepted samples */
+  let hostWindowSampleSummary = null
 
   /**
    * Shared windowed / paired replay options. Sequential replay keeps its own
@@ -2096,18 +2316,50 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
             '--max-replay-events applies to sequential replay only; refuse --windowed-replay with it'
           )
         }
-        await runWindowedOrPairedReplay(api, {
-          eventTimeoutMs: replayStallTimeoutMs,
-          nowMs: replayNowMs,
-          // Assert the 120 s x 3 contract at the call site rather than leaning
-          // on the driver's default: MATRIX_SAMPLING is the single source of
-          // truth that validateRunEvidence checks the run back against.
-          // --replay-window-ms stays a deliberately ineligible test-only seam,
-          // and there is no repetitions seam because three is the contract.
-          windowMs:
-            options.replayWindowMs == null ? MATRIX_SAMPLING.windowMs : options.replayWindowMs,
-          repetitions: MATRIX_SAMPLING.repetitions
+        // T9c — sample the Host snapshot file DURING the replay so lag covers
+        // only the windows it names and per-window work-span deltas stay
+        // attributable to a single role (A1.52's second remaining item). The
+        // sampler reads a file from the runner's own loop: no CDP traffic on
+        // the measured processes, the same posture as T9a/T9b. A probe or
+        // read failure degrades to a counted marker, never a thrown run.
+        hostWindowSampler = createT2HostWindowSampler({
+          userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
+          hostPerfSnapshotPath: hostSnapshotPath,
+          requiredChatIds: fixture.chats.map((chat) => chat.appChatId),
+          probe: options.hostWelcomeProbe,
+          read: options.hostWindowSnapshotRead,
+          fs: options.hostDiscoveryFs,
+          snapshotFs: options.hostSnapshotFs,
+          connect: options.hostSocketConnect,
+          sleep: options.hostDiscoverySleep,
+          nowMs: options.hostDiscoveryNowMs,
+          maxWaitMs: options.hostDiscoveryMaxWaitMs,
+          intervalMs: options.hostDiscoveryIntervalMs,
+          welcomeTimeoutMs: options.hostWelcomeTimeoutMs,
+          now: options.hostNow,
+          maxAgeMs: options.hostSnapshotMaxAgeMs,
+          pollIntervalMs: options.hostWindowPollIntervalMs,
+          timers: options.hostWindowSamplerTimers
         })
+        await hostWindowSampler.start()
+        try {
+          await runWindowedOrPairedReplay(api, {
+            eventTimeoutMs: replayStallTimeoutMs,
+            nowMs: replayNowMs,
+            // Assert the 120 s x 3 contract at the call site rather than leaning
+            // on the driver's default: MATRIX_SAMPLING is the single source of
+            // truth that validateRunEvidence checks the run back against.
+            // --replay-window-ms stays a deliberately ineligible test-only seam,
+            // and there is no repetitions seam because three is the contract.
+            windowMs:
+              options.replayWindowMs == null ? MATRIX_SAMPLING.windowMs : options.replayWindowMs,
+            repetitions: MATRIX_SAMPLING.repetitions
+          })
+        } finally {
+          // Stop on the error path too: a sampler left armed would keep
+          // reading into the capture phase its samples claim to precede.
+          hostWindowSampleSummary = hostWindowSampler.stop()
+        }
         const windowedTotals = summarizeWindowedReplay(windowedReplayResult)
         const aloneTotals = args.pairedRuns
           ? summarizeWindowedReplay(pairedReplayResult && pairedReplayResult.alone)
@@ -2405,9 +2657,11 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
       // itself), the runner makes the qualification call (ruling P4), and the
       // fold goes only through applyCrossThreadToMetrics with
       // requireHostAttribution. Failures here never throw: they record a
-      // NAMED marker and leave the cell visibly unqualified. Sampled while
-      // the renderer session is still attached, after the replay, so the
-      // counters describe the measured window (same posture as T9a).
+      // NAMED marker and leave the cell visibly unqualified. This remains a
+      // single run-level fold sampled after the replay (same posture as T9a):
+      // its lag block and cumulative spans describe the whole run, NOT a
+      // named window — per-role/window lag and work-span deltas are T9c's
+      // report.hostSpanWindows, collected during the replay above (A1.52).
       setCapturePhase('host_span_sample', {}, { log: true })
       const hostSpanEvidence = await collectT2HostSpanEvidence({
         userDataPath: isolationVerification.observedUserDataPath || userDataResolved.userDataPath,
@@ -2660,6 +2914,58 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     }
   }
 
+  // T9c — fold the during-replay samples into per-role/window evidence. The
+  // window bounds come from the lanes driver's OWN observed windows (paired:
+  // both roles; windowed-only: the single declared/default role) — never a
+  // re-derived schedule, so the A1.49 fence and MATRIX_SAMPLING stay
+  // untouched. The post-capture T9b fold above is unchanged: it remains the
+  // cell's qualified run-level fold, while this block is what answers "what
+  // did the light thread cost during THIS window".
+  if (hostWindowSampleSummary !== null) {
+    const samplerReport = { ...hostWindowSampleSummary }
+    delete samplerReport.samples
+    const roleWindows = []
+    const collectRoleWindows = (result) => {
+      if (!result || typeof result !== 'object') return
+      const role =
+        typeof result.pairingRole === 'string'
+          ? result.pairingRole
+          : typeof result.run?.role === 'string'
+            ? result.run.role
+            : null
+      const windows = result.run?.evidence?.windows
+      if (!Array.isArray(windows)) return
+      for (const window of windows) {
+        if (!window || typeof window !== 'object') continue
+        roleWindows.push({
+          role,
+          repetition: window.repetition,
+          startedAtMs: window.startedAtMs,
+          endedAtMs: window.endedAtMs,
+          outcome: window.outcome,
+          reason: window.reason ?? null
+        })
+      }
+    }
+    if (pairedReplayResult) {
+      collectRoleWindows(pairedReplayResult.alone)
+      collectRoleWindows(pairedReplayResult.beside)
+    } else {
+      collectRoleWindows(windowedReplayResult)
+    }
+    const aggregated = aggregateHostWindowSamples({
+      samples: hostWindowSampleSummary.samples,
+      windows: roleWindows
+    })
+    report.hostSpanWindows = {
+      schemaVersion: 1,
+      sampler: samplerReport,
+      windowCount: roleWindows.length,
+      evidence: aggregated.ok ? aggregated.evidence : null,
+      evidenceError: aggregated.ok ? null : String(aggregated.reason).slice(0, 200)
+    }
+  }
+
   report.environment.endedAt = new Date().toISOString()
   const gateProbe = evaluatePerfGates({
     report,
@@ -2831,6 +3137,8 @@ module.exports = {
   checkDiskHeadroom,
   checkHostBundleFreshness,
   collectT2HostSpanEvidence,
+  createT2HostWindowSampler,
+  DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS,
   createWindowedRateTracker,
   captureChildStdio,
   checkExternalHostNodeExecutable,

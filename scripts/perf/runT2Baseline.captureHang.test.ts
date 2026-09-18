@@ -3,7 +3,12 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const require = createRequire(import.meta.url)
-const { childTerminationRecord, abortExitCode } = require('./runT2Baseline.cjs')
+const {
+  childTerminationRecord,
+  abortExitCode,
+  createT2HostWindowSampler,
+  DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS
+} = require('./runT2Baseline.cjs')
 const src = readFileSync(new URL('./runT2Baseline.cjs', import.meta.url), 'utf8')
 
 describe('T2 capture hang guards (source pins)', () => {
@@ -128,5 +133,201 @@ describe('aborted runs leave honestly', () => {
     expect(src.indexOf("status: 'aborted'")).toBeLessThan(
       src.indexOf('const session = childSession')
     )
+  })
+})
+
+/**
+ * T9c — the during-replay Host window sampler (A1.52's second remaining M1
+ * measurement item: "sampling during each role/window"). The once-after-
+ * capture read stays as the cell's run-level fold (T9b); these tests pin the
+ * new sampler's behaviour and its wiring position around the windowed replay.
+ */
+describe('T2 host window sampler (T9c)', () => {
+  const BOOT_EPOCH = 'a'.repeat(64)
+  const PIN = { instanceId: 'host-abc', generation: 2, pid: 777, bootEpoch: BOOT_EPOCH }
+
+  function probeOk(extra: Record<string, unknown> = {}) {
+    return async () => ({
+      ok: true,
+      expectedIdentity: { ...PIN },
+      welcome: { hostId: 'host-abc', generation: 2, bootEpoch: BOOT_EPOCH },
+      discovery: { pid: 777, startedAt: '2026-09-18T00:00:00.000Z' },
+      ...extra
+    })
+  }
+
+  function fakeTimers() {
+    const armed: Array<{ callback: () => unknown; ms: number }> = []
+    const cleared: unknown[] = []
+    return {
+      armed,
+      cleared,
+      timers: {
+        setInterval: (callback: () => unknown, ms: number) => {
+          armed.push({ callback, ms })
+          return armed.length
+        },
+        clearInterval: (handle: unknown) => {
+          cleared.push(handle)
+        }
+      }
+    }
+  }
+
+  function acceptedRead(sequence: number): Record<string, unknown> {
+    return {
+      sequence,
+      capturedAt: new Date(sequence * 5_000).toISOString(),
+      eventLoopLag: { unsupported: 'host_perf_lag_unobserved' },
+      workSpans: { process: 'host', byKind: {}, byResource: {} }
+    }
+  }
+
+  it('pins the Host identity once, then keeps one accepted read per sequence', async () => {
+    const { armed, timers } = fakeTimers()
+    const baseProbe = probeOk()
+    let probeCalls = 0
+    const probe = async () => {
+      probeCalls += 1
+      return baseProbe()
+    }
+    const reads: string[] = []
+    const sampler = createT2HostWindowSampler({
+      userDataPath: '/tmp/userData',
+      hostPerfSnapshotPath: '/tmp/host-snapshot.json',
+      requiredChatIds: ['chat-light'],
+      probe,
+      read: async (options: { expectedIdentity?: unknown }) => {
+        reads.push(JSON.stringify(options.expectedIdentity))
+        return acceptedRead(1)
+      },
+      timers
+    })
+
+    await sampler.start()
+    expect(probeCalls).toBe(1)
+    expect(armed).toHaveLength(1)
+    expect(armed[0].ms).toBe(DEFAULT_HOST_WINDOW_SAMPLE_INTERVAL_MS)
+    expect(sampler.summary().status).toBe('sampling')
+
+    // A timer tick samples; the same sequence again is a no-op, a lower one
+    // is refused — deltas are computed over strictly increasing captures.
+    await armed[0].callback()
+    await sampler.sampleOnce()
+    const summary = sampler.stop()
+    expect(summary.accepted).toBe(1)
+    expect(summary.duplicateSequence).toBe(1)
+    expect(summary.samples).toHaveLength(1)
+    expect(summary.firstSequence).toBe(1)
+    expect(summary.lastSequence).toBe(1)
+    // The read pin is the probed identity, not a file-derived one.
+    expect(reads).toHaveLength(2)
+    expect(JSON.parse(reads[0])).toEqual(PIN)
+  })
+
+  it('counts refusals by marker and never throws a sample into the run', async () => {
+    const { timers } = fakeTimers()
+    const sampler = createT2HostWindowSampler({
+      userDataPath: '/tmp/userData',
+      probe: probeOk(),
+      read: async () => ({ unsupported: 'host_perf_snapshot_stale' }),
+      timers
+    })
+    await sampler.start()
+    expect(await sampler.sampleOnce()).toBe(false)
+    expect(await sampler.sampleOnce()).toBe(false)
+    const summary = sampler.stop()
+    expect(summary.status).toBe('stopped')
+    expect(summary.accepted).toBe(0)
+    expect(summary.refusals).toEqual({ host_perf_snapshot_stale: 2 })
+    expect(summary.lastRefusal).toBe('host_perf_snapshot_stale')
+    expect(summary.samples).toEqual([])
+  })
+
+  it('degrades on a probe failure and leaves T9b to make its own call', async () => {
+    const { armed, timers } = fakeTimers()
+    const sampler = createT2HostWindowSampler({
+      userDataPath: '/tmp/userData',
+      probe: async () => ({ ok: false, stage: 'discovery', reason: 'discovery_absent' }),
+      read: async () => acceptedRead(1),
+      timers
+    })
+    expect(await sampler.start()).toBe(false)
+    expect(armed).toHaveLength(0)
+    expect(await sampler.sampleOnce()).toBe(false)
+    const summary = sampler.stop()
+    expect(summary.status).toBe('degraded')
+    expect(summary.marker).toBe('host_window_discovery_unavailable: discovery_absent')
+    expect(summary.polls).toBe(0)
+  })
+
+  it('contains probe bait: only bounded identity fields reach the summary', async () => {
+    const { timers } = fakeTimers()
+    const sampler = createT2HostWindowSampler({
+      userDataPath: '/tmp/userData',
+      probe: probeOk({
+        expectedIdentity: { ...PIN, token: 'TOKEN_BAIT', tokenPath: '/bait/token' },
+        welcome: { hostId: 'host-abc', generation: 2, tokenPath: '/bait/token' },
+        discovery: { pid: 777, socketPath: '/bait/socket' }
+      }),
+      read: async () => acceptedRead(1),
+      timers
+    })
+    await sampler.start()
+    await sampler.sampleOnce()
+    const serialized = JSON.stringify(sampler.stop())
+    expect(serialized).not.toContain('TOKEN_BAIT')
+    expect(serialized).not.toContain('/bait/token')
+    expect(serialized).not.toContain('/bait/socket')
+    expect(serialized).not.toContain('tokenPath')
+  })
+
+  it('counts a throwing read instead of letting it reject the timer tick', async () => {
+    const { timers } = fakeTimers()
+    const sampler = createT2HostWindowSampler({
+      userDataPath: '/tmp/userData',
+      probe: probeOk(),
+      read: async () => {
+        throw new Error('disk on fire')
+      },
+      timers
+    })
+    await sampler.start()
+    expect(await sampler.sampleOnce()).toBe(false)
+    const summary = sampler.stop()
+    expect(summary.refusals['host_window_sample_threw: disk on fire']).toBe(1)
+  })
+
+  it('samples during the windowed replay and stops in a finally (wiring pins)', () => {
+    const code = src
+    const createAt = code.indexOf('hostWindowSampler = createT2HostWindowSampler({')
+    const startAt = code.indexOf('await hostWindowSampler.start()')
+    const replayAt = code.indexOf('await runWindowedOrPairedReplay(api, {')
+    const stopAt = code.indexOf('hostWindowSampleSummary = hostWindowSampler.stop()')
+    expect(createAt).toBeGreaterThan(-1)
+    expect(startAt).toBeGreaterThan(createAt)
+    expect(replayAt).toBeGreaterThan(startAt)
+    expect(stopAt).toBeGreaterThan(replayAt)
+    // The stop rides a finally: a replay that throws cannot leave the sampler
+    // reading into the capture phase its samples claim to precede.
+    expect(code).toContain('} finally {')
+    const finallyAt = code.lastIndexOf('} finally {', stopAt)
+    expect(finallyAt).toBeGreaterThan(replayAt)
+    expect(finallyAt).toBeLessThan(stopAt)
+  })
+
+  it('assembles per-role/window evidence from the driver observed windows (wiring pins)', () => {
+    const code = src
+    expect(code).toContain('report.hostSpanWindows = null')
+    const assembleAt = code.indexOf('report.hostSpanWindows = {')
+    expect(assembleAt).toBeGreaterThan(-1)
+    expect(code).toContain('aggregateHostWindowSamples({')
+    expect(code).toContain('result.run?.evidence?.windows')
+    // The paired path feeds BOTH roles' observed windows to the bucketing.
+    expect(code).toContain('collectRoleWindows(pairedReplayResult.alone)')
+    expect(code).toContain('collectRoleWindows(pairedReplayResult.beside)')
+    // The run-level T9b fold is untouched and still precedes the report end.
+    expect(code).toContain('const hostSpanEvidence = await collectT2HostSpanEvidence({')
+    expect(code).toContain('report.hostSpans = hostSpanEvidence.record')
   })
 })

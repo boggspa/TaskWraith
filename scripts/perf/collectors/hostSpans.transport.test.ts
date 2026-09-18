@@ -38,7 +38,8 @@ const {
   readHostPerfSnapshotFile,
   sampleHostSpans,
   applyCrossThreadToMetrics,
-  validateCrossThreadBlock
+  validateCrossThreadBlock,
+  aggregateHostWindowSamples
 } = require('./hostSpans.cjs')
 const { decodeProbedWelcome } = require('../hostWelcomeProbe.cjs')
 const { attachRendererCdpSession } = require('../cdpWebSocketSession.cjs')
@@ -1466,5 +1467,90 @@ describe('boot epoch validator lockstep (writer × codec × collector × probe)'
         expect(probed.welcome.bootEpoch).toBe(candidate)
       }
     }
+  })
+})
+
+/**
+ * End-to-end proof of the A1.52 windowed repair over the REAL transport: the
+ * file the Host writer produces is read during the replay (one accepted read
+ * per writer sequence), and bucketing those reads into the lanes driver's
+ * observed window bounds attributes work spans to the single window they
+ * were recorded in — the paired-role combining defect of the once-after-
+ * capture read, closed at the transport it actually rides.
+ */
+describe('hostSpans windowed aggregation over the real file transport (A1.52)', () => {
+  const WINDOW_START = new Date('2026-09-08T16:00:00.000Z')
+  const WINDOW_MID = new Date('2026-09-08T16:00:05.000Z')
+
+  it('attributes a span to the window it was recorded in, not the whole run', () => {
+    const instrumentation = createHostPerfInstrumentation()
+    // A light-phase span lands BEFORE the first published capture: it is the
+    // run-level baseline and must stay out of the window delta.
+    instrumentation.spans.record({
+      chatId: 'chat-light',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 1,
+      durationMs: 10
+    })
+    const path = join(scratchDir(), 'host-snapshot.json')
+    let clockAt = WINDOW_START
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path,
+      intervalMs: 1000,
+      maxBytes: 256 * 1024,
+      identity: IDENTITY,
+      now: () => clockAt
+    })
+    expect(writer.writeOnce()).toBe(true)
+    const baseline = readHostPerfSnapshotFile({
+      hostPerfSnapshotPath: path,
+      now: () => new Date(WINDOW_START.getTime() + 500)
+    })
+    expect(baseline.unsupported).toBeUndefined()
+    expect(baseline.sequence).toBe(1)
+
+    // The beside window's heavy work lands; the writer publishes capture 2.
+    instrumentation.spans.record({
+      chatId: 'chat-heavy',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 5,
+      durationMs: 120
+    })
+    clockAt = WINDOW_MID
+    expect(writer.writeOnce()).toBe(true)
+    const after = readHostPerfSnapshotFile({
+      hostPerfSnapshotPath: path,
+      now: () => new Date(WINDOW_MID.getTime() + 500)
+    })
+    expect(after.unsupported).toBeUndefined()
+    expect(after.sequence).toBe(2)
+
+    const aggregated = aggregateHostWindowSamples({
+      samples: [baseline, after],
+      windows: [
+        {
+          role: 'light-beside',
+          repetition: 0,
+          startedAtMs: WINDOW_START.getTime(),
+          endedAtMs: WINDOW_MID.getTime(),
+          outcome: 'complete'
+        }
+      ]
+    })
+    expect(aggregated.ok).toBe(true)
+    const window = aggregated.evidence.windows[0]
+    const byChat = window.workSpans.byChat as Record<
+      string,
+      Record<string, { count: number; totalMs: number }>
+    >
+    expect(byChat).toEqual({ 'chat-heavy': { host_queue_wait: { count: 1, totalMs: 120 } } })
+    expect(window.workSpans.basis).toBe('cumulative_counter_delta')
+    // The real writer's lag meter never ran in-process, so its lag block
+    // arrives as the named unobserved marker — counted, never a zero.
+    expect(window.lag.sampleCount).toBe(0)
+    expect(window.lag.unobservedCount).toBe(2)
   })
 })
