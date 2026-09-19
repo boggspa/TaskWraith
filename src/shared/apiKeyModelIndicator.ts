@@ -46,6 +46,12 @@ const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
   'mistral-vibe-cli-latest',
   // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`), distinct from the
   // API/BYOK `zai-glm-5-2` which stays key-marked.
+  //
+  // `zai-glm-5-3` is Mistral-hosted too and is DELIBERATELY NOT LISTED: it is
+  // an API-key-only row, so the negation below marks it. The near-identical
+  // label is the trap — adding it here to "match its sibling" would silently
+  // strip the key glyph from a BYOK row and tell the user their subscription
+  // covers it.
   'glm-5-2',
   // Sunset hosted Devstral — remapped to Medium 3.5 at launch; keep unmarked
   // so a stored id does not suddenly look BYOK.

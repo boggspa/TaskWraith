@@ -136,13 +136,17 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.1M")
     }
 
-    @Test("codex gpt-5.4-mini: 400_000 / 400k")
-    func codexGpt54Mini() {
+    @Test("codex drops the rows retired on 2026-09-18")
+    func codexRetiredRowsAbsent() {
+        // Was pinned on gpt-5.4-mini (400k) until the user retired the 5.4
+        // family and Spark. Mirrors modelContextLengths.test.ts.
         let groups = ModelContextLengths.buildGroups()
-        let row = groups.first { $0.provider == "codex" }?
-            .models.first { $0.modelId == "gpt-5.4-mini" }
-        #expect(row?.contextWindow == 400_000)
-        #expect(row?.formatted == "400k")
+        let codex = groups.first { $0.provider == "codex" }?.models ?? []
+        #expect(!codex.isEmpty)
+        for modelId in ["gpt-5.4", "gpt-5.4-mini", "gpt-5.3-codex-spark"] {
+            #expect(!codex.contains { $0.modelId == modelId })
+        }
+        #expect(codex.contains { $0.modelId == "gpt-5.5" })
     }
 
     // MARK: - Cursor group
@@ -329,11 +333,15 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "262k")
     }
 
-    @Test("mistral group is the two BARE Vibe subscription ids, never Pi's mistral/<model> wire ids")
+    @Test("mistral group is BARE seat ids only, never Pi's mistral/<model> wire ids")
     func mistralGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let models = groups.first { $0.provider == "mistral" }?.models ?? []
-        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2"])
+        // `zai-glm-5-3` joined 2026-09-18. It is NOT a Vibe subscription id
+        // like the two before it — it runs on the user's own API key — but it
+        // is still a bare seat id, which is what this guard is about. The
+        // `zai-` prefix also keeps it off Devin's identically-named glm-5-3.
+        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2", "zai-glm-5-3"])
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
     }
 

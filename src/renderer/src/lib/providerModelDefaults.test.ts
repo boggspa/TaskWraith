@@ -50,14 +50,24 @@ describe('Codex provider model defaults', () => {
     }
   })
 
-  it('offers the full Spark ladder in the provider/model/reasoning popover fallback', () => {
-    const spark = CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.3-codex-spark')
-    expect(spark?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+  it('offers the full ladder in the provider/model/reasoning popover fallback', () => {
+    const flagship = CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')
+    expect(flagship?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
       'low',
       'medium',
       'high',
       'xhigh'
     ])
+  })
+
+  it('keeps the user-retired Codex rows out of the pre-IPC fallback', () => {
+    // This list is what the picker renders BEFORE the live model/list lands,
+    // so a retired row surviving here flashes a model the user cannot run.
+    expect(CODEX_DEFAULT_MODELS.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(CODEX_DEFAULT_MODELS.find((model) => model.id === modelId)).toBeUndefined()
+    }
+    expect(CODEX_DEFAULT_MODELS.find((model) => model.id === 'gpt-5.5')).toBeDefined()
   })
 
   it('exposes GPT-5.6 rows with official GA metadata (tiers, names, defaults)', () => {
@@ -327,7 +337,7 @@ describe('Ollama provider model defaults', () => {
 })
 
 describe('Grok provider model defaults', () => {
-  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
+  it('uses Grok 4.6 as the default while retaining Grok 4.5', () => {
     expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
       id: 'grok-4.6',
       label: 'Grok 4.6 Fast',
@@ -337,16 +347,19 @@ describe('Grok provider model defaults', () => {
     expect(
       GROK_DEFAULT_MODELS[0].supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
-    expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
-      'grok-4.6',
-      'grok-4.5',
-      'grok-composer-2.5-fast'
-    ])
+    // grok-composer-2.5-fast retired 2026-09-18. This renderer list is what
+    // the composer picker renders, so it must match main's exactly —
+    // providerFallthroughGuards compares the two.
+    expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual(['grok-4.6', 'grok-4.5'])
     expect(GROK_DEFAULT_MODELS[1]).toMatchObject({
       id: 'grok-4.5',
       label: 'Grok 4.5 Fast'
     })
-    expect(GROK_DEFAULT_MODELS[2].supportedReasoningEfforts).toBeUndefined()
+    // Index 2 was the Composer row, retired 2026-09-18 — the list is now
+    // exactly two long. Asserted rather than dropped so a re-added third row
+    // has to come back through this test.
+    expect(GROK_DEFAULT_MODELS).toHaveLength(2)
+    expect(GROK_DEFAULT_MODELS[1].supportedReasoningEfforts?.length).toBeGreaterThan(0)
   })
 })
 

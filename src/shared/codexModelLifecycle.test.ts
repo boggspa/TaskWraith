@@ -7,11 +7,18 @@ import {
 } from './codexModelLifecycle'
 
 describe('Codex model lifecycle', () => {
-  it('does not encode the unsubstantiated 2026-07-23 rumor for GPT-5.4', () => {
-    expect(codexModelRetiresAt('gpt-5.4')).toBeUndefined()
-    expect(codexModelRetiresAt('gpt-5.4-mini')).toBeUndefined()
-    expect(isCodexModelRetired('gpt-5.4', new Date(2026, 6, 23, 12))).toBe(false)
-    expect(isCodexModelRetired('gpt-5.4-mini', new Date(2026, 6, 23, 12))).toBe(false)
+  it('retires GPT-5.4 on the user-approved date, not the 2026-07-23 rumor', () => {
+    // The 5.4 pair and Spark were retired by the user on 2026-09-18. That is a
+    // product decision, and it must not be confused with — or quietly
+    // rewritten to — the 2026-07-23 deprecation-table rumor this test has
+    // guarded against since 5.4 shipped: all three were still runnable then.
+    for (const model of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(codexModelRetiresAt(model)).toBe('2026-09-18')
+      expect(codexModelRetiresAt(model)).not.toBe('2026-07-23')
+      expect(isCodexModelRetired(model, new Date(2026, 6, 23, 12))).toBe(false)
+      expect(isCodexModelRetired(model, new Date(2026, 8, 17, 23, 59))).toBe(false)
+      expect(isCodexModelRetired(model, new Date(2026, 8, 18, 0, 0))).toBe(true)
+    }
   })
 
   it('takes a verified date-only sunset at the start of the local calendar day', () => {
@@ -44,18 +51,28 @@ describe('Codex model lifecycle', () => {
   })
 
   it('warns before a dated sunset and removes the row on the retirement day', () => {
+    // gpt-5.5 is the control: it carries no retirement row at all, so it must
+    // survive every clock. gpt-5.4 is dated now, so it can no longer play that
+    // part — on 2026-07-22 it still shows, but carrying its warning date.
     const rows = [
+      { id: 'gpt-5.5', label: 'GPT-5.5' },
       { id: 'gpt-5.4', label: 'GPT-5.4' },
       { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex' },
       { id: 'gpt-5.2', label: 'GPT-5.2' }
     ]
 
     expect(activeCodexModelRows(rows, new Date(2026, 6, 22))).toEqual([
-      { id: 'gpt-5.4', label: 'GPT-5.4' },
+      { id: 'gpt-5.5', label: 'GPT-5.5' },
+      { id: 'gpt-5.4', label: 'GPT-5.4', retiresAt: '2026-09-18' },
       { id: 'gpt-5.2-codex', label: 'GPT-5.2 Codex', retiresAt: '2026-07-23' }
     ])
     expect(activeCodexModelRows(rows, new Date(2026, 6, 23))).toEqual([
-      { id: 'gpt-5.4', label: 'GPT-5.4' }
+      { id: 'gpt-5.5', label: 'GPT-5.5' },
+      { id: 'gpt-5.4', label: 'GPT-5.4', retiresAt: '2026-09-18' }
+    ])
+    // And on the 5.4 retirement day only the undated control is left.
+    expect(activeCodexModelRows(rows, new Date(2026, 8, 18))).toEqual([
+      { id: 'gpt-5.5', label: 'GPT-5.5' }
     ])
   })
 })

@@ -351,7 +351,9 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(antigravity.every((id) => id.startsWith('gemini-api:'))).toBe(true)
     expect(gemini).toContain('flash')
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
-    expect(grok).toEqual(['grok-4.6', 'grok-4.5', 'grok-composer-2.5-fast'])
+    // No grok-composer-2.5-fast: retired from the lineup 2026-09-18. Cursor's
+    // own composer pair below is a DIFFERENT provider and is unaffected.
+    expect(grok).toEqual(['grok-4.6', 'grok-4.5'])
     // No grok-4.5: Cursor's catalogue retired the family, and offering an id
     // cursor-agent rejects costs the whole run (exit 1, "Cannot use this model").
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6'])
@@ -428,14 +430,15 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
   })
 
-  it('uses Grok 4.6 as the default while retaining Grok 4.5 and Composer', () => {
+  it('uses Grok 4.6 as the default while retaining Grok 4.5', () => {
     expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
-    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe(
-      'grok-composer-2.5-fast'
-    )
+    // Retired 2026-09-18. The id still starts with `grok`, so without an
+    // explicit migration the passthrough would hand it straight back and the
+    // seat would launch a model that is no longer in the catalogue.
+    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'grok-4.6')).toBe('grok-4.6')
@@ -532,7 +535,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
 
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    for (const modelId of ['gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+    for (const modelId of ['gpt-5.5', 'gpt-6-astra']) {
       expect(
         models
           .find((model) => model.id === modelId)
@@ -551,7 +554,31 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
   })
 
-  it('repairs stale live Spark metadata to its full reasoning ladder', () => {
+  it('drops the user-retired Codex rows from the picker entirely', () => {
+    // The four ids the user retired on 2026-09-18 must be absent from every
+    // offer surface, not merely undefaulted. Asserted positively (find() ===
+    // undefined per id) rather than with an `every`/`not.toContain` sweep,
+    // which would pass vacuously if the catalogue ever came back empty.
+    const codex = getStaticProviderModels('codex') as StaticModelShape[]
+    expect(codex.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(codex.find((model) => model.id === modelId)).toBeUndefined()
+    }
+    // Neighbours survive, so this is a targeted retirement and not an empty list.
+    expect(codex.find((model) => model.id === 'gpt-5.5')).toBeDefined()
+
+    const grok = getStaticProviderModels('grok') as StaticModelShape[]
+    expect(grok.length).toBeGreaterThan(0)
+    expect(grok.find((model) => model.id === 'grok-composer-2.5-fast')).toBeUndefined()
+    expect(grok.find((model) => model.id === 'grok-4.6')).toBeDefined()
+
+    // Cursor's own Composer pair is a different provider and stays put.
+    const cursor = getStaticProviderModels('cursor') as StaticModelShape[]
+    expect(cursor.find((model) => model.id === 'composer-2.5-fast')).toBeDefined()
+    expect(cursor.find((model) => model.id === 'composer-2.5')).toBeDefined()
+  })
+
+  it('repairs stale live Codex metadata to its full reasoning ladder', () => {
     expect(
       codexReasoningEffortsForModel('gpt-5.3-codex-spark', [
         { reasoningEffort: 'low' },
@@ -559,18 +586,17 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
       ]).map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
 
+    // Spark itself is retired, so its static row is gone; the repair helper
+    // above is still exercised by every live model that carries a short ladder.
     const models = getStaticProviderModels('codex') as StaticModelShape[]
     expect(
       models
-        .find((model) => model.id === 'gpt-5.3-codex-spark')
+        .find((model) => model.id === 'gpt-5.5')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(
-      (
-        models.find((model) => model.id === 'gpt-5.3-codex-spark') as {
-          ultraTaskSupported?: boolean
-        }
-      )?.ultraTaskSupported
+      (models.find((model) => model.id === 'gpt-5.5') as { ultraTaskSupported?: boolean })
+        ?.ultraTaskSupported
     ).toBe(true)
   })
 
@@ -614,10 +640,10 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     }
   })
 
-  it('retains the Fast tier on GPT-5.5 and GPT-5.4', () => {
+  it('retains the Fast tier on GPT-5.5', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
 
-    for (const modelId of ['gpt-5.5', 'gpt-5.4']) {
+    for (const modelId of ['gpt-5.5']) {
       expect(models.find((model) => model.id === modelId)?.additionalSpeedTiers).toEqual(['fast'])
     }
   })
@@ -644,13 +670,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('keeps explicitly runnable rows available when CLI discovery omits them', () => {
-    // 5.4 / 5.4-mini dropped from model/list at CLI 0.144.0; the Spark
-    // research-preview row was dropped by a later catalog update the same way.
-    // None have a published sunset, so TaskWraith keeps offering them.
-    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS).toEqual(
-      new Set(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark'])
-    )
+  it('carries no explicitly runnable rows now that the 5.4 family is retired', () => {
+    // 5.4 / 5.4-mini / Spark were this set's only members — kept offered while
+    // CLI discovery omitted them and no sunset existed. The user retired all
+    // three on 2026-09-18, so the set is empty. It is NOT dead code: the
+    // discovery-gap problem it solves recurs with every CLI catalog update.
+    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS.size).toBe(0)
   })
 
   it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
@@ -794,15 +819,15 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: false
     })
+    // Staged-rollout rows only. The three explicitly-runnable appends were
+    // retired 2026-09-18 and mergeCodexLiveModelRows filters retired ids, so
+    // re-adding a row to the static fallback cannot resurrect one here.
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'gpt-6-astra',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
-      'gpt-5.6-luna',
-      'gpt-5.4',
-      'gpt-5.4-mini',
-      'gpt-5.3-codex-spark'
+      'gpt-5.6-luna'
     ])
     // The live row object itself is preserved (not replaced by a static row).
     expect(merged?.[0]).toBe(live[0])

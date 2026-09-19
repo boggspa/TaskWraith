@@ -23159,7 +23159,7 @@ function App(): React.JSX.Element {
     if (sideComposerProvider === 'grok') {
       // All Grok CLI models are permanently Fast-mode → Fast ⚡ glyph on every
       // row. No onToggleFastMode is passed for grok, so no toggle renders.
-      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID])
     }
     return new Set<string>()
   })()

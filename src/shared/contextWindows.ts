@@ -83,6 +83,12 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'mistral-large-2512': 262_144,
   'zai-glm-5-2': 1_000_000,
   'glm-5-2': 1_000_000,
+  // Inherited from the 5.2 deployment, not independently verified. NOTE the
+  // `zai-` prefix is load-bearing: this table is keyed by BARE model id and is
+  // consulted for every provider, so a plain `glm-5-3` row here would also
+  // capture Devin's own GLM-5.3 (devinModelCatalog uses that exact id) and
+  // silently widen it from the 262K devin fallback to 1M.
+  'zai-glm-5-3': 1_000_000,
   'codestral-2508': 131_072,
   'mistral-small-2603': 256_000,
   'devstral-2512': 262_144,

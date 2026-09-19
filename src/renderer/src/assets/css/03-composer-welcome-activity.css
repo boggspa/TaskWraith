@@ -15071,10 +15071,10 @@ button.diff-file-row {
   color: var(--provider-stealth-color, #9e6c00);
 }
 .notification-newadditions-model.provider-unbiased {
-  color: var(--provider-unbiased-color, #c700e4);
+  color: var(--provider-unbiased-color, #b85a35);
 }
 .notification-newadditions-model.provider-typesafe {
-  color: var(--provider-typesafe-color, #298367);
+  color: var(--provider-typesafe-color, #c700e4);
 }
 
 .notification-newadditions-model.provider-groq {

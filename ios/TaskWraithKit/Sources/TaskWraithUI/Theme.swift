@@ -229,13 +229,13 @@ public enum TWTheme {
         // vendor colour: the most saturated gold this band holds, sat between
         // claude and cursor. Mirrors theme.css.
         case "stealth": return 0x9E6C00
-        // Unbiased's vermilion sits in the crowded red band, so Pareto wears
-        // the one vivid slot left at this band's luminance: magenta, dE 11.0
-        // from alibaba. Mirrors theme.css.
-        case "unbiased": return 0xC700E4
-        // TypeSafe's red is spoken for too; emerald reads typed/structured/
-        // safe and sits dE 9.9 from xiaomi, 10.4 from cohere. Mirrors theme.css.
-        case "typesafe": return 0x298367
+        // Pareto's burnt vermilion. The vivid reds are taken, but dropping to
+        // HLS saturation 0.55 opens hue 17 without leaving orange: dE 7.2 from
+        // mistral and cerebras. Mirrors theme.css.
+        case "unbiased": return 0xB85A35
+        // TypeSafe's mark is a vivid pink, so Jev wears the magenta — dE 11.0
+        // from alibaba. Swapped with Pareto 2026-09-18. Mirrors theme.css.
+        case "typesafe": return 0xC700E4
         default: return chroma1Hex
         }
     }

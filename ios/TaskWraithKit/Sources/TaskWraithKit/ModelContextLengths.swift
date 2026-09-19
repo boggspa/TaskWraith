@@ -63,9 +63,6 @@ public enum ModelContextLengths {
                 (id: "gpt-5.6-sol",          label: "GPT-5.6-Sol"),
                 (id: "gpt-5.6-terra",        label: "GPT-5.6-Terra"),
                 (id: "gpt-5.6-luna",         label: "GPT-5.6-Luna"),
-                (id: "gpt-5.4",              label: "GPT-5.4"),
-                (id: "gpt-5.4-mini",         label: "GPT-5.4 Mini"),
-                (id: "gpt-5.3-codex-spark",  label: "GPT-5.3 Codex Spark"),
             ]
         case "claude":
             return [
@@ -120,7 +117,6 @@ public enum ModelContextLengths {
                 (id: "openrouter/inception/mercury-2.5", label: "Mercury 2.5"),
                 (id: "openrouter/nex-agi/nex-n2.5-mini:free", label: "Nex-N2.5-Mini"),
                 (id: "openrouter/nex-agi/nex-n2.5-pro:free", label: "Nex-N2.5-Pro"),
-                (id: "openrouter/stealth/union-alpha", label: "Union Alpha"),
                 (id: "openrouter/sakana/fugu-max", label: "Fugu Max"),
                 (id: "openrouter/sakana/fugu-ultra-v2", label: "Fugu Ultra v2"),
                 (id: "openrouter/unbiased/pareto", label: "Pareto"),
@@ -132,7 +128,6 @@ public enum ModelContextLengths {
                 // provider-scoped Grok rows keep a separate Fast toggle.
                 (id: "grok-4.6",                label: "Grok 4.6 Fast"),
                 (id: "grok-4.5",                label: "Grok 4.5 Fast"),
-                (id: "grok-composer-2.5-fast",  label: "Grok Composer 2.5 Fast"),
             ]
         case "cursor":
             return [
@@ -161,6 +156,7 @@ public enum ModelContextLengths {
             return [
                 (id: "mistral-medium-3.5",  label: "Mistral Medium 3.5"),
                 (id: "glm-5-2",             label: "GLM-5.2 (Mistral Hosted)"),
+                (id: "zai-glm-5-3",         label: "GLM-5.3 (Mistral Hosted)"),
             ]
         case "ollama":
             return [

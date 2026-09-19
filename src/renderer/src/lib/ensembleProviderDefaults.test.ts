@@ -1079,11 +1079,10 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
   it('defaults Grok to 4.6 while retaining 4.5 with its narrower effort ladder', () => {
     const grok = getEnsembleModelDefaults('grok')
     expect(grok.defaultModelId).toBe('grok-4.6')
-    expect(grok.modelOptions.map((o) => o.id)).toEqual([
-      'grok-4.6',
-      'grok-4.5',
-      'grok-composer-2.5-fast'
-    ])
+    // grok-composer-2.5-fast retired 2026-09-18. Unlike the Pi list, the Grok
+    // rows are NOT wrapped in a lifecycle filter, so the row is deleted
+    // outright rather than dated.
+    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-4.6', 'grok-4.5'])
     expect(grok.defaultReasoning).toBe('high')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh'])
     expect(getEnsembleReasoningOptions('grok', 'grok-4.6').map((o) => o.value)).toEqual([

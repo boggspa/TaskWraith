@@ -58,14 +58,28 @@ describe('buildModelContextLengthGroups', () => {
     expect(row!.formatted).toBe('1.1M')
   })
 
-  it('codex gpt-5.4-mini resolves to 400k', () => {
+  it('mistral GLM-5.3 resolves to 1M on the zai- prefixed id', () => {
+    // Replaces the old gpt-5.4-mini row, retired 2026-09-18. Same shape of
+    // check: a catalogue row whose window comes from the shared static table
+    // rather than the provider fallback.
+    const groups = buildModelContextLengthGroups()
+    const mistralGroup = groups.find((g) => g.provider === 'mistral')
+    expect(mistralGroup).toBeDefined()
+    const row = mistralGroup!.models.find((m) => m.modelId === 'zai-glm-5-3')
+    expect(row).toBeDefined()
+    expect(row!.contextWindow).toBe(1_000_000)
+    expect(row!.formatted).toBe('1.0M')
+  })
+
+  it('drops the retired Codex rows from the Model Usage table', () => {
     const groups = buildModelContextLengthGroups()
     const codexGroup = groups.find((g) => g.provider === 'codex')
     expect(codexGroup).toBeDefined()
-    const row = codexGroup!.models.find((m) => m.modelId === 'gpt-5.4-mini')
-    expect(row).toBeDefined()
-    expect(row!.contextWindow).toBe(400_000)
-    expect(row!.formatted).toBe('400k')
+    expect(codexGroup!.models.length).toBeGreaterThan(0)
+    for (const modelId of ['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark']) {
+      expect(codexGroup!.models.find((m) => m.modelId === modelId)).toBeUndefined()
+    }
+    expect(codexGroup!.models.find((m) => m.modelId === 'gpt-5.5')).toBeDefined()
   })
 
   it('cursor composer-2.5 resolves via provider fallback to contextWindow 200000 / formatted 200k', () => {

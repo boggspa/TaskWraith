@@ -183,6 +183,7 @@ export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_MEDIUM,
   'glm-5-2',
   'mistral-large-2512',
+  'zai-glm-5-3',
   'zai-glm-5-2',
   'codestral-2508',
   'mistral-small-2603',

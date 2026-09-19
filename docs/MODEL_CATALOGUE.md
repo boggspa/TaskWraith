@@ -48,9 +48,13 @@ not the monoline glyph set.
 | **GPT-5.6-Terra** `gpt-5.6-terra`             | Light · Medium · High · Extra · Max · Ultracode | Toggle | Balanced agentic coding for everyday work.                       |
 | **GPT-5.6-Luna** `gpt-5.6-luna`               | Light · Medium · High · Extra · Max             | Toggle | Fast and affordable agentic coding.                              |
 | **GPT-5.5** `gpt-5.5` **(Default)**           | Light · Medium · High · Extra                   | Toggle | Default while the GPT-5.6 rollout remains account-dependent.     |
-| **GPT-5.4** `gpt-5.4`                         | Light · Medium · High · Extra                   | Toggle | Still offered when directly runnable even if discovery omits it. |
-| **GPT-5.4 Mini** `gpt-5.4-mini`               | Light · Medium · High · Extra                   | —      | Smaller GPT-5.4 option.                                          |
-| **GPT-5.3 Codex Spark** `gpt-5.3-codex-spark` | Light · Medium · High · Extra                   | —      | Research preview where available.                                |
+
+GPT-5.4, GPT-5.4 Mini and GPT-5.3 Codex Spark were **retired from the lineup on
+2026-09-18** by product decision. OpenAI published no sunset for any of them —
+they were the whole of `CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS`, kept offered while
+CLI discovery omitted them. They now carry that date in
+`CODEX_MODEL_RETIREMENTS`, so every offer surface drops them while saved chats
+keep their labels.
 
 <table>
   <tr>
@@ -104,7 +108,11 @@ not the monoline glyph set.
 | --------------------------------------------------- | ------------------- | -------- | ---------------------------------------------------- |
 | **Grok 4.6 Fast** `grok-4.6` **(Default)**          | Low · Medium · High · Extra-high | Included | 500K-context coding model; Fast is provider-encoded. |
 | **Grok 4.5 Fast** `grok-4.5`                        | Low · Medium · High | Included | Previous default; retained as a selectable row.      |
-| **Grok Composer 2.5 Fast** `grok-composer-2.5-fast` | —                   | Included | Historical/specialised Fast model row.               |
+
+Grok Composer 2.5 Fast (`grok-composer-2.5-fast`) was **retired on 2026-09-18**.
+It was xAI's resale row; Cursor's own `composer-2.5` / `composer-2.5-fast` pair
+is a different provider and is unaffected. Persisted Grok seats pinned to it
+migrate to Grok 4.6.
 
 <table>
   <tr>
@@ -204,6 +212,7 @@ them onto the shared ladder vocabulary.
 | ---------------------------------------------------- | ------------- | ---- | -------------------------------------------------------------- |
 | **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. |
 | **GLM-5.2 (Mistral Hosted)** `glm-5-2`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok.   |
+| **GLM-5.3 (Mistral Hosted)** `zai-glm-5-3`           | —             | —    | 1M context · $1.40/$4.40 per Mtok · **API key only** — hosted by Mistral but billed to your own key, unlike the 5.2 row above. Added 2026-09-18. Price and window are both **carried forward from GLM-5.2** and not independently verified: Mistral has published no 5.3 page yet, and Z.ai prices its own GLM-5.3 identically. The `zai-` prefix avoids colliding with Devin's own `glm-5-3`. |
 | **Mistral Large 3** `mistral-large-2512`             | —             | —    | 262K context · flagship · $0.50/$1.50 per Mtok.                |
 | **GLM-5.2 (via Mistral)** `zai-glm-5-2`              | —             | —    | 1M context · $1.40/$4.40 per Mtok.                             |
 | **Codestral (Aug 2025)** `codestral-2508`            | —             | —    | 131K context · coding-tuned · $0.30/$0.90 per Mtok.            |
@@ -360,7 +369,7 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **Nex-N2.5-Pro (OpenRouter Free)** `openrouter/nex-agi/nex-n2.5-pro:free` | Off → Max | — | The larger free Nex-N2.5 — same window and output, plus image input for its visual feedback loop. |
 | **Fugu Max** `openrouter/sakana/fugu-max`                  | Off → Max    | —    | Sakana AI's cost-performance Fugu, released 2026-09-11. Fugu is not a single model: it is a learned multi-agent orchestrator that routes tasks across a fixed pool of open-weights and specialist models and calls instances of itself recursively. 1M context, 128K output, text + image + file input. $2.00/$6.00 per Mtok with $0.25 cache read. |
 | **Fugu Ultra v2** `openrouter/sakana/fugu-ultra-v2`        | Off → Max    | —    | The higher-performance Fugu, tuned for complex multi-step reasoning, autonomous research and full-stack work. Same 1M window and 128K output. $5.00/$30.00 per Mtok with $0.50 cache read — **but OpenRouter publishes a prompt-length break: past 272,000 prompt tokens it bills $10.00/$45.00 with $1.00 cache read.** TaskWraith's flat rate table records the base tier only, so a long-prompt turn is under-estimated by up to 2x on input. |
-| **Union Alpha** `openrouter/stealth/union-alpha`            | —            | —    | A free stealth preview listed 2026-09-16: OpenRouter forwards to a single anonymous provider and states it is not the model's developer, owner or provider. 262,144 context, 131,072 output, text + image input, tools and structured output. $0.00/$0.00 — free for the preview only. **Reasoning is not configurable**: the endpoint advertises `max_tokens`, `temperature`, `top_p`, `tools`, `tool_choice` and `response_format` and neither `reasoning` nor `reasoning_effort`, so unlike every other OpenRouter route here it carries no effort ladder. **Offered for seven days — scheduled to stop being offered on 2026-09-23**; OpenRouter publishes no sunset of its own (the Models API carries a 2098 placeholder), so that date is TaskWraith's, and saved chats keep the label after it. Prompts and completions may be retained by the provider. |
+| **Union Alpha** `openrouter/stealth/union-alpha`            | —            | —    | A free stealth preview listed 2026-09-16: OpenRouter forwards to a single anonymous provider and states it is not the model's developer, owner or provider. 262,144 context, 131,072 output, text + image input, tools and structured output. $0.00/$0.00 — free for the preview only. **Reasoning is not configurable**: the endpoint advertises `max_tokens`, `temperature`, `top_p`, `tools`, `tool_choice` and `response_format` and neither `reasoning` nor `reasoning_effort`, so unlike every other OpenRouter route here it carries no effort ladder. **RETIRED 2026-09-18.** It was offered for a seven-day window from its listing and scheduled to stop on 2026-09-23; the user ended that window early. OpenRouter publishes no sunset of its own (the Models API carries a 2098 placeholder), so both dates are TaskWraith's, and saved chats keep the label. Prompts and completions may be retained by the provider. |
 | **Pareto** `openrouter/unbiased/pareto`                     | —            | —    | Unbiased's multimodal composite, released 2026-09-17 and hosted by that one provider, so OpenRouter forwards directly with no routing decision. 262,144 context, 131,072 output, text + image input, $2.50/$7.50 per Mtok with $0.25 cache read; 30-day retention, prompts not trained on. **Reasoning is not configurable**: supported_parameters are `max_tokens`, `response_format`, `temperature`, `tool_choice`, `tools` and `top_p` — neither `reasoning` nor `reasoning_effort`, the same shape as Union Alpha. |
 | **Jev 1.13** `openrouter/typesafe/jev-1.13`                 | —            | —    | TypeSafe's first System One structured decision model, released 2026-09-17: it returns typed choices for routing, classification and other decision points rather than free-form prose. 32K context, text input only. **Coming soon on OpenRouter** — the page is listed with no live endpoints, pricing or output ceiling yet, so the registered 8,192 output tokens and zero cost are placeholders to re-verify against the Models API at launch, and the route itself 404s until it goes live. |
 

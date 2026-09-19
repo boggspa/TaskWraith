@@ -87,12 +87,12 @@ const STATIC_PROVIDER_COLORS = {
   // design token like nexagi's: the most saturated gold available at this
   // palette's luminance, sat between claude (dE 9.20) and cursor (dE 8.88).
   stealth: '#9E6C00',
-  // Both vendor marks are reds inside the palette's most crowded band, so
-  // these are TaskWraith design tokens at the same iso-luminant band:
-  // magenta, the one vivid hue slot left (dE 11.0 from alibaba), and emerald
-  // between xiaomi and cohere (dE 9.9 / 10.4). See theme.css for the sweep.
-  unbiased: '#C700E4',
-  typesafe: '#298367'
+  // Swapped 2026-09-18. Pareto takes a burnt vermilion that keeps its brand's
+  // red without colliding with the vivid ones (dE 7.2 from mistral/cerebras),
+  // and Jev takes the magenta, which matches TypeSafe's pink mark (dE 11.0
+  // from alibaba). See theme.css for both sweeps.
+  unbiased: '#B85A35',
+  typesafe: '#C700E4'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -130,8 +130,8 @@ const IOS_PROVIDER_CASES = [
   ['case "nexagi"', '#747A42'],
   ['case "sakana"', '#EA0C2D'],
   ['case "stealth"', '#9E6C00'],
-  ['case "unbiased"', '#C700E4'],
-  ['case "typesafe"', '#298367']
+  ['case "unbiased"', '#B85A35'],
+  ['case "typesafe"', '#C700E4']
 ] as const
 
 const PROVIDER_RGB_TRIPLETS = {

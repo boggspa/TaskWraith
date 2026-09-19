@@ -13,6 +13,17 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('gemini', 'flash-lite', Number.POSITIVE_INFINITY)).toBe(200_000)
   })
 
+  it("keeps the Mistral GLM-5.3 row off Devin's identically-named model", () => {
+    // CONTEXT_WINDOWS_BY_MODEL is keyed by BARE model id and consulted for
+    // every provider, so the Mistral seat's GLM-5.3 takes the `zai-` API-lane
+    // prefix. A plain `glm-5-3` row would also capture Devin's own GLM-5.3
+    // (devinModelCatalog.ts uses exactly that id) and silently widen it from
+    // Devin's 262K provider fallback to 1M.
+    expect(resolveContextWindow('mistral', 'zai-glm-5-3')).toBe(1_000_000)
+    expect(resolveContextWindow('devin', 'glm-5-3')).toBe(262_144)
+    expect(resolveContextWindow('devin', 'glm-5-3-flash')).toBe(262_144)
+  })
+
   it('resolves representative model ids across providers', () => {
     expect(resolveContextWindow('gemini', 'pro')).toBe(1_048_576)
     // GPT-5.6 trio — official raw API window (GA 2026-07-09).

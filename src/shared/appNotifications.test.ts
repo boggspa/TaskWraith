@@ -249,6 +249,7 @@ describe('notification registry', () => {
       'Leanstral 1.5 (Labs)',
       'GLM-5.2 (via Mistral)',
       'GLM-5.2 (Mistral Hosted)',
+      'GLM-5.3 (Mistral Hosted)',
       'Codestral (Aug 2025)',
       'Ministral 3 (14B)',
       'Ministral 3 (8B)',
@@ -257,6 +258,11 @@ describe('notification registry', () => {
     expect(mistral?.models[0]?.blurb).toMatch(/Effort.*configurable|configurable.*Effort/i)
     expect(mistral?.models.find((m) => m.name === 'GLM-5.2 (Mistral Hosted)')?.blurb).toMatch(
       /Vibe subscription.*no API key/i
+    )
+    // The 5.3 row sits directly beside 5.2 under a near-identical name, so the
+    // card has to say which lane it is on or the two read as the same offer.
+    expect(mistral?.models.find((m) => m.name === 'GLM-5.3 (Mistral Hosted)')?.blurb).toMatch(
+      /your own API key/i
     )
 
     const ollama = groups.find((g) => g.provider === 'ollama')
@@ -294,7 +300,6 @@ describe('notification registry', () => {
       // 2026-09-17), and Jev is announced ahead of its OpenRouter launch.
       'Pareto (OpenRouter)',
       'Jev 1.13 (OpenRouter)',
-      'Union Alpha (OpenRouter Free)',
       'Fugu Max (OpenRouter)',
       'Fugu Ultra v2 (OpenRouter)',
       'Mercury 2.5 (OpenRouter)',
@@ -316,17 +321,12 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
-      // Both 2026-09-17 routes wear their own brand override: the vendors'
-      // reds sit in the palette's most crowded band, so each carries a
-      // TaskWraith design token instead (magenta for Unbiased, emerald for
-      // TypeSafe) — see PI_UPSTREAM_BRANDS.
+      // Both 2026-09-17 routes wear their own brand override — see
+      // PI_UPSTREAM_BRANDS. Unbiased carries a burnt vermilion (its own red is
+      // too close to the palette's vivid ones) and TypeSafe the magenta that
+      // matches its pink mark; the two swapped on 2026-09-18.
       'unbiased',
       'typesafe',
-      // `stealth` is a brand override for an anonymous namespace rather than a
-      // vendor. Without it the row falls back to the generic OpenRouter red,
-      // which is the one accent a stealth preview must NOT wear — OpenRouter
-      // is explicitly not this model's developer, owner or provider.
-      'stealth',
       // Sakana is its own brand override — without it both Fugu rows fall back
       // to the generic OpenRouter red, which is a DIFFERENT vendor's accent.
       'sakana',
@@ -364,11 +364,9 @@ describe('notification registry', () => {
     expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Mini (OpenRouter Free)')?.blurb).toMatch(
       /262K.*text only/i
     )
-    // The 'no effort axis' claim is load-bearing: this endpoint advertises no
-    // `reasoning`/`reasoning_effort`, and every neighbouring row does.
-    expect(pi?.models.find((m) => m.name === 'Union Alpha (OpenRouter Free)')?.blurb).toMatch(
-      /262K.*vision.*no effort axis.*7 days/i
-    )
+    // Union Alpha's seven-day window was ended early by the user on
+    // 2026-09-18, so the row is off the card entirely rather than reworded.
+    expect(pi?.models.find((m) => m.name === 'Union Alpha (OpenRouter Free)')).toBeUndefined()
     expect(pi?.models.find((m) => m.name === 'Fugu Max (OpenRouter)')?.blurb).toMatch(
       /1M context.*Off-to-Max.*\$2\/\$6/
     )

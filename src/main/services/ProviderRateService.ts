@@ -1826,6 +1826,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Third-party Z.ai GLM-5.2 served by Mistral.'
       },
       {
+        modelId: 'zai-glm-5-3',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.14,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "Third-party Z.ai GLM-5.3 served by Mistral, added 2026-09-18. CARRIED FORWARD from the GLM-5.2 row above: Mistral has published no separate GLM-5.3 rate, and Z.ai prices its own GLM-5.3 identically to 5.2 (see devinModelCatalog, 1.4/4.4). The cached-input figure is 5.2's Mistral-docs 0.14, not Z.ai's own 0.26. Re-verify against Mistral's model docs when the 5.3 page lands — every offered model must carry a rate row (providerApiRatesTable guard), so this is a sourced-adjacent estimate rather than an omission."
+      },
+      {
         modelId: 'glm-5-2',
         inputUsdPerMillion: 1.4,
         outputUsdPerMillion: 4.4,

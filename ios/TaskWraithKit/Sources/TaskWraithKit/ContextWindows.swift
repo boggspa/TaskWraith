@@ -111,6 +111,10 @@ public enum ContextWindows {
         "mistral-large-2512": 262_144,
         "zai-glm-5-2": 1_000_000,
         "glm-5-2": 1_000_000,
+        // `zai-` prefix is load-bearing: this table is keyed by BARE model id
+        // across providers, and a plain `glm-5-3` would also capture Devin's
+        // own GLM-5.3. Mirrors shared/contextWindows.ts.
+        "zai-glm-5-3": 1_000_000,
         "codestral-2508": 131_072,
         "mistral-small-2603": 256_000,
         "devstral-2512": 262_144,

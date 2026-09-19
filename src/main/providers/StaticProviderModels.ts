@@ -381,21 +381,15 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
   'gpt-5.6-luna'
 ])
 
-// Codex CLI 0.144.0 stopped returning these rows from `model/list`, but direct
-// read-only requests to both ids still completed on 2026-07-18 and OpenAI's
-// current model cards still list them as active. Keep them discoverable in
-// TaskWraith until the shared lifecycle schedule reaches a verified sunset.
-export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set([
-  'gpt-5.4',
-  'gpt-5.4-mini',
-  // 2026-07-25: a later CLI catalog update dropped the GPT-5.3 Codex Spark
-  // research-preview row from `model/list` the same way, which silently
-  // removed it from every picker (the merge only re-appends listed ids).
-  // Spark has NO published sunset (see CODEX_MODEL_RETIREMENTS) and its
-  // static row is already hedged ("Research preview where available"), so
-  // keep it offered; the CLI's own row wins the id-dedupe if it returns.
-  'gpt-5.3-codex-spark'
-])
+// Models the Codex CLI stopped returning from `model/list` but which still
+// answer a direct request, re-appended so a discovery gap cannot silently empty
+// a picker row. EMPTY since 2026-09-18: its three members — gpt-5.4,
+// gpt-5.4-mini and gpt-5.3-codex-spark — were retired from the lineup by the
+// user, so they are now dated rows in CODEX_MODEL_RETIREMENTS instead and
+// `mergeCodexLiveModelRows` filters them out of the appends anyway. The set
+// stays because the discovery-gap problem it solves is real and recurring; the
+// next discovery-hidden-but-runnable model belongs here.
+export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set<string>()
 
 // Fallback default when a persisted/unknown id can't be resolved. Deliberately
 // NOT the newest family: gpt-5.6 is still ramping account-by-account (see
@@ -561,6 +555,12 @@ export const CODEX_STATIC_MODELS = [
   }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (see CODEX_RETIRED_MODEL_IDS)
   // and intentionally omitted here.
+  //
+  // gpt-5.4, gpt-5.4-mini and gpt-5.3-codex-spark are RETIRED BY DATE, not
+  // hard-retired, so their rows deliberately STAY: a dated row still resolves
+  // a label and a context window for a saved transcript, and
+  // `activeCodexModelRows` drops it from every offer surface. Deleting them
+  // would gain nothing and would strip old chats of their model names.
 ]
 const CLAUDE_REASONING_UNAVAILABLE = 'Not available for this Claude model'
 const CLAUDE_FULL_REASONING_EFFORTS = [
@@ -1072,8 +1072,12 @@ const GROK_STATIC_MODELS = [
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,
     ultraTaskSupported: true
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast', ultraTaskSupported: true }
+  }
+  // Grok Composer 2.5 Fast was RETIRED from the lineup by the user on
+  // 2026-09-18. This was xAI's resale row and says nothing about Cursor's own
+  // `composer-2.5` / `composer-2.5-fast` pair, which is untouched. Persisted
+  // grok seats migrate to Grok 4.6 in normalizeCliProviderModel below; the
+  // context-window and display-name rows stay so saved chats keep their label.
 ]
 // Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
 // (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.25.0) plus the
@@ -1106,6 +1110,25 @@ const MISTRAL_STATIC_MODELS = [
     // default to it. Every effort in the ladder above maps 1:1 onto Vibe's
     // `thinking` config option via normalizeMistralThinkingLevel.
     defaultReasoningEffort: 'high',
+    ultraTaskSupported: true
+  },
+  {
+    // Added 2026-09-18. Unlike its `glm-5-2` sibling directly above, this one
+    // is API-KEY ONLY — it is deliberately absent from
+    // MISTRAL_SUBSCRIPTION_MODELS in shared/apiKeyModelIndicator, so the row
+    // carries the key glyph. Do not "fix" that asymmetry: 5.2 is the Vibe
+    // subscription extra, 5.3 is not. The id takes the `zai-` API-lane prefix
+    // its BYOK sibling `zai-glm-5-2` uses, NOT a bare `glm-5-3` — that exact
+    // bare id is Devin's own GLM-5.3 row, and contextWindows is keyed by bare
+    // id across all providers.
+    //
+    // Price and window are both CARRIED FORWARD from the 5.2 deployment and
+    // are not independently verified — Mistral has published no GLM-5.3 page
+    // yet. The rate row exists because providerApiRatesTable requires every
+    // offered model to have one; see its note in ProviderRateService.
+    id: 'zai-glm-5-3',
+    label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
     ultraTaskSupported: true
   },
   {
@@ -1446,6 +1469,9 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'grok') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GROK_DEFAULT_MODEL
     if (lowered === 'grok-build' || lowered === 'grok-build-0.1') return GROK_DEFAULT_MODEL
+    // Retired 2026-09-18. Must precede the `grok` passthrough below, which
+    // would otherwise hand the retired id straight back to the seat.
+    if (lowered === 'grok-composer-2.5-fast') return GROK_DEFAULT_MODEL
     if (lowered.startsWith('grok')) return trimmed
     return GROK_DEFAULT_MODEL
   }

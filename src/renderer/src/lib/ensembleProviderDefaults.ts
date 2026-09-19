@@ -309,12 +309,11 @@ const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // rollout yet (the id is simply absent from that account's live model/list).
   { id: 'gpt-5.6-sol', label: 'GPT-5.6-Sol' },
   { id: 'gpt-5.6-terra', label: 'GPT-5.6-Terra' },
-  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' },
-  { id: 'gpt-5.4', label: 'GPT-5.4' },
-  { id: 'gpt-5.4-mini', label: 'GPT-5.4 Mini' },
-  { id: 'gpt-5.3-codex-spark', label: 'GPT-5.3 Codex Spark' }
+  { id: 'gpt-5.6-luna', label: 'GPT-5.6-Luna' }
   // gpt-5.2 and gpt-5.3-codex are HARD-retired (the API rejects requests) and
-  // removed from the ensemble Codex picker. Historical/cost lookups elsewhere
+  // removed from the ensemble Codex picker. gpt-5.4, gpt-5.4-mini and
+  // gpt-5.3-codex-spark were retired by product decision on 2026-09-18 and are
+  // removed for the same reason. Historical/cost lookups elsewhere
   // (modelDisplayName, contextWindows, ProviderRateService) keep their entries.
 ]
 const CODEX_MODELS = withCuratedUltraTaskSupport(CODEX_MODEL_ROWS)
@@ -398,8 +397,9 @@ const GROK_MODEL_ROWS: CombinedModelPickerModelOption[] = [
     label: 'Grok 4.5 Fast',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+  }
+  // grok-composer-2.5-fast retired 2026-09-18. Cursor's own composer pair is a
+  // different provider and keeps its rows.
 ]
 const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 
@@ -410,6 +410,7 @@ const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'glm-5-2', label: 'GLM-5.2 (Mistral Hosted)' },
+  { id: 'zai-glm-5-3', label: 'GLM-5.3 (Mistral Hosted)' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
   { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
   { id: 'codestral-2508', label: 'Codestral (Aug 2025)' },
@@ -527,6 +528,11 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'openrouter/nex-agi/nex-n2.5-pro:free', label: 'Nex-N2.5-Pro' },
   { id: 'openrouter/sakana/fugu-max', label: 'Fugu Max' },
   { id: 'openrouter/sakana/fugu-ultra-v2', label: 'Fugu Ultra v2' },
+  // Retired 2026-09-18, but the ROW STAYS: this list is wrapped in
+  // activePiModelRows(PI_MODELS, now), so the lifecycle date does the removal
+  // and the list must keep mirroring the catalogue at any `now`. Deleting the
+  // row here instead makes the picker disagree with PI_STATIC_MODELS for every
+  // date before the retirement.
   { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' },
   { id: 'openrouter/unbiased/pareto', label: 'Pareto' },
   { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' }
@@ -579,7 +585,6 @@ const OLLAMA_MODELS = withCuratedUltraTaskSupport(OLLAMA_MODEL_ROWS)
 
 const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.5',
-  'gpt-5.4',
   // GPT-5.6 trio (GA, 5.5 parity) — all expose the Fast speed tier
   // (additionalSpeedTiers:['fast'] in the preview catalog); the solo composer
   // derives Fast dynamically from that field, so mirror it here for ensemble seats.
@@ -603,11 +608,7 @@ const CURSOR_FAST_CAPABLE = new Set<string>([
 // All Grok CLI models run permanently in Fast mode. This set only drives the
 // picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
 // renders and no fast-clearing runs on model switch.
-const GROK_FAST_CAPABLE = new Set<string>([
-  GROK_46_MODEL_ID,
-  GROK_45_MODEL_ID,
-  'grok-composer-2.5-fast'
-])
+const GROK_FAST_CAPABLE = new Set<string>([GROK_46_MODEL_ID, GROK_45_MODEL_ID])
 
 function isDirectGrok46ModelId(modelId?: string | null): boolean {
   const id = String(modelId || '')

@@ -950,17 +950,20 @@ describe('EnsembleParticipantsAboveRow', () => {
       })
     })
 
-    it('offers the full Spark ladder in the Add Participant popover fallback', () => {
+    it('offers the full ladder in the Add Participant popover fallback', () => {
+      // Was pinned on Spark until the user retired it on 2026-09-18; gpt-5.5
+      // carries the same low/medium/high/xhigh ladder plus UltraTask.
       const providerGroups = [
         {
           provider: 'codex' as const,
           label: 'Codex',
-          modelOptions: CODEX_DEFAULT_MODELS.filter((model) => model.id === 'gpt-5.3-codex-spark')
+          modelOptions: CODEX_DEFAULT_MODELS.filter((model) => model.id === 'gpt-5.5')
         }
       ]
 
+      expect(providerGroups[0].modelOptions).toHaveLength(1)
       expect(
-        getEnsembleAddReasoningOptions('codex', 'gpt-5.3-codex-spark', providerGroups).map(
+        getEnsembleAddReasoningOptions('codex', 'gpt-5.5', providerGroups).map(
           (option) => option.value
         )
       ).toEqual(['low', 'medium', 'high', 'xhigh', 'ultraTask'])

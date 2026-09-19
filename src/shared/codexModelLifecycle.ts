@@ -2,9 +2,13 @@
  * Codex model lifecycle policy shared by main-process launch gates and the
  * renderer's pre-IPC fallback catalog.
  *
- * Add a model here only when OpenAI publishes an actual shutdown date. A model
- * disappearing from `model/list` is not sufficient: discovery-hidden models
- * can remain runnable when explicitly requested.
+ * Two things put a date in this table, and they are not interchangeable:
+ * an actual shutdown OpenAI published, or a retirement the user approved in
+ * their own session. A model merely disappearing from `model/list` is neither:
+ * discovery-hidden models can remain runnable when explicitly requested, which
+ * is what CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS was for. Say which of the two a
+ * row is, inline, so a later session does not read a product decision as a
+ * vendor fact and "correct" it.
  */
 export const CODEX_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.freeze({
   // Actual Codex-family shutdowns in OpenAI's 2026-04-22 deprecation notice.
@@ -16,10 +20,16 @@ export const CODEX_MODEL_RETIREMENTS: Readonly<Record<string, string>> = Object.
   // Historical dates stay here after hard retirement so diagnostics can name
   // the sunset that applied.
   'gpt-5.2': '2026-06-02',
-  'gpt-5.3-codex': '2026-06-02'
-  // Intentionally no gpt-5.4 / gpt-5.4-mini entry. On 2026-07-18, OpenAI's
-  // model cards still marked both active; the 2026-07-23 deprecations table
-  // named 5.4 mini as a substitute and neither model as a shutdown target.
+  'gpt-5.3-codex': '2026-06-02',
+  // USER-APPROVED retirements, 2026-09-18 — not vendor shutdowns. OpenAI has
+  // published no sunset for any of the three and all three may still answer a
+  // direct request; the user retired them from TaskWraith's lineup. They were
+  // the entire contents of CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS, which is why
+  // that set is now empty rather than deleted. Reversing this is a product
+  // decision: drop the row here and re-list the id there.
+  'gpt-5.4': '2026-09-18',
+  'gpt-5.4-mini': '2026-09-18',
+  'gpt-5.3-codex-spark': '2026-09-18'
 })
 
 /** Models already known to reject new requests, retained for history only. */

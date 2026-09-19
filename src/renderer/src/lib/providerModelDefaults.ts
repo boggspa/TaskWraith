@@ -366,8 +366,10 @@ const GROK_DEFAULT_MODEL_ROWS = [
     description: '500K context - low/medium/high reasoning',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT
-  },
-  { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
+  }
+  // grok-composer-2.5-fast retired 2026-09-18. This renderer copy must track
+  // main's GROK_STATIC_MODELS exactly — providerFallthroughGuards compares the
+  // two, because the composer picker reads THIS list, not main's.
 ] satisfies CodexModelOption[]
 const GROK_DEFAULT_MODELS = withCuratedUltraTaskSupport(GROK_DEFAULT_MODEL_ROWS)
 // Mistral Vibe seat catalog. BARE ids only — a `mistral/<model>` id belongs to
@@ -389,6 +391,13 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     id: 'glm-5-2',
     label: 'GLM-5.2 (Mistral Hosted)',
     description: '1M context - coding model'
+  },
+  {
+    // API-key lane, unlike the `glm-5-2` row above. Mirrors main's
+    // MISTRAL_STATIC_MODELS; the `zai-` prefix keeps it off Devin's `glm-5-3`.
+    id: 'zai-glm-5-3',
+    label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok'
   },
   {
     id: 'mistral-large-2512',

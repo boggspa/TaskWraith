@@ -86,7 +86,7 @@ export function fastModeCapableModelIds(
     return new Set(['composer-2.5', 'composer-2.5-fast', CURSOR_GROK_46_BASE_MODEL_ID])
   }
   if (provider === 'grok') {
-    return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID, 'grok-composer-2.5-fast'])
+    return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID])
   }
   return new Set<string>()
 }
