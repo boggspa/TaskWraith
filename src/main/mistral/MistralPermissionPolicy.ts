@@ -29,6 +29,22 @@ export function createMistralPermissionHandler(input: {
    * host-containment deny below.
    */
   gateNativeShell?: (request: AcpPermissionRequest) => Promise<MistralPermissionDecision>
+  /**
+   * Present only when the seat has a native-write capture loop wired. The gate
+   * snapshots each target before the provider writes it, admits the mutation
+   * through the SAME lock coordinator a brokered write uses -- so lane write
+   * scope, run finality and mutual exclusion all still apply -- and records a
+   * contribution afterwards so the change stays undoable.
+   *
+   * It refuses, on its own, every tool this journal cannot represent, so the
+   * terminal deny below remains the answer for delete_path, move_path,
+   * rename_path, create_directory and apply_patch. Absent reproduces the
+   * previous behaviour exactly.
+   */
+  gateNativeWrite?: (
+    request: AcpPermissionRequest,
+    preflight: NativeWorkspaceToolPreflight
+  ) => Promise<MistralPermissionDecision>
 }): (
   request: AcpPermissionRequest
 ) => MistralPermissionDecision | Promise<MistralPermissionDecision> {
@@ -80,6 +96,12 @@ export function createMistralPermissionHandler(input: {
     // `git status` are not pushed through an approval card they never needed.
     if (preflight.access === 'shell' && input.gateNativeShell) {
       return input.gateNativeShell(request)
+    }
+    // Native writes on a write-capable seat whose capture loop is wired. Placed
+    // beside the shell arm and above the terminal deny, so a seat without the
+    // loop keeps the deny verbatim.
+    if (preflight.access === 'write' && input.gateNativeWrite) {
+      return input.gateNativeWrite(request, preflight)
     }
     return {
       decision: 'deny',

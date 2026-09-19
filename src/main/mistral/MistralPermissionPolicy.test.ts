@@ -5,6 +5,7 @@ import {
   createMistralPermissionHandler,
   mistralPermissionLedgerRecord
 } from './MistralPermissionPolicy'
+import { NATIVE_WRITE_UNCAPTURABLE_REASON } from '../native-tools/NativeWriteContributionCapture'
 
 const request: AcpPermissionRequest = {
   rpcId: 9,
@@ -203,5 +204,92 @@ describe('native shell on a write-capable seat', () => {
     })(request)
     expect(gateNativeShell).not.toHaveBeenCalled()
     expect(decision).toBe('allow')
+  })
+})
+
+describe('native write routing', () => {
+  const request = {
+    toolName: 'Edit',
+    toolKind: 'edit',
+    rawToolCall: { toolCallId: 'call-1', filePath: '/workspace/a.ts' }
+  } as unknown as AcpPermissionRequest
+  const writeAllow: NativeWorkspaceToolPreflight = {
+    kind: 'allow',
+    canonicalTool: 'replace',
+    source: 'native',
+    service: 'fileChanges',
+    access: 'write',
+    checkedPaths: ['/workspace/a.ts'],
+    requiresRuntimeSandbox: false
+  }
+  const base = {
+    isBrokerTool: () => false,
+    isNetworkRead: () => false,
+    networkAllowed: () => true,
+    preflight: () => writeAllow,
+    isReadOnlyShell: () => false
+  }
+
+  it('routes a native write to the capture gate with its preflight', async () => {
+    const gateNativeWrite = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: false,
+      gateNativeWrite
+    })(request)
+    // The preflight goes with it: the gate needs checkedPaths and canonicalTool
+    // and must never re-derive them from the model-controlled tool call.
+    expect(gateNativeWrite).toHaveBeenCalledWith(request, writeAllow)
+    expect(decision).toBe('allow')
+  })
+
+  it('reproduces the containment deny verbatim when no capture loop is wired', async () => {
+    const decision = await createMistralPermissionHandler({ ...base, readOnlySeat: false })(request)
+    expect(decision).toMatchObject({
+      decision: 'deny',
+      origin: 'host-containment',
+      reason: NATIVE_WRITE_UNCAPTURABLE_REASON
+    })
+  })
+
+  it('keeps the hard deny on a read-only seat, capture loop or not', async () => {
+    const gateNativeWrite = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: true,
+      gateNativeWrite
+    })(request)
+    expect(gateNativeWrite).not.toHaveBeenCalled()
+    expect(decision).toMatchObject({ decision: 'deny', origin: 'host-policy' })
+  })
+
+  it('does not divert a native READ into write capture', async () => {
+    const gateNativeWrite = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: false,
+      preflight: (): NativeWorkspaceToolPreflight => ({
+        ...writeAllow,
+        canonicalTool: 'read_file',
+        access: 'read'
+      }),
+      gateNativeWrite
+    })(request)
+    expect(gateNativeWrite).not.toHaveBeenCalled()
+    expect(decision).toBe('allow')
+  })
+
+  it('passes a capture refusal back unaltered', async () => {
+    const refusal = {
+      decision: 'deny',
+      origin: 'host-containment',
+      reason: 'Too large to snapshot.'
+    } as const
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: false,
+      gateNativeWrite: async () => refusal
+    })(request)
+    expect(decision).toEqual(refusal)
   })
 })
