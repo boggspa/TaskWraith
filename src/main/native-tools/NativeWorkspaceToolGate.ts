@@ -53,6 +53,17 @@ export interface NativeWorkspaceToolPreflightInput {
    * check alone is not containment: `cat /etc/passwd` still escapes it.
    */
   runtimeSandboxed?: boolean
+  /**
+   * The seat's posture permits a native shell that TaskWraith does not execute
+   * and therefore cannot wrap in a sandbox. Deliberately NOT `runtimeSandboxed`:
+   * that flag asserts a hard runtime boundary exists, and asserting it here
+   * would be false. This one says only that an informed user chose to permit
+   * the call. What actually bounds it is the cwd check above, the shellCommands
+   * approval gate the caller routes into, the destructive-command ask wall, and
+   * the audit ledger — not a kernel boundary. The Seatbelt is macOS-only, so on
+   * Windows and Linux this is the only route a native shell has.
+   */
+  nativeShellPermittedUnsandboxed?: boolean
 }
 
 const READ_TOOLS = new Set([
@@ -502,7 +513,7 @@ export function preflightNativeWorkspaceTool(
     } catch {
       return deny(canonicalTool, 'Native shell cwd is outside the active workspace.', [], true)
     }
-    if (input.runtimeSandboxed !== true) {
+    if (input.runtimeSandboxed !== true && input.nativeShellPermittedUnsandboxed !== true) {
       return deny(
         canonicalTool,
         'Native shell requires a runtime workspace sandbox; cwd validation alone cannot contain absolute paths or egress.',

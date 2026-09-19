@@ -136,3 +136,72 @@ describe('Mistral native permission provenance without changing the gate', () =>
     expect(record.params).toBeUndefined()
   })
 })
+
+describe('native shell on a write-capable seat', () => {
+  const shellAllow: NativeWorkspaceToolPreflight = {
+    kind: 'allow',
+    canonicalTool: 'run_shell_command',
+    source: 'native',
+    service: 'shellCommands',
+    access: 'shell',
+    checkedPaths: ['/workspace'],
+    normalizedCwd: '/workspace',
+    requiresRuntimeSandbox: true
+  }
+  const base = {
+    isBrokerTool: () => false,
+    isNetworkRead: () => false,
+    networkAllowed: () => true,
+    preflight: () => shellAllow,
+    isReadOnlyShell: () => false
+  }
+
+  it('routes to the approval gate instead of the containment deny', async () => {
+    const gateNativeShell = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: false,
+      gateNativeShell
+    })(request)
+    expect(gateNativeShell).toHaveBeenCalledWith(request)
+    expect(decision).toBe('allow')
+  })
+
+  it('passes a gate refusal straight back, unaltered', async () => {
+    const refusal = { decision: 'deny', origin: 'human', reason: 'Declined.' } as const
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: false,
+      gateNativeShell: async () => refusal
+    })(request)
+    expect(decision).toEqual(refusal)
+  })
+
+  it('keeps the hard deny on a read-only seat, gate or no gate', async () => {
+    const gateNativeShell = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      readOnlySeat: true,
+      gateNativeShell
+    })(request)
+    expect(gateNativeShell).not.toHaveBeenCalled()
+    expect(decision).toMatchObject({ decision: 'deny', origin: 'host-policy' })
+  })
+
+  it('reproduces the previous containment deny when no gate is supplied', async () => {
+    const decision = await createMistralPermissionHandler({ ...base, readOnlySeat: false })(request)
+    expect(decision).toMatchObject({ decision: 'deny', origin: 'host-containment' })
+  })
+
+  it('never sends a provably read-only shell through the gate', async () => {
+    const gateNativeShell = vi.fn(async () => 'allow' as const)
+    const decision = await createMistralPermissionHandler({
+      ...base,
+      isReadOnlyShell: () => true,
+      readOnlySeat: false,
+      gateNativeShell
+    })(request)
+    expect(gateNativeShell).not.toHaveBeenCalled()
+    expect(decision).toBe('allow')
+  })
+})

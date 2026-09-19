@@ -20,7 +20,18 @@ export function createMistralPermissionHandler(input: {
   preflight: (request: AcpPermissionRequest) => NativeWorkspaceToolPreflight
   isReadOnlyShell: (request: AcpPermissionRequest) => boolean
   readOnlySeat: boolean
-}): (request: AcpPermissionRequest) => MistralPermissionDecision {
+  /**
+   * Present only when the seat permits native shell. Routes the request into
+   * `requestAgenticServiceApproval('shellCommands')`, which is where the
+   * non-grantable host-destructive wall, the destructive-command ask wall, the
+   * per-tier holds, the command rules, the approval card and the ledger already
+   * live. Absent reproduces the previous behaviour exactly: the terminal
+   * host-containment deny below.
+   */
+  gateNativeShell?: (request: AcpPermissionRequest) => Promise<MistralPermissionDecision>
+}): (
+  request: AcpPermissionRequest
+) => MistralPermissionDecision | Promise<MistralPermissionDecision> {
   return (request) => {
     if (input.isBrokerTool(request)) return 'allow'
     const networkRead = input.isNetworkRead(request)
@@ -62,6 +73,13 @@ export function createMistralPermissionHandler(input: {
         origin: 'host-policy',
         reason: 'This native operation is not allowed by the Mistral seat policy.'
       }
+    }
+    // Native shell on a write-capable seat whose posture permits it. Deliberately
+    // below the read-only seat check above, so a recon seat keeps its hard deny,
+    // and below the read allow and read-only-shell fast paths, so `ls` and
+    // `git status` are not pushed through an approval card they never needed.
+    if (preflight.access === 'shell' && input.gateNativeShell) {
+      return input.gateNativeShell(request)
     }
     return {
       decision: 'deny',
