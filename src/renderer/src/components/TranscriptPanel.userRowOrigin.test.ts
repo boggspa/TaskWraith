@@ -18,22 +18,30 @@ describe('transcript user-row speaker label', () => {
     expect(source).not.toContain('messageOriginLabel(')
   })
 
+  /**
+   * Indentation is not the guarded property. These pins previously embedded the
+   * exact leading whitespace of the JSX, so any reindent or line-shape change
+   * reddened them while the wiring they exist to protect was untouched -- and
+   * this repo has already had to unwind a formatting pay-down for breaking
+   * byte-pinned files (63f4f200c). Comparing with whitespace squashed keeps the
+   * full structural guard -- element nesting, class names, the key, the
+   * fallback -- without pinning the formatter's output.
+   */
+  const squash = (text: string): string => text.replace(/\s+/g, '')
+  const squashedSource = squash(source)
+
   it('renders the origin speaker in place of "You", keeping the user-meta seam', () => {
-    expect(source).toContain(
-      '<div className="message-meta user-meta">\n' +
-        '                            <span className="message-meta-label">\n' +
-        "                              {originSpeaker ?? 'You'}\n" +
-        '                            </span>'
+    expect(squashedSource).toContain(
+      squash(`<div className="message-meta user-meta">
+        <span className="message-meta-label">{originSpeaker ?? 'You'}</span>`)
     )
   })
 
   it('renders each identifying chip as its own badge beside the speaker', () => {
-    expect(source).toContain(
-      '{messageOriginBadges(msg.metadata?.origin).map((badge) => (\n' +
-        '                              <span key={badge} className="message-meta-model-badge">\n' +
-        '                                {badge}\n' +
-        '                              </span>\n' +
-        '                            ))}'
+    expect(squashedSource).toContain(
+      squash(`{messageOriginBadges(msg.metadata?.origin).map((badge) => (
+        <span key={badge} className="message-meta-model-badge">{badge}</span>
+      ))}`)
     )
   })
 })
