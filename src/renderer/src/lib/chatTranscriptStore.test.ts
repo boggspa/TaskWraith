@@ -471,6 +471,122 @@ describe('Stage 1b paged entries (ingestPage)', () => {
   })
 })
 
+describe('manual tail refresh', () => {
+  function tail(start: number, ids: string[], overrides: Partial<TranscriptPage> = {}) {
+    const page = transcriptPage('paged', ids, {
+      windowStart: start,
+      windowEnd: start + ids.length,
+      totalMessageCount: start + ids.length,
+      hasOlder: start > 0,
+      ...overrides
+    })
+    page.estimatedBytes = page.messages.reduce((sum, row) => sum + estimateChatMessageBytes(row), 0)
+    return page
+  }
+
+  it('updates overlapping text and appends new rows without replacing the loaded leading rows', () => {
+    const store = new ChatTranscriptStore()
+    const initial = store.ingestPage(tail(10, ['a', 'b', 'c']))
+    const incoming = tail(11, ['b', 'c', 'd'])
+    incoming.messages[1] = message('c', 'message c continues streaming')
+    const listener = vi.fn()
+    store.subscribe('paged', listener)
+    const next = store.refreshChatTranscriptTailPage(incoming)!
+    expect(next.messages.map((row) => row.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(next.messages[0]).toBe(initial.messages[0])
+    expect(next.messages[2]).toBe(incoming.messages[1])
+    expect(next.windowStart).toBe(10)
+    expect(next.windowEnd).toBe(14)
+    expect(next.hasNewer).toBe(false)
+    expect(next.windowEstimatedBytes).toBe(
+      next.messages.reduce((sum, row) => sum + estimateChatMessageBytes(row), 0)
+    )
+    expect(listener).toHaveBeenCalledOnce()
+  })
+
+  it('publishes text and run completion when the message count stays the same', () => {
+    const store = new ChatTranscriptStore()
+    const run = { runId: 'run', status: 'running' } as ChatRecord['runs'][number]
+    store.ingestPage(tail(10, ['a'], { runs: [run] }))
+    const completed = { ...run, status: 'completed' } as ChatRecord['runs'][number]
+    const page = tail(10, ['a'], { runs: [completed] })
+    page.messages[0] = message('a', 'message a with final output')
+    const next = store.refreshChatTranscriptTailPage(page)!
+    expect(next.messages[0].content).toBe('message a with final output')
+    expect(next.runs).toEqual([completed])
+    expect(next.windowStart).toBe(10)
+  })
+
+  it('keeps duplicate message IDs at different absolute positions', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(tail(10, ['same', 'same']))
+    const next = store.refreshChatTranscriptTailPage(tail(12, ['same']))!
+    expect(next.messages.map((row) => row.id)).toEqual(['same', 'same', 'same'])
+    expect(next.windowEnd).toBe(13)
+  })
+
+  it('ignores an older prefix of the fetched page', () => {
+    const store = new ChatTranscriptStore()
+    store.ingestPage(tail(11, ['b', 'c']))
+    const next = store.refreshChatTranscriptTailPage(tail(10, ['a', 'b', 'c', 'd']))!
+    expect(next.messages.map((row) => row.id)).toEqual(['b', 'c', 'd'])
+    expect(next.windowStart).toBe(11)
+  })
+
+  it('retains the window and advertises newer history instead of bridging a gap', () => {
+    const store = new ChatTranscriptStore()
+    const initial = store.ingestPage(tail(10, ['a', 'b']))
+    const next = store.refreshChatTranscriptTailPage(tail(15, ['f']))!
+    expect(next.messages).toBe(initial.messages)
+    expect(next.windowStart).toBe(10)
+    expect(next.windowEnd).toBe(12)
+    expect(next.totalMessageCount).toBe(16)
+    expect(next.hasNewer).toBe(true)
+  })
+
+  it.each(['identity', 'prefix', 'older-count'] as const)(
+    'refuses %s regression atomically',
+    (kind) => {
+      const store = new ChatTranscriptStore()
+      const initial = store.ingestPage(tail(10, ['a', 'b']))
+      const page = tail(10, ['a', 'b'])
+      page.messages[0] = message('a', 'message a grows')
+      if (kind === 'identity') page.messages[1] = message('different', 'message b')
+      if (kind === 'prefix') page.messages[1] = message('b', 'message')
+      if (kind === 'older-count') page.totalMessageCount = 11
+      expect(store.refreshChatTranscriptTailPage(page)).toBeNull()
+      expect(store.get('paged')).toBe(initial)
+    }
+  )
+
+  it('caps only new rows and keeps the reader edge at the accumulation limit', () => {
+    const store = new ChatTranscriptStore({ maxMessagesPerPage: 1 })
+    const initial = store.ingestPage(tail(10, ['a', 'b', 'c']))
+    const next = store.refreshChatTranscriptTailPage(tail(12, ['c', 'd', 'e']))!
+    expect(next.messages.map((row) => row.id)).toEqual(['a', 'b', 'c', 'd'])
+    expect(next.messages[0]).toBe(initial.messages[0])
+    expect(next.windowStart).toBe(10)
+    expect(next.windowEnd).toBe(14)
+    expect(next.totalMessageCount).toBe(15)
+    expect(next.hasNewer).toBe(true)
+  })
+
+  it('does not evict existing rows when their text grows beyond the byte budget', () => {
+    const store = new ChatTranscriptStore({ maxBytesPerPage: 1_000 })
+    const initial = store.ingestPage(tail(10, ['a', 'b']))
+    const page = tail(11, ['b'])
+    page.messages[0] = message('b', `message b ${'x'.repeat(5_000)}`)
+    const next = store.refreshChatTranscriptTailPage(page)!
+    expect(next.messages).toHaveLength(2)
+    expect(next.messages[0]).toBe(initial.messages[0])
+    expect(next.messages[1]).toBe(page.messages[0])
+    expect(next.hasNewer).toBe(false)
+    const capped = store.refreshChatTranscriptTailPage(tail(12, ['c']))!
+    expect(capped.messages).toHaveLength(2)
+    expect(capped.hasNewer).toBe(true)
+  })
+})
+
 describe('ChatTranscriptStore - Accumulated Infinite Scroll', () => {
   it('prependPage merges older messages when contiguous', () => {
     const store = new ChatTranscriptStore()

@@ -285,7 +285,7 @@ export class ChatUpdateInterestRuntime {
 
   retryDeferredPagedInvalidations(): void {
     for (const [chatId, invalidation] of this.deferredPagedInvalidations) {
-      if (this.desiredModes.get(chatId) === 'paged' && this.visiblePagedChatFollowsLatest(chatId)) {
+      if (this.desiredModes.get(chatId) === 'paged' && this.visiblePagedChatCanRefresh(chatId)) {
         this.deferredPagedInvalidations.delete(chatId)
         this.coordinator?.invalidate(invalidation)
       }
@@ -320,10 +320,15 @@ export class ChatUpdateInterestRuntime {
     })
   }
 
+  private visiblePagedChatCanRefresh(chatId: string): boolean {
+    // Scroll ownership controls how a page is merged, not whether visible text
+    // may advance. Only a window with unloaded newer history stays anchored;
+    // a missing window must also recover after a failed initial read.
+    return !this.getState().hydrationRuntime.transcriptStore.get(chatId)?.hasNewer
+  }
+
   private visiblePagedChatFollowsLatest(chatId: string): boolean {
     const state = this.getState()
-    const payload = state.hydrationRuntime.transcriptStore.get(chatId)
-    if (payload?.hasNewer) return false
     let renderedInPane = false
     for (let index = 0; index < state.paneChatIds.length; index += 1) {
       if (state.paneChatIds[index] !== chatId) continue
@@ -345,7 +350,7 @@ export class ChatUpdateInterestRuntime {
     if (!invalidation) return
     const mode = this.desiredModes.get(invalidation.chatId)
     if (mode === 'paged') {
-      if (this.visiblePagedChatFollowsLatest(invalidation.chatId)) {
+      if (this.visiblePagedChatCanRefresh(invalidation.chatId)) {
         this.deferredPagedInvalidations.delete(invalidation.chatId)
         this.coordinator?.invalidate(invalidation)
       } else {
@@ -437,7 +442,7 @@ export class ChatUpdateInterestRuntime {
       (!current && state.isChatPopoutWindow && state.chatPopoutChatId === chatId) ||
       (current && isChatSummaryRecord(current) && shouldPageTranscriptOnOpen(current))
     )
-    if ((!alreadyPaged && !awaitingFirstPage) || !this.visiblePagedChatFollowsLatest(chatId)) {
+    if ((!alreadyPaged && !awaitingFirstPage) || !this.visiblePagedChatCanRefresh(chatId)) {
       this.deferredPagedInvalidations.set(chatId, invalidation)
       return false
     }
@@ -460,11 +465,19 @@ export class ChatUpdateInterestRuntime {
       }
     }
     const committed = preserveOptimisticEnsembleQueue(shellWithListMetadata, current)
-    this.dropPendingFullAliases(chatId)
-    state.hydrationRuntime.retention.dropTransportBaseline(chatId)
     // Presentation arrays live only in the transcript store. The marked shell
     // remains empty and can never be mistaken for a saveable ChatRecord.
-    state.hydrationRuntime.transcriptStore.replaceChatTranscriptWindow(page)
+    const store = state.hydrationRuntime.transcriptStore
+    const refreshed =
+      alreadyPaged && !this.visiblePagedChatFollowsLatest(chatId)
+        ? store.refreshChatTranscriptTailPage(page)
+        : store.replaceChatTranscriptWindow(page)
+    if (!refreshed) {
+      this.deferredPagedInvalidations.set(chatId, invalidation)
+      return false
+    }
+    this.dropPendingFullAliases(chatId)
+    state.hydrationRuntime.retention.dropTransportBaseline(chatId)
     state.hydrationRuntime.byteLru.touch(chatId)
     // Only settle announcements known when the read began. A coherent page
     // can publish progress while a later resync still awaits its own read.

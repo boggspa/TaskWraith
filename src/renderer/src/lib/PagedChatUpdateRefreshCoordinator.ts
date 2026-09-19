@@ -22,14 +22,11 @@ export const DEFAULT_PAGED_CHAT_UPDATE_DEBOUNCE_MS = 50
 export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS = 10_000
 
 /**
- * Hard upper bound on how long one pull's PROMISE may stay unsettled. The
- * fetch deadline above releases the flight slot, but a pull whose transport
- * request is lost (the Host accepted the connection then wedged — the socket
- * request frame never answers) would otherwise await its transport-internal
- * 30 s timeout, and every bounded retry behind it queues on the same stuck
- * invoke: the panel stays stale for half a minute. Racing the pull with this
- * bound lets the retry cadence own recovery; the timed-out response never
- * reaches the commit callback.
+ * Upper bound on waiting for one pull. The 10-second deadline independently
+ * releases its flight slot; this 12-second bound finishes the waiter even if
+ * the underlying IPC never answers. IPC is not cancelled, and its original
+ * promise may still publish a valid late page through the ordering and window
+ * guards. Retries remain independently bounded.
  */
 export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_SETTLE_TIMEOUT_MS = 12_000
 
@@ -63,7 +60,7 @@ export interface PagedChatUpdateRefreshCoordinatorOptions {
   debounceMs?: number
   /** Releases the per-chat flight slot when a pull overruns. 0 disables. */
   fetchDeadlineMs?: number
-  /** Hard bound on one pull promise staying unsettled. 0 disables. */
+  /** Bound on waiting for one pull; the original fetch may finish later. 0 disables. */
   fetchSettleTimeoutMs?: number
   maxMessages?: number
   maxBytes?: number
@@ -341,10 +338,9 @@ export class PagedChatUpdateRefreshCoordinator {
   }
 
   /**
-   * Bound how long one pull may stay unsettled. A pull whose transport frame
-   * is lost would otherwise sit on the transport's own 30 s timer and starve
-   * every bounded retry queued behind it. Rejecting early drops the late
-   * response: runFetch never sees it.
+   * Finish waiting independently of the transport's timeout. The bounded
+   * waiter releases its bookkeeping; the original fetch retains its guarded
+   * completion handler and cannot release a newer attempt's flight slot.
    */
   private withFetchSettleTimeout<T>(fetch: Promise<T>): Promise<T> {
     if (this.fetchSettleTimeoutMs <= 0) return fetch
@@ -365,26 +361,13 @@ export class PagedChatUpdateRefreshCoordinator {
     })
   }
 
-  private async runFetch(
+  private acceptPage(
     state: RefreshState,
     invalidation: ChatUpdateInvalidation,
     generation: number,
     attempt: number,
-    isImmediateRetry: boolean
-  ): Promise<void> {
-    let page: TranscriptPage | null = null
-    try {
-      page = await this.withFetchSettleTimeout(
-        this.fetchPage({
-          chatId: invalidation.chatId,
-          maxMessages: this.maxMessages,
-          maxBytes: this.maxBytes
-        })
-      )
-    } catch {
-      // Keep the current window; bounded retries also cover a quiet stream.
-    }
-
+    page: TranscriptPage | null
+  ): void {
     if (
       this.isLive(state) &&
       attempt > state.committedAttempt &&
@@ -396,10 +379,49 @@ export class PagedChatUpdateRefreshCoordinator {
           // This page covers the invalidation that started its read, not any
           // newer notification that arrived while the read was in flight.
           state.committedGeneration = Math.max(state.committedGeneration, generation)
+          // A late success can arrive after its waiter timed out but before
+          // the delayed retry starts. Cancel only that now-redundant retry,
+          // never a newer invalidation's timer or another attempt's deadline.
+          if (
+            state.committedGeneration === state.generation &&
+            !state.inFlight &&
+            state.retryTimer &&
+            state.timer
+          ) {
+            this.clearTimer(state.timer)
+            state.timer = undefined
+            state.retryTimer = false
+          }
         }
       } catch {
         // A renderer state transition may have made the surface disappear.
       }
+    }
+  }
+
+  private async runFetch(
+    state: RefreshState,
+    invalidation: ChatUpdateInvalidation,
+    generation: number,
+    attempt: number,
+    isImmediateRetry: boolean
+  ): Promise<void> {
+    try {
+      const fetch = this.fetchPage({
+        chatId: invalidation.chatId,
+        maxMessages: this.maxMessages,
+        maxBytes: this.maxBytes
+      })
+      // Keep publication attached to the original read. Full-history indexing
+      // can legitimately outlast the waiting bound; discarding every such
+      // page would keep a busy transcript blank despite successful reads.
+      void fetch.then(
+        (page) => this.acceptPage(state, invalidation, generation, attempt, page),
+        () => undefined
+      )
+      await this.withFetchSettleTimeout(fetch)
+    } catch {
+      // Keep the current window; bounded retries also cover a quiet stream.
     }
 
     if (!this.isLive(state)) return

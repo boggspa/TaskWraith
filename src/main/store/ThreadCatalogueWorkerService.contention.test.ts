@@ -2,7 +2,7 @@ import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { build } from 'esbuild'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   ThreadCatalogueRequestError,
@@ -279,6 +279,69 @@ describe('ThreadCatalogueWorkerService request-local contention', () => {
       expect(second.entry.projection.summary.title).toBe('chat revision 2')
       await worker.query({ method: 'release', leaseId: first.leaseId })
       await worker.query({ method: 'release', leaseId: second.leaseId })
+    } finally {
+      await worker.dispose()
+    }
+  })
+
+  it.each(['pages', 'record'] as const)(
+    'retains a shared %s snapshot until its final reader releases it',
+    async (mode) => {
+      const profilePath = fs.mkdtempSync(join(tmpdir(), 'catalogue-shared-snapshot-'))
+      profiles.push(profilePath)
+      writeChat(profilePath, 'chat')
+      const worker = realService(profilePath)
+      // A stream advancing during import prevents publication, but the decoded
+      // snapshot still belongs to every foreground reader that joined the job.
+      vi.spyOn(worker.catalogue, 'publishResolution').mockReturnValue(false)
+      const kind = mode === 'pages' ? 'shell' : 'record'
+      try {
+        const [first, second] = (await Promise.all([
+          worker.query({ method: 'open', chatId: 'chat', mode }),
+          worker.query({ method: 'open', chatId: 'chat', mode })
+        ])) as Array<{ leaseId: string; entry: IndexedThread }>
+        expect(first.entry.snapshot).toBe(true)
+        expect(second.entry.generation).toBe(first.entry.generation)
+        await worker.query({ method: 'release', leaseId: first.leaseId })
+        await expect(
+          worker.query({ method: 'objects', leaseId: second.leaseId, kind })
+        ).resolves.toMatchObject([{ kind: 'inline', value: { appChatId: 'chat' } }])
+        await worker.query({ method: 'release', leaseId: second.leaseId })
+        expect(worker.database.isCommitted(second.entry)).toBe(false)
+      } finally {
+        await worker.dispose()
+      }
+    }
+  )
+
+  it('retains a shared snapshot when another reader expires during a later open', async () => {
+    const profilePath = fs.mkdtempSync(join(tmpdir(), 'catalogue-expired-snapshot-'))
+    profiles.push(profilePath)
+    writeChat(profilePath, 'chat')
+    const worker = realService(profilePath)
+    vi.spyOn(worker.catalogue, 'publishResolution').mockReturnValue(false)
+    try {
+      const [first, second] = (await Promise.all([
+        worker.query({ method: 'open', chatId: 'chat', mode: 'pages' }),
+        worker.query({ method: 'open', chatId: 'chat', mode: 'pages' })
+      ])) as Array<{ leaseId: string; entry: IndexedThread }>
+      const leases = (
+        worker as unknown as { leases: Map<string, { entry: IndexedThread; expires: number }> }
+      ).leases
+      leases.get(first.leaseId)!.expires = Date.now() - 1
+      const third = (await worker.query({
+        method: 'open',
+        chatId: 'chat',
+        mode: 'pages'
+      })) as { leaseId: string; entry: IndexedThread }
+      expect(leases.has(first.leaseId)).toBe(false)
+      await expect(
+        worker.query({ method: 'objects', leaseId: second.leaseId, kind: 'shell' })
+      ).resolves.toMatchObject([{ kind: 'inline', value: { appChatId: 'chat' } }])
+      await worker.query({ method: 'release', leaseId: second.leaseId })
+      expect(worker.database.isCommitted(second.entry)).toBe(false)
+      await worker.query({ method: 'release', leaseId: third.leaseId })
+      expect(worker.database.isCommitted(third.entry)).toBe(false)
     } finally {
       await worker.dispose()
     }

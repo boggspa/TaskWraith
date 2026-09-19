@@ -469,6 +469,88 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     expect(coordinator.stats().behind).toBe(0)
   })
 
+  it('publishes a valid 13-second page once and cancels its now-unnecessary delayed retry', async () => {
+    const flight = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn(() => flight.promise)
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({ debounceMs: 0, fetchPage, commit })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(13_000)
+    expect(coordinator.stats()).toMatchObject({ inFlight: 0, scheduled: 1, overdueFetches: 1 })
+
+    flight.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(coordinator.stats()).toMatchObject({ behind: 0, scheduled: 0 })
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchPage).toHaveBeenCalledOnce()
+    expect(commit).toHaveBeenCalledOnce()
+    coordinator.dispose()
+  })
+
+  it('ignores a post-timeout page after a newer attempt has already published', async () => {
+    const first = deferred<TranscriptPage | null>()
+    const second = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({ debounceMs: 0, fetchPage, commit })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(12_500)
+    coordinator.invalidate(invalidation('chat-a', 2))
+    await vi.advanceTimersByTimeAsync(0)
+    second.resolve(page('chat-a', 2))
+    await flushMicrotasks()
+    await vi.advanceTimersByTimeAsync(500)
+    first.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit.mock.calls[0][0].page.updatedAt).toBe(2)
+    coordinator.dispose()
+  })
+
+  it('ignores a post-timeout page after disposal', async () => {
+    const flight = deferred<TranscriptPage | null>()
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 0,
+      fetchPage: () => flight.promise,
+      commit
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(13_000)
+    coordinator.dispose()
+    flight.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(commit).not.toHaveBeenCalled()
+    expect(coordinator.stats()).toMatchObject({ trackedChats: 0, scheduled: 0 })
+  })
+
+  it('keeps a newer generation queued when a post-timeout page publishes older progress', async () => {
+    const flight = deferred<TranscriptPage | null>()
+    const fetchPage = vi
+      .fn()
+      .mockReturnValueOnce(flight.promise)
+      .mockResolvedValue(page('chat-a', 2))
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 100,
+      fetchPage,
+      commit
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(13_100)
+    coordinator.invalidate(invalidation('chat-a', 2))
+    flight.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(coordinator.stats()).toMatchObject({ scheduled: 1, behind: 1 })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(commit.mock.calls[1][0].page.updatedAt).toBe(2)
+    coordinator.dispose()
+  })
+
   it('clears the deadline on a normal completion, so a later fetch is not released early', async () => {
     const first = deferred<TranscriptPage | null>()
     const second = deferred<TranscriptPage | null>()
@@ -498,10 +580,8 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
   })
 
   it('gives up on a pull whose promise never settles and recovers via the bounded retry', async () => {
-    // Transport pathology: the Host accepts the connection then wedges, the
-    // request frame never answers, and the invoke sits on the transport's own
-    // 30 s timer. Without a settle bound the panel waits out all 30 s and
-    // every retry queues behind the same stuck invoke.
+    // The request never answers. A shorter waiting bound still permits a
+    // retry when the flight-slot deadline is configured longer than the bound.
     let calls = 0
     const commit = vi.fn<(value: PagedChatUpdateRefreshCommit) => void>()
     const coordinator = new PagedChatUpdateRefreshCoordinator({

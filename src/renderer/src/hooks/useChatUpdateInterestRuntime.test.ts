@@ -484,8 +484,114 @@ describe('ChatUpdateInterestRuntime', () => {
     )
   })
 
-  it('retains the latest invalidation while manual scroll blocks refresh and retries at latest', async () => {
-    const initialPage = page('large', 2)
+  it.each(['current', 'pane'] as const)(
+    'keeps a recovered %s transcript advancing without changing manual scroll ownership',
+    async (surface) => {
+      const initial = summary('large', 2_000)
+      const harness = stateHarness([initial], initial)
+      harness.currentAutoFollowRef.current = false
+      const tailPage = (start: number, contents: string[]): TranscriptPage => {
+        const source = page('large', start + contents.length)
+        const messages = contents.map((content, index) => ({
+          ...source.messages[0],
+          id: `large-message-${start + index}`,
+          content
+        }))
+        return {
+          ...source,
+          messages,
+          windowStart: start,
+          oldestMessageId: messages[0].id,
+          newestMessageId: messages[messages.length - 1].id
+        }
+      }
+      const firstPage = tailPage(1_998, ['earlier loaded row', 'stream'])
+      let nextPage = firstPage
+      const fetchPage = vi.fn(async (_request: TranscriptPageRequest) => nextPage)
+      const bridge: ChatUpdateInterestBridge = {
+        onChatUpdateInvalidated: (handler) => {
+          invalidationHandler = handler
+          return () => undefined
+        },
+        setChatUpdateInterests: () => undefined,
+        getChatTranscriptPage: fetchPage
+      }
+      const runtime = new ChatUpdateInterestRuntime(bridge, () => ({
+        ...harness.getState(),
+        ...(surface === 'pane'
+          ? {
+              paneChatIds: ['large'],
+              paneScrollRefs: [{ autoFollowRef: harness.currentAutoFollowRef }]
+            }
+          : {})
+      }))
+      runtime.setPendingSnapshot(
+        createChatUpdateInterestSnapshot([{ chatId: 'large', mode: 'paged' }])
+      )
+      runtime.start()
+
+      // An initial history read failed, leaving no window for scroll intent
+      // to protect. A later invalidation must still recover visible content.
+      invalidationHandler!(buildChatUpdateInvalidation(initial)!)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledOnce()
+      const store = harness.hydrationRuntime.transcriptStore
+      expect(store.get('large')?.messages).toEqual(firstPage.messages)
+      expect(store.isPaged('large')).toBe(true)
+      expect(harness.currentAutoFollowRef.current).toBe(false)
+
+      // Catalogue-only producers send no pushed rows. Successive pulls must
+      // update overlapping text and append rows without dropping the head.
+      nextPage = tailPage(1_999, ['stream continues'])
+      invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_002))!)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledTimes(2)
+      expect(store.get('large')?.messages.map((message) => message.content)).toEqual([
+        'earlier loaded row',
+        'stream continues'
+      ])
+
+      nextPage = tailPage(1_999, ['stream continues', 'next row'])
+      invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_003))!)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledTimes(3)
+      expect(store.get('large')?.messages.map((message) => message.content)).toEqual([
+        'earlier loaded row',
+        'stream continues',
+        'next row'
+      ])
+
+      nextPage = tailPage(2_000, ['next row keeps growing'])
+      invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_004))!)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledTimes(4)
+      expect(store.get('large')?.messages.map((message) => message.content)).toEqual([
+        'earlier loaded row',
+        'stream continues',
+        'next row keeps growing'
+      ])
+      expect(store.get('large')?.messages[0]).toBe(firstPage.messages[0])
+      expect(store.get('large')?.windowStart).toBe(1_998)
+      expect(harness.currentAutoFollowRef.current).toBe(false)
+
+      // Unloaded newer history still defers a tail read. Dropping that window
+      // lets the already-deferred update recover the missing page again.
+      store.ingestPage({ ...firstPage, totalMessageCount: 2_001, hasNewer: true })
+      invalidationHandler!(buildChatUpdateInvalidation(summary('large', 2_005))!)
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledTimes(4)
+      store.drop('large')
+      runtime.retryDeferredPagedInvalidations()
+      await vi.advanceTimersByTimeAsync(50)
+      expect(fetchPage).toHaveBeenCalledTimes(5)
+      expect(store.get('large')?.messages).toEqual(nextPage.messages)
+      expect(harness.currentAutoFollowRef.current).toBe(false)
+      runtime.stop()
+    }
+  )
+
+  it('retains the latest invalidation while reading unloaded history and retries at latest', async () => {
+    const initialPage = { ...page('large', 2), totalMessageCount: 3, hasNewer: true }
     const shell = initialPage.shell!
     const harness = stateHarness([shell], shell)
     harness.hydrationRuntime.transcriptStore.ingestPage(initialPage)
@@ -509,6 +615,11 @@ describe('ChatUpdateInterestRuntime', () => {
     expect(fetchPage).not.toHaveBeenCalled()
 
     harness.currentAutoFollowRef.current = true
+    runtime.retryDeferredPagedInvalidations()
+    await vi.advanceTimersByTimeAsync(50)
+    expect(fetchPage).not.toHaveBeenCalled()
+
+    harness.hydrationRuntime.transcriptStore.ingestPage(page('large', 2))
     runtime.retryDeferredPagedInvalidations()
     await vi.advanceTimersByTimeAsync(50)
     expect(fetchPage).toHaveBeenCalledOnce()

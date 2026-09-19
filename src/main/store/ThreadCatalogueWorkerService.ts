@@ -671,16 +671,28 @@ export class ThreadCatalogueWorkerService {
     })
   }
 
+  private releaseSnapshot(entry: IndexedThread): void {
+    if (
+      !entry.snapshot ||
+      [...this.leases.values()].some(
+        (lease) =>
+          lease.entry.chatId === entry.chatId && lease.entry.generation === entry.generation
+      )
+    )
+      return
+    // Concurrent opens join one import, including its unpublished snapshot.
+    // Releasing one reader must not delete objects still leased by another.
+    this.database.abandonGeneration(entry)
+    this.viewContexts.delete(entry.generation)
+  }
+
   private prune(chatId: string): void {
     const affected = new Set([chatId])
     for (const [id, lease] of this.leases) {
       if (lease.expires >= Date.now()) continue
       this.leases.delete(id)
       affected.add(lease.entry.chatId)
-      if (lease.entry.snapshot) {
-        this.database.abandonGeneration(lease.entry)
-        this.viewContexts.delete(lease.entry.generation)
-      }
+      this.releaseSnapshot(lease.entry)
     }
     for (const id of affected) {
       const pins = [...this.leases.values()]
@@ -834,10 +846,7 @@ export class ThreadCatalogueWorkerService {
         const lease = this.leases.get(query.leaseId)
         this.leases.delete(query.leaseId)
         if (lease) {
-          if (lease.entry.snapshot) {
-            this.database.abandonGeneration(lease.entry)
-            this.viewContexts.delete(lease.entry.generation)
-          }
+          this.releaseSnapshot(lease.entry)
           this.prune(lease.entry.chatId)
         }
         return true

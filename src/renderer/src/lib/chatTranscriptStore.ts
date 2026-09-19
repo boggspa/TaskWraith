@@ -287,6 +287,82 @@ export class ChatTranscriptStore {
     return this.accumulatePage(chatId, entry, page, 'newer')
   }
 
+  /** Refresh a loaded tail without moving a reader who disabled automatic scrolling. */
+  refreshChatTranscriptTailPage(page: TranscriptPage): ChatTranscriptPayload | null {
+    const entry = this.byId.get(page.chatId)
+    if (!entry?.paged || entry.payload.hasNewer) return null
+    const current = entry.payload
+    if (
+      page.windowEnd < current.windowEnd ||
+      page.totalMessageCount < current.totalMessageCount ||
+      page.windowEnd - page.windowStart !== page.messages.length
+    ) {
+      return null
+    }
+
+    let messages = current.messages
+    let estimatedBytes = current.windowEstimatedBytes
+    for (let index = 0; index < page.messages.length; index += 1) {
+      const offset = page.windowStart + index - current.windowStart
+      if (offset < 0 || offset >= current.messages.length) continue
+      const previous = current.messages[offset]
+      const incoming = page.messages[index]
+      // Validate the whole overlap before publishing. IDs may repeat at
+      // different ordinals, so global ID deduplication would lose real rows.
+      if (previous.id !== incoming.id || isTranscriptRowPrefixRegression(previous, incoming)) {
+        return null
+      }
+      if (previous === incoming) continue
+      if (messages === current.messages) messages = current.messages.slice()
+      messages[offset] = incoming
+      estimatedBytes += estimateChatMessageBytes(incoming) - estimateChatMessageBytes(previous)
+    }
+
+    // A missed stretch must never replace the reader's window or join
+    // disjoint history. The larger count below advertises a newer page.
+    if (page.windowStart <= current.windowEnd) {
+      const maxMessages = this.maxMessagesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+      const maxBytes = this.maxBytesPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+      for (
+        let index = current.windowEnd - page.windowStart;
+        index < page.messages.length;
+        index += 1
+      ) {
+        const incoming = page.messages[index]
+        const size = estimateChatMessageBytes(incoming)
+        if (
+          messages.length >= maxMessages ||
+          (messages.length > 0 && estimatedBytes + size > maxBytes)
+        ) {
+          break
+        }
+        if (messages === current.messages) messages = current.messages.slice()
+        messages.push(incoming)
+        estimatedBytes += size
+      }
+    }
+
+    // Existing rows remain installed even when their text grows beyond the
+    // budget. Only new rows are bounded; evicting loaded rows would move the
+    // manual viewport. A full window exposes the normal newer-page controls.
+    const windowEnd = current.windowStart + messages.length
+    const totalMessageCount = Math.max(current.totalMessageCount, page.totalMessageCount, windowEnd)
+    return this.installPagedWindow(page.chatId, {
+      ...current,
+      messages,
+      runs: selectTranscriptPageRuns(
+        mergeRunsById(current.runs, page.runs),
+        messages,
+        this.maxRunsPerPage * ACCUMULATED_WINDOW_PAGE_BUDGET
+      ),
+      updatedAt: Math.max(current.updatedAt, page.updatedAt),
+      totalMessageCount,
+      windowEnd,
+      windowEstimatedBytes: Math.max(0, estimatedBytes),
+      hasNewer: windowEnd < totalMessageCount
+    })
+  }
+
   /**
    * Recency guard for the pushed tail lane. Records the frame's sequence as
    * the newest this chat's window has seen and reports whether the frame was
