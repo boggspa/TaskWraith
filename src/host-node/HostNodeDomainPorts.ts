@@ -110,6 +110,7 @@ function resolveQueuedStartLifecycle(
   if (options.queuedStartLifecycle) return options.queuedStartLifecycle
   const factory = options.createQueuedStartLifecycle ?? createHostNodeQueuedStartLifecycle
   return factory({
+    ...(options.queuedStartOnStarting ? { onStarting: options.queuedStartOnStarting } : {}),
     ...(options.queuedStartOnStarted ? { onStarted: options.queuedStartOnStarted } : {})
   })
 }
@@ -208,9 +209,13 @@ export interface HostNodeDomainPortsOptions {
     options?: HostQueuedStartLifecycleOptions
   ) => HostQueuedStartLifecycle
   /**
-   * Production short-start publication hook. Passed into the default factory
-   * as `onStarted`. Ignored when an injected lifecycle instance is used, and
-   * ignored while the gate is off.
+   * Phase hook after the durable execution claim succeeds, before provider
+   * side effects. Passed into the default lifecycle factory only while on.
+   */
+  readonly queuedStartOnStarting?: HostQueuedStartLifecycleOptions['onStarting']
+  /**
+   * Durable beginRun witness hook. It remains witness-only because beginRun
+   * precedes persistence of the user prompt.
    */
   readonly queuedStartOnStarted?: HostQueuedStartLifecycleOptions['onStarted']
   /**

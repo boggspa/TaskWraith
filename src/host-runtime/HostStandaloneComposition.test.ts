@@ -6,8 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type { WorkSpanAggregates } from '../host-shared/perf/WorkSpanRecorder'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import { createHostPerfInstrumentation } from './HostPerfSnapshot'
 import type { HostPerfSnapshotFileFs, HostPerfSnapshotFileTimers } from './HostPerfSnapshotFile'
+import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import {
   createHostStandaloneComposition,
   HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS
@@ -85,6 +87,53 @@ function input(runtimePath: string, lease: { assertHeld(): void }) {
 }
 
 describe('HostStandaloneComposition', () => {
+  it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-phases-'))
+    paths.push(runtimePath)
+    let startingHandler: ((view: HostQueuedStartStartedView) => void) | undefined
+    let startedHandler: ((view: HostQueuedStartStartedView) => void) | undefined
+    let settledHandler:
+      | ((commandId: string, result: HostCommandExecutionResult) => void)
+      | undefined
+    const queuedStartStartingBind = vi.fn((handler: (view: HostQueuedStartStartedView) => void) => {
+      startingHandler = handler
+    })
+    const queuedStartStartedBind = vi.fn((handler: (view: HostQueuedStartStartedView) => void) => {
+      startedHandler = handler
+    })
+    const queuedStartDispatchSettledBind = vi.fn(
+      (handler: (commandId: string, result: HostCommandExecutionResult) => void) => {
+        settledHandler = handler
+      }
+    )
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      queuedComposerSend: () => ({ status: 'succeeded', resultSummary: 'run_queued' }),
+      queuedStartStartingBind,
+      queuedStartStartedBind,
+      queuedStartDispatchSettledBind
+    })
+    try {
+      expect(queuedStartStartingBind).toHaveBeenCalledOnce()
+      expect(queuedStartStartedBind).toHaveBeenCalledOnce()
+      expect(queuedStartDispatchSettledBind).toHaveBeenCalledOnce()
+      const base = {
+        commandId: 'unregistered',
+        threadId: 'thread-1',
+        fingerprint: 'fp',
+        startedEvidence: false,
+        terminalOutcome: null
+      }
+      expect(() => startingHandler?.({ ...base, phase: 'starting' })).not.toThrow()
+      expect(() =>
+        startedHandler?.({ ...base, phase: 'started', startedEvidence: true })
+      ).not.toThrow()
+      expect(() => settledHandler?.('unregistered', { status: 'succeeded' })).not.toThrow()
+    } finally {
+      await composition.shutdown()
+    }
+  })
+
   it('can cancel a run while another command is waiting for start capacity', async () => {
     const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-cancel-'))
     paths.push(runtimePath)

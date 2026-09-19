@@ -275,6 +275,12 @@ export type HostQueuedStartReopenOutcome =
 export interface HostQueuedStartLifecycleOptions {
   readonly executionClaimStore?: HostQueuedStartExecutionClaimStore
   /**
+   * Phase publication after the durable execution claim succeeds and the
+   * reservation enters starting, before provider side effects. Exactly once
+   * because only the winning claim can cross this transition.
+   */
+  readonly onStarting?: (reservation: HostQueuedStartReservationView) => void
+  /**
    * Short start publication (M2 slice 2), notified EXACTLY ONCE per
    * reservation at the moment `markStarted` records the durable-start
    * witness — independently of the terminal outcome, which may arrive much
@@ -581,6 +587,13 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
           return refuse('host_shutting_down')
         }
         record.phase = 'starting'
+        if (options.onStarting) {
+          try {
+            options.onStarting(record.view)
+          } catch {
+            callbackErrors += 1
+          }
+        }
         return { kind: 'claimed', leaseCustody: 'lifecycle', reservation: record.view }
       } catch {
         claimRecordFailures += 1

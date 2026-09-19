@@ -24,14 +24,19 @@
  * (out of this grant). `onStarted` never succeeds a receipt and never
  * mints a second one.
  *
- * Residuals (not this slice): `HostCommandReceiptStore` / Projection do not
- * carry `phase`; `openHostNodeQueuedStartExecutionClaimStore` has no
- * production caller; HostMainComposition (in-main desktop) is not wired —
+ * Receipt phase is stored/projected by HostCommandReceiptStore and advanced
+ * here without changing receipt status. `openHostNodeQueuedStartExecutionClaimStore`
+ * still has no production caller; HostMainComposition (in-main desktop) is not wired —
  * standalone HostNodeProductionServer is the production short-start route.
  * Flag default remains OFF.
  */
 
-import type { HostCommand, HostCursorPosition, HostDeltaFamily } from '../shared/hostProtocol'
+import type {
+  HostCommand,
+  HostCursorPosition,
+  HostDeltaFamily,
+  HostQueuedStartPhase
+} from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type {
@@ -40,6 +45,7 @@ import type {
   HostCommandReceiptLookupResult,
   HostCommandReceiptMarkIndeterminateInput,
   HostCommandReceiptMarkIndeterminateResult,
+  HostCommandReceiptPhaseUpdateResult,
   HostCommandReceiptRecord
 } from './HostCommandReceiptStore'
 import type {
@@ -79,6 +85,10 @@ export interface HostQueuedStartPublicationPorts {
   readonly markIndeterminate: (
     input: HostCommandReceiptMarkIndeterminateInput
   ) => HostCommandReceiptMarkIndeterminateResult
+  readonly updateReceiptPhase: (
+    commandId: string,
+    phase: HostQueuedStartPhase
+  ) => HostCommandReceiptPhaseUpdateResult
   readonly readScopedFamilies: (
     scope: HostMutationObservationScope
   ) => HostMutationObservationFamilies | Promise<HostMutationObservationFamilies>
@@ -93,6 +103,8 @@ export interface HostQueuedStartPublicationPorts {
 export type HostQueuedStartPublicationOutcome =
   | { readonly kind: 'registered' }
   | { readonly kind: 'queued' }
+  | { readonly kind: 'starting' }
+  | { readonly kind: 'started' }
   | { readonly kind: 'succeeded' }
   | { readonly kind: 'failed' }
   | { readonly kind: 'indeterminate'; readonly errorCode: string }
@@ -244,19 +256,28 @@ export function provesQueuedStartEffects(
 }
 
 export function createHostQueuedStartStartedSlot(): {
+  dispatchStarting(view: HostQueuedStartStartedView): void
   dispatch(view: HostQueuedStartStartedView): void
   dispatchSettled(commandId: string, result: HostCommandExecutionResult): void
+  bindStarting(handler: (view: HostQueuedStartStartedView) => void): void
   bind(handler: (view: HostQueuedStartStartedView) => void): void
   bindSettled(handler: (commandId: string, result: HostCommandExecutionResult) => void): void
 } {
+  let onStarting: ((view: HostQueuedStartStartedView) => void) | null = null
   let onStarted: ((view: HostQueuedStartStartedView) => void) | null = null
   let onSettled: ((commandId: string, result: HostCommandExecutionResult) => void) | null = null
   return {
+    dispatchStarting(view) {
+      onStarting?.(view)
+    },
     dispatch(view) {
       onStarted?.(view)
     },
     dispatchSettled(commandId, result) {
       onSettled?.(commandId, result)
+    },
+    bindStarting(next) {
+      onStarting = next
     },
     bind(next) {
       onStarted = next
@@ -269,6 +290,8 @@ export function createHostQueuedStartStartedSlot(): {
 
 export function createHostQueuedStartPublication(ports: HostQueuedStartPublicationPorts): {
   register(input: HostQueuedStartPublicationRegisterInput): HostQueuedStartPublicationOutcome
+  markQueued(commandId: string): HostQueuedStartPublicationOutcome
+  onStarting(view: HostQueuedStartStartedView): HostQueuedStartPublicationOutcome
   onStarted(view: HostQueuedStartStartedView): void
   completeStart(commandId: string): void
   abort(commandId: string): void
@@ -334,6 +357,47 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
     return true
   }
 
+  function advancePhase(
+    input: HostQueuedStartPublicationRegisterInput,
+    phase: HostQueuedStartPhase
+  ): HostQueuedStartPublicationOutcome {
+    if (!stillPending(input.commandId, input.actor, input.fingerprint)) {
+      return { kind: 'ignored', reason: 'receipt_not_pending' }
+    }
+    let result: HostCommandReceiptPhaseUpdateResult
+    try {
+      result = ports.updateReceiptPhase(input.commandId, phase)
+    } catch {
+      promote(input.commandId, 'deferred_execution_may_have_begun')
+      return { kind: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
+    }
+    if (result.kind === 'updated' || result.kind === 'unchanged') {
+      if (phase === 'queued') return { kind: 'queued' }
+      if (phase === 'starting') return { kind: 'starting' }
+      return { kind: 'started' }
+    }
+    if (result.kind === 'status_refused') {
+      pending.delete(input.commandId)
+      return { kind: 'ignored', reason: `receipt_${result.status}` }
+    }
+    promote(input.commandId, 'deferred_execution_may_have_begun')
+    return { kind: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
+  }
+
+  function phaseViewMatches(
+    input: HostQueuedStartPublicationRegisterInput,
+    view: HostQueuedStartStartedView,
+    phase: HostQueuedStartPhase
+  ): boolean {
+    return (
+      view.commandId === input.commandId &&
+      view.threadId === input.command.target.threadId &&
+      view.fingerprint === input.fingerprint &&
+      view.phase === phase &&
+      view.terminalOutcome === null
+    )
+  }
+
   async function publishComplete(input: HostQueuedStartPublicationRegisterInput): Promise<void> {
     if (!stillPending(input.commandId, input.actor, input.fingerprint)) return
     await runQueue(async () => {
@@ -395,18 +459,35 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
       pending.set(input.commandId, input)
       return { kind: 'registered' }
     },
+    markQueued(commandId) {
+      const input = pending.get(commandId)
+      if (!input) return { kind: 'ignored', reason: 'unregistered_command' }
+      return advancePhase(input, 'queued')
+    },
+    onStarting(view) {
+      const input = pending.get(view.commandId)
+      if (!input) return { kind: 'ignored', reason: 'unregistered_command' }
+      if (!phaseViewMatches(input, view, 'starting')) {
+        promote(input.commandId, 'deferred_execution_may_have_begun')
+        return { kind: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
+      }
+      return advancePhase(input, 'starting')
+    },
     onStarted(view) {
-      // Witness only. Completing here races providers that append the user
-      // prompt after beginRun; dispatch-settled after persist is the gate.
+      // Witness only. Completing or advancing phase here races providers that
+      // append the user prompt after beginRun; dispatch-settled after persist
+      // is the gate for the started phase and terminal success.
       const input = pending.get(view.commandId)
       if (!input) return
-      if (view.fingerprint !== input.fingerprint) {
+      if (!phaseViewMatches(input, view, 'started')) {
         promote(input.commandId, 'deferred_execution_may_have_begun')
       }
     },
     completeStart(commandId) {
       const input = pending.get(commandId)
       if (!input || inFlight.has(commandId)) return
+      const phase = advancePhase(input, 'started')
+      if (phase.kind !== 'started') return
       track(commandId, publishComplete(input))
     },
     abort(commandId) {

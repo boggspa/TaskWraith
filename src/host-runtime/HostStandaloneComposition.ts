@@ -119,6 +119,7 @@ export interface HostStandaloneCompositionInput {
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
   readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
+  readonly queuedStartStartingBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
   readonly queuedStartStartedBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
   readonly queuedStartDispatchSettledBind?: (
     handler: (
@@ -362,6 +363,9 @@ export function createHostStandaloneComposition(
     }
   })
   drainQueuedStartPublication = () => authority.drainQueuedStartPublication()
+  input.queuedStartStartingBind?.((view) => {
+    authority.handleQueuedStartStarting(view)
+  })
   input.queuedStartStartedBind?.((view) => {
     authority.handleQueuedStartStarted(view)
   })

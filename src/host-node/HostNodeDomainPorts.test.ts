@@ -3855,6 +3855,7 @@ describe('HostNodeDomainPorts', () => {
       expect(src).toMatch(/queuedStartLifecycle\.cancel\(/)
       expect(src).toContain('fingerprintHostCommand')
       expect(src).toContain('acknowledgeQueuedComposerSend')
+      expect(src).toContain('queuedStartOnStarting')
       expect(src).toContain('queuedStartOnStarted')
       const ctorStart = src.indexOf('this.runPort = new HostNodeProfileRunPort')
       const ctor = src.slice(ctorStart, src.indexOf('this.interactions', ctorStart))
@@ -3916,6 +3917,10 @@ describe('HostNodeDomainPorts', () => {
           postureConsent: true
         })
       }
+      const startingPhases: Array<{ commandId: string; phase: string }> = []
+      const onStarting = vi.fn((view: { commandId: string; phase: string }) => {
+        startingPhases.push({ commandId: view.commandId, phase: view.phase })
+      })
       const onStarted = vi.fn()
       const domain = new HostNodeDomainPorts({
         ...domainOptions,
@@ -3923,6 +3928,7 @@ describe('HostNodeDomainPorts', () => {
         maxQueuedStarts: 1,
         shutdownTimeoutMs: 1_000,
         hostQueuedStartEnabled: true,
+        queuedStartOnStarting: onStarting,
         queuedStartOnStarted: onStarted
       })
       await expect(
@@ -3937,6 +3943,10 @@ describe('HostNodeDomainPorts', () => {
           { id: 'target' }
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(startingPhases).toContainEqual({
+        commandId: 'run-held-capacity',
+        phase: 'starting'
+      })
       const ackStarted = Date.now()
       await expect(
         domain.acknowledgeQueuedComposerSend(
@@ -3951,7 +3961,15 @@ describe('HostNodeDomainPorts', () => {
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
       expect(Date.now() - ackStarted).toBeLessThan(250)
+      expect(startingPhases.some(({ commandId }) => commandId === 'run-queued-ack')).toBe(false)
       releaseRun()
+      await vi.waitFor(() =>
+        expect(
+          startingPhases.some(
+            ({ commandId, phase }) => commandId === 'run-queued-ack' && phase === 'starting'
+          )
+        ).toBe(true)
+      )
       await domain.shutdown()
     })
 

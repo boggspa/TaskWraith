@@ -3,12 +3,18 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
+import {
+  HOST_PROTOCOL_VERSION,
+  HOST_QUEUED_START_PHASES,
+  type HostCommand,
+  type HostQueuedStartPhase
+} from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDomainDeltaPublisher'
 import type {
   HostCommandReceiptActor,
   HostCommandReceiptLookupResult,
+  HostCommandReceiptPhaseUpdateResult,
   HostCommandReceiptRecord
 } from './HostCommandReceiptStore'
 import type { HostMutationObservationFamilies } from './HostMutationObservationScope'
@@ -255,6 +261,7 @@ describe('createHostQueuedStartPublication', () => {
   }) {
     const completes: string[] = []
     const indeterminates: string[] = []
+    const phaseUpdates: HostQueuedStartPhase[] = []
     const published: HostDomainEffectDto[][] = []
     let releaseQueue!: () => void
     const queueGate = options?.holdQueue
@@ -262,22 +269,60 @@ describe('createHostQueuedStartPublication', () => {
           releaseQueue = resolve
         })
       : Promise.resolve()
-    const receipt =
+    let receiptState: HostCommandReceiptLookupResult =
       options?.receipt ?? ({ kind: 'found', receipt: pendingReceipt('cmd-1', 'fp-1') } as const)
     let afterState = options?.after ?? startedAfter()
     const ports = {
-      getReceipt: vi.fn((): HostCommandReceiptLookupResult => receipt),
+      getReceipt: vi.fn((): HostCommandReceiptLookupResult => receiptState),
       completeReceipt: vi.fn((input: { commandId: string }) => {
         completes.push(input.commandId)
-        return {
+        const completed = {
           ...pendingReceipt(input.commandId, 'fp-1'),
+          ...(receiptState.kind === 'found' ? receiptState.receipt : {}),
           status: 'succeeded'
         } as HostCommandReceiptRecord
+        receiptState = { kind: 'found', receipt: completed }
+        return completed
       }),
       markIndeterminate: vi.fn((input: { commandId: string; errorCode: string }) => {
         indeterminates.push(input.errorCode)
-        return { kind: 'marked' as const, receipt: pendingReceipt(input.commandId, 'fp-1') }
+        const receipt = {
+          ...pendingReceipt(input.commandId, 'fp-1'),
+          ...(receiptState.kind === 'found' ? receiptState.receipt : {}),
+          status: 'indeterminate'
+        } as HostCommandReceiptRecord
+        receiptState = { kind: 'found', receipt }
+        return { kind: 'marked' as const, receipt }
       }),
+      updateReceiptPhase: vi.fn(
+        (commandId: string, phase: HostQueuedStartPhase): HostCommandReceiptPhaseUpdateResult => {
+          if (receiptState.kind !== 'found' || receiptState.receipt.commandId !== commandId) {
+            return { kind: 'not_found' }
+          }
+          const current = receiptState.receipt
+          if (current.status !== 'pending') {
+            return { kind: 'status_refused', status: current.status }
+          }
+          if (current.phase === phase) {
+            return { kind: 'unchanged', receipt: current }
+          }
+          if (
+            current.phase !== undefined &&
+            HOST_QUEUED_START_PHASES.indexOf(phase) <
+              HOST_QUEUED_START_PHASES.indexOf(current.phase)
+          ) {
+            return {
+              kind: 'regression_refused',
+              currentPhase: current.phase,
+              requestedPhase: phase
+            }
+          }
+          const receipt = { ...current, phase }
+          receiptState = { kind: 'found', receipt }
+          phaseUpdates.push(phase)
+          return { kind: 'updated', receipt }
+        }
+      ),
       readScopedFamilies: vi.fn(async () => afterState),
       publishEffects: vi.fn(
         (effects: readonly HostDomainEffectDto[]): HostDomainDeltaPublishResult => {
@@ -326,6 +371,7 @@ describe('createHostQueuedStartPublication', () => {
       publication,
       completes,
       indeterminates,
+      phaseUpdates,
       published,
       releaseQueue,
       scope,
@@ -335,14 +381,56 @@ describe('createHostQueuedStartPublication', () => {
     }
   }
 
-  it('does not succeed a receipt from onStarted (beginRun is before user-prompt persist)', async () => {
-    const { publication, completes, published, ports } = setup()
+  it('keeps onStarted witness-only and advances started only after dispatch settlement', async () => {
+    const { publication, completes, phaseUpdates, published, ports } = setup()
+    expect(publication.markQueued('cmd-1')).toEqual({ kind: 'queued' })
+    expect(
+      publication.onStarting(
+        startedView('cmd-1', 'fp-1', { phase: 'starting', startedEvidence: false })
+      )
+    ).toEqual({ kind: 'starting' })
     publication.onStarted(startedView('cmd-1', 'fp-1'))
     await publication.drain()
+    expect(phaseUpdates).toEqual(['queued', 'starting'])
     expect(completes).toEqual([])
     expect(published).toEqual([])
     expect(ports.publishEffects).not.toHaveBeenCalled()
     expect(publication.pendingCount()).toBe(1)
+
+    publication.completeStart('cmd-1')
+    await publication.drain()
+    expect(phaseUpdates).toEqual(['queued', 'starting', 'started'])
+    expect(completes).toEqual(['cmd-1'])
+  })
+
+  it('makes duplicate queued/starting phase evidence idempotent without extra writes', () => {
+    const { publication, phaseUpdates, ports } = setup()
+    expect(publication.markQueued('cmd-1')).toEqual({ kind: 'queued' })
+    expect(publication.markQueued('cmd-1')).toEqual({ kind: 'queued' })
+    const starting = startedView('cmd-1', 'fp-1', {
+      phase: 'starting',
+      startedEvidence: false
+    })
+    expect(publication.onStarting(starting)).toEqual({ kind: 'starting' })
+    expect(publication.onStarting(starting)).toEqual({ kind: 'starting' })
+    expect(phaseUpdates).toEqual(['queued', 'starting'])
+    expect(ports.updateReceiptPhase).toHaveBeenCalledTimes(4)
+  })
+
+  it('fails closed when starting evidence does not match the original registration', () => {
+    const { publication, indeterminates, phaseUpdates } = setup()
+    expect(publication.markQueued('cmd-1')).toEqual({ kind: 'queued' })
+    expect(
+      publication.onStarting(
+        startedView('cmd-1', 'wrong-fingerprint', {
+          phase: 'starting',
+          startedEvidence: false
+        })
+      )
+    ).toMatchObject({ kind: 'indeterminate' })
+    expect(phaseUpdates).toEqual(['queued'])
+    expect(indeterminates).toContain('deferred_execution_may_have_begun')
+    expect(publication.pendingCount()).toBe(0)
   })
 
   it('completes the ORIGINAL receipt after persist-settled completeStart without attributing a concurrent mission or other run', async () => {
@@ -502,11 +590,18 @@ describe('createHostQueuedStartPublication', () => {
 })
 
 describe('residuals', () => {
-  it('does not claim phase is on the wire (store/projector residual)', () => {
+  it('uses the reviewed receipt-phase foundation without advancing from onStarted', () => {
     const store = readFileSync(join(__dirname, 'HostCommandReceiptStore.ts'), 'utf8')
     const projection = readFileSync(join(__dirname, 'HostCommandReceiptProjection.ts'), 'utf8')
-    expect(store).not.toMatch(/\bphase\b/)
-    expect(projection).not.toMatch(/candidate\.phase|phase: record\.phase/)
+    const publication = readFileSync(join(__dirname, 'HostQueuedStartPublication.ts'), 'utf8')
+    expect(store).toContain('updatePhase(')
+    expect(projection).toContain('candidate.phase = record.phase')
+    const onStarted = publication.slice(
+      publication.indexOf('onStarted(view)'),
+      publication.indexOf('completeStart(commandId)')
+    )
+    expect(onStarted).not.toContain("advancePhase(input, 'started')")
+    expect(publication).toContain("const phase = advancePhase(input, 'started')")
   })
 
   it('does not emit family channel; publisher still omits it (out-of-grant residual)', () => {
@@ -534,18 +629,28 @@ describe('residuals', () => {
 })
 
 describe('createHostQueuedStartStartedSlot', () => {
-  it('delivers started and settled handlers independently', () => {
+  it('delivers starting, started, and settled handlers independently', () => {
     const slot = createHostQueuedStartStartedSlot()
+    const starting = vi.fn()
     const started = vi.fn()
     const settled = vi.fn()
+    const startingView = startedView('cmd-1', 'fp-1', {
+      phase: 'starting',
+      startedEvidence: false
+    })
+    slot.dispatchStarting(startingView)
     slot.dispatch(startedView('cmd-1', 'fp-1'))
     slot.dispatchSettled('cmd-1', { status: 'succeeded' })
+    expect(starting).not.toHaveBeenCalled()
     expect(started).not.toHaveBeenCalled()
     expect(settled).not.toHaveBeenCalled()
+    slot.bindStarting(starting)
     slot.bind(started)
     slot.bindSettled(settled)
+    slot.dispatchStarting(startingView)
     slot.dispatch(startedView('cmd-1', 'fp-1'))
     slot.dispatchSettled('cmd-1', { status: 'failed', errorCode: 'host_saturated' })
+    expect(starting).toHaveBeenCalledWith(startingView)
     expect(started).toHaveBeenCalledTimes(1)
     expect(settled).toHaveBeenCalledWith('cmd-1', {
       status: 'failed',

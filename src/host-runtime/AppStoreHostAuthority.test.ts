@@ -1740,6 +1740,7 @@ describe('AppStoreHostAuthority', () => {
       releaseAck = () => resolve({ status: 'succeeded', resultSummary: 'run_queued' })
     })
     let queueHeld = false
+    const queuedComposerSend = vi.fn(() => hungAck)
     const authority = open({
       ports: {
         runProjectionOperation: async (operation) => {
@@ -1749,7 +1750,7 @@ describe('AppStoreHostAuthority', () => {
         commandExecutor: () => {
           throw new Error('legacy observed executor must not run for queued composer.send')
         },
-        queuedComposerSend: () => hungAck
+        queuedComposerSend
       }
     })
     const send = makeCommand({
@@ -1768,7 +1769,7 @@ describe('AppStoreHostAuthority', () => {
     const result = await commandPromise
     expect(result).toMatchObject({
       ok: true,
-      value: { commandId: send.commandId, status: 'pending' }
+      value: { commandId: send.commandId, status: 'pending', phase: 'queued' }
     })
     expect(
       runtime.receiptStore.getByCommandId(send.commandId, {
@@ -1776,7 +1777,14 @@ describe('AppStoreHostAuthority', () => {
         clientId: ACTOR_A.clientId,
         clientClass: ACTOR_A.clientClass
       })
-    ).toMatchObject({ kind: 'found', receipt: { status: 'pending' } })
+    ).toMatchObject({ kind: 'found', receipt: { status: 'pending', phase: 'queued' } })
+
+    await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toMatchObject({
+      ok: true,
+      value: { commandId: send.commandId, status: 'pending', phase: 'queued' }
+    })
+    expect(queuedComposerSend).toHaveBeenCalledTimes(1)
+    expect(runtime.receiptStore.size).toBe(1)
   })
 
   it('settles the original receipt when the snapshot donor throws before ACK', async () => {
@@ -1972,8 +1980,45 @@ describe('AppStoreHostAuthority', () => {
     })
     await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toMatchObject({
       ok: true,
-      value: { status: 'pending' }
+      value: { status: 'pending', phase: 'queued' }
     })
+    const fingerprint = fingerprintHostCommand(send).fingerprint
+    authority.handleQueuedStartStarting({
+      commandId: send.commandId,
+      threadId: 'thread-1',
+      fingerprint,
+      phase: 'starting',
+      startedEvidence: false,
+      terminalOutcome: null
+    })
+    let phased = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(phased).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'pending', phase: 'starting' }
+    })
+    authority.handleQueuedStartStarted({
+      commandId: send.commandId,
+      threadId: 'thread-1',
+      fingerprint,
+      phase: 'started',
+      startedEvidence: true,
+      terminalOutcome: null
+    })
+    phased = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    // beginRun/onStarted is still too early: user-prompt persistence is not proven.
+    expect(phased).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'pending', phase: 'starting' }
+    })
+
     const positionBefore = runtime.getPosition()
     authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
     await Promise.resolve()
@@ -1986,7 +2031,10 @@ describe('AppStoreHostAuthority', () => {
       clientId: ACTOR_A.clientId,
       clientClass: ACTOR_A.clientClass
     })
-    expect(found).toMatchObject({ kind: 'found', receipt: { status: 'succeeded' } })
+    expect(found).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'succeeded', phase: 'started' }
+    })
     expect(runtime.getPosition().cursor).toBeGreaterThan(positionBefore.cursor)
   })
 
@@ -2100,6 +2148,7 @@ describe('AppStoreHostAuthority', () => {
     })
     const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), send)
     expect(result).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+    expect(result).not.toHaveProperty('value.phase')
     expect(executorCalls).toBe(1)
   })
 })

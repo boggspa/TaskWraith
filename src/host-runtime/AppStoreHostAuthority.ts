@@ -541,6 +541,8 @@ export class AppStoreHostAuthority implements HostAuthority {
             this.runtime.receiptStore.getByCommandId(commandId, actor),
           completeReceipt: (input) => this.runtime.receiptStore.complete(input),
           markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input),
+          updateReceiptPhase: (commandId, phase) =>
+            this.runtime.receiptStore.updatePhase(commandId, phase),
           readScopedFamilies: async (scope) => {
             const donor = await this.readMutationSnapshotDonor()
             return scopeHostMutationObservationFamilies(donor, scope)
@@ -1072,6 +1074,11 @@ export class AppStoreHostAuthority implements HostAuthority {
     return command?.name === 'composer.send' && this.queuedStartPublication !== null
   }
 
+  /** Durable-claim transition, bound by composition before provider side effects. */
+  handleQueuedStartStarting(view: HostQueuedStartStartedView): void {
+    this.queuedStartPublication?.onStarting(view)
+  }
+
   /**
    * Lifecycle onStarted entry. Bound by composition through the started slot.
    * Witness only — never succeeds a receipt (beginRun is before user-prompt persist).
@@ -1136,9 +1143,31 @@ export class AppStoreHostAuthority implements HostAuthority {
       scope
     }
     publication.register(registerInput)
+    let acknowledgement: Promise<AppStoreHostAuthorityExecutorResult>
+    try {
+      // Invoke the ACK path before persisting queued, but do not await it:
+      // queued must land before the off-stack dispatch can publish starting.
+      acknowledgement = Promise.resolve(acknowledge(hostCommand, context))
+    } catch {
+      publication.abort(hostCommand.commandId)
+      return { ok: false, error: 'host_unavailable' }
+    }
+
+    const queued = publication.markQueued(hostCommand.commandId)
+    if (queued.kind !== 'queued') {
+      try {
+        await acknowledgement
+      } catch {
+        // The phase failure already fenced the original receipt.
+      }
+      const settled = this.runtime.receiptStore.getByCommandId(hostCommand.commandId, actor)
+      if (settled.kind !== 'found') return { ok: false, error: 'host_unavailable' }
+      return projectFoundReceipt(settled.receipt)
+    }
+
     let ack: AppStoreHostAuthorityExecutorResult
     try {
-      ack = await acknowledge(hostCommand, context)
+      ack = await acknowledgement
     } catch {
       // Dispatch may already have been scheduled; do not certify "no execution".
       publication.abort(hostCommand.commandId)
@@ -1150,7 +1179,9 @@ export class AppStoreHostAuthority implements HostAuthority {
       if (settled.kind !== 'found') return { ok: false, error: 'host_unavailable' }
       return projectFoundReceipt(settled.receipt)
     }
-    return projectFoundReceipt(found.receipt)
+    const current = this.runtime.receiptStore.getByCommandId(hostCommand.commandId, actor)
+    if (current.kind !== 'found') return { ok: false, error: 'host_unavailable' }
+    return projectFoundReceipt(current.receipt)
   }
 
   /**

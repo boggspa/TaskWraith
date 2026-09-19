@@ -406,6 +406,7 @@ export class HostNodeProductionServer {
         onProjectionDirty: () => projectionDirtyRef.current?.(),
         ...(queuedStartSlot
           ? {
+              queuedStartOnStarting: queuedStartSlot.dispatchStarting,
               queuedStartOnStarted: queuedStartSlot.dispatch,
               queuedStartOnDispatchSettled: queuedStartSlot.dispatchSettled
             }
@@ -479,6 +480,7 @@ export class HostNodeProductionServer {
                 this.domain!.acknowledgeQueuedComposerSend(context, command, {
                   id: context.client.clientId
                 }),
+              queuedStartStartingBind: queuedStartSlot.bindStarting,
               queuedStartStartedBind: queuedStartSlot.bind,
               queuedStartDispatchSettledBind: queuedStartSlot.bindSettled
             }

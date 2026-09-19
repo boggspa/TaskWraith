@@ -51,9 +51,11 @@ function harness(
   let domainWorkSpanRecorder: unknown
   let composedResolveReceiptSpanChatId: unknown
   let domainHostQueuedStartEnabled: HostNodeDomainPortsOptions['hostQueuedStartEnabled']
+  let domainQueuedStartOnStarting: HostNodeDomainPortsOptions['queuedStartOnStarting']
   let domainQueuedStartOnStarted: HostNodeDomainPortsOptions['queuedStartOnStarted']
   let domainQueuedStartOnDispatchSettled: HostNodeDomainPortsOptions['queuedStartOnDispatchSettled']
   let compositionQueuedComposerSend: HostStandaloneCompositionInput['queuedComposerSend']
+  let compositionQueuedStartStartingBind: HostStandaloneCompositionInput['queuedStartStartingBind']
   let compositionQueuedStartStartedBind: HostStandaloneCompositionInput['queuedStartStartedBind']
   let compositionQueuedStartDispatchSettledBind: HostStandaloneCompositionInput['queuedStartDispatchSettledBind']
   const lease = {
@@ -171,6 +173,7 @@ function harness(
       interactionTimeoutMs = input.interactionTimeoutMs
       domainWorkSpanRecorder = input.workSpanRecorder
       domainHostQueuedStartEnabled = input.hostQueuedStartEnabled
+      domainQueuedStartOnStarting = input.queuedStartOnStarting
       domainQueuedStartOnStarted = input.queuedStartOnStarted
       domainQueuedStartOnDispatchSettled = input.queuedStartOnDispatchSettled
       return domain as never
@@ -182,6 +185,7 @@ function harness(
       composedPerf = input.perf
       composedResolveReceiptSpanChatId = input.resolveReceiptSpanChatId
       compositionQueuedComposerSend = input.queuedComposerSend
+      compositionQueuedStartStartingBind = input.queuedStartStartingBind
       compositionQueuedStartStartedBind = input.queuedStartStartedBind
       compositionQueuedStartDispatchSettledBind = input.queuedStartDispatchSettledBind
       return composition as never
@@ -217,9 +221,11 @@ function harness(
     projectionDirty: () => projectionDirty?.(),
     interactionTimeoutMs: () => interactionTimeoutMs,
     domainHostQueuedStartEnabled: () => domainHostQueuedStartEnabled,
+    domainQueuedStartOnStarting: () => domainQueuedStartOnStarting,
     domainQueuedStartOnStarted: () => domainQueuedStartOnStarted,
     domainQueuedStartOnDispatchSettled: () => domainQueuedStartOnDispatchSettled,
     compositionQueuedComposerSend: () => compositionQueuedComposerSend,
+    compositionQueuedStartStartingBind: () => compositionQueuedStartStartingBind,
     compositionQueuedStartStartedBind: () => compositionQueuedStartStartedBind,
     compositionQueuedStartDispatchSettledBind: () => compositionQueuedStartDispatchSettledBind
   }
@@ -712,14 +718,18 @@ describe('HostNodeProductionServer', () => {
     await on.server.start()
     expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
     expect(on.domainHostQueuedStartEnabled()).toBe(true)
+    expect(on.domainQueuedStartOnStarting()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnStarted()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnDispatchSettled()).toBeTypeOf('function')
     expect(on.compositionQueuedComposerSend()).toBeTypeOf('function')
+    expect(on.compositionQueuedStartStartingBind()).toBeTypeOf('function')
     expect(on.compositionQueuedStartStartedBind()).toBeTypeOf('function')
     expect(on.compositionQueuedStartDispatchSettledBind()).toBeTypeOf('function')
 
+    const starting = vi.fn()
     const started = vi.fn()
     const settled = vi.fn()
+    on.compositionQueuedStartStartingBind()?.(starting)
     on.compositionQueuedStartStartedBind()?.(started)
     on.compositionQueuedStartDispatchSettledBind()?.(settled)
     const view = {
@@ -734,6 +744,14 @@ describe('HostNodeProductionServer', () => {
       providerRunBegan: true,
       providerWorkEnded: false
     }
+    const startingView = {
+      ...view,
+      phase: 'starting' as const,
+      startedEvidence: false
+    }
+    on.domainQueuedStartOnStarting()?.(startingView)
+    expect(starting).toHaveBeenCalledTimes(1)
+    expect(starting).toHaveBeenCalledWith(startingView)
     on.domainQueuedStartOnStarted()?.(view)
     expect(started).toHaveBeenCalledTimes(1)
     expect(started).toHaveBeenCalledWith(view)
@@ -766,9 +784,11 @@ describe('HostNodeProductionServer', () => {
     await off.server.start()
     expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
     expect(off.domainHostQueuedStartEnabled()).toBe(false)
+    expect(off.domainQueuedStartOnStarting()).toBeUndefined()
     expect(off.domainQueuedStartOnStarted()).toBeUndefined()
     expect(off.domainQueuedStartOnDispatchSettled()).toBeUndefined()
     expect(off.compositionQueuedComposerSend()).toBeUndefined()
+    expect(off.compositionQueuedStartStartingBind()).toBeUndefined()
     expect(off.compositionQueuedStartStartedBind()).toBeUndefined()
     expect(off.compositionQueuedStartDispatchSettledBind()).toBeUndefined()
     await off.server.stop()
@@ -777,6 +797,7 @@ describe('HostNodeProductionServer', () => {
     await empty.server.start()
     expect(empty.domainHostQueuedStartEnabled()).toBe(false)
     expect(empty.compositionQueuedComposerSend()).toBeUndefined()
+    expect(empty.domainQueuedStartOnStarting()).toBeUndefined()
     expect(empty.domainQueuedStartOnStarted()).toBeUndefined()
     await empty.server.stop()
   })

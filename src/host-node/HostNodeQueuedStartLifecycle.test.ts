@@ -167,6 +167,87 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
     expect(lifecycle.stats().fencedLateStarts).toBe(1)
   })
 
+  it('publishes starting exactly once after durable claim and before provider side effects', async () => {
+    const order: string[] = []
+    const store: HostQueuedStartExecutionClaimStore = {
+      record() {
+        order.push('claim-durable')
+      },
+      list() {
+        return []
+      }
+    }
+    const lifecycle = createHostNodeQueuedStartLifecycle({
+      executionClaimStore: store,
+      onStarting: (view) => {
+        order.push(`starting:${view.phase}`)
+        expect(view.startedEvidence).toBe(false)
+        expect(view.terminalOutcome).toBeNull()
+      }
+    })
+    lifecycle.reserve(reserveInput())
+    const holder = fakeLease('cmd-1')
+    expect(await lifecycle.claim('cmd-1', holder.lease)).toMatchObject({ kind: 'claimed' })
+    expect(order).toEqual(['claim-durable', 'starting:starting'])
+
+    await lifecycle.executeStart('cmd-1', () => {
+      order.push('provider-side-effect')
+    })
+    expect(order).toEqual(['claim-durable', 'starting:starting', 'provider-side-effect'])
+
+    // The winning claim is unique; a repeated claim cannot publish again.
+    expect(await lifecycle.claim('cmd-1', holder.lease)).toMatchObject({
+      kind: 'refused',
+      reason: 'already_claimed'
+    })
+    expect(order).toEqual(['claim-durable', 'starting:starting', 'provider-side-effect'])
+  })
+
+  it('contains a throwing starting observer without blocking the claimed start', async () => {
+    const { lifecycle, holder } = await claimedLifecycle({
+      onStarting: () => {
+        throw new Error('phase store offline')
+      }
+    })
+    expect(lifecycle.getReservation('cmd-1')?.phase).toBe('starting')
+    expect(lifecycle.stats().callbackErrors).toBe(1)
+    await expect(lifecycle.executeStart('cmd-1', () => undefined)).resolves.toEqual({
+      kind: 'started'
+    })
+    expect(holder.state.releases).toBe(0)
+  })
+
+  it('never publishes starting when cancelled before claim or claim recording fails', async () => {
+    const starting: string[] = []
+    const cancelled = createHostNodeQueuedStartLifecycle({
+      onStarting: (view) => starting.push(view.commandId)
+    })
+    cancelled.reserve(reserveInput())
+    cancelled.cancel({ commandId: 'cmd-1' })
+    expect(await cancelled.claim('cmd-1', fakeLease('cmd-1').lease)).toMatchObject({
+      kind: 'refused',
+      reason: 'already_terminal'
+    })
+
+    const failed = createHostNodeQueuedStartLifecycle({
+      executionClaimStore: {
+        record() {
+          throw new Error('disk full')
+        },
+        list() {
+          return []
+        }
+      },
+      onStarting: (view) => starting.push(view.commandId)
+    })
+    failed.reserve(reserveInput({ commandId: 'cmd-2', fingerprint: 'fp-2' }))
+    expect(await failed.claim('cmd-2', fakeLease('cmd-2').lease)).toMatchObject({
+      kind: 'refused',
+      reason: 'claim_record_failed'
+    })
+    expect(starting).toEqual([])
+  })
+
   it('publishes start evidence WITHOUT waiting for a terminal outcome', async () => {
     // M2 slice 2 red-first: deleting the onStarted call in markStarted reds
     // this test — and a publication that only landed with the terminal
