@@ -181,6 +181,10 @@ export class ChatUpdateInterestRuntime {
    * frames and the pulled page commits that reconcile them.
    */
   private readonly stallWatchdog = new TranscriptStallWatchdog()
+  private readonly pageReadBaselines = new WeakMap<
+    TranscriptPage,
+    { windowGeneration: number; announcedSequence: number }
+  >()
   private handshakePublished = false
   private started = false
   private getState: () => ChatUpdateInterestRuntimeState
@@ -302,8 +306,16 @@ export class ChatUpdateInterestRuntime {
 
   private createCoordinator(): PagedChatUpdateRefreshCoordinator {
     return new PagedChatUpdateRefreshCoordinator({
-      fetchPage: (request) =>
-        this.bridge.getChatTranscriptPage!({ ...request, includeShell: true }),
+      fetchPage: async (request) => {
+        const store = this.getState().hydrationRuntime.transcriptStore
+        const baseline = {
+          windowGeneration: store.generation(request.chatId),
+          announcedSequence: this.stallWatchdog.status(request.chatId, Date.now()).announcedSequence
+        }
+        const page = await this.bridge.getChatTranscriptPage!({ ...request, includeShell: true })
+        if (page) this.pageReadBaselines.set(page, baseline)
+        return page
+      },
       commit: (value) => this.commitPagedRefresh(value)
     })
   }
@@ -399,10 +411,20 @@ export class ChatUpdateInterestRuntime {
     this.replaceChatRecord(projected)
   }
 
-  private commitPagedRefresh({ invalidation, page }: PagedChatUpdateRefreshCommit): void {
-    if (this.desiredModes.get(invalidation.chatId) !== 'paged') return
+  private commitPagedRefresh({ invalidation, page }: PagedChatUpdateRefreshCommit): boolean {
+    if (this.desiredModes.get(invalidation.chatId) !== 'paged') return false
     const state = this.getState()
     const chatId = invalidation.chatId
+    const baseline = this.pageReadBaselines.get(page)
+    // A completed read may be useful even while newer invalidations arrive,
+    // but must never roll back a tail push or a history navigation that has
+    // already changed the visible window since the request began.
+    if (
+      !baseline ||
+      baseline.windowGeneration !== state.hydrationRuntime.transcriptStore.generation(chatId)
+    ) {
+      return false
+    }
     const current =
       state.chatByIdRef.current.get(chatId) ||
       (state.currentChat?.appChatId === chatId ? state.currentChat : null)
@@ -417,10 +439,10 @@ export class ChatUpdateInterestRuntime {
     )
     if ((!alreadyPaged && !awaitingFirstPage) || !this.visiblePagedChatFollowsLatest(chatId)) {
       this.deferredPagedInvalidations.set(chatId, invalidation)
-      return
+      return false
     }
     if (!page.shell || !isTranscriptPagedShell(page.shell) || page.shell.appChatId !== chatId) {
-      return
+      return false
     }
 
     const shellWithListMetadata = { ...page.shell } as ChatShell & Record<string, unknown>
@@ -444,14 +466,13 @@ export class ChatUpdateInterestRuntime {
     // remains empty and can never be mistaken for a saveable ChatRecord.
     state.hydrationRuntime.transcriptStore.replaceChatTranscriptWindow(page)
     state.hydrationRuntime.byteLru.touch(chatId)
-    // The pull lane just replaced the window with main's current view, so
-    // whatever the push lane could not carry — a resync, a missed frame — is
-    // now on screen. Closing the gap here is what stops a single declined frame
-    // from reading as a permanent stall.
+    // Only settle announcements known when the read began. A coherent page
+    // can publish progress while a later resync still awaits its own read.
     const settledAt = Date.now()
-    this.stallWatchdog.settleToAnnounced(chatId, settledAt)
+    this.stallWatchdog.settle(chatId, baseline.announcedSequence, settledAt)
     this.publishStall(chatId, settledAt)
     this.replaceChatRecord(committed)
+    return true
   }
 
   /**

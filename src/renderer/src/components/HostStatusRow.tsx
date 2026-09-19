@@ -221,7 +221,7 @@ export function describeHostLifecycleControl(
 
 /** Providers as Host reports them, or an honest absence. */
 export interface HostProvidersView {
-  /** False whenever the numbers are not a LIVE measured fact. */
+  /** True for a live snapshot or its continuously validated display projection. */
   readonly known: boolean
   readonly available?: number
   readonly total?: number
@@ -238,9 +238,10 @@ export interface HostProvidersView {
  * both must land on "Unknown":
  *
  *  1. the client could not reach Host at all (`status !== 'live'`);
- *  2. Host answered, but said the projection it served was ITSELF cached —
- *     `projectHostSnapshot` forces `freshness: 'cached'` in that case, so
- *     `status` can be 'live' while the data underneath is stale.
+ *  2. Host served a cached snapshot without a live baseline. This differs
+ *     from a connected client applying contiguous deltas to a live snapshot:
+ *     those rows remain suitable for display (as in the provider picker),
+ *     while their cached freshness still fences command authority.
  *
  * Checking only (1) is the easy mistake, and it would paint Host's own stale
  * answer as a fresh measurement. Rendering either as "0 providers" would be
@@ -249,7 +250,11 @@ export interface HostProvidersView {
  */
 export function describeHostProviders(state: HostProjectionState): HostProvidersView {
   const projection = state.projection
-  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+  if (
+    !projection ||
+    state.status !== 'live' ||
+    (projection.freshness !== 'live' && state.liveBaselineContinuity !== true)
+  ) {
     return { known: false, label: 'Unknown' }
   }
 
@@ -312,7 +317,11 @@ export function describeHostAwaitingApprovals(
   state: HostProjectionState
 ): HostAwaitingApprovalsView {
   const projection = state.projection
-  if (!projection || state.status !== 'live' || projection.freshness !== 'live') {
+  if (
+    !projection ||
+    state.status !== 'live' ||
+    (projection.freshness !== 'live' && state.liveBaselineContinuity !== true)
+  ) {
     return { known: false, label: 'Unknown' }
   }
 

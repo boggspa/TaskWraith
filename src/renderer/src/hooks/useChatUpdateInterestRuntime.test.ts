@@ -13,6 +13,7 @@ import type {
 import { createChatHydrationRuntime } from '../lib/chatHydrationRuntime'
 import { isChatSummaryRecord } from '../lib/chatRecordMerge'
 import {
+  buildTranscriptTailResync,
   buildTranscriptTailUpdate,
   type TranscriptTailFrame
 } from '../../../shared/transcriptTailStream'
@@ -207,6 +208,141 @@ describe('buildChatUpdateInterestSurfaceSnapshot', () => {
       fullResidencyChatIds: ['approval-chat']
     })
     expect(snapshot.entries).toEqual([{ chatId: 'approval-chat', mode: 'full' }])
+  })
+})
+
+describe('paged refresh progress during an active stream', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    resetTranscriptStallStoreForTests()
+  })
+
+  afterEach(() => {
+    resetTranscriptStallStoreForTests()
+    vi.useRealTimers()
+  })
+
+  function liveRefreshHarness() {
+    const chatId = 'large'
+    const initial = page(chatId, 2_000)
+    const harness = stateHarness([initial.shell!], initial.shell!)
+    const store = harness.hydrationRuntime.transcriptStore
+    store.ingestPage(initial)
+    let invalidationHandler!: (value: ChatUpdateInvalidation) => void
+    let tailHandler!: (value: TranscriptTailFrame) => void
+    const replies: Array<(value: TranscriptPage | null) => void> = []
+    const fetchPage = vi.fn(
+      () => new Promise<TranscriptPage | null>((resolve) => replies.push(resolve))
+    )
+    const runtime = new ChatUpdateInterestRuntime(
+      {
+        setChatUpdateInterests: () => undefined,
+        onChatUpdateInvalidated: (handler) => {
+          invalidationHandler = handler
+          return () => undefined
+        },
+        onTranscriptTailAppended: (handler) => {
+          tailHandler = handler
+          return () => undefined
+        },
+        getChatTranscriptPage: fetchPage
+      },
+      harness.getState
+    )
+    runtime.setPendingSnapshot(createChatUpdateInterestSnapshot([{ chatId, mode: 'paged' }]))
+    runtime.start()
+    return {
+      harness,
+      runtime,
+      store,
+      fetchPage,
+      replies,
+      invalidate: (revision: number) =>
+        invalidationHandler(
+          buildChatUpdateInvalidation({
+            ...summary(chatId, revision),
+            persistenceRevision: revision,
+            updatedAt: revision
+          })!
+        ),
+      push: (frame: TranscriptTailFrame) => tailHandler(frame),
+      resync: (sequence: number) =>
+        tailHandler(
+          buildTranscriptTailResync({
+            chatId,
+            sequence,
+            messageCount: 2_000 + sequence,
+            appendedAtMs: Date.now()
+          })!
+        )
+    }
+  }
+
+  it('keeps rendering completed pages and only settles the announcements each read covers', async () => {
+    const { runtime, store, fetchPage, replies, invalidate, resync } = liveRefreshHarness()
+    resync(1)
+    invalidate(2_001)
+    await vi.advanceTimersByTimeAsync(50)
+    resync(2)
+    invalidate(2_002)
+    replies[0](page('large', 2_001))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(store.get('large')?.totalMessageCount).toBe(2_001)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    expect(runtime.stallStatus('large', Date.now())).toMatchObject({
+      announcedSequence: 2,
+      settledSequence: 1
+    })
+
+    replies[1](page('large', 2_002))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.get('large')?.totalMessageCount).toBe(2_002)
+    expect(runtime.stallStatus('large', Date.now())).toMatchObject({
+      announcedSequence: 2,
+      settledSequence: 2
+    })
+    runtime.stop()
+  })
+
+  it('preserves text pushed during a page read, then retries the rejected page', async () => {
+    const { runtime, store, fetchPage, replies, invalidate, push } = liveRefreshHarness()
+    invalidate(2_001)
+    await vi.advanceTimersByTimeAsync(50)
+    const row = { ...store.get('large')!.messages[0], content: 'newer streamed text' }
+    push(
+      buildTranscriptTailUpdate({
+        chatId: 'large',
+        sequence: 1,
+        messageCount: 2_000,
+        rows: [{ index: 1_999, message: row }],
+        appendedAtMs: Date.now()
+      })!
+    )
+    replies[0](page('large', 2_001))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.get('large')?.messages[0]).toBe(row)
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+    const currentPage = page('large', 2_001)
+    currentPage.messages = [{ ...row, content: 'newer streamed text and final result' }]
+    replies[1](currentPage)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.get('large')?.messages[0].content).toBe('newer streamed text and final result')
+    runtime.stop()
+  })
+
+  it('does not replace a history window selected during the refresh', async () => {
+    const { runtime, store, replies, invalidate } = liveRefreshHarness()
+    invalidate(2_001)
+    await vi.advanceTimersByTimeAsync(50)
+    const older = { ...page('large', 50), totalMessageCount: 2_000, hasNewer: true }
+    const selected = store.ingestPage(older)
+    replies[0](page('large', 2_001))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.get('large')).toBe(selected)
+    runtime.stop()
   })
 })
 

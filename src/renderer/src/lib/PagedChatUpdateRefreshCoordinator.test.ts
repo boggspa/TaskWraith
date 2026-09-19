@@ -75,6 +75,105 @@ async function flushMicrotasks(): Promise<void> {
 }
 
 describe('PagedChatUpdateRefreshCoordinator', () => {
+  it('starts a bounded refresh while invalidations arrive faster than the debounce', async () => {
+    const fetchPage = vi.fn(async (request: TranscriptPageRequest) => page(request.chatId, 10))
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 50,
+      fetchPage,
+      commit
+    })
+
+    for (let revision = 1; revision <= 10; revision += 1) {
+      coordinator.invalidate(invalidation('chat-a', revision))
+      await vi.advanceTimersByTimeAsync(20)
+    }
+
+    expect(fetchPage.mock.calls.length).toBeGreaterThan(0)
+    expect(commit.mock.calls.length).toBeGreaterThan(0)
+    coordinator.dispose()
+  })
+
+  it('publishes progress on every completed pull while the stream keeps advancing', async () => {
+    const flights: Array<ReturnType<typeof deferred<TranscriptPage | null>>> = []
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 10,
+      fetchPage: () => {
+        const flight = deferred<TranscriptPage | null>()
+        flights.push(flight)
+        return flight.promise
+      },
+      commit
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(10)
+
+    for (let revision = 1; revision <= 5; revision += 1) {
+      coordinator.invalidate(invalidation('chat-a', revision + 1))
+      flights[revision - 1].resolve(page('chat-a', revision))
+      await flushMicrotasks()
+      expect(commit).toHaveBeenCalledTimes(revision)
+      expect(commit.mock.calls.at(-1)?.[0].page.updatedAt).toBe(revision)
+      expect(coordinator.stats().behind).toBe(1)
+      await vi.advanceTimersByTimeAsync(10)
+    }
+
+    flights[5].resolve(page('chat-a', 6))
+    await flushMicrotasks()
+    expect(coordinator.stats().behind).toBe(0)
+    coordinator.dispose()
+  })
+
+  it('does not let an overdue attempt release a retry slot for the same generation', async () => {
+    const first = deferred<TranscriptPage | null>()
+    const second = deferred<TranscriptPage | null>()
+    const fetchPage = vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 0,
+      fetchDeadlineMs: 100,
+      fetchSettleTimeoutMs: 0,
+      fetchPage,
+      commit
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(5_100)
+    expect(fetchPage).toHaveBeenCalledTimes(2)
+
+    first.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(coordinator.stats().inFlight).toBe(1)
+    await vi.advanceTimersByTimeAsync(100)
+    expect(coordinator.stats().overdueFetches).toBe(2)
+    second.resolve(page('chat-a', 2))
+    await flushMicrotasks()
+    expect(commit.mock.calls.at(-1)?.[0].page.updatedAt).toBe(2)
+    coordinator.dispose()
+  })
+
+  it('never overwrites a completed newer attempt with a late response', async () => {
+    const first = deferred<TranscriptPage | null>()
+    const second = deferred<TranscriptPage | null>()
+    const commit = vi.fn()
+    const coordinator = new PagedChatUpdateRefreshCoordinator({
+      debounceMs: 0,
+      fetchDeadlineMs: 100,
+      fetchSettleTimeoutMs: 0,
+      fetchPage: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
+      commit
+    })
+    coordinator.invalidate(invalidation('chat-a', 1))
+    await vi.advanceTimersByTimeAsync(5_100)
+    second.resolve(page('chat-a', 2))
+    await flushMicrotasks()
+    first.resolve(page('chat-a', 1))
+    await flushMicrotasks()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit.mock.calls[0][0].page.updatedAt).toBe(2)
+    coordinator.dispose()
+  })
+
   it('debounces replacements, fetches a bounded tail and commits only the latest invalidation', async () => {
     const requests: TranscriptPageRequest[] = []
     const commits: PagedChatUpdateRefreshCommit[] = []
@@ -86,7 +185,9 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
         requests.push(request)
         return page(request.chatId, 2)
       },
-      commit: (value) => commits.push(value)
+      commit: (value) => {
+        commits.push(value)
+      }
     })
 
     expect(coordinator.invalidate(invalidation('chat-a', 1))).toBe(1)
@@ -108,7 +209,7 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     expect(commits[0].generation).toBe(2)
   })
 
-  it('single-flights by chat, drops a stale page and retries once with the newest generation', async () => {
+  it('single-flights by chat, publishes the completed page and follows the newest generation', async () => {
     const first = deferred<TranscriptPage | null>()
     const second = deferred<TranscriptPage | null>()
     const fetchPage = vi
@@ -131,13 +232,15 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     first.resolve(page('chat-a', 1))
     await flushMicrotasks()
 
-    expect(commit).not.toHaveBeenCalled()
+    expect(commit).toHaveBeenCalledOnce()
+    expect(commit.mock.calls[0][0].generation).toBe(1)
+    expect(coordinator.stats().behind).toBe(1)
     expect(fetchPage).toHaveBeenCalledTimes(2)
     second.resolve(page('chat-a', 2))
     await flushMicrotasks()
 
-    expect(commit).toHaveBeenCalledOnce()
-    expect(commit.mock.calls[0][0]).toMatchObject({
+    expect(commit).toHaveBeenCalledTimes(2)
+    expect(commit.mock.calls[1][0]).toMatchObject({
       generation: 2,
       invalidation: { chatId: 'chat-a', revision: 2 }
     })
@@ -171,13 +274,13 @@ describe('PagedChatUpdateRefreshCoordinator', () => {
     flights[1].resolve(page('chat-a', 2))
     await flushMicrotasks()
     expect(fetchPage).toHaveBeenCalledTimes(2)
-    expect(commit).not.toHaveBeenCalled()
+    expect(commit.mock.calls.map(([value]) => value.generation)).toEqual([1, 2])
 
     await vi.advanceTimersByTimeAsync(10)
     expect(fetchPage).toHaveBeenCalledTimes(3)
     flights[2].resolve(page('chat-a', 3))
     await flushMicrotasks()
-    expect(commit.mock.calls[0][0].invalidation.revision).toBe(3)
+    expect(commit.mock.calls[2][0].invalidation.revision).toBe(3)
   })
 
   it('logically cancels in-flight work and clears all scheduled work on dispose', async () => {

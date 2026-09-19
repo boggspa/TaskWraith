@@ -28,8 +28,8 @@ export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_DEADLINE_MS = 10_000
  * request frame never answers) would otherwise await its transport-internal
  * 30 s timeout, and every bounded retry behind it queues on the same stuck
  * invoke: the panel stays stale for half a minute. Racing the pull with this
- * bound lets the retry cadence own recovery; a late response is dropped by
- * the generation guards, never committed twice.
+ * bound lets the retry cadence own recovery; the timed-out response never
+ * reaches the commit callback.
  */
 export const DEFAULT_PAGED_CHAT_UPDATE_FETCH_SETTLE_TIMEOUT_MS = 12_000
 
@@ -58,8 +58,8 @@ export interface PagedChatUpdateRefreshCommit {
 
 export interface PagedChatUpdateRefreshCoordinatorOptions {
   fetchPage: PagedChatUpdateTailFetcher
-  /** Must synchronously publish the accepted generation into renderer state. */
-  commit: (value: PagedChatUpdateRefreshCommit) => void
+  /** Publish synchronously; return false when the visible window rejected the page. */
+  commit: (value: PagedChatUpdateRefreshCommit) => boolean | void
   debounceMs?: number
   /** Releases the per-chat flight slot when a pull overruns. 0 disables. */
   fetchDeadlineMs?: number
@@ -88,13 +88,15 @@ interface RefreshState {
   generation: number
   inFlight: boolean
   timer?: ReturnType<typeof setTimeout>
+  retryTimer: boolean
   deadlineTimer?: ReturnType<typeof setTimeout>
-  /** Generation that currently owns the slot and its deadline. */
+  /** Fetch attempt that owns the slot; retries can share an invalidation generation. */
   deadlineOwner: number | null
   cancelled: boolean
   lastTouched: number
   /** Newest generation a commit has published. Lags `generation` while behind. */
   committedGeneration: number
+  committedAttempt: number
   /** Bounded retries scheduled since the newest invalidation arrived. */
   retryCount: number
 }
@@ -114,16 +116,17 @@ function boundedDebounce(value: number | undefined): number {
 /**
  * Converts compact paged-chat invalidations into bounded tail pulls.
  *
- * There is at most one fetch per chat. Invalidations replace each other while
- * debounced or in flight. A fetch invalidated while awaiting IPC is discarded
- * and retried once immediately with the newest generation; if streaming also
- * outruns that retry, the next cycle returns to the debounce rather than
- * creating an unbounded fetch loop.
+ * There is one active refresh slot per chat. Invalidations replace each other while
+ * waiting or in flight. The first invalidation starts a fixed coalescing
+ * window, so a continuous stream cannot postpone the fetch forever. Completed
+ * pages publish ordered progress even when a newer invalidation is waiting;
+ * one immediate follow-up then reconciles it. Waiting for a completely quiet
+ * fetch interval starves large transcripts whose reads span several updates.
  */
 export class PagedChatUpdateRefreshCoordinator {
   private readonly states = new Map<string, RefreshState>()
   private readonly fetchPage: PagedChatUpdateTailFetcher
-  private readonly commit: (value: PagedChatUpdateRefreshCommit) => void
+  private readonly commit: PagedChatUpdateRefreshCoordinatorOptions['commit']
   private readonly debounceMs: number
   private readonly fetchDeadlineMs: number
   private readonly fetchSettleTimeoutMs: number
@@ -140,6 +143,7 @@ export class PagedChatUpdateRefreshCoordinator {
   private disposed = false
   private overdueFetches = 0
   private touchSequence = 0
+  private fetchSequence = 0
 
   constructor(options: PagedChatUpdateRefreshCoordinatorOptions) {
     this.fetchPage = options.fetchPage
@@ -189,9 +193,11 @@ export class PagedChatUpdateRefreshCoordinator {
         latest: invalidation,
         generation: 0,
         inFlight: false,
+        retryTimer: false,
         cancelled: false,
         lastTouched: 0,
         committedGeneration: 0,
+        committedAttempt: 0,
         deadlineOwner: null,
         retryCount: 0
       }
@@ -275,6 +281,9 @@ export class PagedChatUpdateRefreshCoordinator {
   }
 
   private arm(state: RefreshState): void {
+    // Keep the first update's deadline. A trailing debounce can be reset
+    // forever by a busy run, without ever starting a read.
+    if (state.timer && !state.retryTimer) return
     this.armWithDelay(state, this.debounceMs)
   }
 
@@ -287,14 +296,16 @@ export class PagedChatUpdateRefreshCoordinator {
     if (!this.isLive(state) || state.inFlight) return
     if (state.retryCount >= this.maxRetryAttempts) return
     state.retryCount += 1
-    this.armWithDelay(state, this.retryDelayMs)
+    this.armWithDelay(state, this.retryDelayMs, true)
   }
 
-  private armWithDelay(state: RefreshState, delayMs: number): void {
+  private armWithDelay(state: RefreshState, delayMs: number, retry = false): void {
     if (!this.isLive(state) || state.inFlight) return
     if (state.timer) this.clearTimer(state.timer)
+    state.retryTimer = retry
     state.timer = this.setTimer(() => {
       state.timer = undefined
+      state.retryTimer = false
       this.startFetch(state, false)
     }, delayMs)
   }
@@ -302,9 +313,10 @@ export class PagedChatUpdateRefreshCoordinator {
   private startFetch(state: RefreshState, isImmediateRetry: boolean): void {
     if (!this.isLive(state) || state.inFlight) return
     const generation = state.generation
+    const attempt = ++this.fetchSequence
     const invalidation = state.latest
     state.inFlight = true
-    state.deadlineOwner = generation
+    state.deadlineOwner = attempt
     // Release the slot if this pull overruns. The fetch keeps running and its
     // page is still accepted if it lands — a late page is correct, it is the
     // WEDGED SLOT that costs the user their transcript.
@@ -312,7 +324,7 @@ export class PagedChatUpdateRefreshCoordinator {
       state.deadlineTimer = this.setTimer(() => {
         state.deadlineTimer = undefined
         if (!this.isLive(state) || !state.inFlight) return
-        if (state.deadlineOwner !== generation) return
+        if (state.deadlineOwner !== attempt) return
         state.deadlineOwner = null
         state.inFlight = false
         this.overdueFetches += 1
@@ -325,14 +337,14 @@ export class PagedChatUpdateRefreshCoordinator {
       }, this.fetchDeadlineMs)
     }
 
-    void this.runFetch(state, invalidation, generation, isImmediateRetry)
+    void this.runFetch(state, invalidation, generation, attempt, isImmediateRetry)
   }
 
   /**
    * Bound how long one pull may stay unsettled. A pull whose transport frame
    * is lost would otherwise sit on the transport's own 30 s timer and starve
    * every bounded retry queued behind it. Rejecting early drops the late
-   * response: the runFetch generation guards never see it.
+   * response: runFetch never sees it.
    */
   private withFetchSettleTimeout<T>(fetch: Promise<T>): Promise<T> {
     if (this.fetchSettleTimeoutMs <= 0) return fetch
@@ -357,6 +369,7 @@ export class PagedChatUpdateRefreshCoordinator {
     state: RefreshState,
     invalidation: ChatUpdateInvalidation,
     generation: number,
+    attempt: number,
     isImmediateRetry: boolean
   ): Promise<void> {
     let page: TranscriptPage | null = null
@@ -369,20 +382,21 @@ export class PagedChatUpdateRefreshCoordinator {
         })
       )
     } catch {
-      // The next invalidation is the retry signal; keep the current window.
+      // Keep the current window; bounded retries also cover a quiet stream.
     }
 
     if (
       this.isLive(state) &&
-      state.generation === generation &&
+      attempt > state.committedAttempt &&
       page?.chatId === invalidation.chatId
     ) {
       try {
-        this.commit({ invalidation, page, generation })
-        // Only a real commit closes the gap. Recorded here rather than on
-        // fetch completion so `behind` stays true when a page arrives for a
-        // surface that has gone away and nothing was published.
-        if (generation > state.committedGeneration) state.committedGeneration = generation
+        if (this.commit({ invalidation, page, generation }) !== false) {
+          state.committedAttempt = attempt
+          // This page covers the invalidation that started its read, not any
+          // newer notification that arrived while the read was in flight.
+          state.committedGeneration = Math.max(state.committedGeneration, generation)
+        }
       } catch {
         // A renderer state transition may have made the surface disappear.
       }
@@ -395,7 +409,7 @@ export class PagedChatUpdateRefreshCoordinator {
     // deadline and then release its slot, starting a third pull alongside it —
     // one overrun compounding into concurrent invokes against the very main
     // thread that just missed a deadline.
-    if (state.deadlineOwner !== generation) return
+    if (state.deadlineOwner !== attempt) return
     if (state.deadlineTimer) {
       this.clearTimer(state.deadlineTimer)
       state.deadlineTimer = undefined
@@ -408,7 +422,7 @@ export class PagedChatUpdateRefreshCoordinator {
       // gets the bounded retry — without it this chat would sit stale until an
       // unrelated invalidation arrives, which the mirror's equality gate no
       // longer manufactures.
-      if (page?.chatId !== invalidation.chatId) this.armRetry(state)
+      if (state.committedGeneration < generation) this.armRetry(state)
       return
     }
 
