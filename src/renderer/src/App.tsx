@@ -449,11 +449,14 @@ import {
   shouldAppendDueScheduledRun
 } from './lib/midRunSteeringQueue'
 import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
+import {
+  runRequestDisplayPrompt,
+  runRequestPromptPreview
+} from './lib/runRequestPromptPreview'
 import { buildCodexNativeReviewInvocationParams } from './lib/codexNativeReview'
 import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
-  discordContextSelectionSummary,
   ensembleQueuedPromptsFromRound,
   ensembleRoundQueuePatch,
   filterTranscriptBackedQueuedRunEntries,
@@ -3955,12 +3958,6 @@ function App(): React.JSX.Element {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentChat?.appChatId, projectsRevision])
-  const projectReferenceContextSummary = (
-    selection: ProjectReferenceContextSelection | null | undefined
-  ): string =>
-    selection
-      ? `${selection.referenceIds.length} Project reference${selection.referenceIds.length === 1 ? '' : 's'}`
-      : ''
   const runRequestHasContent = (
     request: Pick<
       QueuedRunRequest,
@@ -3970,44 +3967,6 @@ function App(): React.JSX.Element {
     hasAttachmentPromptContent(request.prompt, request.imageAttachments) ||
     Boolean(request.projectReferenceContextSelection?.referenceIds.length) ||
     Boolean(request.discordContextSelection)
-  const runRequestDisplayPrompt = (
-    request: Pick<
-      QueuedRunRequest,
-      | 'prompt'
-      | 'displayPrompt'
-      | 'imageAttachments'
-      | 'projectReferenceContextSelection'
-      | 'discordContextSelection'
-    >,
-    finalPrompt: string
-  ): string => {
-    if (request.displayPrompt?.trim()) return request.displayPrompt
-    if (request.prompt.trim()) return finalPrompt
-    return (
-      attachmentSummary(request.imageAttachments) ||
-      projectReferenceContextSummary(request.projectReferenceContextSelection) ||
-      discordContextSelectionSummary(request.discordContextSelection) ||
-      finalPrompt
-    )
-  }
-  const runRequestPromptPreview = (
-    request: Pick<
-      QueuedRunRequest,
-      | 'prompt'
-      | 'displayPrompt'
-      | 'imageAttachments'
-      | 'projectReferenceContextSelection'
-      | 'discordContextSelection'
-    >
-  ): string => {
-    const text = (request.displayPrompt || request.prompt || '').trim()
-    return (
-      text ||
-      attachmentSummary(request.imageAttachments) ||
-      projectReferenceContextSummary(request.projectReferenceContextSelection) ||
-      discordContextSelectionSummary(request.discordContextSelection)
-    )
-  }
   const buildSubmittedImageThumbnailMetadata = async (
     attachments: readonly ImageAttachment[]
   ): Promise<{ imagePaths: string[]; imageThumbnails: ImageAttachmentThumbnail[] }> => {
