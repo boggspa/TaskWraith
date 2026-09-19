@@ -3107,12 +3107,38 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * Blocked FIFO heads already announced, by entry identity. Restart recovery
+   * mints fresh entry objects, so a relaunch re-announces once -- which is
+   * correct, because the blockage IS a restart artifact and the user needs to
+   * be told again. `queuedPromptFields` is a strict whitelist, so an
+   * announce-once flag could not have persisted on the entry anyway.
+   */
+  private readonly announcedBlockedQueueHeads = new WeakSet<object>()
+
   /** Absorb the next FIFO queued prompt into the live round. Returns true when absorbed. */
   private absorbNextQueuedPromptIntoLiveRound(runtime: ActiveRoundRuntime): boolean {
     if (runtime.cancelled || runtime.queuedPrompts.length === 0) return false
     const [nextEntry, ...remainingQueue] = runtime.queuedPrompts
     if (!nextEntry) return false
-    if (nextEntry.restartRecoveryBlockedReason) return false
+    if (nextEntry.restartRecoveryBlockedReason) {
+      // ANNOUNCE, NEVER SKIP. The drain only ever inspects queuedPrompts[0], so
+      // returning silently here head-of-line blocked every later message the
+      // user typed, at every boundary, for the life of the round, with nothing
+      // surfaced anywhere. Skipping the head instead would deliver their
+      // messages out of the order they typed them, so the order stands and the
+      // blockage is named -- exactly what the sibling branch below already does
+      // for an unavailable target.
+      if (!this.announcedBlockedQueueHeads.has(nextEntry)) {
+        this.announcedBlockedQueueHeads.add(nextEntry)
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          nextEntry.restartRecoveryBlockedReason
+        )
+      }
+      return false
+    }
     const targetError = this.queuedTargetUnavailableReason(runtime.chatId, nextEntry)
     if (targetError) {
       this.appendRoundStatus(runtime.chatId, runtime.roundId, targetError)

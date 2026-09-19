@@ -1908,3 +1908,84 @@ describe('EnsembleOrchestrator host-stamped origin', () => {
     expect(plainRow?.metadata).not.toHaveProperty('origin')
   })
 })
+
+describe('a blocked queued head announces itself instead of silently stalling the FIFO', () => {
+  const BLOCKED_REASON =
+    'Queued prompt preserved but not dispatched after restart because attachment paths must be re-selected.'
+
+  function runtimeFor(harness: Harness): { queuedPrompts: Array<Record<string, unknown>> } {
+    const runtime = (
+      harness.orchestrator as unknown as {
+        roundsByChatId: Map<string, { queuedPrompts: Array<Record<string, unknown>> }>
+      }
+    ).roundsByChatId.get(CHAT_ID)
+    expect(runtime).toBeTruthy()
+    return runtime as { queuedPrompts: Array<Record<string, unknown>> }
+  }
+
+  async function liveRoundWithBlockedHead(harness: Harness): Promise<{
+    queuedPrompts: Array<Record<string, unknown>>
+  }> {
+    const result = harness.orchestrator.startRound({
+      chatId: CHAT_ID,
+      prompt: 'Initial ensemble prompt.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    expect(result.status).toBe('started')
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const runtime = runtimeFor(harness)
+    runtime.queuedPrompts = [
+      { id: 'q-blocked', prompt: 'blocked head', restartRecoveryBlockedReason: BLOCKED_REASON },
+      { id: 'q-next', prompt: 'the message queued behind it' }
+    ]
+    return runtime
+  }
+
+  // The drain only ever inspects queuedPrompts[0]. Its sibling branch --
+  // queuedTargetUnavailableReason, six lines below -- calls appendRoundStatus
+  // and returns; this one only returned. So a head blocked by restart recovery
+  // head-of-line blocked every later message the user typed, at every boundary,
+  // for the life of the round, with nothing surfaced anywhere.
+  it('announces the blocked head at a boundary without reordering the queue', async () => {
+    const harness = makeHarness()
+    const runtime = await liveRoundWithBlockedHead(harness)
+    stream(harness, 0, 'Worker answer.')
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.some((message) =>
+          message.content.includes('attachment paths must be re-selected')
+        )
+      ).toBe(true)
+    )
+    // Announce, never skip: reordering would deliver the user's messages out of
+    // the order they typed them.
+    expect(runtime.queuedPrompts.map((entry) => entry.prompt)).toEqual([
+      'blocked head',
+      'the message queued behind it'
+    ])
+  })
+
+  it('announces once rather than at every boundary', async () => {
+    const harness = makeHarness()
+    await liveRoundWithBlockedHead(harness)
+    stream(harness, 0, 'Worker answer.')
+    complete(harness, 0)
+    await vi.waitFor(() =>
+      expect(
+        harness.chat.messages.filter((message) =>
+          message.content.includes('attachment paths must be re-selected')
+        )
+      ).toHaveLength(1)
+    )
+    await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThanOrEqual(2))
+    stream(harness, 1, 'Reviewer answer.')
+    complete(harness, 1)
+    await new Promise((resolve) => setTimeout(resolve, 25))
+    expect(
+      harness.chat.messages.filter((message) =>
+        message.content.includes('attachment paths must be re-selected')
+      )
+    ).toHaveLength(1)
+  })
+})
