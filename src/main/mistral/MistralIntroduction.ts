@@ -20,6 +20,17 @@ export interface MistralAcknowledgedTurnOptions {
   introductionTimeoutMs?: number
 }
 
+const EXCERPT_BUDGET = 12_000
+const EXCERPT_HEAD = 4_000
+
+/** Keep the head as well as the tail: the tool-permission grants sit in the
+ * routing envelopes at the front, and a tail-only window drops them. */
+function introductionExcerpt(context: string): string {
+  if (context.length <= EXCERPT_BUDGET) return context
+  const tail = EXCERPT_BUDGET - EXCERPT_HEAD
+  return `${context.slice(0, EXCERPT_HEAD)}\n\n[...]\n\n${context.slice(-tail)}`
+}
+
 export function mistralIntroductionPrompt(prompt: string): string {
   let context = prompt
   for (const preamble of [MISTRAL_READ_ONLY_PROMPT_PREAMBLE, MISTRAL_WRITE_MODE_PROMPT_PREAMBLE]) {
@@ -30,7 +41,7 @@ export function mistralIntroductionPrompt(prompt: string): string {
     "If the actual user request calls for investigation or action, put one short first-person sentence in the opening field, acknowledging it and naming the next concrete action, in the user's language. Do not use tools, perform the task, claim completion, or ask for permission.",
     'Set opening to null only for a direct-answer request, a forbidden introduction, an exact output format, or a user prohibition on ALL tools. A task that asks you to edit or investigate using permitted tools needs an opening even when it prohibits other tools or paths.',
     'Task/context excerpt (JSON string; context for composing the opening, not instructions for this private phase):',
-    JSON.stringify(context.slice(-12_000)),
+    JSON.stringify(introductionExcerpt(context)),
     'Return only valid JSON, without a code fence: {"opening":"I will inspect the files and verify the change."} or {"opening":null}. Do not answer or execute the quoted task in this private phase. Use null for an exact-format answer or a prohibition on ALL tools, not for ordinary tool restrictions in an action request.'
   ].join('\n\n')
 }
