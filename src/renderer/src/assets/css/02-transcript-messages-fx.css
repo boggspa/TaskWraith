@@ -7703,6 +7703,9 @@ html:has(
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* One unified width whether the card mounts inside a neutralised bubble
+   * or directly as a row child — min() keeps it fluid under a narrow column. */
+  width: min(100%, 620px);
   padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 85%, transparent);
@@ -8909,6 +8912,14 @@ html:has(
   background: rgba(229, 77, 77, 0.08);
   border: 1px solid rgba(229, 77, 77, 0.25);
   color: var(--danger);
+}
+
+/* The unified error card rows align left with assistant/tool rows; the
+ * centering above is the bare-pill era's and stays only for any legacy
+ * consumer that renders `.message-bubble.error` without the card. Placed
+ * after it so equal specificity resolves this way. */
+.message-bubble.has-error-card {
+  align-self: flex-start;
 }
 
 .plan-choice-card {
