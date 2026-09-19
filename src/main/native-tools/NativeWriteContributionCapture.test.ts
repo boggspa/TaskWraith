@@ -147,6 +147,70 @@ describe('native write contribution capture', () => {
     })
   })
 
+  it('reserves a path before its first await, so concurrent gates cannot both pass', async () => {
+    // The guard is only worth anything if it closes synchronously. With the
+    // check before the reads and the reservation after the approval, two gates
+    // for one file both slip through, both snapshot the same `before`, and the
+    // journal's chain check then refuses Undo for BOTH.
+    let releaseRead: () => void = () => {}
+    const firstRead = new Promise<void>((resolve) => {
+      releaseRead = resolve
+    })
+    let reads = 0
+    const { deps } = makeDeps({
+      readFileBytes: vi.fn(async () => {
+        reads += 1
+        if (reads === 1) await firstRead
+        return Buffer.from('before')
+      })
+    })
+    const capture = createNativeWriteContributionCapture(deps)
+
+    const first = capture.gate(request('call-1'), allowPreflight('replace'))
+    // First gate is now parked inside its read, having already reserved.
+    const second = await capture.gate(request('call-2'), allowPreflight('replace'))
+    expect(second).toMatchObject({ decision: 'deny', origin: 'host-containment' })
+
+    releaseRead()
+    expect(await first).toBe('allow')
+    expect(capture.inFlightCount()).toBe(1)
+  })
+
+  it('frees a reserved path when the gate refuses, so one bad call cannot wedge the file', async () => {
+    const eacces = Object.assign(new Error('denied'), { code: 'EACCES' })
+    let calls = 0
+    const { deps } = makeDeps({
+      readFileBytes: vi.fn(async () => {
+        calls += 1
+        if (calls === 1) throw eacces
+        return Buffer.from('before')
+      })
+    })
+    const capture = createNativeWriteContributionCapture(deps)
+    expect(await capture.gate(request('call-1'), allowPreflight('replace'))).toMatchObject({
+      decision: 'deny'
+    })
+    // The refused call must not leave the path reserved forever.
+    expect(await capture.gate(request('call-2'), allowPreflight('replace'))).toBe('allow')
+  })
+
+  it('frees a reserved path when a dependency throws', async () => {
+    const { deps } = makeDeps({
+      admit: vi.fn(async () => {
+        throw new Error('lock authority unavailable')
+      })
+    })
+    const capture = createNativeWriteContributionCapture(deps)
+    expect(await capture.gate(request('call-1'), allowPreflight('replace'))).toMatchObject({
+      decision: 'deny',
+      origin: 'host-containment'
+    })
+    expect(capture.inFlightCount()).toBe(0)
+    const healthy = makeDeps()
+    const capture2 = createNativeWriteContributionCapture(healthy.deps)
+    expect(await capture2.gate(request('call-2'), allowPreflight('replace'))).toBe('allow')
+  })
+
   it('frees the path once the first write settles', async () => {
     const { deps } = makeDeps()
     const capture = createNativeWriteContributionCapture(deps)

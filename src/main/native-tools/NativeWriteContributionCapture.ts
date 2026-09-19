@@ -174,10 +174,12 @@ export function createNativeWriteContributionCapture(
         'This native write declares no verifiable workspace path, so it cannot be recorded for Undo.'
       )
     }
+    // Reserve SYNCHRONOUSLY, before the first await. Checking here and only
+    // populating after the reads and the approval would leave a window in which
+    // two concurrent gates for one file both pass: both would snapshot the same
+    // `before`, and the journal's chain check would then see a break and refuse
+    // Undo for BOTH edits -- losing the undo precisely when two edits landed.
     for (const path of paths) {
-      // Two native edits to one file inside a single parallel batch both read
-      // the same `before`, and the journal's chain check then sees a break and
-      // refuses Undo for BOTH. Serialise instead of silently losing the undo.
       if (pathsInFlight.has(path)) {
         return denial(
           'host-containment',
@@ -185,91 +187,114 @@ export function createNativeWriteContributionCapture(
         )
       }
     }
-
-    const captured = new Map<string, HeldPath>()
-    for (const path of paths) {
-      let before: Buffer | null = null
-      try {
-        const info = await statOne(path)
-        if (info.size > SHARED_WORKSPACE_MAX_CAPTURE_BYTES) {
-          return denial(
-            'host-containment',
-            'This file is too large for TaskWraith to snapshot, so the write cannot be recorded for Undo.'
-          )
-        }
-        before = await readBytes(path)
-      } catch (error) {
-        // ONLY a genuinely absent file may become a null `before`. Any other
-        // read failure -- EACCES, ELOOP, EMFILE -- must refuse, because a
-        // pre-existing file journalled as a create is undone by DELETING it,
-        // destroying content the journal never held.
-        if (!isMissingFileError(error)) {
-          deps.onCaptureError?.(path, error)
-          return denial(
-            'host-containment',
-            'TaskWraith could not read this file to snapshot it, so the write cannot be recorded for Undo.'
-          )
-        }
-        before = null
-      }
-      if (before && before.length > SHARED_WORKSPACE_MAX_CAPTURE_BYTES) {
-        return denial(
-          'host-containment',
-          'This file is too large for TaskWraith to snapshot, so the write cannot be recorded for Undo.'
-        )
-      }
-      captured.set(path, { before })
-    }
-
     if (held.size >= MAX_IN_FLIGHT) {
       return denial(
         'host-containment',
         'Too many native writes are already in flight to record this one for Undo.'
       )
     }
+    for (const path of paths) pathsInFlight.add(path)
+    let reserved = true
+    const unreserve = (): void => {
+      if (!reserved) return
+      for (const path of paths) pathsInFlight.delete(path)
+      reserved = false
+    }
 
-    const admission = await deps.admit({
-      canonicalTool: preflight.canonicalTool,
-      nativeAction: request.toolName || preflight.canonicalTool,
-      rawToolCall: request.rawToolCall,
-      paths
-    })
-    if (!admission.ok) {
+    try {
+      const captured = new Map<string, HeldPath>()
+      for (const path of paths) {
+        let before: Buffer | null = null
+        try {
+          const info = await statOne(path)
+          if (info.size > SHARED_WORKSPACE_MAX_CAPTURE_BYTES) {
+            unreserve()
+            return denial(
+              'host-containment',
+              'This file is too large for TaskWraith to snapshot, so the write cannot be recorded for Undo.'
+            )
+          }
+          before = await readBytes(path)
+        } catch (error) {
+          // ONLY a genuinely absent file may become a null `before`. Any other
+          // read failure -- EACCES, ELOOP, EMFILE -- must refuse, because a
+          // pre-existing file journalled as a create is undone by DELETING it,
+          // destroying content the journal never held.
+          if (!isMissingFileError(error)) {
+            deps.onCaptureError?.(path, error)
+            unreserve()
+            return denial(
+              'host-containment',
+              'TaskWraith could not read this file to snapshot it, so the write cannot be recorded for Undo.'
+            )
+          }
+          before = null
+        }
+        if (before && before.length > SHARED_WORKSPACE_MAX_CAPTURE_BYTES) {
+          unreserve()
+          return denial(
+            'host-containment',
+            'This file is too large for TaskWraith to snapshot, so the write cannot be recorded for Undo.'
+          )
+        }
+        captured.set(path, { before })
+      }
+
+      const admission = await deps.admit({
+        canonicalTool: preflight.canonicalTool,
+        nativeAction: request.toolName || preflight.canonicalTool,
+        rawToolCall: request.rawToolCall,
+        paths
+      })
+      if (!admission.ok) {
+        unreserve()
+        return denial(
+          'host-policy',
+          admission.reason || 'This native write was not admitted by the workspace lock authority.'
+        )
+      }
+
+      let approved = false
+      try {
+        approved = await deps.requestApproval({
+          method: `${deps.provider}/native-write`,
+          title: `${deps.provider} wants to edit files directly`,
+          body:
+            `${request.toolName || preflight.canonicalTool} will write ${paths.length} ` +
+            `file${paths.length === 1 ? '' : 's'} in the workspace using the provider's own tool. ` +
+            'TaskWraith snapshots each file before and after so the change stays undoable.',
+          preview: { kind: 'tool', toolName: request.toolName, params: { paths } },
+          riskLabels: ['native-write']
+        })
+      } catch {
+        approved = false
+      }
+      if (!approved) {
+        await deps.release(admission)
+        unreserve()
+        // Never attributed to the user unless a human actually refused; this
+        // seam cannot tell an auto-resolve from a decline, so it claims neither.
+        return denial('unknown', 'This native write was not approved.')
+      }
+
+      // Ownership of the reservation passes to the held entry, which frees it
+      // in forget(). Do NOT unreserve here.
+      reserved = false
+      held.set(toolCallId, {
+        canonicalTool: preflight.canonicalTool,
+        admission,
+        paths: captured
+      })
+      return 'allow'
+    } catch (error) {
+      // A dep that throws must not strand the reservation and wedge the file.
+      unreserve()
+      deps.onCaptureError?.(paths[0], error)
       return denial(
-        'host-policy',
-        admission.reason || 'This native write was not admitted by the workspace lock authority.'
+        'host-containment',
+        'TaskWraith could not prepare an undo record for this native write.'
       )
     }
-
-    let approved = false
-    try {
-      approved = await deps.requestApproval({
-        method: `${deps.provider}/native-write`,
-        title: `${deps.provider} wants to edit files directly`,
-        body:
-          `${request.toolName || preflight.canonicalTool} will write ${paths.length} ` +
-          `file${paths.length === 1 ? '' : 's'} in the workspace using the provider's own tool. ` +
-          'TaskWraith snapshots each file before and after so the change stays undoable.',
-        preview: { kind: 'tool', toolName: request.toolName, params: { paths } },
-        riskLabels: ['native-write']
-      })
-    } catch {
-      approved = false
-    }
-    if (!approved) {
-      await deps.release(admission)
-      // Never attributed to the user unless a human actually refused; this seam
-      // cannot tell an auto-resolve from a decline, so it claims neither.
-      return denial('unknown', 'This native write was not approved.')
-    }
-
-    held.set(toolCallId, {
-      canonicalTool: preflight.canonicalTool,
-      admission,
-      paths: captured
-    })
-    for (const path of captured.keys()) pathsInFlight.add(path)
-    return 'allow'
   }
 
   const settleEntry = async (entry: HeldWrite, succeeded: boolean): Promise<void> => {
