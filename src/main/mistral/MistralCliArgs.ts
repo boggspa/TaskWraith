@@ -293,24 +293,23 @@ export const MISTRAL_WRITE_MODE_PROMPT_PREAMBLE =
   'operations enforce the effective grants and assigned paths, asking only when ' +
   'the policy requires it. ' +
   `${noToolsOverrideClause('shell, file, or any other tool')} ` +
-  'If the user declines a tool request, respect that decision: do not retry ' +
-  'the operation, reword the same edit, or substitute another tool for the same ' +
-  'side effect. Report the blocker and continue only with other requested work ' +
-  'that remains permitted. For a technical tool failure, use an applicable ' +
+  'A decline you can point to — never one you assume — settles a tool request: do ' +
+  'not retry it, reword the same edit, or substitute another tool for the same side ' +
+  'effect. Report that blocker and continue with the rest of the permitted work. ' +
+  'For a technical tool failure, use an applicable ' +
   'allowed route once if one is available; otherwise report the failure and ' +
   'answer from the evidence already available.'
 
 export const MISTRAL_REFUSAL_ATTRIBUTION_PREAMBLE =
   'TaskWraith decides native ACP permission requests automatically. Vibe may ' +
   'render a host refusal as "User rejected the tool call"; that wording alone ' +
-  'does not establish a human decision. Exact-run approval_status records identify ' +
-  'host-containment versus host-policy refusals; includePreview=true returns the exact reason. A broker refusal ' +
+  'does not establish a human decision. A broker refusal ' +
   'can still be an actual human decline: respect its receipt. For host containment, ' +
   'route the original scoped action once through an applicable listed broker tool. ' +
   'Do not route around scope or policy refusals. For an unknown origin, do not ' +
-  'attribute it to the user or retry the side effect. If the required route is absent ' +
-  'or the same refusal repeats without new evidence, preserve the design and exact ' +
-  'blocker, finish the lane, and let the coordinator recover after it settles.'
+  'attribute it to the user or retry the side effect. Only after you have attempted ' +
+  'the route: if it is absent, or the same refusal repeats without new evidence, record ' +
+  'the exact blocker, finish the lane, and let the coordinator recover after it settles.'
 
 export function applyMistralPromptPreamble(prompt: string, writeCapable: boolean): string {
   const preamble = writeCapable

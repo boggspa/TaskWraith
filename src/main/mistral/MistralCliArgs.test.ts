@@ -233,8 +233,13 @@ describe('prompt preamble', () => {
     const prompt = applyMistralPromptPreamble('x', true)
     expect(prompt).toContain('TaskWraith_replace')
     expect(prompt).toContain('do not open a human approval card')
-    expect(prompt).toContain('host-containment versus host-policy')
     expect(prompt).toContain('same refusal repeats without new evidence')
+    // The finish-the-lane consequent must not be reachable before the seat has
+    // tried anything; unprefixed, it arrived 32 sentences in and read as an
+    // instruction to describe the work instead of doing it.
+    expect(prompt).toContain('Only after you have attempted the route')
+    // approval_status is a broker tool; this preamble cannot know one is listed.
+    expect(prompt).not.toContain('approval_status')
     expect(prompt).not.toContain('expect an approval round-trip')
     expect(prompt).not.toContain('use your edit tools')
     expect(applyMistralPromptPreamble('x', false)).toContain('within your assigned workspace scope')
