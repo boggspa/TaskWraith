@@ -449,6 +449,7 @@ import {
   shouldAppendDueScheduledRun
 } from './lib/midRunSteeringQueue'
 import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
+import { mergeHydratedRawLogs, shouldHydrateThreadRawLogs } from './lib/rawLogHydration'
 import {
   runRequestDisplayPrompt,
   runRequestPromptPreview
@@ -1971,6 +1972,13 @@ function App(): React.JSX.Element {
   const usageRecordsRefreshPendingRef = useRef(false)
   const lateQuotaRefreshCoordinatorRef = useRef<LateBackgroundRefreshCoordinator | null>(null)
   const rawLogHydrationInFlightRef = useRef<Set<string>>(new Set())
+  /**
+   * Chats whose run-event history has been fetched. Tracked separately from the
+   * raw-log buffer because `appendThreadRawLog` creates a buffer for the first
+   * renderer-authored line, and using buffer presence as the guard let one such
+   * line suppress hydration for that thread permanently.
+   */
+  const rawLogHydratedRef = useRef<Set<string>>(new Set())
   const [imageAttachmentsByChatId, setImageAttachmentsByChatId] = useState<
     Record<string, ImageAttachment[]>
   >({})
@@ -5153,21 +5161,28 @@ function App(): React.JSX.Element {
 
   const hydrateThreadRawLogsFromEvents = (chatId: string) => {
     if (
-      rawLogsByChatIdRef.current.has(chatId) ||
-      rawLogHydrationInFlightRef.current.has(chatId) ||
-      typeof window.api.getRunEvents !== 'function'
+      !shouldHydrateThreadRawLogs({
+        hydrated: rawLogHydratedRef.current.has(chatId),
+        inFlight: rawLogHydrationInFlightRef.current.has(chatId),
+        hasBuffer: rawLogsByChatIdRef.current.has(chatId),
+        hasRunEventsApi: typeof window.api.getRunEvents === 'function'
+      })
     )
       return
     rawLogHydrationInFlightRef.current.add(chatId)
     window.api
       .getRunEvents({ chatId, limit: 1000 })
       .then((events: RunEventRecord[]) => {
-        if (!Array.isArray(events) || rawLogsByChatIdRef.current.has(chatId)) return
+        if (!Array.isArray(events)) return
         const logs = events
           .map(rawLogFromRunEvent)
           .filter((log): log is RawLogEntry => Boolean(log))
-          .slice(-1000)
-        setThreadRawLogs(chatId, logs)
+        // Renderer-authored lines can land while this fetch is in flight, and
+        // setThreadRawLogs replaces the buffer wholesale -- merge so hydration
+        // never discards the very lines whose presence allowed it to run.
+        const existing = rawLogsByChatIdRef.current.get(chatId)?.snapshot() || []
+        rawLogHydratedRef.current.add(chatId)
+        setThreadRawLogs(chatId, mergeHydratedRawLogs(logs, existing, 1000))
       })
       .catch(() => {})
       .finally(() => {
