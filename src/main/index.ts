@@ -1783,6 +1783,12 @@ import {
   createNativeShellApprovalGate,
   nativeShellPermitted
 } from './native-tools/NativeShellApprovalGate'
+import { createNativeWriteContributionCapture } from './native-tools/NativeWriteContributionCapture'
+import { prepareSharedWorkspaceEdit } from './sharedWorkspace/SharedWorkspaceContributions'
+import {
+  bindSharedWorkspaceActor,
+  withSharedWorkspaceOperation
+} from './sharedWorkspace/SharedWorkspaceSession'
 import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
 import {
@@ -26056,6 +26062,126 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     readOnlySeat: mistralReadOnlySeat,
     shellPolicy: payload.effectivePermissions?.agenticServices.shellCommands
   })
+  // Native writes are ADMITTED and then the acquisition is released straight
+  // away, before the provider writes. The lock is deliberately NOT held across
+  // the write.
+  //
+  // Holding it looks safer and is not. releaseAcquisition marks the runtime
+  // unhealthy when a release returns !ok, and markUnhealthy is write-once, so a
+  // benign double release -- settle() and sweep() both firing, or a terminal
+  // releaseAllForRun getting there first -- fails every later acquire, replace,
+  // transfer and verify for the rest of the session. Nothing reclaims a leaked
+  // lease in-session either: there is no TTL, no reaper and no heartbeat, only
+  // boot recovery. And the hold would buy only advisory exclusion, because
+  // TaskWraith never sees the provider's write and has no descriptor to fence.
+  //
+  // What admission is actually for survives: lane write-scope validation, path
+  // containment through claim derivation, run finality, owner identity, and the
+  // fail-closed behaviour when admission is poisoned. What is given up is
+  // mutual exclusion during the write itself; the journal already detects that
+  // by re-hashing on preview and flipping the row to 'changed', and the gate's
+  // own synchronous path reservation excludes the realistic collision of two
+  // Mistral calls on one file in one turn.
+  const mistralNativeWritePermitted =
+    !mistralReadOnlySeat &&
+    payload.scope !== 'global' &&
+    Boolean(payload.workspace) &&
+    payload.effectivePermissions?.agenticServices.fileChanges !== 'deny'
+  let mistralAcpTurnLive = true
+  const mistralNativeWriteWorkspace = payload.workspace || ''
+  const mistralAdmissionContext = {
+    scope: payload.scope,
+    cwd: mistralNativeWriteWorkspace,
+    workspacePath: mistralNativeWriteWorkspace,
+    ...(route.appRunId ? { appRunId: route.appRunId } : {}),
+    ...(route.appChatId ? { appChatId: route.appChatId } : {}),
+    ...(payload.ensembleRun ? { ensembleRun: payload.ensembleRun } : {})
+  }
+  const mistralNativeWriteCapture = mistralNativeWritePermitted
+    ? createNativeWriteContributionCapture({
+        provider: 'mistral',
+        workspacePath: mistralNativeWriteWorkspace,
+        admit: async (input) => {
+          const runtime = workspaceLockRuntimeRef
+          if (!runtime) {
+            return { ok: false, reason: 'Workspace-lock authority is not available.' }
+          }
+          const rawArgs =
+            input.rawToolCall && typeof input.rawToolCall === 'object'
+              ? (input.rawToolCall as Record<string, unknown>)
+              : {}
+          const admission = await workspaceLockMcpAdmissionCoordinator.admit({
+            context: mistralAdmissionContext,
+            provider: 'mistral',
+            // Canonical, so contract, lane validation, owner identity and
+            // acquisition are the same code paths a brokered write takes.
+            toolName: input.canonicalTool,
+            args: { ...rawArgs, path: input.paths[0] },
+            resourcePath: input.paths[0],
+            nativeMutation: { action: input.nativeAction },
+            // MANDATORY. The default is () => true, and admission spins on a
+            // conflict with a 250ms poll; called from the permission handler
+            // without this, a contended path hangs the session/request_permission
+            // reply forever and wedges the turn.
+            acquisitionStillWanted: () => mistralAcpTurnLive
+          })
+          if (!admission.ok) {
+            return { ok: false, reason: admission.reason }
+          }
+          const lockOwnerId = admission.owner?.lockOwnerId
+          if (admission.releaseAfterOperation && admission.acquiredTransitionId && admission.owner) {
+            const released = await runtime.releaseAcquisition(
+              admission.owner.runId,
+              admission.acquiredTransitionId
+            )
+            // A failed release has already marked the runtime unhealthy, so the
+            // only honest answer is to refuse this write rather than proceed on
+            // an acquisition whose state we no longer know.
+            if (!released.ok) {
+              return {
+                ok: false,
+                reason: 'Workspace-lock release failed; this native write was not admitted.'
+              }
+            }
+          }
+          return { ok: true, ...(lockOwnerId ? { lockOwnerId } : {}) }
+        },
+        // Nothing is held, so there is nothing to release. Kept explicit so a
+        // future change cannot quietly start holding one without revisiting the
+        // double-release hazard above.
+        release: async () => {},
+        requestApproval: (approval) =>
+          requestAgenticServiceApproval(
+            event.sender,
+            'mistral',
+            'fileChanges',
+            payload.scope === 'global' ? undefined : payload.workspace,
+            { ...approval, runId: route.appRunId ?? undefined }
+          ),
+        journalNativeEdit: (entry) =>
+          // The permission handler is NOT inside a shared-workspace operation,
+          // and bindSharedWorkspaceActor is a no-op without that store while
+          // prepareSharedWorkspaceEdit returns null without an actor. Omitting
+          // this wrapper would land every native write uncaptured, silently.
+          withSharedWorkspaceOperation(async () => {
+            bindSharedWorkspaceActor(
+              mistralAdmissionContext,
+              'mistral',
+              entry.canonicalTool,
+              entry.lockOwnerId,
+              'provider-native'
+            )
+            const receipt = await prepareSharedWorkspaceEdit(
+              { rootPath: mistralNativeWriteWorkspace, targetPath: entry.targetPath },
+              entry.before,
+              entry.after,
+              entry.executable
+            )
+            await receipt?.complete()
+          })
+      })
+    : null
+
   // Preserve the existing native gate and attach its host refusal provenance.
   const mistralPermissionHandler = createMistralPermissionHandler({
     isBrokerTool: mistralTaskWraithBrokerToolRequested,
@@ -26072,6 +26198,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     }),
     isReadOnlyShell: grokReadOnlyShellRequestAllowed,
     readOnlySeat: mistralReadOnlySeat,
+    ...(mistralNativeWriteCapture ? { gateNativeWrite: mistralNativeWriteCapture.gate } : {}),
     ...(mistralNativeShell
       ? {
           gateNativeShell: createMistralNativeShellGate({
@@ -26297,10 +26424,26 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
           ]
         })
       },
-      onEvent: (evt) => applyMistralRunEvent(state, evt),
+      onEvent: (evt) => {
+        // Settle the native-write capture on the terminal tool result, BEFORE
+        // the run event is applied, so the contribution exists by the time the
+        // renderer reflects the tool as finished. `cancelled` and
+        // `permission_rejected` never reach here -- only sweep() recovers those.
+        if (mistralNativeWriteCapture && evt.type === 'tool_result' && evt.toolId) {
+          void mistralNativeWriteCapture.settle(evt.toolId, evt.toolStatus !== 'error')
+        }
+        applyMistralRunEvent(state, evt)
+      },
       onToolBatchBoundary: () => scheduleQueuedSteerToolBoundary('mistral', route.appRunId!),
       onRawFrame: (direction, message) => maybeLogMistralRawAcp(direction, message),
-      onClose: finishMistralAcpTurn
+      onClose: (...args: Parameters<typeof finishMistralAcpTurn>) => {
+        // The turn is over: stop any admission still waiting on a contended
+        // path, and attempt the capture for anything that never produced a
+        // terminal tool result. The file was written either way.
+        mistralAcpTurnLive = false
+        if (mistralNativeWriteCapture) void mistralNativeWriteCapture.sweep()
+        return finishMistralAcpTurn(...args)
+      }
     })
   } catch (error) {
     try {
