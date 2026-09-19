@@ -90,6 +90,31 @@ describe('native write contribution capture', () => {
     }
   })
 
+  it('accepts the capital-D tool call id spelling the event side accepts', async () => {
+    // GrokAcpProtocol reads toolCallId | toolCallID | id. A gate that missed
+    // toolCallID would refuse every write on such a build.
+    const { deps } = makeDeps()
+    const capture = createNativeWriteContributionCapture(deps)
+    const req = {
+      toolName: 'Edit',
+      toolKind: 'edit',
+      rawToolCall: { toolCallID: 'call-CAP', filePath: FILE }
+    } as unknown as AcpPermissionRequest
+    expect(await capture.gate(req, allowPreflight('replace'))).toBe('allow')
+    expect(capture.inFlightCount()).toBe(1)
+  })
+
+  it('refuses a multi-target native write rather than journalling more than it admitted', async () => {
+    const { deps } = makeDeps()
+    const capture = createNativeWriteContributionCapture(deps)
+    const decision = await capture.gate(
+      request(),
+      allowPreflight('replace', [FILE, '/ws/src/b.ts'])
+    )
+    expect(decision).toMatchObject({ decision: 'deny', origin: 'host-containment' })
+    expect(deps.admit).not.toHaveBeenCalled()
+  })
+
   it('admits the two tools the journal can represent', async () => {
     for (const tool of ['write_file', 'replace']) {
       const { deps } = makeDeps()

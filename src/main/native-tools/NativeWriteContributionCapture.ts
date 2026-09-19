@@ -94,7 +94,10 @@ function toolCallIdOf(request: AcpPermissionRequest): string | null {
   const raw = request?.rawToolCall
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
   const record = raw as Record<string, unknown>
-  for (const key of ['toolCallId', 'toolcallid', 'tool_call_id', 'id', 'toolId']) {
+  // Must match the aliases the event side accepts (GrokAcpProtocol acpToolCallId:
+  // toolCallId | toolCallID | id). A Vibe build spelling it with a capital D
+  // would otherwise gate on nothing here and never settle.
+  for (const key of ['toolCallId', 'toolCallID', 'toolcallid', 'tool_call_id', 'id', 'toolId']) {
     const value = record[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
@@ -172,6 +175,16 @@ export function createNativeWriteContributionCapture(
       return denial(
         'host-containment',
         'This native write declares no verifiable workspace path, so it cannot be recorded for Undo.'
+      )
+    }
+    // write_file and replace are single-target, and claim derivation resolves
+    // exactly one path|file_path|filePath. Snapshotting several while validating
+    // one would journal more than was admitted, so an anomalous multi-path call
+    // refuses instead of being partially covered.
+    if (paths.length !== 1) {
+      return denial(
+        'host-containment',
+        'This native write names more than one target, so TaskWraith cannot admit and record it exactly.'
       )
     }
     // Reserve SYNCHRONOUSLY, before the first await. Checking here and only
