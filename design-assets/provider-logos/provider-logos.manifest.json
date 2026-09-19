@@ -442,6 +442,39 @@
       ]
     },
     {
+      "id": "muse",
+      "label": "Muse",
+      "owner": "Meta Platforms, Inc.",
+      "status": "live",
+      "artwork": "Meta blue infinity mark and wordmark",
+      "sourceKind": "user-supplied local asset",
+      "localSource": "LLMUsageCounter/LLMUsageCounter/Assets.xcassets/ProviderMetaLogo.imageset/logo.png",
+      "corroboratingLocalCopy": "Mistral Bridge/Source/provider-logos/provider-logo-meta.png",
+      "retrievedAt": "2026-09-19",
+      "rightsNote": "User-requested local Meta branding asset, preserved byte-for-byte for provider identification. No affiliation or endorsement is implied.",
+      "runtimePresentation": "Display the leading 340 x 237 infinity mark from the intact 1024 x 237 PNG, preserving its proportions and centering it in the icon slot.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-meta.png",
+          "originalFilename": "logo.png",
+          "dimensions": {
+            "width": 1024,
+            "height": 237
+          },
+          "bytes": 114268,
+          "sha256": "4c8418c1cc505f434cbfd83476b78142449acad9eeaa9b272d54b4fb7d24806b",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 124020,
+            "partialAlphaPixels": 47145,
+            "opaquePixels": 71523
+          }
+        }
+      ]
+    },
+    {
       "id": "devin",
       "label": "Devin",
       "owner": "Cognition AI, Inc.",
