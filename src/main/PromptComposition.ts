@@ -1004,19 +1004,31 @@ function renderConversationProjection(
     }
   }
 
-  // Preserve the legacy ordinary-context slice exactly; compaction uses the
-  // whole-row branch above and therefore stays strictly within its budget.
-  const prefixLength = Math.max(0, budget.maxBlockChars - 18)
+  // Keep the NEWEST rows. This block exists to give the model recent context,
+  // and the caller has ALREADY windowed to the most recent turns -- so taking a
+  // PREFIX of that window discarded the newest of them first, and under budget
+  // pressure the model received the beginning of the window and never the end.
+  // A mid-run steer is by construction the newest row in the transcript, which
+  // made it the single row most likely to be dropped.
+  //
+  // Compaction is deliberately NOT affected: it selects the OLDEST uncovered
+  // rows, takes the whole-row branch above, and its provenance requires an
+  // exact prefix of the eligible transcript.
+  const body = lines.map((line) => line.text).join('\n')
+  const room = Math.max(0, budget.maxBlockChars - header.length - truncationMarker.length - 1)
+  const keptBody = body.slice(Math.max(0, body.length - room))
+  const droppedChars = body.length - keptBody.length
   const suppliedMessageIds: string[] = []
-  let lineStart = header.length + 1
+  let lineStart = 0
   for (const line of lines) {
     // A row is supplied if any portion of its rendered line survives the
-    // aggregate slice. This preserves the legacy context-block behavior.
-    if (lineStart < prefixLength) suppliedMessageIds.push(line.id)
+    // aggregate slice, exactly as before -- only the surviving end changed.
+    if (lineStart + line.text.length > droppedChars) suppliedMessageIds.push(line.id)
     lineStart += line.text.length + 1
   }
+  // The marker leads now: what was cut is the EARLIER context, not the later.
   return {
-    block: `${contextBlock.slice(0, prefixLength)}${truncationMarker}`,
+    block: `${header}${truncationMarker}\n${keptBody}`,
     suppliedMessageIds
   }
 }

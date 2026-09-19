@@ -516,8 +516,13 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
 
     expect(projection.block).toContain('[context truncated]')
-    expect(projection.suppliedMessageIds).toEqual(['m1', 'm2'])
-    expect(projection.block).not.toContain('C'.repeat(20))
+    // Direction flipped deliberately when the aggregate slice began keeping the
+    // NEWEST rows instead of the oldest -- see "ordinary conversation context
+    // keeps the newest turns under budget pressure". The contract this test
+    // exists for is unchanged: suppliedMessageIds names exactly the rows with
+    // surviving bytes. Only which end survives moved.
+    expect(projection.suppliedMessageIds).toEqual(['m2', 'm3'])
+    expect(projection.block).not.toContain('A'.repeat(20))
   })
 
   it('selects oldest uncovered rows for compaction and advances by exact prefix', () => {
@@ -3183,5 +3188,68 @@ describe('composeRunPrompt bounded workspace doctrine', () => {
     expect(skipped.envelopeLayers.find((layer) => layer.id === 'workspace_doctrine')?.state).toBe(
       'skipped'
     )
+  })
+})
+
+describe('ordinary conversation context keeps the newest turns under budget pressure', () => {
+  const budget = { maxTurns: 3, maxCharsPerTurn: 40, maxBlockChars: 125 }
+  const threeTurns = [
+    message({ id: 'm1', role: 'user', content: 'A'.repeat(40) }),
+    message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) }),
+    message({ id: 'm3', role: 'user', content: 'C'.repeat(40) })
+  ]
+
+  // The window above this already selected the most RECENT turns; taking a
+  // prefix of that window then discarded the newest of them first, so a model
+  // under budget pressure saw the beginning of the window and never the end.
+  it('drops the oldest rows, not the newest', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.block).toContain('C'.repeat(40))
+    expect(projection.block).not.toContain('A'.repeat(20))
+  })
+
+  it('reports exactly the rows with surviving bytes', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.suppliedMessageIds).toEqual(['m2', 'm3'])
+  })
+
+  it('still marks the block truncated and stays inside the budget', () => {
+    const projection = buildConversationContextProjection(threeTurns, 3, '', budget)
+    expect(projection.block).toContain('[context truncated]')
+    expect(projection.block.length).toBeLessThanOrEqual(budget.maxBlockChars)
+  })
+
+  // A mid-run steer is by construction the newest row in the transcript, so it
+  // was the single row most likely to be discarded.
+  it('keeps a just-arrived steer rather than the turn that preceded it', () => {
+    const projection = buildConversationContextProjection(
+      [
+        message({ id: 'old', role: 'user', content: 'X'.repeat(40) }),
+        message({ id: 'reply', role: 'assistant', content: 'Y'.repeat(40) }),
+        message({ id: 'steer', role: 'user', content: 'STEER-MARKER actually use the other file' })
+      ],
+      3,
+      '',
+      budget
+    )
+    expect(projection.block).toContain('STEER-MARKER')
+    expect(projection.suppliedMessageIds).toContain('steer')
+  })
+
+  // Guard the adjacent contract: compaction deliberately selects the OLDEST
+  // uncovered rows and takes the whole-row branch, and its provenance requires
+  // an exact prefix. The change above must not reach it.
+  it('leaves compaction selecting oldest-first and never cutting a row in half', () => {
+    const projection = buildConversationCompactionProjection(
+      [
+        message({ id: 'm1', content: 'A'.repeat(40) }),
+        message({ id: 'm2', role: 'assistant', content: 'B'.repeat(40) })
+      ],
+      2,
+      undefined,
+      { maxTurns: 2, maxCharsPerTurn: 40, maxBlockChars: 140 }
+    )
+    expect(projection.suppliedMessageIds).toEqual(['m1'])
+    expect(projection.block).not.toContain('B')
   })
 })
