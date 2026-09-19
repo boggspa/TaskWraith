@@ -3901,6 +3901,17 @@ describe('HostNodeDomainPorts', () => {
       const createQueuedStartLifecycle = vi.fn(() => {
         throw new Error('lifecycle factory must not run while TASKWRAITH_HOST_QUEUED_START is off')
       })
+      const executionClaimStore = {
+        coverageEpoch: 'a'.repeat(64),
+        path: '/ignored/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => {
+          throw new Error('claim store must not run while TASKWRAITH_HOST_QUEUED_START is off')
+        }),
+        list: vi.fn(() => {
+          throw new Error('claim store must not run while TASKWRAITH_HOST_QUEUED_START is off')
+        })
+      }
       const queuedStartLifecycle = {
         reserve() {
           throw new Error('lifecycle must not be consulted while the gate is off')
@@ -3921,6 +3932,7 @@ describe('HostNodeDomainPorts', () => {
       const domain = new HostNodeDomainPorts({
         ...domainOptions,
         hostQueuedStartEnabled: false,
+        executionClaimStore,
         createQueuedStartLifecycle,
         queuedStartLifecycle
       })
@@ -3937,7 +3949,102 @@ describe('HostNodeDomainPorts', () => {
         )
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
       expect(createQueuedStartLifecycle).not.toHaveBeenCalled()
+      expect(executionClaimStore.record).not.toHaveBeenCalled()
+      expect(executionClaimStore.list).not.toHaveBeenCalled()
       releaseRun()
+      await domain.shutdown()
+    })
+
+    it('awaits the injected execution-claim record before provider side effects', async () => {
+      const { domainOptions, store, workspace, prompts, releaseRun } = open({
+        killReleases: false
+      })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      let releaseClaim!: () => void
+      const claimRecorded = new Promise<void>((resolve) => {
+        releaseClaim = resolve
+      })
+      const executionClaimStore = {
+        coverageEpoch: 'a'.repeat(64),
+        path: '/test/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => claimRecorded),
+        list: vi.fn(() => [])
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        executionClaimStore
+      })
+      const starting = domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-durable-claim',
+          { threadId: thread.appChatId },
+          { text: 'claim first' }
+        ),
+        { id: 'target' }
+      )
+
+      await vi.waitFor(() => expect(executionClaimStore.record).toHaveBeenCalledTimes(1))
+      expect(prompts).toEqual([])
+      releaseClaim()
+      await vi.waitFor(() => expect(prompts).toEqual(['claim first']))
+      releaseRun()
+      await expect(starting).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
+      await domain.shutdown()
+    })
+
+    it('fails closed when the injected execution-claim record cannot persist', async () => {
+      const { domainOptions, store, workspace, prompts } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const executionClaimStore = {
+        coverageEpoch: 'b'.repeat(64),
+        path: '/test/queued-start-claims.jsonl',
+        declaresDurableCoverage: false,
+        record: vi.fn(() => Promise.reject(new Error('fsync failed'))),
+        list: vi.fn(() => [])
+      }
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        executionClaimStore
+      })
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-durable-claim-failed',
+            { threadId: thread.appChatId },
+            { text: 'must not start' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      expect(executionClaimStore.record).toHaveBeenCalledTimes(1)
+      expect(prompts).toEqual([])
       await domain.shutdown()
     })
 

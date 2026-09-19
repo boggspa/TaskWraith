@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -17,6 +17,10 @@ import {
 import type { HostStandaloneCompositionInput } from '../host-runtime/HostStandaloneComposition'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
 import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
+import {
+  HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME,
+  type HostNodeQueuedStartExecutionClaimStore
+} from './HostNodeQueuedStartExecutionClaimStore'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 
 const profiles: string[] = []
@@ -52,6 +56,7 @@ function harness(
   let domainWorkSpanRecorder: unknown
   let composedResolveReceiptSpanChatId: unknown
   let domainHostQueuedStartEnabled: HostNodeDomainPortsOptions['hostQueuedStartEnabled']
+  let domainExecutionClaimStore: HostNodeDomainPortsOptions['executionClaimStore']
   let domainQueuedStartOnStarting: HostNodeDomainPortsOptions['queuedStartOnStarting']
   let domainQueuedStartOnStarted: HostNodeDomainPortsOptions['queuedStartOnStarted']
   let domainQueuedStartOnDispatchSettled: HostNodeDomainPortsOptions['queuedStartOnDispatchSettled']
@@ -174,6 +179,7 @@ function harness(
       interactionTimeoutMs = input.interactionTimeoutMs
       domainWorkSpanRecorder = input.workSpanRecorder
       domainHostQueuedStartEnabled = input.hostQueuedStartEnabled
+      domainExecutionClaimStore = input.executionClaimStore
       domainQueuedStartOnStarting = input.queuedStartOnStarting
       domainQueuedStartOnStarted = input.queuedStartOnStarted
       domainQueuedStartOnDispatchSettled = input.queuedStartOnDispatchSettled
@@ -222,6 +228,7 @@ function harness(
     projectionDirty: () => projectionDirty?.(),
     interactionTimeoutMs: () => interactionTimeoutMs,
     domainHostQueuedStartEnabled: () => domainHostQueuedStartEnabled,
+    domainExecutionClaimStore: () => domainExecutionClaimStore,
     domainQueuedStartOnStarting: () => domainQueuedStartOnStarting,
     domainQueuedStartOnStarted: () => domainQueuedStartOnStarted,
     domainQueuedStartOnDispatchSettled: () => domainQueuedStartOnDispatchSettled,
@@ -713,12 +720,21 @@ describe('HostNodeProductionServer', () => {
 
   it('passes one injected-environment queued-start gate to Domain and composition without mutating process.env', async () => {
     const previous = process.env[TASKWRAITH_HOST_QUEUED_START_ENV]
+    const runtimePath = realpathSync(profile())
     const on = harness({
-      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' },
+      runtimePath: () => runtimePath
     })
     await on.server.start()
     expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
     expect(on.domainHostQueuedStartEnabled()).toBe(true)
+    expect(on.domainExecutionClaimStore()?.path).toBe(
+      join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME)
+    )
+    expect(on.domainExecutionClaimStore()?.declaresDurableCoverage).toBe(false)
+    expect(existsSync(join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME))).toBe(
+      true
+    )
     expect(on.domainQueuedStartOnStarting()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnStarted()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnDispatchSettled()).toBeTypeOf('function')
@@ -777,14 +793,86 @@ describe('HostNodeProductionServer', () => {
     await on.server.stop()
   })
 
+  it('creates the canonical default runtime directory before opening the ON claim journal', async () => {
+    const profilePath = realpathSync(profile())
+    const runtimePath = join(profilePath, 'host-runtime')
+    const h = harness({
+      profilePath,
+      acquireLease: undefined,
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+    })
+
+    await h.server.start()
+    expect(h.domainExecutionClaimStore()?.path).toBe(
+      join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME)
+    )
+    expect(existsSync(join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME))).toBe(
+      true
+    )
+    await h.server.stop()
+  })
+
+  it('reopens the same runtime claim journal and preserves durable claim presence', async () => {
+    const runtimePath = realpathSync(profile())
+    const environment = { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+
+    const first = harness({ environment, runtimePath: () => runtimePath })
+    await first.server.start()
+    const firstStore = first.domainExecutionClaimStore()
+    expect(firstStore).toBeDefined()
+    await firstStore!.record({
+      commandId: 'claim-one',
+      threadId: 'thread-one',
+      fingerprint: 'fingerprint-one',
+      claimedAt: 1
+    })
+    await first.server.stop()
+
+    const second = harness({ environment, runtimePath: () => runtimePath })
+    await second.server.start()
+    const reopened: HostNodeQueuedStartExecutionClaimStore = second.domainExecutionClaimStore()!
+    expect(reopened).not.toBe(firstStore)
+    expect(reopened.declaresDurableCoverage).toBe(false)
+    expect(reopened.list()).toEqual([
+      expect.objectContaining({ commandId: 'claim-one', threadId: 'thread-one' })
+    ])
+    await reopened.record({
+      commandId: 'claim-two',
+      threadId: 'thread-two',
+      fingerprint: 'fingerprint-two',
+      claimedAt: 2
+    })
+    expect(reopened.list().map((claim) => claim.commandId)).toEqual(['claim-one', 'claim-two'])
+    await second.server.stop()
+  })
+
+  it('fails closed on a corrupt queued-start claim journal without constructing Domain', async () => {
+    const runtimePath = realpathSync(profile())
+    writeFileSync(
+      join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME),
+      '{not-json}\n',
+      { mode: 0o600 }
+    )
+    const h = harness({
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' },
+      runtimePath: () => runtimePath
+    })
+
+    await expect(h.server.start()).rejects.toThrow()
+    expect(h.domainExecutionClaimStore()).toBeUndefined()
+    expect(h.order).not.toContain('domain')
+  })
+
   it('refreshes the exact queued-start run before dispatching successful settlement', async () => {
     const refreshFor = vi
       .spyOn(ThreadCatalogueHostRunWindow.prototype, 'refreshFor')
       .mockResolvedValue(true)
+    const runtimePath = realpathSync(profile())
     const h = harness({
       profilePath: profile(),
       acquireLease: undefined,
-      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' },
+      runtimePath: () => runtimePath
     })
     let started = false
     try {
@@ -812,12 +900,17 @@ describe('HostNodeProductionServer', () => {
 
   it('omits queued-start callbacks and ports when the injected environment is off', async () => {
     const previous = process.env[TASKWRAITH_HOST_QUEUED_START_ENV]
+    const runtimePath = realpathSync(profile())
+    const claimPath = join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME)
     const off = harness({
-      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: 'true' }
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: 'true' },
+      runtimePath: () => runtimePath
     })
     await off.server.start()
     expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
     expect(off.domainHostQueuedStartEnabled()).toBe(false)
+    expect(off.domainExecutionClaimStore()).toBeUndefined()
+    expect(existsSync(claimPath)).toBe(false)
     expect(off.domainQueuedStartOnStarting()).toBeUndefined()
     expect(off.domainQueuedStartOnStarted()).toBeUndefined()
     expect(off.domainQueuedStartOnDispatchSettled()).toBeUndefined()
@@ -827,9 +920,11 @@ describe('HostNodeProductionServer', () => {
     expect(off.compositionQueuedStartDispatchSettledBind()).toBeUndefined()
     await off.server.stop()
 
-    const empty = harness({ environment: {} })
+    const empty = harness({ environment: {}, runtimePath: () => runtimePath })
     await empty.server.start()
     expect(empty.domainHostQueuedStartEnabled()).toBe(false)
+    expect(empty.domainExecutionClaimStore()).toBeUndefined()
+    expect(existsSync(claimPath)).toBe(false)
     expect(empty.compositionQueuedComposerSend()).toBeUndefined()
     expect(empty.domainQueuedStartOnStarting()).toBeUndefined()
     expect(empty.domainQueuedStartOnStarted()).toBeUndefined()

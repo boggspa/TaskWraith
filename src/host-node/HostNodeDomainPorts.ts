@@ -78,6 +78,7 @@ import {
 } from './HostNodeInteractionRegistry'
 import type { HostNodeProvider } from './HostNodeProvider'
 import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
+import type { HostNodeQueuedStartExecutionClaimStore } from './HostNodeQueuedStartExecutionClaimStore'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 import { createHostNodeRunAdmission, type HostNodeRunAdmission } from './HostNodeRunAdmission'
 import {
@@ -110,6 +111,7 @@ function resolveQueuedStartLifecycle(
   if (options.queuedStartLifecycle) return options.queuedStartLifecycle
   const factory = options.createQueuedStartLifecycle ?? createHostNodeQueuedStartLifecycle
   return factory({
+    ...(options.executionClaimStore ? { executionClaimStore: options.executionClaimStore } : {}),
     ...(options.queuedStartOnStarting ? { onStarting: options.queuedStartOnStarting } : {}),
     ...(options.queuedStartOnStarted ? { onStarted: options.queuedStartOnStarted } : {})
   })
@@ -200,6 +202,11 @@ export interface HostNodeDomainPortsOptions {
    * holds. Absence preserves the existing construction and behavior exactly.
    */
   readonly runAdmission?: HostNodeRunAdmission
+  /**
+   * File-backed execution-claim journal supplied by the production server.
+   * Consulted only while the queued-start gate is on.
+   */
+  readonly executionClaimStore?: HostNodeQueuedStartExecutionClaimStore
   /** Optional recorder for control_response and round_start span telemetry. Absence is safe. */
   readonly workSpanRecorder?: WorkSpanRecorder
   /**

@@ -3,6 +3,7 @@ import { ThreadCatalogueHostRecovery } from './ThreadCatalogueHostRecovery'
 import { hostNodeReceiptSpanChatId } from './hostNodeReceiptSpanChatId'
 import type { HostCatalogueRunOrigin } from '../shared/threadCatalogueTypes'
 import { randomUUID } from 'node:crypto'
+import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import { createHostThreadCatalogue } from './ThreadCatalogueHostClient'
 import { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
 import type { ThreadCatalogueClient } from '../host-shared/thread-catalogue/ThreadCatalogueClient'
@@ -50,6 +51,7 @@ import {
   type HostNodeDomainPortsOptions
 } from './HostNodeDomainPorts'
 import { createHostQueuedStartStartedSlot } from '../host-runtime/HostQueuedStartPublication'
+import { openHostNodeQueuedStartExecutionClaimStore } from './HostNodeQueuedStartExecutionClaimStore'
 
 export type HostNodeProductionPhase =
   | 'idle'
@@ -143,6 +145,20 @@ function asError(value: unknown): Error {
 
 function defaultRuntimePath(profilePath: string): string {
   return join(profilePath, 'host-runtime')
+}
+
+function ensureDefaultRuntimePath(profilePath: string, runtimePath: string): void {
+  if (runtimePath !== defaultRuntimePath(profilePath)) return
+  try {
+    const existing = lstatSync(runtimePath)
+    if (!existing.isDirectory() || existing.isSymbolicLink()) {
+      throw new Error('Unsafe Host runtime directory')
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    mkdirSync(runtimePath, { recursive: false, mode: 0o700 })
+  }
+  if (process.platform !== 'win32') chmodSync(runtimePath, 0o700)
 }
 
 /**
@@ -376,8 +392,13 @@ export class HostNodeProductionServer {
       // One Host recorder: Domain persist and composition receipts both write
       // into composition.perf.spans (A1.10 durable_commit / receipt_delivery).
       const hostPerf = createHostPerfInstrumentation()
+      const runtimePath = (this.options.runtimePath ?? defaultRuntimePath)(this.lease.path)
       const queuedStartEnabled = isHostQueuedStartEnabled(this.options.environment ?? process.env)
       const queuedStartSlot = queuedStartEnabled ? createHostQueuedStartStartedSlot() : null
+      if (queuedStartEnabled) ensureDefaultRuntimePath(this.lease.path, runtimePath)
+      const queuedStartExecutionClaimStore = queuedStartEnabled
+        ? openHostNodeQueuedStartExecutionClaimStore({ dataDir: runtimePath })
+        : null
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
         ...domainOptions,
         hostQueuedStartEnabled: queuedStartEnabled,
@@ -404,8 +425,9 @@ export class HostNodeProductionServer {
           : {}),
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
         onProjectionDirty: () => projectionDirtyRef.current?.(),
-        ...(queuedStartSlot
+        ...(queuedStartSlot && queuedStartExecutionClaimStore
           ? {
+              executionClaimStore: queuedStartExecutionClaimStore,
               queuedStartOnStarting: queuedStartSlot.dispatchStarting,
               queuedStartOnStarted: queuedStartSlot.dispatch,
               queuedStartOnDispatchSettled: async (commandId, threadId, result) => {
@@ -459,7 +481,7 @@ export class HostNodeProductionServer {
         this.options.environment ?? process.env
       )
       this.composition = (this.options.createComposition ?? createHostStandaloneComposition)({
-        runtimePath: (this.options.runtimePath ?? defaultRuntimePath)(this.lease.path),
+        runtimePath,
         lease: this.lease,
         host: this.identity,
         hostCapabilityOffer: capabilities,
