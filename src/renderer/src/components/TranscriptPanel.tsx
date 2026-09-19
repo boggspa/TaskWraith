@@ -87,13 +87,9 @@ import {
 } from '../lib/TranscriptScroll'
 import {
   getChatTranscriptStore,
-  revealChatTranscriptMessage,
-  useChatTranscript
+  revealChatTranscriptMessage
 } from '../lib/useChatTranscript'
-import {
-  chatHasPendingApproval,
-  shouldDeferTranscriptPresentation
-} from '../lib/approvalPresentationGate'
+import { useVisibleChatTranscript } from '../lib/useVisibleChatTranscript'
 import {
   requestLatestTranscriptPage,
   requestNewerTranscriptPage,
@@ -2720,17 +2716,10 @@ export const TranscriptPanel = memo(function TranscriptPanel({
   // Narrow stream subscription: App may retain React chat identity across
   // coalesced flushes; the store is the live messages/runs source for this
   // panel. Props remain the fallback for tests / side panes not yet ingested.
+  // Visible text stays urgent during live runs and approvals; virtualisation
+  // bounds mounted history while surrounding app chrome can remain deferred.
   const chatId = currentChat?.appChatId ?? null
-  const storeTranscript = useChatTranscript(chatId, {
-    deferPresentation: shouldDeferTranscriptPresentation({
-      running: Boolean(chatId && Array.isArray(runningChatIds) && runningChatIds.includes(chatId)),
-      approvalOpen: chatHasPendingApproval(
-        chatId,
-        pendingAgentApprovalByChatId,
-        pendingApprovalQueueByChatId
-      )
-    })
-  })
+  const storeTranscript = useVisibleChatTranscript(chatId)
   const storeReady = Boolean(chatId && getChatTranscriptStore().has(chatId))
   const resolvedMessages = storeReady ? storeTranscript.messages : messages
   const onCopyEntireTurn = useTranscriptTurnCopy(currentChat, resolvedMessages)

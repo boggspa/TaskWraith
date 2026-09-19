@@ -1,4 +1,4 @@
-import { act, useLayoutEffect } from 'react'
+import { act, startTransition, useLayoutEffect } from 'react'
 import { flushSync } from 'react-dom'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,7 @@ import {
   resetChatTranscriptStoreBindingForTests,
   useChatTranscript
 } from './useChatTranscript'
+import { useVisibleChatTranscript } from './useVisibleChatTranscript'
 
 let root: Root | null = null
 const savedGlobals = new Map<string, PropertyDescriptor | undefined>()
@@ -74,6 +75,134 @@ function publish(store: ChatTranscriptStore, chatId: string, content: string): v
 }
 
 describe('transcript presentation scheduling', () => {
+  it('commits visible text and composer input while transcript-derived chrome stays deferred', () => {
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    publish(store, 'chat-a', 'initial')
+    const initial = getChatTranscriptSnapshot('chat-a')
+    const visibleCommits: ChatTranscriptPayload[] = []
+    const chromeCommits: ChatTranscriptPayload[] = []
+    let committedDraft = ''
+    function VisibleTranscript() {
+      const transcript = useVisibleChatTranscript('chat-a')
+      useLayoutEffect(() => {
+        visibleCommits.push(transcript)
+      }, [transcript])
+      return null
+    }
+    function Chrome() {
+      const transcript = useChatTranscript('chat-a', { deferPresentation: true })
+      useLayoutEffect(() => {
+        chromeCommits.push(transcript)
+      }, [transcript])
+      return null
+    }
+    function Composer() {
+      const draft = useComposerDraft('chat-a')
+      useLayoutEffect(() => {
+        committedDraft = draft
+      }, [draft])
+      return null
+    }
+    const mountedRoot = installRendererRoot()
+    act(() =>
+      mountedRoot.render(
+        <>
+          <Chrome />
+          <VisibleTranscript />
+          <Composer />
+        </>
+      )
+    )
+
+    act(() => {
+      flushSync(() => {
+        // Store delivery may itself originate in a background transition.
+        // Visible text must still commit without waiting for that lane.
+        startTransition(() => {
+          for (let index = 0; index < 30; index += 1) {
+            publish(store, 'chat-a', `stream ${index}`)
+          }
+        })
+        composerDraftState.setDraft('chat-a', 'keep typing')
+      })
+      expect(visibleCommits).toEqual([initial, getChatTranscriptSnapshot('chat-a')])
+      expect(visibleCommits.at(-1)?.messages[0].content).toBe('stream 29')
+      expect(committedDraft).toBe('keep typing')
+      // This is the old transcript policy, and a positive control that the
+      // flush above did not simply drain every deferred update as well.
+      expect(chromeCommits).toEqual([initial])
+    })
+    expect(chromeCommits.at(-1)).toBe(getChatTranscriptSnapshot('chat-a'))
+  })
+
+  it('keeps visible updates urgent across repeated streaming bursts', () => {
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    publish(store, 'chat-a', 'initial')
+    let visible = ''
+    let background = ''
+    function VisibleTranscript() {
+      const transcript = useVisibleChatTranscript('chat-a')
+      useLayoutEffect(() => {
+        visible = transcript.messages[0].content
+      }, [transcript])
+      return null
+    }
+    function Chrome() {
+      const transcript = useChatTranscript('chat-a', { deferPresentation: true })
+      useLayoutEffect(() => {
+        background = transcript.messages[0].content
+      }, [transcript])
+      return null
+    }
+    const mountedRoot = installRendererRoot()
+    act(() =>
+      mountedRoot.render(
+        <>
+          <Chrome />
+          <VisibleTranscript />
+        </>
+      )
+    )
+    act(() => {
+      for (let index = 0; index < 60; index += 1) {
+        flushSync(() => startTransition(() => publish(store, 'chat-a', `frame ${index}`)))
+        expect(visible).toBe(`frame ${index}`)
+        expect(background).toBe('initial')
+      }
+    })
+    expect(background).toBe('frame 59')
+  })
+
+  it('shows the current visible snapshot when switching away, back, and clearing the chat', () => {
+    const store = new ChatTranscriptStore()
+    bindChatTranscriptStore(store)
+    publish(store, 'chat-a', 'a')
+    publish(store, 'chat-b', 'b')
+    const commits: string[] = []
+    function VisibleTranscript({ chatId }: { chatId: string | null }) {
+      const transcript = useVisibleChatTranscript(chatId)
+      useLayoutEffect(() => {
+        commits.push(`${chatId}:${transcript.messages[0]?.content ?? 'empty'}`)
+      }, [chatId, transcript])
+      return null
+    }
+    const mountedRoot = installRendererRoot()
+    act(() => mountedRoot.render(<VisibleTranscript chatId="chat-a" />))
+    act(() => {
+      startTransition(() => publish(store, 'chat-a', 'pending'))
+      flushSync(() => mountedRoot.render(<VisibleTranscript chatId="chat-b" />))
+      expect(commits.at(-1)).toBe('chat-b:b')
+      publish(store, 'chat-a', 'latest while away')
+      flushSync(() => mountedRoot.render(<VisibleTranscript chatId="chat-a" />))
+      expect(commits.at(-1)).toBe('chat-a:latest while away')
+      flushSync(() => mountedRoot.render(<VisibleTranscript chatId={null} />))
+      expect(commits.at(-1)).toBe('null:empty')
+    })
+    expect(commits.at(-1)).toBe('null:empty')
+  })
+
   it('commits composer input before a burst of transcript updates, keeping the store current', () => {
     const store = new ChatTranscriptStore()
     bindChatTranscriptStore(store)

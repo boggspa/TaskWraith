@@ -25,13 +25,13 @@ describe('approvalPresentationGate', () => {
     expect(chatHasPendingApproval('a', {}, { a: [] })).toBe(false)
   })
 
-  it('wires the gate into the focused, pane, and transcript surfaces', () => {
+  it('defers app and pane chrome while keeping the visible transcript urgent', () => {
     const transcript = readSource('src/renderer/src/components/TranscriptPanel.tsx')
     const pane = readSource('src/renderer/src/components/ChatViewPane.tsx')
     const app = readSource('src/renderer/src/App.tsx')
 
-    expect(transcript).toContain('shouldDeferTranscriptPresentation({')
-    expect(transcript).toContain('chatHasPendingApproval(')
+    expect(transcript).toContain('useVisibleChatTranscript(chatId)')
+    expect(transcript).not.toContain('shouldDeferTranscriptPresentation({')
     expect(pane).toContain('shouldDeferTranscriptPresentation({')
     expect(pane).toContain('props.composerProps?.pendingAgentApproval')
     expect(app).toContain('shouldDeferTranscriptPresentation({')

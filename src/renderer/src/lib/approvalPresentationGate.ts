@@ -1,10 +1,10 @@
 /**
  * Presentation-lane gate for the pending-approval overlay.
  *
- * Transcript streaming and measurement must yield the main thread while the
- * user is deciding Allow/Deny/Grant. `deferPresentation` already exists for
- * live runs; this helper also covers the ensemble-parent case where the chat
- * never enters `runningChatIds` but a sibling lane is still flushing.
+ * Defer transcript-derived App and pane chrome while a run or approval is
+ * active. The visible virtualised TranscriptPanel subscribes independently at
+ * urgent priority so background presentation cannot starve streamed text.
+ * This also covers ensemble parents whose sibling lanes are still flushing.
  */
 
 export function shouldDeferTranscriptPresentation(input: {
