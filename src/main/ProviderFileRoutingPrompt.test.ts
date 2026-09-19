@@ -102,8 +102,15 @@ describe('buildProviderFileRoutingPrompt', () => {
     expect(prompt).toContain('TaskWraith_replace')
     expect(prompt).toContain('TaskWraith_apply_patch')
     expect(prompt).toContain('do not ask a human')
-    expect(prompt).toContain('approval_status')
     expect(prompt).toContain('scope, and actual human refusals')
+    // Kimi's absent-route exit, which Mistral lacked: the seat in the field had
+    // no sanctioned way to stop, so it guessed broker tool names instead.
+    expect(prompt).toContain('must be present in your current tool list')
+    expect(prompt).toContain('report the missing route and finish the lane')
+    expect(prompt).toContain('Never emit a native edit while describing it as')
+    // Never name a broker-only receipt: it is absent in the exact state the
+    // pointer existed to resolve.
+    expect(prompt).not.toContain('approval_status')
     expect(prompt).not.toContain('Codex-native')
     for (const [files, mcp] of [
       ['deny', 'allow'],
