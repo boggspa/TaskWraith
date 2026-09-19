@@ -4283,6 +4283,8 @@ enum ProviderLogoAssetResolver {
         switch provider {
         case "gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek":
             return "provider-logo-\(provider)"
+        case "muse":
+            return "provider-logo-meta"
         case "cursor", "grok", "ollama", "pi", "cerebras", "devin":
             return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
         default:
@@ -4351,12 +4353,23 @@ public struct ProviderLogoIcon: View {
 
         Group {
             if let assetName, let logo = Self.logoImage(named: assetName) {
-                logo
-                    .renderingMode(.original)
-                    .resizable()
-                    .scaledToFit()
-                    .scaleEffect(ProviderLogoAssetResolver.opticalScale(for: provider))
-                    .accessibilityHidden(true)
+                if assetName == "provider-logo-meta" {
+                    // Display the leading 340 x 237 mark without altering the source PNG.
+                    logo
+                        .renderingMode(.original)
+                        .resizable()
+                        .frame(width: size * 1024 / 340, height: size * 237 / 340)
+                        .frame(width: size, height: size * 237 / 340, alignment: .leading)
+                        .clipped()
+                        .accessibilityHidden(true)
+                } else {
+                    logo
+                        .renderingMode(.original)
+                        .resizable()
+                        .scaledToFit()
+                        .scaleEffect(ProviderLogoAssetResolver.opticalScale(for: provider))
+                        .accessibilityHidden(true)
+                }
             } else {
                 ProviderGlyphIcon(
                     provider: provider,

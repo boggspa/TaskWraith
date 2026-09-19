@@ -76,8 +76,8 @@ struct ProviderLogoAssetTests {
     }
 
     @Test func fullColourMarksUseOneAssetAcrossAppearances() {
-        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral", "deepseek"] {
-            let expected = "provider-logo-\(provider)"
+        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral", "muse", "deepseek"] {
+            let expected = provider == "muse" ? "provider-logo-meta" : "provider-logo-\(provider)"
             #expect(
                 ProviderLogoAssetResolver.assetName(
                     for: provider, darkBackground: false) == expected)
@@ -137,6 +137,7 @@ struct ProviderLogoAssetTests {
             "provider-logo-pi-on-light",
             "provider-logo-pi-on-dark",
             "provider-logo-mistral",
+            "provider-logo-meta",
             "provider-logo-deepseek",
             "provider-logo-cerebras-on-light",
             "provider-logo-cerebras-on-dark",
