@@ -44,7 +44,12 @@ import {
 } from '../host-runtime/HostStandaloneComposition'
 import { createHostPerfInstrumentation } from '../host-runtime/HostPerfSnapshot'
 import type { HostSessionHostIdentity } from '../host-runtime/HostSession'
-import { HostNodeDomainPorts, type HostNodeDomainPortsOptions } from './HostNodeDomainPorts'
+import {
+  HostNodeDomainPorts,
+  isHostQueuedStartEnabled,
+  type HostNodeDomainPortsOptions
+} from './HostNodeDomainPorts'
+import { createHostQueuedStartStartedSlot } from '../host-runtime/HostQueuedStartPublication'
 
 export type HostNodeProductionPhase =
   | 'idle'
@@ -371,8 +376,11 @@ export class HostNodeProductionServer {
       // One Host recorder: Domain persist and composition receipts both write
       // into composition.perf.spans (A1.10 durable_commit / receipt_delivery).
       const hostPerf = createHostPerfInstrumentation()
+      const queuedStartEnabled = isHostQueuedStartEnabled(this.options.environment ?? process.env)
+      const queuedStartSlot = queuedStartEnabled ? createHostQueuedStartStartedSlot() : null
       this.domain = (this.options.createDomain ?? ((input) => new HostNodeDomainPorts(input)))({
         ...domainOptions,
+        hostQueuedStartEnabled: queuedStartEnabled,
         profilePath: this.lease.path,
         store,
         events,
@@ -395,7 +403,13 @@ export class HostNodeProductionServer {
           ? { permissionConsentAuthority: this.permissionConsentAuthority }
           : {}),
         interactionTimeoutMs: domainOptions.interactionTimeoutMs ?? 5 * 60 * 1000,
-        onProjectionDirty: () => projectionDirtyRef.current?.()
+        onProjectionDirty: () => projectionDirtyRef.current?.(),
+        ...(queuedStartSlot
+          ? {
+              queuedStartOnStarted: queuedStartSlot.dispatch,
+              queuedStartOnDispatchSettled: queuedStartSlot.dispatchSettled
+            }
+          : {})
       })
       if (
         this.threadCatalogue &&
@@ -459,6 +473,16 @@ export class HostNodeProductionServer {
         },
         commandExecutor: (command, context) =>
           this.domain!.executeCommand(context, command, { id: context.client.clientId }),
+        ...(queuedStartSlot
+          ? {
+              queuedComposerSend: (command, context) =>
+                this.domain!.acknowledgeQueuedComposerSend(context, command, {
+                  id: context.client.clientId
+                }),
+              queuedStartStartedBind: queuedStartSlot.bind,
+              queuedStartDispatchSettledBind: queuedStartSlot.bindSettled
+            }
+          : {}),
         setupExecutor: this.domain.setupExecutor,
         healthProvider: this.options.health ?? domainOptions.health,
         // The domain owns the curated per-thread catalogue, so a standalone Host

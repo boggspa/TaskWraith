@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -10,6 +10,11 @@ import {
   writeHostProfileWriterFence
 } from '../host-runtime/HostProfileWriterFence'
 import { HOST_PERF_SNAPSHOT_PATH_ENV, HostNodeProductionServer } from './HostNodeProductionServer'
+import {
+  TASKWRAITH_HOST_QUEUED_START_ENV,
+  type HostNodeDomainPortsOptions
+} from './HostNodeDomainPorts'
+import type { HostStandaloneCompositionInput } from '../host-runtime/HostStandaloneComposition'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 
@@ -45,6 +50,12 @@ function harness(
   let composedPerf: unknown
   let domainWorkSpanRecorder: unknown
   let composedResolveReceiptSpanChatId: unknown
+  let domainHostQueuedStartEnabled: HostNodeDomainPortsOptions['hostQueuedStartEnabled']
+  let domainQueuedStartOnStarted: HostNodeDomainPortsOptions['queuedStartOnStarted']
+  let domainQueuedStartOnDispatchSettled: HostNodeDomainPortsOptions['queuedStartOnDispatchSettled']
+  let compositionQueuedComposerSend: HostStandaloneCompositionInput['queuedComposerSend']
+  let compositionQueuedStartStartedBind: HostStandaloneCompositionInput['queuedStartStartedBind']
+  let compositionQueuedStartDispatchSettledBind: HostStandaloneCompositionInput['queuedStartDispatchSettledBind']
   const lease = {
     path: '/profile',
     assertHeld: vi.fn(() => order.push('lease.assert')),
@@ -92,6 +103,10 @@ function harness(
     snapshotDonor: vi.fn(() => ({})),
     evaluateAuthority: vi.fn(() => ({ decision: 'deny', reason: 'test' })),
     executeCommand: vi.fn(),
+    acknowledgeQueuedComposerSend: vi.fn(async () => ({
+      status: 'succeeded' as const,
+      resultSummary: 'run_queued'
+    })),
     providerStatuses: vi.fn(async () => []),
     providerOffers: vi.fn(),
     providerAuthFlows: vi.fn(async () => []),
@@ -155,6 +170,9 @@ function harness(
       projectionDirty = input.onProjectionDirty ?? null
       interactionTimeoutMs = input.interactionTimeoutMs
       domainWorkSpanRecorder = input.workSpanRecorder
+      domainHostQueuedStartEnabled = input.hostQueuedStartEnabled
+      domainQueuedStartOnStarted = input.queuedStartOnStarted
+      domainQueuedStartOnDispatchSettled = input.queuedStartOnDispatchSettled
       return domain as never
     },
     createComposition: (input) => {
@@ -163,6 +181,9 @@ function harness(
       composedGitReadProvider = input.gitReadProvider as typeof composedGitReadProvider
       composedPerf = input.perf
       composedResolveReceiptSpanChatId = input.resolveReceiptSpanChatId
+      compositionQueuedComposerSend = input.queuedComposerSend
+      compositionQueuedStartStartedBind = input.queuedStartStartedBind
+      compositionQueuedStartDispatchSettledBind = input.queuedStartDispatchSettledBind
       return composition as never
     },
     createListener: (input) => {
@@ -194,7 +215,13 @@ function harness(
     authenticatedShutdown: () => authenticatedShutdown,
     eventPublish: () => eventPublish?.(),
     projectionDirty: () => projectionDirty?.(),
-    interactionTimeoutMs: () => interactionTimeoutMs
+    interactionTimeoutMs: () => interactionTimeoutMs,
+    domainHostQueuedStartEnabled: () => domainHostQueuedStartEnabled,
+    domainQueuedStartOnStarted: () => domainQueuedStartOnStarted,
+    domainQueuedStartOnDispatchSettled: () => domainQueuedStartOnDispatchSettled,
+    compositionQueuedComposerSend: () => compositionQueuedComposerSend,
+    compositionQueuedStartStartedBind: () => compositionQueuedStartStartedBind,
+    compositionQueuedStartDispatchSettledBind: () => compositionQueuedStartDispatchSettledBind
   }
 }
 
@@ -675,5 +702,109 @@ describe('HostNodeProductionServer', () => {
     // to any future exact-shape assertion on the listener input.
     expect(Object.prototype.hasOwnProperty.call(h.listenerInput() ?? {}, 'bootEpoch')).toBe(false)
     await h.server.stop()
+  })
+
+  it('passes one injected-environment queued-start gate to Domain and composition without mutating process.env', async () => {
+    const previous = process.env[TASKWRAITH_HOST_QUEUED_START_ENV]
+    const on = harness({
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+    })
+    await on.server.start()
+    expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
+    expect(on.domainHostQueuedStartEnabled()).toBe(true)
+    expect(on.domainQueuedStartOnStarted()).toBeTypeOf('function')
+    expect(on.domainQueuedStartOnDispatchSettled()).toBeTypeOf('function')
+    expect(on.compositionQueuedComposerSend()).toBeTypeOf('function')
+    expect(on.compositionQueuedStartStartedBind()).toBeTypeOf('function')
+    expect(on.compositionQueuedStartDispatchSettledBind()).toBeTypeOf('function')
+
+    const started = vi.fn()
+    const settled = vi.fn()
+    on.compositionQueuedStartStartedBind()?.(started)
+    on.compositionQueuedStartDispatchSettledBind()?.(settled)
+    const view = {
+      commandId: 'cmd-started',
+      threadId: 'thread-1',
+      fingerprint: 'fp',
+      phase: 'started' as const,
+      startedEvidence: true,
+      terminalOutcome: null,
+      cancelLatched: false,
+      dispatched: true,
+      providerRunBegan: true,
+      providerWorkEnded: false
+    }
+    on.domainQueuedStartOnStarted()?.(view)
+    expect(started).toHaveBeenCalledTimes(1)
+    expect(started).toHaveBeenCalledWith(view)
+    const result = { status: 'succeeded' as const, resultSummary: 'run_started' }
+    on.domainQueuedStartOnDispatchSettled()?.('cmd-started', result)
+    expect(settled).toHaveBeenCalledTimes(1)
+    expect(settled).toHaveBeenCalledWith('cmd-started', result)
+
+    const context = {
+      actor: { actorId: 'tui-1', clientId: 'tui-1', clientClass: 'tui' as const },
+      client: { clientId: 'tui-1', clientClass: 'tui' as const, clientVersion: '1.0.0' }
+    }
+    const send = {
+      type: 'host.command' as const,
+      commandId: 'cmd-started',
+      name: 'composer.send' as const
+    }
+    await on.compositionQueuedComposerSend()?.(send as never, context as never)
+    expect(on.domain.acknowledgeQueuedComposerSend).toHaveBeenCalledWith(context, send, {
+      id: 'tui-1'
+    })
+    await on.server.stop()
+  })
+
+  it('omits queued-start callbacks and ports when the injected environment is off', async () => {
+    const previous = process.env[TASKWRAITH_HOST_QUEUED_START_ENV]
+    const off = harness({
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: 'true' }
+    })
+    await off.server.start()
+    expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
+    expect(off.domainHostQueuedStartEnabled()).toBe(false)
+    expect(off.domainQueuedStartOnStarted()).toBeUndefined()
+    expect(off.domainQueuedStartOnDispatchSettled()).toBeUndefined()
+    expect(off.compositionQueuedComposerSend()).toBeUndefined()
+    expect(off.compositionQueuedStartStartedBind()).toBeUndefined()
+    expect(off.compositionQueuedStartDispatchSettledBind()).toBeUndefined()
+    await off.server.stop()
+
+    const empty = harness({ environment: {} })
+    await empty.server.start()
+    expect(empty.domainHostQueuedStartEnabled()).toBe(false)
+    expect(empty.compositionQueuedComposerSend()).toBeUndefined()
+    expect(empty.domainQueuedStartOnStarted()).toBeUndefined()
+    await empty.server.stop()
+  })
+
+  it('production cleanup awaits domain shutdown before composition, and composition drains publication before flush', () => {
+    const serverSrc = readFileSync(join(__dirname, 'HostNodeProductionServer.ts'), 'utf8')
+    const cleanupStart = serverSrc.indexOf('private async cleanup(): Promise<void> {')
+    const cleanup = serverSrc.slice(
+      cleanupStart,
+      serverSrc.indexOf('private installSignals', cleanupStart)
+    )
+    expect(cleanup.indexOf('await this.domain?.shutdown()')).toBeGreaterThan(-1)
+    expect(cleanup.indexOf('await this.domain?.shutdown()')).toBeLessThan(
+      cleanup.indexOf('await this.composition?.shutdown()')
+    )
+
+    const compositionSrc = readFileSync(
+      join(__dirname, '../host-runtime/HostStandaloneComposition.ts'),
+      'utf8'
+    )
+    const shutdownStart = compositionSrc.indexOf('const shutdown = async (): Promise<void> => {')
+    const shutdown = compositionSrc.slice(
+      shutdownStart,
+      compositionSrc.indexOf('const authority = new AppStoreHostAuthority')
+    )
+    expect(shutdown.indexOf('await drainQueuedStartPublication()')).toBeGreaterThan(-1)
+    expect(shutdown.indexOf('await drainQueuedStartPublication()')).toBeLessThan(
+      shutdown.indexOf('runtime.flush()')
+    )
   })
 })

@@ -70,6 +70,7 @@ import {
   type HostAuthorityShutdownResult
 } from './HostAuthority'
 import { fingerprintHostCommand } from './HostCommandFingerprint'
+import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import { validateHostCommandArguments } from './HostCommandArguments'
 import {
   parseGovernedMutationCommandName,
@@ -115,6 +116,11 @@ import {
 import { projectHostRecovery } from './HostRecoveryProjection'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
+import {
+  createHostQueuedStartPublication,
+  type HostQueuedStartPublicationRegisterInput,
+  type HostQueuedStartStartedView
+} from './HostQueuedStartPublication'
 
 /** Explicit activation modes; neither silently falls back to the other. */
 export type AppStoreHostAuthorityMode = 'in-process-migration' | 'standalone'
@@ -282,6 +288,12 @@ export interface AppStoreHostAuthorityPorts {
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
+  /**
+   * When present, composer.send uses the short-start ACK path: pending receipt,
+   * waits off the projection queue, publication via onStarted. Omit while the
+   * queued-start gate is off so the legacy observed path stays byte-equivalent.
+   */
+  readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
@@ -439,6 +451,10 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   private readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   private readonly commandExecutor: AppStoreHostAuthorityExecutor
+  private readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
+  private readonly queuedStartPublication: ReturnType<
+    typeof createHostQueuedStartPublication
+  > | null
   private readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   private readonly healthProvider: AppStoreHostAuthorityHealthProvider
   private readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
@@ -486,6 +502,7 @@ export class AppStoreHostAuthority implements HostAuthority {
       typeof ports.snapshotDonor !== 'function' ||
       typeof ports.authorityEvaluator !== 'function' ||
       typeof ports.commandExecutor !== 'function' ||
+      (ports.queuedComposerSend !== undefined && typeof ports.queuedComposerSend !== 'function') ||
       (ports.setupExecutor !== undefined && typeof ports.setupExecutor.execute !== 'function') ||
       typeof ports.healthProvider !== 'function' ||
       (ports.threadOffersProvider !== undefined &&
@@ -517,6 +534,24 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.snapshotDonor = ports.snapshotDonor
     this.authorityEvaluator = ports.authorityEvaluator
     this.commandExecutor = ports.commandExecutor
+    this.queuedComposerSend = ports.queuedComposerSend
+    this.queuedStartPublication = ports.queuedComposerSend
+      ? createHostQueuedStartPublication({
+          getReceipt: (commandId, actor) =>
+            this.runtime.receiptStore.getByCommandId(commandId, actor),
+          completeReceipt: (input) => this.runtime.receiptStore.complete(input),
+          markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input),
+          readScopedFamilies: async (scope) => {
+            const donor = await this.readMutationSnapshotDonor()
+            return scopeHostMutationObservationFamilies(donor, scope)
+          },
+          publishEffects: (effects) => this.domainPublisher.publish(effects),
+          getPosition: () => this.runtime.getPosition(),
+          runProjectionOperation: (operation, label) =>
+            this.runProjectionOperation(operation, label),
+          now: () => this.now()
+        })
+      : null
     this.setupExecutor = ports.setupExecutor
     this.healthProvider = ports.healthProvider
     this.threadOffersProvider = ports.threadOffersProvider
@@ -872,7 +907,8 @@ export class AppStoreHostAuthority implements HostAuthority {
     if (
       command?.name === 'run.cancel' ||
       command?.name === 'approval.decide' ||
-      command?.name === 'question.answer'
+      command?.name === 'question.answer' ||
+      this.usesQueuedComposerSend(command)
     ) {
       return this.executeCommand(context, command)
     }
@@ -1026,7 +1062,95 @@ export class AppStoreHostAuthority implements HostAuthority {
       if (!this.setupExecutor) return { ok: false, error: 'host_unavailable' }
       return this.executeAllowedMutation(hostCommand, context, this.setupExecutor)
     }
+    if (this.usesQueuedComposerSend(hostCommand)) {
+      return this.executeQueuedComposerSend(hostCommand, context, fingerprintResult.fingerprint)
+    }
     return this.executeAllowedMutation(hostCommand, context, this.commandExecutor)
+  }
+
+  private usesQueuedComposerSend(command: HostCommand | undefined): boolean {
+    return command?.name === 'composer.send' && this.queuedStartPublication !== null
+  }
+
+  /**
+   * Lifecycle onStarted entry. Bound by composition through the started slot.
+   * Witness only — never succeeds a receipt (beginRun is before user-prompt persist).
+   */
+  handleQueuedStartStarted(view: HostQueuedStartStartedView): void {
+    this.queuedStartPublication?.onStarted(view)
+  }
+
+  /**
+   * Off-stack DomainPorts dispatch settlement. Persist-proven success publishes
+   * start effects on the projection queue; any other outcome terminalizes the
+   * original pending receipt. Never mints a second receipt.
+   */
+  handleQueuedStartDispatchSettled(commandId: string, result: HostCommandExecutionResult): void {
+    if (result.status === 'succeeded') this.queuedStartPublication?.completeStart(commandId)
+    else this.queuedStartPublication?.fail(commandId, result)
+  }
+
+  /** Drain in-flight start publications. Composition shutdown calls this before runtime.flush. */
+  async drainQueuedStartPublication(): Promise<void> {
+    await this.queuedStartPublication?.drain()
+  }
+
+  private async executeQueuedComposerSend(
+    hostCommand: HostCommand,
+    context: HostAuthorityCallContext,
+    fingerprint: string
+  ): Promise<HostAuthorityResult<HostCommandReceipt>> {
+    const publication = this.queuedStartPublication
+    const acknowledge = this.queuedComposerSend
+    if (!publication || !acknowledge) {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    const found = this.runtime.receiptStore.getByCommandId(
+      hostCommand.commandId,
+      toReceiptActor(context.actor)
+    )
+    if (found.kind !== 'found' || found.receipt.status !== 'pending') {
+      return { ok: false, error: 'host_unavailable' }
+    }
+    const actor = toReceiptActor(context.actor)
+    let donor: AppStoreHostAuthoritySnapshotDonorFamilies
+    try {
+      donor = await this.readMutationSnapshotDonor()
+    } catch {
+      // No dispatch yet — settle the begun receipt rather than leave it pending.
+      this.runtime.receiptStore.complete({
+        commandId: hostCommand.commandId,
+        status: 'failed',
+        completedAt: this.now(),
+        errorCode: 'host_unavailable'
+      })
+      return { ok: false, error: 'host_unavailable' }
+    }
+    const scope = createHostMutationObservationScope(hostCommand, donor)
+    const registerInput: HostQueuedStartPublicationRegisterInput = {
+      commandId: hostCommand.commandId,
+      actor,
+      fingerprint,
+      command: hostCommand,
+      beforeScoped: scopeHostMutationObservationFamilies(donor, scope),
+      scope
+    }
+    publication.register(registerInput)
+    let ack: AppStoreHostAuthorityExecutorResult
+    try {
+      ack = await acknowledge(hostCommand, context)
+    } catch {
+      // Dispatch may already have been scheduled; do not certify "no execution".
+      publication.abort(hostCommand.commandId)
+      return { ok: false, error: 'host_unavailable' }
+    }
+    if (ack.status !== 'succeeded') {
+      publication.fail(hostCommand.commandId, ack)
+      const settled = this.runtime.receiptStore.getByCommandId(hostCommand.commandId, actor)
+      if (settled.kind !== 'found') return { ok: false, error: 'host_unavailable' }
+      return projectFoundReceipt(settled.receipt)
+    }
+    return projectFoundReceipt(found.receipt)
   }
 
   /**
@@ -1419,12 +1543,17 @@ export class AppStoreHostAuthority implements HostAuthority {
     }
     const lease = this.assertStandaloneLease()
     if (!lease.ok) return lease
+    this.stopped = true
+    try {
+      await this.queuedStartPublication?.drain()
+    } catch {
+      // Drain is best-effort; shutdown still proceeds.
+    }
     try {
       this.runtime.flush()
     } catch {
       return { ok: false, error: 'host_unavailable' }
     }
-    this.stopped = true
     try {
       await this.onShutdown()
     } catch {

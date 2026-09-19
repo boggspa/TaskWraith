@@ -1733,4 +1733,373 @@ describe('AppStoreHostAuthority', () => {
       )
     ).resolves.toEqual({ ok: false, error: 'host_unavailable' })
   })
+
+  it('queued composer.send returns the pending receipt without occupying the projection queue', async () => {
+    let releaseAck!: () => void
+    const hungAck = new Promise<{ status: 'succeeded'; resultSummary: string }>((resolve) => {
+      releaseAck = () => resolve({ status: 'succeeded', resultSummary: 'run_queued' })
+    })
+    let queueHeld = false
+    const authority = open({
+      ports: {
+        runProjectionOperation: async (operation) => {
+          queueHeld = true
+          return operation()
+        },
+        commandExecutor: () => {
+          throw new Error('legacy observed executor must not run for queued composer.send')
+        },
+        queuedComposerSend: () => hungAck
+      }
+    })
+    const send = makeCommand({
+      commandId: '33333333-3333-4333-8333-333333333333',
+      idempotencyKey: 'queued-composer-send-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const commandPromise = authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+    await Promise.resolve()
+    expect(queueHeld).toBe(false)
+    expect(executorCalls).toBe(0)
+    releaseAck()
+    const result = await commandPromise
+    expect(result).toMatchObject({
+      ok: true,
+      value: { commandId: send.commandId, status: 'pending' }
+    })
+    expect(
+      runtime.receiptStore.getByCommandId(send.commandId, {
+        actorId: ACTOR_A.actorId,
+        clientId: ACTOR_A.clientId,
+        clientClass: ACTOR_A.clientClass
+      })
+    ).toMatchObject({ kind: 'found', receipt: { status: 'pending' } })
+  })
+
+  it('settles the original receipt when the snapshot donor throws before ACK', async () => {
+    const authority = open({
+      ports: {
+        queuedComposerSend: () => ({ status: 'succeeded' as const, resultSummary: 'run_queued' }),
+        snapshotDonor: () => {
+          throw new Error('donor unavailable')
+        }
+      }
+    })
+    const send = makeCommand({
+      commandId: '77777777-7777-4777-8777-777777777777',
+      idempotencyKey: 'queued-donor-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    const found = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(found).toMatchObject({ kind: 'found', receipt: { status: 'failed' } })
+    expect(runtime.receiptStore.size).toBe(1)
+  })
+
+  it('marks the original receipt indeterminate when ACK throws after registration', async () => {
+    const authority = open({
+      ports: {
+        queuedComposerSend: async () => {
+          throw new Error('ack exploded')
+        }
+      }
+    })
+    const send = makeCommand({
+      commandId: '88888888-8888-4888-8888-888888888888',
+      idempotencyKey: 'queued-ack-throw-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toEqual({
+      ok: false,
+      error: 'host_unavailable'
+    })
+    const found = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(found).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'indeterminate' }
+    })
+    authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+    await authority.drainQueuedStartPublication()
+    const again = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(again).toMatchObject({ kind: 'found', receipt: { status: 'indeterminate' } })
+    expect(runtime.receiptStore.size).toBe(1)
+  })
+
+  it('ACK failure unregisters publication so a later start cannot succeed the receipt', async () => {
+    const authority = open({
+      ports: {
+        queuedComposerSend: () => ({ status: 'failed' as const, errorCode: 'host_saturated' })
+      }
+    })
+    const send = makeCommand({
+      commandId: '99999999-9999-4999-8999-999999999999',
+      idempotencyKey: 'queued-ack-fail-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+    expect(result).toMatchObject({
+      ok: true,
+      value: { status: 'failed', errorCode: 'host_saturated' }
+    })
+    authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+    await authority.drainQueuedStartPublication()
+    const found = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(found).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'failed', errorCode: 'host_saturated' }
+    })
+    expect(runtime.receiptStore.size).toBe(1)
+  })
+
+  it('dispatch failure terminalizes the original pending receipt and does not mint a second one', async () => {
+    const authority = open({
+      ports: {
+        queuedComposerSend: () => ({ status: 'succeeded' as const, resultSummary: 'run_queued' })
+      }
+    })
+    const send = makeCommand({
+      commandId: '55555555-5555-4555-8555-555555555555',
+      idempotencyKey: 'queued-fail-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+    expect(result).toMatchObject({ ok: true, value: { status: 'pending' } })
+    expect(runtime.receiptStore.size).toBe(1)
+    authority.handleQueuedStartDispatchSettled(send.commandId, {
+      status: 'failed',
+      errorCode: 'host_saturated'
+    })
+    const found = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(found).toMatchObject({
+      kind: 'found',
+      receipt: { status: 'failed', errorCode: 'host_saturated' }
+    })
+    expect(runtime.receiptStore.size).toBe(1)
+  })
+
+  it('does not publish start effects until a held legacy projection-queue window releases', async () => {
+    let releaseQueue!: () => void
+    const queueGate = new Promise<void>((resolve) => {
+      releaseQueue = resolve
+    })
+    let queueEntered = false
+    let donorPhase = 0
+    const send = makeCommand({
+      commandId: '66666666-6666-4666-8666-666666666666',
+      idempotencyKey: 'queued-queue-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const authority = open({
+      ports: {
+        runProjectionOperation: async (operation) => {
+          queueEntered = true
+          await queueGate
+          return operation()
+        },
+        queuedComposerSend: () => ({ status: 'succeeded' as const, resultSummary: 'run_queued' }),
+        snapshotDonor: () => {
+          donorPhase += 1
+          return donorFamilies({
+            threads:
+              donorPhase > 1
+                ? [
+                    {
+                      id: 'thread-1',
+                      messageCount: 1,
+                      updatedAt: 2
+                    } as AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+                  ]
+                : [
+                    {
+                      id: 'thread-1'
+                    } as AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+                  ],
+            runs:
+              donorPhase > 1
+                ? [
+                    {
+                      runId: send.commandId,
+                      threadId: 'thread-1',
+                      providerId: 'codex',
+                      providerOutcome: 'running'
+                    } as AppStoreHostAuthoritySnapshotDonorFamilies['runs'][number]
+                  ]
+                : []
+          })
+        }
+      }
+    })
+    await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'pending' }
+    })
+    const positionBefore = runtime.getPosition()
+    authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+    await Promise.resolve()
+    expect(queueEntered).toBe(true)
+    expect(runtime.getPosition()).toEqual(positionBefore)
+    releaseQueue()
+    await authority.drainQueuedStartPublication()
+    const found = runtime.receiptStore.getByCommandId(send.commandId, {
+      actorId: ACTOR_A.actorId,
+      clientId: ACTOR_A.clientId,
+      clientClass: ACTOR_A.clientClass
+    })
+    expect(found).toMatchObject({ kind: 'found', receipt: { status: 'succeeded' } })
+    expect(runtime.getPosition().cursor).toBeGreaterThan(positionBefore.cursor)
+  })
+
+  it('does not publish a same-thread mission that appears during a blocked ACK', async () => {
+    let releaseAck!: () => void
+    const hungAck = new Promise<{ status: 'succeeded'; resultSummary: string }>((resolve) => {
+      releaseAck = () => resolve({ status: 'succeeded', resultSummary: 'run_queued' })
+    })
+    let ackEntered = false
+    let contaminate = false
+    const send = makeCommand({
+      commandId: '55555555-5555-4555-8555-555555555555',
+      idempotencyKey: 'queued-ack-contaminate-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const authority = open({
+      ports: {
+        queuedComposerSend: () => {
+          ackEntered = true
+          return hungAck
+        },
+        snapshotDonor: () =>
+          donorFamilies({
+            threads: contaminate
+              ? [
+                  {
+                    id: 'thread-1',
+                    messageCount: 1,
+                    updatedAt: 2
+                  } as AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+                ]
+              : [
+                  {
+                    id: 'thread-1'
+                  } as AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+                ],
+            runs: contaminate
+              ? [
+                  {
+                    runId: send.commandId,
+                    threadId: 'thread-1',
+                    providerId: 'codex',
+                    providerOutcome: 'running'
+                  } as AppStoreHostAuthoritySnapshotDonorFamilies['runs'][number],
+                  {
+                    runId: 'other-run',
+                    threadId: 'thread-1',
+                    providerId: 'codex',
+                    providerOutcome: 'running'
+                  } as AppStoreHostAuthoritySnapshotDonorFamilies['runs'][number]
+                ]
+              : [],
+            missions: contaminate
+              ? [
+                  {
+                    missionId: 'concurrent-mission',
+                    threadId: 'thread-1'
+                  } as AppStoreHostAuthoritySnapshotDonorFamilies['missions'][number]
+                ]
+              : []
+          })
+      }
+    })
+    const commandPromise = authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+    await vi.waitFor(() => expect(ackEntered).toBe(true))
+    contaminate = true
+    releaseAck()
+    await expect(commandPromise).resolves.toMatchObject({
+      ok: true,
+      value: { status: 'pending' }
+    })
+    const positionBefore = runtime.getPosition()
+    authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+    await authority.drainQueuedStartPublication()
+    const deltaResult = runtime.deltaStore.since(positionBefore)
+    expect(deltaResult).toMatchObject({ kind: 'deltas' })
+    expect(deltaResult).toMatchObject({
+      kind: 'deltas',
+      deltas: expect.arrayContaining([
+        expect.objectContaining({ family: 'run', entityId: send.commandId, kind: 'upsert' })
+      ])
+    })
+    expect(
+      deltaResult.kind === 'deltas' &&
+        deltaResult.deltas.some((delta) => delta.family === 'mission')
+    ).toBe(false)
+    expect(
+      deltaResult.kind === 'deltas' &&
+        deltaResult.deltas.some((delta) => delta.family === 'run' && delta.entityId === 'other-run')
+    ).toBe(false)
+    expect(deltaResult).toMatchObject({
+      kind: 'deltas',
+      deltas: expect.arrayContaining([
+        expect.objectContaining({ family: 'thread', entityId: 'thread-1', kind: 'upsert' })
+      ])
+    })
+  })
+
+  it('without queuedComposerSend, composer.send still uses the observed executor (flag-off equivalent)', async () => {
+    const authority = open()
+    const send = makeCommand({
+      commandId: '44444444-4444-4444-8444-444444444444',
+      idempotencyKey: 'legacy-composer-send-key',
+      actor: ACTOR_A,
+      name: 'composer.send',
+      target: { threadId: 'thread-1' },
+      arguments: { text: 'hello' }
+    })
+    const result = await authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+    expect(result).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+    expect(executorCalls).toBe(1)
+  })
 })

@@ -46,6 +46,7 @@ import { projectHostKimiSelection } from '../host-shared/kimi/HostKimiSelectionP
 import type { HostGitFileStatus } from '../host-shared/git/HostGitStatusParse'
 import type { HostGitReadResult, HostGitReadService } from '../host-shared/git/HostGitReadService'
 import { validateHostCommandArguments } from '../host-runtime/HostCommandArguments'
+import { fingerprintHostCommand } from '../host-runtime/HostCommandFingerprint'
 import { normalizeHostProviderRunPresentationText } from '../host-runtime/HostProviderRunPort'
 import type { HostCommandExecutionResult } from '../host-runtime/HostCommandExecutionResult'
 import {
@@ -79,7 +80,10 @@ import type { HostNodeProvider } from './HostNodeProvider'
 import { HostNodeProviderRegistry } from './HostNodeProviderRegistry'
 import { HostNodeProfileRunPort, type HostNodeRunEventSink } from './HostNodeProfileRunPort'
 import { createHostNodeRunAdmission, type HostNodeRunAdmission } from './HostNodeRunAdmission'
-import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
+import {
+  createHostNodeQueuedStartLifecycle,
+  type HostQueuedStartLifecycleOptions
+} from './HostNodeQueuedStartLifecycle'
 
 const LOCAL_CLIENT_CLASSES = new Set(['desktop', 'tui', 'test'])
 const HOST_RESUME_FALLBACK_MAX_CHARS = 16_000
@@ -104,7 +108,10 @@ function resolveQueuedStartLifecycle(
   const enabled = options.hostQueuedStartEnabled ?? isHostQueuedStartEnabled()
   if (!enabled) return null
   if (options.queuedStartLifecycle) return options.queuedStartLifecycle
-  return (options.createQueuedStartLifecycle ?? createHostNodeQueuedStartLifecycle)()
+  const factory = options.createQueuedStartLifecycle ?? createHostNodeQueuedStartLifecycle
+  return factory({
+    ...(options.queuedStartOnStarted ? { onStarted: options.queuedStartOnStarted } : {})
+  })
 }
 
 /**
@@ -197,7 +204,24 @@ export interface HostNodeDomainPortsOptions {
   /** Test seam: a pre-built lifecycle. Ignored unless the gate is on. */
   readonly queuedStartLifecycle?: HostQueuedStartLifecycle
   /** Test seam: factory consulted only when the gate is on and no instance was given. */
-  readonly createQueuedStartLifecycle?: () => HostQueuedStartLifecycle
+  readonly createQueuedStartLifecycle?: (
+    options?: HostQueuedStartLifecycleOptions
+  ) => HostQueuedStartLifecycle
+  /**
+   * Production short-start publication hook. Passed into the default factory
+   * as `onStarted`. Ignored when an injected lifecycle instance is used, and
+   * ignored while the gate is off.
+   */
+  readonly queuedStartOnStarted?: HostQueuedStartLifecycleOptions['onStarted']
+  /**
+   * Settled result of the off-stack queued composer.send dispatch (capacity,
+   * revalidation, start, persist wait). Authority routes this onto the original
+   * pending receipt. Ignored while the gate is off.
+   */
+  readonly queuedStartOnDispatchSettled?: (
+    commandId: string,
+    result: HostCommandExecutionResult
+  ) => void
 }
 
 type AuthOperation = {
@@ -455,6 +479,7 @@ export class HostNodeDomainPorts {
   private readonly authOperations = new Map<string, AuthOperation>()
   private readonly runCompletions = new Map<string, Promise<void>>()
   private readonly runThreads = new Map<string, string>()
+  private readonly queuedDispatches = new Map<string, Promise<void>>()
 
   hasRuntimeWorkForThread(threadId: string): boolean {
     return [...this.runThreads].some(
@@ -1036,10 +1061,28 @@ export class HostNodeDomainPorts {
     return { decision: 'allow' }
   }
 
-  async executeCommand(
+  /**
+   * Queued-start ACK: reserve under the canonical fingerprint, then continue
+   * admission/start OFF this call. Does not await capacity or persisted-start.
+   * Flag-OFF callers must not use this; executeCommand remains the legacy path.
+   */
+  async acknowledgeQueuedComposerSend(
     context: HostAuthorityCallContext,
     command: HostCommand,
     target: HostRunEventTarget
+  ): Promise<HostCommandExecutionResult> {
+    return this.executeCommand(context, command, target, { queuedAck: true })
+  }
+
+  async executeCommand(
+    context: HostAuthorityCallContext,
+    command: HostCommand,
+    target: HostRunEventTarget,
+    sendOptions?: {
+      readonly queuedAck?: boolean
+      readonly skipPersistedStartWait?: boolean
+      readonly persistProof?: 'running' | 'monotonic'
+    }
   ): Promise<HostCommandExecutionResult> {
     if (!(await this.prepareAuthorityEvaluation(context, command))) {
       return failed('provider_offers_unavailable')
@@ -1211,7 +1254,7 @@ export class HostNodeDomainPorts {
       const reserved = this.queuedStartLifecycle.reserve({
         commandId: command.commandId,
         threadId: command.target.threadId,
-        fingerprint: command.idempotencyKey
+        fingerprint: fingerprintHostCommand(command).fingerprint
       })
       if (reserved.kind === 'refused') {
         return failed('host_shutting_down', 'Host is shutting down; the run was not started.')
@@ -1219,6 +1262,31 @@ export class HostNodeDomainPorts {
       if (reserved.kind === 'conflict') {
         return failed('run_identity_conflict', reserved.reason)
       }
+    }
+    if (sendOptions?.queuedAck && this.queuedStartLifecycle) {
+      // Capacity + persist waits continue on the full executeCommand path
+      // (including awaitPersistedStart: running row AND user prompt) off this
+      // caller's stack. The RESULT is routed to Authority so a saturated
+      // reject / cancel / revalidation deny cannot leave the original receipt
+      // pending. Do not skip the persist wait: onStarted fires in beginRun
+      // before providers append the user prompt.
+      const commandId = command.commandId
+      const dispatch = this.executeCommand(context, command, target, {
+        persistProof: 'monotonic'
+      })
+        .then(
+          (result) => {
+            this.options.queuedStartOnDispatchSettled?.(commandId, result)
+          },
+          () => {
+            this.options.queuedStartOnDispatchSettled?.(commandId, failed('run_not_started'))
+          }
+        )
+        .finally(() => {
+          this.queuedDispatches.delete(commandId)
+        })
+      this.queuedDispatches.set(commandId, dispatch)
+      return { status: 'succeeded', resultSummary: 'run_queued' }
     }
     const admission = await this.runAdmission.acquire({
       commandId: command.commandId,
@@ -1233,6 +1301,23 @@ export class HostNodeDomainPorts {
     }
     const lease = admission.lease
     if (this.queuedStartLifecycle) {
+      if (!(await this.prepareAuthorityEvaluation(context, command))) {
+        lease.release()
+        this.queuedStartLifecycle.cancel({
+          commandId: command.commandId,
+          threadId: command.target.threadId
+        })
+        return failed('authority_denied', 'provider_offers_unavailable')
+      }
+      const recheck = this.evaluateAuthority(context, command)
+      if (recheck.decision !== 'allow') {
+        lease.release()
+        this.queuedStartLifecycle.cancel({
+          commandId: command.commandId,
+          threadId: command.target.threadId
+        })
+        return failed('authority_denied', recheck.reason)
+      }
       const claimed = await this.queuedStartLifecycle.claim(command.commandId, lease)
       if (claimed.kind !== 'claimed') {
         if (claimed.leaseCustody === 'caller') lease.release()
@@ -1323,7 +1408,15 @@ export class HostNodeDomainPorts {
       }
       lease.release()
     })
-    if (!(await this.awaitPersistedStart(command.commandId, command.target.threadId, prompt))) {
+    if (
+      !sendOptions?.skipPersistedStartWait &&
+      !(await this.awaitPersistedStart(
+        command.commandId,
+        command.target.threadId,
+        prompt,
+        sendOptions?.persistProof ?? 'running'
+      ))
+    ) {
       try {
         provider.cancel(command.commandId)
       } catch {
@@ -1627,17 +1720,23 @@ export class HostNodeDomainPorts {
   private async awaitPersistedStart(
     runId: string,
     threadId: string,
-    prompt: unknown
+    prompt: unknown,
+    persistProof: 'running' | 'monotonic' = 'running'
   ): Promise<boolean> {
     const deadline = this.now() + HOST_PERSISTED_START_GRACE_MS
-    while (!this.hasPersistedStart(runId, threadId, prompt)) {
+    while (!this.hasPersistedStart(runId, threadId, prompt, persistProof)) {
       if (this.now() >= deadline) return false
       await new Promise((resolve) => setTimeout(resolve, HOST_PERSISTED_START_POLL_MS))
     }
     return true
   }
 
-  private hasPersistedStart(runId: string, threadId: string, prompt: unknown): boolean {
+  private hasPersistedStart(
+    runId: string,
+    threadId: string,
+    prompt: unknown,
+    persistProof: 'running' | 'monotonic' = 'running'
+  ): boolean {
     if (typeof prompt !== 'string') return false
     // `hasBegun` is an in-memory Map.get (HostNodeProfileRunPort.ts) and is
     // already a conjunct of the result, so gating the record read on it is
@@ -1652,9 +1751,15 @@ export class HostNodeDomainPorts {
     // (AppStoreHostAuthority) for the full two seconds.
     if (!this.runPort.hasBegun(runId, threadId)) return false
     const thread = this.options.store.getThread(threadId)
+    const run = thread?.runs?.find((candidate) => candidate.runId === runId)
+    // Flag-OFF / legacy waits require the row to still be running. The queued
+    // path keeps monotonic start evidence across fast finish/cancel: a matching
+    // persisted user message plus the run row is enough even if the provider
+    // already completed before the first poll.
+    const runStarted = persistProof === 'monotonic' ? Boolean(run) : run?.status === 'running'
     return Boolean(
-      thread?.runs?.some((run) => run.runId === runId && run.status === 'running') &&
-      thread.messages.some(
+      runStarted &&
+      thread?.messages.some(
         (message) =>
           message.runId === runId && message.role === 'user' && message.content === prompt
       )
@@ -1794,7 +1899,9 @@ export class HostNodeDomainPorts {
     this.queuedStartLifecycle?.beginShutdown()
     const cancelledRuns = this.runPort.cancelAll()
     const completions = [...this.runCompletions.values()]
+    const dispatches = [...this.queuedDispatches.values()]
     await Promise.all([this.registry.shutdown(), this.interactions.shutdown()])
+    if (dispatches.length) await this.awaitWithinShutdownTimeout(Promise.all(dispatches))
     if (completions.length) await this.awaitWithinShutdownTimeout(Promise.all(completions))
     return { stopped: true, alreadyStopped: false, cancelledRuns }
   }

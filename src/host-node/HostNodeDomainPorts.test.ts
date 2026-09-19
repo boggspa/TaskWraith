@@ -10,6 +10,7 @@ import {
   type HostCommand
 } from '../shared/hostProtocol'
 import { HostProfileDomainStore } from '../host-runtime/HostProfileDomainStore'
+import { fingerprintHostCommand } from '../host-runtime/HostCommandFingerprint'
 import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 import {
   HostPermissionConsentAuthority,
@@ -3729,22 +3730,20 @@ describe('HostNodeDomainPorts', () => {
         hostQueuedStartEnabled: true,
         queuedStartLifecycle: lifecycle
       })
-      await expect(
-        domain.executeCommand(
-          context,
-          command(
-            'composer.send',
-            'run-queued-start-on',
-            { threadId: thread.appChatId },
-            { text: 'admit' }
-          ),
-          { id: 'target' }
-        )
-      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      const send = command(
+        'composer.send',
+        'run-queued-start-on',
+        { threadId: thread.appChatId },
+        { text: 'admit' }
+      )
+      await expect(domain.executeCommand(context, send, { id: 'target' })).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
       expect(reserve).toHaveBeenCalledWith({
         commandId: 'run-queued-start-on',
         threadId: thread.appChatId,
-        fingerprint: 'key-run-queued-start-on'
+        fingerprint: fingerprintHostCommand(send).fingerprint
       })
       expect(claim).toHaveBeenCalledWith(
         'run-queued-start-on',
@@ -3854,6 +3853,9 @@ describe('HostNodeDomainPorts', () => {
       expect(src).toMatch(/queuedStartLifecycle\.claim\(/)
       expect(src).toMatch(/queuedStartLifecycle\.executeStart\(/)
       expect(src).toMatch(/queuedStartLifecycle\.cancel\(/)
+      expect(src).toContain('fingerprintHostCommand')
+      expect(src).toContain('acknowledgeQueuedComposerSend')
+      expect(src).toContain('queuedStartOnStarted')
       const ctorStart = src.indexOf('this.runPort = new HostNodeProfileRunPort')
       const ctor = src.slice(ctorStart, src.indexOf('this.interactions', ctorStart))
       expect(src).toMatch(
@@ -3862,6 +3864,252 @@ describe('HostNodeDomainPorts', () => {
       expect(ctor).toMatch(/\.\.\.\(queuedStartLifecycle\s*\?/)
       expect(ctor).toContain('hostQueuedStartEnabled: true')
       expect(ctor).not.toContain('createQueuedStartLifecycle')
+    })
+
+    it('reserves with the canonical command fingerprint, not the idempotency key', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const lifecycle = createHostNodeQueuedStartLifecycle()
+      const reserve = vi.spyOn(lifecycle, 'reserve')
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        hostQueuedStartEnabled: true,
+        queuedStartLifecycle: lifecycle
+      })
+      const send = command(
+        'composer.send',
+        'run-canonical-fingerprint',
+        { threadId: thread.appChatId },
+        { text: 'admit' }
+      )
+      await expect(domain.executeCommand(context, send, { id: 'target' })).resolves.toEqual({
+        status: 'succeeded',
+        resultSummary: 'run_started'
+      })
+      expect(reserve).toHaveBeenCalledTimes(1)
+      expect(reserve.mock.calls[0][0].fingerprint).toBe(fingerprintHostCommand(send).fingerprint)
+      expect(reserve.mock.calls[0][0].fingerprint).not.toBe(send.idempotencyKey)
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('acknowledgeQueuedComposerSend returns without waiting for a blocked capacity slot', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const threads = Array.from({ length: 2 }, () =>
+        store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      )
+      for (const thread of threads) {
+        store.configureThread({
+          threadId: thread.appChatId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'workspace_write',
+          postureConsent: true
+        })
+      }
+      const onStarted = vi.fn()
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 1,
+        shutdownTimeoutMs: 1_000,
+        hostQueuedStartEnabled: true,
+        queuedStartOnStarted: onStarted
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-held-capacity',
+            { threadId: threads[0]!.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      const ackStarted = Date.now()
+      await expect(
+        domain.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-queued-ack',
+            { threadId: threads[1]!.appChatId },
+            { text: 'queue' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      expect(Date.now() - ackStarted).toBeLessThan(250)
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('routes a saturated background dispatch to queuedStartOnDispatchSettled without leaving work untracked', async () => {
+      const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+      const registered = store.registerWorkspace({ path: workspace })
+      const threads = Array.from({ length: 2 }, () =>
+        store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      )
+      for (const thread of threads) {
+        store.configureThread({
+          threadId: thread.appChatId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'workspace_write',
+          postureConsent: true
+        })
+      }
+      const onDispatchSettled = vi.fn()
+      const domain = new HostNodeDomainPorts({
+        ...domainOptions,
+        maxConcurrentRuns: 1,
+        maxQueuedStarts: 0,
+        shutdownTimeoutMs: 1_000,
+        hostQueuedStartEnabled: true,
+        queuedStartOnDispatchSettled: onDispatchSettled
+      })
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-held-for-settle',
+            { threadId: threads[0]!.appChatId },
+            { text: 'hold' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      await expect(
+        domain.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-saturated-ack',
+            { threadId: threads[1]!.appChatId },
+            { text: 'queue' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
+      expect(onDispatchSettled.mock.calls[0][0]).toBe('run-saturated-ack')
+      expect(onDispatchSettled.mock.calls[0][1]).toMatchObject({
+        status: 'failed',
+        errorCode: 'host_saturated'
+      })
+      releaseRun()
+      await domain.shutdown()
+    })
+
+    it('queued persist proof retains start after beginRun, user prompt, and immediate finish', async () => {
+      const { domainOptions, store, workspace } = open()
+      const registered = store.registerWorkspace({ path: workspace })
+      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+      const museOffers = hostProviderOffers('muse', true)!
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+      const holder: { domain?: HostNodeDomainPorts } = {}
+      const fastProvider: HostNodeProviderInstance = {
+        providerId: 'muse',
+        getStatus: async () => ({ providerId: 'muse', status: 'ready', label: 'Muse' }),
+        getAuthStatus: async () => ({ providerId: 'muse', state: 'authenticated' }),
+        getAuthFlows: async () => [],
+        beginAuth: async () => undefined,
+        cancelAuth: async () => false,
+        run: async (input) => {
+          holder.domain!.runPort.beginRun({
+            runId: input.runId,
+            threadId: input.threadId,
+            providerId: 'muse',
+            modelId: 'muse-spark-1.2',
+            startedAt: '2026-08-24T05:00:00.000Z'
+          })
+          holder.domain!.runPort.appendTranscript({
+            threadId: input.threadId,
+            runId: input.runId,
+            role: 'user',
+            text: input.prompt,
+            createdAt: '2026-08-24T05:00:00.000Z'
+          })
+          holder.domain!.runPort.finishRun({
+            runId: input.runId,
+            status: 'completed',
+            finishedAt: '2026-08-24T05:00:01.000Z',
+            warningSummaries: []
+          })
+          return { runId: input.runId, status: 'completed' }
+        },
+        cancel: () => true,
+        shutdown: async () => undefined
+      }
+      const providers: HostNodeProvider[] = [
+        {
+          providerId: 'muse',
+          displayProvider: 'Muse',
+          shortCode: 'MUS',
+          offers: museOffers,
+          supportsApprovals: true,
+          supportsQuestions: false,
+          create: () => fastProvider
+        }
+      ]
+      const off = new HostNodeDomainPorts({ ...domainOptions, providers })
+      holder.domain = off
+      await expect(
+        off.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-fast-finish-off',
+            { threadId: thread.appChatId },
+            { text: 'fast' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toMatchObject({ status: 'failed', errorCode: 'run_not_started' })
+      await off.shutdown()
+
+      const onDispatchSettled = vi.fn()
+      const on = new HostNodeDomainPorts({
+        ...domainOptions,
+        providers,
+        hostQueuedStartEnabled: true,
+        queuedStartOnDispatchSettled: onDispatchSettled
+      })
+      holder.domain = on
+      await expect(
+        on.acknowledgeQueuedComposerSend(
+          context,
+          command(
+            'composer.send',
+            'run-fast-finish-on',
+            { threadId: thread.appChatId },
+            { text: 'fast' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
+      await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
+      expect(onDispatchSettled.mock.calls[0][0]).toBe('run-fast-finish-on')
+      expect(onDispatchSettled.mock.calls[0][1]).toMatchObject({ status: 'succeeded' })
+      await on.shutdown()
     })
 
     it('when the gate is on, ProfileRunPort receives the same Domain-owned lifecycle instance', async () => {

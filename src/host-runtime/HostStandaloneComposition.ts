@@ -59,6 +59,7 @@ import {
   type HostProjectionReconcileResult
 } from './HostProjectionReconciler'
 import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
+import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { randomBytes } from 'node:crypto'
@@ -117,6 +118,14 @@ export interface HostStandaloneCompositionInput {
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly commandExecutor: AppStoreHostAuthorityExecutor
+  readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
+  readonly queuedStartStartedBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
+  readonly queuedStartDispatchSettledBind?: (
+    handler: (
+      commandId: string,
+      result: import('./HostCommandExecutionResult').HostCommandExecutionResult
+    ) => void
+  ) => void
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
@@ -294,9 +303,14 @@ export function createHostStandaloneComposition(
   const runProjectionOperation = createHostProjectionSerialQueue({ spans: hostPerf.spans })
   let stopped = false
   let reconciler: HostProjectionReconciler | null = null
+  let drainQueuedStartPublication: () => Promise<void> = async () => undefined
   const shutdown = async (): Promise<void> => {
     if (stopped) return
     stopped = true
+    // Fence is domain.beginShutdown (ProductionServer calls domain.shutdown
+    // first). Drain start publications after dispatches have quiesced and
+    // before runtime.flush so a snapshot-only drain cannot miss work.
+    await drainQueuedStartPublication()
     await reconciler?.stop()
     await runProjectionOperation(async () => undefined)
     // Diagnostics stop after the queue drains so the drain's own span is
@@ -317,6 +331,7 @@ export function createHostStandaloneComposition(
       snapshotDonor: input.snapshotDonor,
       authorityEvaluator: input.authorityEvaluator,
       commandExecutor: input.commandExecutor,
+      ...(input.queuedComposerSend ? { queuedComposerSend: input.queuedComposerSend } : {}),
       ...(input.setupExecutor ? { setupExecutor: input.setupExecutor } : {}),
       healthProvider: input.healthProvider,
       ...(input.threadOffersProvider ? { threadOffersProvider: input.threadOffersProvider } : {}),
@@ -345,6 +360,13 @@ export function createHostStandaloneComposition(
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
       onShutdown: shutdown
     }
+  })
+  drainQueuedStartPublication = () => authority.drainQueuedStartPublication()
+  input.queuedStartStartedBind?.((view) => {
+    authority.handleQueuedStartStarted(view)
+  })
+  input.queuedStartDispatchSettledBind?.((commandId, result) => {
+    authority.handleQueuedStartDispatchSettled(commandId, result)
   })
 
   const publisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })
