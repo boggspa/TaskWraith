@@ -111,7 +111,14 @@ describe('Codex shell — Codex Desktop composer parity CSS', () => {
     const section = readParitySection()
     expect(section).toContain('background: transparent !important;')
     expect(section).toContain('box-shadow: none !important;')
-    expect(section).toContain('--codex-cc-box-radius: 16px;')
+    // 2026-09-19 corner-arc re-measurement of the real shell: the box
+    // radius is 24px (was 16px, which read visibly sharper) and the dark
+    // box fill is the shell's #2a2a2a.
+    expect(section).toContain('--codex-cc-box-radius: 24px;')
+    expect(section).toContain('--codex-cc-box-bg: #2a2a2a;')
+    expect(section).toContain(
+      'background: var(--codex-cc-box-bg, var(--composer-bg-solid, var(--composer-bg)));'
+    )
     expect(section).toContain('.composer-inner-module {')
     expect(section).toContain('border-radius: var(--codex-cc-box-radius);')
     // The box's drop shadow is dark-family only: this section outranks the
