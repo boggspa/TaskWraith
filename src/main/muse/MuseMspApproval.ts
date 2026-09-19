@@ -118,6 +118,26 @@ export function describeMuseMspApproval(request: MuseMspApprovalRequest): MuseMs
     title: `Muse wants to run ${toolName}${protectedWrite}`,
     body: detail ? `${detail}${escalated}` : `${toolName}${escalated}`,
     toolName,
-    rawToolCall: parseRawArgs(request?.rawArgs)
+    rawToolCall: museApprovalRawToolCall(request)
   }
+}
+
+/**
+ * The command text the host's shell classifiers read.
+ *
+ * MSP sends model-authored arguments as a JSON string, so `rawArgs` is the
+ * primary source. When it is absent or carries no `command`, the subject still
+ * holds the command verbatim — `describeSubject` above has always used it for
+ * the human-facing line. Without this fallback every command-text gate
+ * (the destructive-shell ask hold, the prompt-free read-only proof, the tier
+ * holds) sees `null` on the Muse lane, which reads as "no command to classify"
+ * rather than "could not parse one", so a destructive command would pass them
+ * all silently.
+ */
+function museApprovalRawToolCall(request: MuseMspApprovalRequest): Record<string, unknown> | null {
+  const parsed = parseRawArgs(request?.rawArgs)
+  if (parsed && typeof parsed.command === 'string' && parsed.command.trim()) return parsed
+  const command = request?.subject?.command
+  if (typeof command === 'string' && command.trim()) return { ...(parsed || {}), command }
+  return parsed
 }

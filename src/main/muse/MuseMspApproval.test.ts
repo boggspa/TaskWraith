@@ -73,14 +73,24 @@ describe('describeMuseMspApproval', () => {
 
   it('still raises a card when the argument blob is malformed', () => {
     const ask = describeMuseMspApproval(request({ rawArgs: '{not json' }))
-    expect(ask.rawToolCall).toBeNull()
+    // The blob is rejected as arguments, but the subject still carries the
+    // command, and the host's shell classifiers read it from here. Returning
+    // null would let a destructive command past every command-text gate purely
+    // because Muse sent an unparseable argument string alongside it.
+    expect(ask.rawToolCall).toEqual({ command: 'ls -la' })
     expect(ask.service).toBe('shellCommands')
     expect(ask.title).toContain('run_command')
   })
 
   it('rejects a non-object argument payload', () => {
-    expect(describeMuseMspApproval(request({ rawArgs: '["ls"]' })).rawToolCall).toBeNull()
-    expect(describeMuseMspApproval(request({ rawArgs: '"ls"' })).rawToolCall).toBeNull()
+    // Neither payload is usable as arguments, so neither reaches rawToolCall;
+    // the subject command is what survives, for the reason above.
+    expect(describeMuseMspApproval(request({ rawArgs: '["ls"]' })).rawToolCall).toEqual({
+      command: 'ls -la'
+    })
+    expect(describeMuseMspApproval(request({ rawArgs: '"ls"' })).rawToolCall).toEqual({
+      command: 'ls -la'
+    })
   })
 
   it('puts the concrete subject in the body so the card is not just a tool name', () => {
@@ -114,5 +124,47 @@ describe('describeMuseMspApproval', () => {
     )
     expect(ask.service).toBe('mcpTools')
     expect(ask.body).toContain('example.com:443')
+  })
+})
+
+describe('describeMuseMspApproval — command text for the host shell classifiers', () => {
+  it('falls back to subject.command when rawArgs carries none', () => {
+    const ask = describeMuseMspApproval(
+      request({
+        toolName: 'shell',
+        subject: { kind: 'shell', command: 'git reset --hard' },
+        rawArgs: ''
+      })
+    )
+    expect(ask.rawToolCall).toEqual({ command: 'git reset --hard' })
+  })
+
+  it('keeps rawArgs when it already carries the command', () => {
+    const ask = describeMuseMspApproval(
+      request({
+        toolName: 'shell',
+        subject: { kind: 'shell', command: 'ls' },
+        rawArgs: JSON.stringify({ command: 'git clean -fdx', cwd: '/repo' })
+      })
+    )
+    expect(ask.rawToolCall).toEqual({ command: 'git clean -fdx', cwd: '/repo' })
+  })
+
+  it('grafts the subject command onto parsed args that lack one', () => {
+    const ask = describeMuseMspApproval(
+      request({
+        toolName: 'shell',
+        subject: { kind: 'shell', command: 'git stash' },
+        rawArgs: JSON.stringify({ cwd: '/repo' })
+      })
+    )
+    expect(ask.rawToolCall).toEqual({ cwd: '/repo', command: 'git stash' })
+  })
+
+  it('stays null when neither source has a command', () => {
+    const ask = describeMuseMspApproval(
+      request({ toolName: 'shell', subject: { kind: 'shell' }, rawArgs: '' })
+    )
+    expect(ask.rawToolCall).toBeNull()
   })
 })
