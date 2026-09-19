@@ -56,3 +56,44 @@ export function resolveEnsembleParticipantRetryDispatch(input: {
   }
   return { kind: 'freshRound', prompt, dmTargetParticipantId: input.participantId }
 }
+
+export type EnsembleParticipantRetryResult =
+  | { ok: true; lane: 'steer' | 'freshRound' }
+  | { ok: false; reason: string }
+
+/**
+ * Execute a one-seat retry. This is THE retry path — the roster chip's Retry
+ * button and the SeatFailureCard's Retry action both call here, so the two
+ * surfaces can never disagree about what "retry" does: a live round is
+ * joined as an additive User Fan-Out lane for the seat (steer), an idle chat
+ * gets a fresh DM round scoped to the seat. Returns the failure reason
+ * instead of throwing so each call site can surface it in its own voice.
+ */
+export function retryEnsembleParticipant(
+  chat: ChatRecord | null | undefined,
+  participantId: string
+): EnsembleParticipantRetryResult {
+  const dispatch = resolveEnsembleParticipantRetryDispatch({ chat, participantId })
+  if (dispatch.kind === 'none') return { ok: false, reason: dispatch.reason }
+  if (typeof window === 'undefined' || typeof window.api?.runEnsembleRound !== 'function') {
+    return { ok: false, reason: 'Retry: the run bridge is unavailable.' }
+  }
+  if (!chat) return { ok: false, reason: 'Retry: no chat is selected.' }
+  if (dispatch.kind === 'steer') {
+    void window.api.runEnsembleRound({
+      chatId: chat.appChatId,
+      prompt: dispatch.prompt,
+      mode: 'steer'
+    })
+    return { ok: true, lane: 'steer' }
+  }
+  void window.api.runEnsembleRound({
+    chatId: chat.appChatId,
+    prompt: dispatch.prompt,
+    mode: 'normal',
+    concurrentMode: false,
+    fanoutPolicy: 'off',
+    dmTargetParticipantId: dispatch.dmTargetParticipantId
+  })
+  return { ok: true, lane: 'freshRound' }
+}

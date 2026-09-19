@@ -4178,10 +4178,7 @@ function App(): React.JSX.Element {
       ...(provider === 'ollama'
         ? {
             ollamaReasoningEffort:
-              resolveOllamaComposerReasoningEffort(
-                providerModel,
-                participant.reasoningEffort
-              ) ||
+              resolveOllamaComposerReasoningEffort(providerModel, participant.reasoningEffort) ||
               getEnsembleReasoningOptions(
                 'ollama',
                 providerModel,
@@ -5393,11 +5390,9 @@ function App(): React.JSX.Element {
           hadRecentRun: pendingMainUpdate.hadRecentRun,
           pendingMarkerIds,
           localGoalIntent: pendingGoalIntentRef.current.get(chatId) ?? null,
-          localComposerSelectionPending:
-            composerSelectionClaimsRef.current?.held(chatId) === true,
+          localComposerSelectionPending: composerSelectionClaimsRef.current?.held(chatId) === true,
           localEnsembleRosterPending: ensembleRosterClaimsRef.current?.held(chatId) === true,
-          localEnsembleChatKindPending:
-            ensembleChatKindClaimsRef.current?.held(chatId) === true
+          localEnsembleChatKindPending: ensembleChatKindClaimsRef.current?.held(chatId) === true
         })
         updated = pendingChatDraftsRef.current.apply(pendingMainUpdate.chat, updated, beforeMerge)
         byId.set(chatId, updated)
@@ -5539,9 +5534,21 @@ function App(): React.JSX.Element {
     rendererTranscriptPersistenceRef.current = new RendererChatTranscriptPersistence({
       mutate: (request) => window.api.mutateChatTranscript(request),
       loadCanonical: (chatId) => window.api.getChat(chatId),
-      onAccepted: (chatId, baseRevision, optimisticTarget, result, beforeTarget, acceptedTarget) => {
+      onAccepted: (
+        chatId,
+        baseRevision,
+        optimisticTarget,
+        result,
+        beforeTarget,
+        acceptedTarget
+      ) => {
         const current = chatByIdRef.current.get(chatId)
-        const advancedRecord = pendingChatDraftsRef.current.advance(beforeTarget, optimisticTarget, current, acceptedTarget)
+        const advancedRecord = pendingChatDraftsRef.current.advance(
+          beforeTarget,
+          optimisticTarget,
+          current,
+          acceptedTarget
+        )
         if (!advancedRecord) return
         const persistedRecord = advancedRecord.record
         const transportBaseline = chatUpdateBaselineByIdRef.current.get(chatId)
@@ -5554,7 +5561,10 @@ function App(): React.JSX.Element {
             acceptedTarget,
             result.transcriptHash
           )
-          if (!advancedRecord.pending && (!result.recordHash || advanced.recordHash === result.recordHash)) {
+          if (
+            !advancedRecord.pending &&
+            (!result.recordHash || advanced.recordHash === result.recordHash)
+          ) {
             chatUpdateBaselineByIdRef.current.set(chatId, advanced)
           } else {
             chatUpdateBaselineByIdRef.current.delete(chatId)
@@ -5565,13 +5575,25 @@ function App(): React.JSX.Element {
       onRecovered: (chatId, optimisticTarget, rebasedTarget, canonical) => {
         chatUpdateBaselineByIdRef.current.delete(chatId)
         const current = chatByIdRef.current.get(chatId)
-        const advanced = pendingChatDraftsRef.current.advance(optimisticTarget, rebasedTarget, current, canonical)
+        const advanced = pendingChatDraftsRef.current.advance(
+          optimisticTarget,
+          rebasedTarget,
+          current,
+          canonical
+        )
         if (advanced) publishPersistedRecord(chatId, advanced.record)
       },
       onUnrecoverable: (chatId, canonical) => {
         chatUpdateBaselineByIdRef.current.delete(chatId)
         if (canonical) {
-          publishPersistedRecord(chatId, pendingChatDraftsRef.current.apply(canonical, canonical, chatByIdRef.current.get(chatId)))
+          publishPersistedRecord(
+            chatId,
+            pendingChatDraftsRef.current.apply(
+              canonical,
+              canonical,
+              chatByIdRef.current.get(chatId)
+            )
+          )
           return
         }
         const latest = chatByIdRef.current.get(chatId)
@@ -5948,7 +5970,9 @@ function App(): React.JSX.Element {
 
   const refreshChatList = useCallback(
     async (workspaceId?: string): Promise<ChatRecord[]> => {
-      const list = (await loadChatList(workspaceId)).map((row) => pendingChatDraftsRef.current.apply(row, row, chatByIdRef.current.get(row.appChatId)))
+      const list = (await loadChatList(workspaceId)).map((row) =>
+        pendingChatDraftsRef.current.apply(row, row, chatByIdRef.current.get(row.appChatId))
+      )
       chatMutations.reconcileAll(list)
       return list
     },
@@ -5975,7 +5999,11 @@ function App(): React.JSX.Element {
 
   const applyHydratedChat = useCallback(
     (chat: ChatRecord, request?: { localAtRequestStart: ChatRecord | null }): ChatRecord => {
-      const merged = pendingChatDraftsRef.current.apply(chat, resolveHydratedChat(chat, request), chatByIdRef.current.get(chat.appChatId))
+      const merged = pendingChatDraftsRef.current.apply(
+        chat,
+        resolveHydratedChat(chat, request),
+        chatByIdRef.current.get(chat.appChatId)
+      )
       const committed = commitHydratedChat({
         chat: merged,
         transcriptStore: chatHydrationRuntime.transcriptStore,
@@ -6025,7 +6053,11 @@ function App(): React.JSX.Element {
     ) {
       return current
     }
-    const committed: ChatRecord = pendingChatDraftsRef.current.apply(shell, mergeChatRecordValue(current ?? undefined, shell), current)
+    const committed: ChatRecord = pendingChatDraftsRef.current.apply(
+      shell,
+      mergeChatRecordValue(current ?? undefined, shell),
+      current
+    )
     chatByIdRef.current.set(committed.appChatId, committed)
     chatHydrationRuntime.transcriptStore.ingestPage(page)
     chatHydrationRuntime.byteLru.touch(committed.appChatId)
@@ -14495,6 +14527,11 @@ function App(): React.JSX.Element {
     let currentRunIdForCleanup = runRequest?.appRunId
     let dispatchAccepted = false
     let requestForClaimCleanup = runRequest
+    // Hoisted so the outer catch can honour the ordering invariant: a run
+    // error must never land in the transcript before the user message that
+    // triggered it. Assigned at their original sites inside the try.
+    let runStartedAt: string | undefined
+    let promptMessageId: string | undefined
     try {
       const baseRequest = runRequest ?? buildRunRequest()
       let request = baseRequest.appRunId
@@ -15014,8 +15051,7 @@ function App(): React.JSX.Element {
         chatToUpdate.title = derivePromptFallbackThreadTitle(displayFinalPrompt, 'New Chat')
       }
 
-      let runStartedAt = new Date().toISOString()
-      let promptMessageId: string | undefined
+      runStartedAt = new Date().toISOString()
       if (authorsPromptMessage) {
         const imageAttachmentMetadata = request.imageAttachments
           .map((attachment) => ({
@@ -16293,18 +16329,45 @@ function App(): React.JSX.Element {
       const chatId = runRequest?.chatRecord?.appChatId || currentChat?.appChatId
       if (chatId) {
         appendThreadRawLog(chatId, { type: 'stderr', content: message })
-        updateChatById(chatId, (source) => ({
-          ...source,
-          messages: [
-            ...source.messages,
-            {
+        updateChatById(chatId, (source) => {
+          const nextMessages = [...source.messages]
+          // ORDERING INVARIANT: a run error never lands before the user
+          // message that triggered it. A throw in the early dispatch awaits
+          // (before the prompt row is written) would otherwise append this
+          // error first — and a re-send would then stack its prompt AFTER
+          // the error, so the transcript read the failure above its own
+          // request. Ensemble prompts are excluded: their receipt rows are
+          // authored by the orchestrator in main, not by this function.
+          const promptRowWritten =
+            typeof promptMessageId === 'string' &&
+            nextMessages.some((existing) => existing.id === promptMessageId)
+          const fallbackPrompt =
+            typeof runRequest?.displayPrompt === 'string' && runRequest.displayPrompt.trim()
+              ? runRequest.displayPrompt
+              : typeof runRequest?.prompt === 'string'
+                ? runRequest.prompt.trim()
+                : ''
+          if (
+            !promptRowWritten &&
+            !runRequest?.existingPrompt &&
+            fallbackPrompt &&
+            (runRequest?.chatRecord ?? currentChat)?.chatKind !== 'ensemble'
+          ) {
+            nextMessages.push({
               id: createMessageId(),
-              role: 'error',
-              content: message,
-              timestamp: new Date().toISOString()
-            }
-          ]
-        }))
+              role: 'user',
+              content: fallbackPrompt,
+              timestamp: runStartedAt ?? new Date().toISOString()
+            })
+          }
+          nextMessages.push({
+            id: createMessageId(),
+            role: 'error',
+            content: message,
+            timestamp: new Date().toISOString()
+          })
+          return { ...source, messages: nextMessages }
+        })
       }
     } finally {
       // Keyed by run, so a settle that arrives after a later submit already
@@ -21485,7 +21548,10 @@ function App(): React.JSX.Element {
     }
   }
   useApplicationMenu(applicationMenuActions, !isChatPopoutWindow, () => {
-    void window.api.getWorkspaces().then(setWorkspaces).catch(() => {})
+    void window.api
+      .getWorkspaces()
+      .then(setWorkspaces)
+      .catch(() => {})
   })
 
   const createNewChatFromKeyboard = (): boolean => {
@@ -22913,9 +22979,7 @@ function App(): React.JSX.Element {
     : null
   const sideThinkingModel =
     sideProvider === 'ollama' || sideProvider === 'pi'
-      ? sideRun?.actualModel ||
-        sideRun?.requestedModel ||
-        ''
+      ? sideRun?.actualModel || sideRun?.requestedModel || ''
       : ''
   const sideThinkingPresentation = resolveWorkingIndicatorProviderPresentation(
     sideProvider,
@@ -31111,10 +31175,7 @@ function App(): React.JSX.Element {
         isRunning: viewerIsRunning,
         currentRunStartedAt: viewerRun?.startedAt
       })
-      const viewerCumulativeRunBaseMs = resolveCumulativeRunBaseMs(
-        viewerChat,
-        viewerRunStartedAt
-      )
+      const viewerCumulativeRunBaseMs = resolveCumulativeRunBaseMs(viewerChat, viewerRunStartedAt)
       const viewerShouldShowWelcomeUsageDashboard =
         viewerIsWelcomeChat &&
         usageInitialized &&
@@ -33045,11 +33106,16 @@ function App(): React.JSX.Element {
         chatId={currentChat?.appChatId}
         drafts={pendingChatDraftsRef.current}
         getCurrent={(id) => chatByIdRef.current.get(id)}
-        beforeResolve={async (id) => { await rendererTranscriptPersistenceRef.current?.whenIdle(id) }}
+        beforeResolve={async (id) => {
+          await rendererTranscriptPersistenceRef.current?.whenIdle(id)
+        }}
         onResolved={(canonical, advanced) => {
           if (advanced) chatByIdRef.current.set(canonical.appChatId, advanced)
           applyHydratedChat(canonical)
-          if (pendingChatDraftsRef.current.has(canonical.appChatId) && !pendingChatDraftsRef.current.conflicts(canonical.appChatId).length)
+          if (
+            pendingChatDraftsRef.current.has(canonical.appChatId) &&
+            !pendingChatDraftsRef.current.conflicts(canonical.appChatId).length
+          )
             updateChatById(canonical.appChatId, (chat) => ({ ...chat }))
         }}
       />

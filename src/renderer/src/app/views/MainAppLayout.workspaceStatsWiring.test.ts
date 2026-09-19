@@ -10,8 +10,8 @@ describe('MainAppLayout Workspace Stats wiring', () => {
     )
     expect(layoutSource).toContain('() => mainPaneActionPillRef.current?.openWorkspaceStats()')
     expect(layoutSource).toContain('ref={mainPaneActionPillRef}')
-    expect(layoutSource).toContain(
-      'canOpenMainPaneWorkspaceStats ? requestMainPaneWorkspaceStats : undefined'
+    expect(layoutSource).toMatch(
+      /canOpenMainPaneWorkspaceStats\s*\?\s*requestMainPaneWorkspaceStats\s*:\s*undefined/
     )
   })
 
