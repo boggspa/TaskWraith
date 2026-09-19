@@ -25186,7 +25186,16 @@ function App(): React.JSX.Element {
         const idx = Number(ensembleMatch[2])
         const chat = targetChat || currentChat
         const round = chat?.ensemble?.activeRound
-        if (!chat || !round || round.roundId !== queuedRoundId) return
+        if (!chat || !round || round.roundId !== queuedRoundId) {
+          // The row encodes the round it was queued against, so a
+          // rolled-over round means this click can never land. Say so
+          // rather than reading as a dead button.
+          appendFailure(
+            'Cannot steer this queued message',
+            'the round it was queued against has already finished'
+          )
+          return
+        }
         const ensembleChatId = chat.appChatId
         // The queued-row Steer button is not disabled during the IPC round
         // trip, so ignore re-entrant clicks for this chat until it settles.
@@ -25198,7 +25207,13 @@ function App(): React.JSX.Element {
               ? [round.queuedPrompt]
               : []
         const prompt = currentQueue[idx]
-        if (!prompt) return
+        if (!prompt) {
+          appendFailure(
+            'Cannot steer this queued message',
+            'it is no longer in the round queue'
+          )
+          return
+        }
         const fanoutPolicy = normalizeEnsembleFanoutPolicy(
           chat.ensemble?.fanoutPolicy,
           chat.ensemble?.concurrentModeEnabled
@@ -25251,9 +25266,21 @@ function App(): React.JSX.Element {
       const match =
         (job ? resolveQueuedDesktopRunRequest(job) : null) ||
         queuedRunsRef.current.find((request) => queuedRunFallbackId(request) === entryId)
-      if (!match) return
+      if (!match) {
+        appendFailure(
+          'Cannot steer this queued message',
+          'its queued request is no longer tracked'
+        )
+        return
+      }
       const recordedOwnerChatId = match.chatRecord?.appChatId || job?.chatId || null
-      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) return
+      if (targetChat && recordedOwnerChatId !== targetChat.appChatId) {
+        appendFailure(
+          'Cannot steer this queued message',
+          'it belongs to a different chat than the pane it was clicked in'
+        )
+        return
+      }
       const targetChatId = targetChat?.appChatId || recordedOwnerChatId || currentChat?.appChatId
       const targetRecord =
         (targetChatId ? chatByIdRef.current.get(targetChatId) : null) ||
@@ -25274,221 +25301,230 @@ function App(): React.JSX.Element {
       const clearQueuedSteerInFlight = (): void => {
         queuedSteerInFlightRunIdsRef.current.delete(runId)
       }
+      // BACKSTOP. Every explicit return below already clears the in-flight
+      // entry, but a throw out of any await did not -- and this ref is what
+      // suppresses a re-entrant click, so a leaked entry left that row's Steer
+      // permanently dead for the session. Deleting is idempotent, so the
+      // existing calls stand.
+      try {
 
-      const promotion = await invokePromoteQueuedRunForSteer({
-        runId,
-        provider: match.provider,
-        chatId: targetChatId,
-        statusReason: 'Promoted from queued-row steer for live or next-safe-boundary delivery.',
-        queueMessageId: midRunQueuedMessageId(runId),
-        transitionVersion: job?.transitionVersion
-      })
-
-      if (!promotion) {
-        clearQueuedSteerInFlight()
-        appendFailure(
-          'Steer promotion API is unavailable in this TaskWraith build',
-          'skipping queued-row promote+dispatch'
-        )
-        return
-      }
-      const promotionPermitted = promotion.ok === true || promotion.kind === 'dispatch-permission'
-
-      if (!promotionPermitted) {
-        clearQueuedSteerInFlight()
-        appendFailure(
-          'Queued run steer promotion failed',
-          promotion.reason || 'the request could not be handed off safely'
-        )
-        return
-      }
-
-      const matchedRequest = buildSteerQueuedRunRequest(promotion.request, match)
-      const dispatchRequest = attachSteerMetadataToRequest(
-        {
-          ...matchedRequest,
-          appRunId: runId
-        },
-        promotion.promotionToken,
-        promotion.ownerToken
-      )
-
-      if (targetChatBusy) {
-        // Promotion is provisional. Retain the exact request locally at FIFO
-        // head until main broadcasts a terminal delivery state; the durable
-        // scheduler consults this mirror when choosing the next queued job.
-        setQueuedRuns((prev) => reserveQueuedRunAtFront(prev, dispatchRequest, queuedRunFallbackId))
-        setFailedQueuedSteerRunIds((previous) => {
-          if (!previous.has(runId)) return previous
-          const next = new Set(previous)
-          next.delete(runId)
-          return next
-        })
-      }
-
-      const providerLabel = getProviderLabel(dispatchRequest.provider)
-      let steeringMessage: ChatMessage | null = null
-      if (targetChatBusy && targetChatId) {
-        steeringMessage = await appendMidRunQueuedRequestToTranscript(
-          {
-            ...dispatchRequest,
-            chatRecord: targetRecord || dispatchRequest.chatRecord
-          },
-          'soloSteer',
-          new Date().toISOString(),
-          { persistImmediately: true }
-        )
-      }
-
-      const leasePromotedForDispatch = async (): Promise<boolean> => {
-        if (!promotion.ownerToken) return true
-        const lease = await invokeLeasePromotedSteerJob({
+        const promotion = await invokePromoteQueuedRunForSteer({
           runId,
-          ownerToken: promotion.ownerToken,
-          statusReason: 'Queued-row steer was leased for dispatch.'
+          provider: match.provider,
+          chatId: targetChatId,
+          statusReason: 'Promoted from queued-row steer for live or next-safe-boundary delivery.',
+          queueMessageId: midRunQueuedMessageId(runId),
+          transitionVersion: job?.transitionVersion
         })
-        if (lease?.ok === true) return true
-        const reason = lease?.kind || 'steer lease did not succeed'
-        appendFailure('Queued run steer lease failed', reason)
-        const fallback = await invokeFallbackPromotedSteerJob({
-          runId,
-          ownerToken: promotion.ownerToken,
-          reason: `Queued-row steer lease failed: ${reason}.`,
-          fallbackStatus: 'queued'
-        })
-        if (fallback?.ok !== true) {
-          queueRunRequest(
-            dispatchRequest,
-            `Queued-row steer lease failed; queued fallback for this row.`
+
+        if (!promotion) {
+          clearQueuedSteerInFlight()
+          appendFailure(
+            'Steer promotion API is unavailable in this TaskWraith build',
+            'skipping queued-row promote+dispatch'
           )
-        } else {
-          restoreQueuedRunForSteer(dispatchRequest)
+          return
         }
-        return false
-      }
+        const promotionPermitted = promotion.ok === true || promotion.kind === 'dispatch-permission'
 
-      if (!targetChatId || !targetChatBusy) {
-        setQueuedRuns((prev) =>
-          prev.filter(
-            (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
+        if (!promotionPermitted) {
+          clearQueuedSteerInFlight()
+          appendFailure(
+            'Queued run steer promotion failed',
+            promotion.reason || 'the request could not be handed off safely'
           )
+          return
+        }
+
+        const matchedRequest = buildSteerQueuedRunRequest(promotion.request, match)
+        const dispatchRequest = attachSteerMetadataToRequest(
+          {
+            ...matchedRequest,
+            appRunId: runId
+          },
+          promotion.promotionToken,
+          promotion.ownerToken
         )
-        const leased = await leasePromotedForDispatch()
-        if (!leased) {
+
+        if (targetChatBusy) {
+          // Promotion is provisional. Retain the exact request locally at FIFO
+          // head until main broadcasts a terminal delivery state; the durable
+          // scheduler consults this mirror when choosing the next queued job.
+          setQueuedRuns((prev) => reserveQueuedRunAtFront(prev, dispatchRequest, queuedRunFallbackId))
+          setFailedQueuedSteerRunIds((previous) => {
+            if (!previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.delete(runId)
+            return next
+          })
+        }
+
+        const providerLabel = getProviderLabel(dispatchRequest.provider)
+        let steeringMessage: ChatMessage | null = null
+        if (targetChatBusy && targetChatId) {
+          steeringMessage = await appendMidRunQueuedRequestToTranscript(
+            {
+              ...dispatchRequest,
+              chatRecord: targetRecord || dispatchRequest.chatRecord
+            },
+            'soloSteer',
+            new Date().toISOString(),
+            { persistImmediately: true }
+          )
+        }
+
+        const leasePromotedForDispatch = async (): Promise<boolean> => {
+          if (!promotion.ownerToken) return true
+          const lease = await invokeLeasePromotedSteerJob({
+            runId,
+            ownerToken: promotion.ownerToken,
+            statusReason: 'Queued-row steer was leased for dispatch.'
+          })
+          if (lease?.ok === true) return true
+          const reason = lease?.kind || 'steer lease did not succeed'
+          appendFailure('Queued run steer lease failed', reason)
+          const fallback = await invokeFallbackPromotedSteerJob({
+            runId,
+            ownerToken: promotion.ownerToken,
+            reason: `Queued-row steer lease failed: ${reason}.`,
+            fallbackStatus: 'queued'
+          })
+          if (fallback?.ok !== true) {
+            queueRunRequest(
+              dispatchRequest,
+              `Queued-row steer lease failed; queued fallback for this row.`
+            )
+          } else {
+            restoreQueuedRunForSteer(dispatchRequest)
+          }
+          return false
+        }
+
+        if (!targetChatId || !targetChatBusy) {
+          setQueuedRuns((prev) =>
+            prev.filter(
+              (request) => request.appRunId !== runId && queuedRunFallbackId(request) !== entryId
+            )
+          )
+          const leased = await leasePromotedForDispatch()
+          if (!leased) {
+            clearQueuedSteerInFlight()
+            return
+          }
+          void executeRunRef.current(dispatchRequest)
           clearQueuedSteerInFlight()
           return
         }
-        void executeRunRef.current(dispatchRequest)
-        clearQueuedSteerInFlight()
-        return
-      }
 
-      const activeRunId =
-        resolveActiveRunContextForChat(targetChatId)?.runId ||
-        (activeRunChatIdRef.current === targetChatId
-          ? activeRunIdRef.current || undefined
-          : undefined)
-      const liveOutcome =
-        steeringMessage && activeRunId && promotion.ownerToken
-          ? await attemptLiveSteering(window.api, {
+        const activeRunId =
+          resolveActiveRunContextForChat(targetChatId)?.runId ||
+          (activeRunChatIdRef.current === targetChatId
+            ? activeRunIdRef.current || undefined
+            : undefined)
+        const liveOutcome =
+          steeringMessage && activeRunId && promotion.ownerToken
+            ? await attemptLiveSteering(window.api, {
+                chatId: targetChatId,
+                activeRunId,
+                queuedRunId: runId,
+                ownerToken: promotion.ownerToken
+              })
+            : ({ kind: 'unavailable' } as const)
+        const rendererFallback =
+          liveOutcome.kind === 'unavailable' && promotion.ownerToken
+            ? await invokeFallbackPromotedSteerJob({
+                runId,
+                ownerToken: promotion.ownerToken,
+                reason: `Queued-row live steering was unavailable; waiting for the active ${providerLabel} turn to finish.`,
+                fallbackStatus: 'queued'
+              })
+            : null
+        let deliveryOwned =
+          liveOutcome.kind === 'accepted' ||
+          liveOutcome.kind === 'boundary' ||
+          (rendererFallback?.ok === true && rendererFallback.jobStatus === 'queued')
+        let durableHandoff: RunQueueJob | null = null
+        let durableLookupCompleted = false
+        if (!deliveryOwned && typeof window.api.getRunQueueJobs === 'function') {
+          try {
+            const latestJobs = await window.api.getRunQueueJobs({
               chatId: targetChatId,
-              activeRunId,
-              queuedRunId: runId,
-              ownerToken: promotion.ownerToken
+              includeTerminal: true
             })
-          : ({ kind: 'unavailable' } as const)
-      const rendererFallback =
-        liveOutcome.kind === 'unavailable' && promotion.ownerToken
-          ? await invokeFallbackPromotedSteerJob({
-              runId,
-              ownerToken: promotion.ownerToken,
-              reason: `Queued-row live steering was unavailable; waiting for the active ${providerLabel} turn to finish.`,
-              fallbackStatus: 'queued'
-            })
-          : null
-      let deliveryOwned =
-        liveOutcome.kind === 'accepted' ||
-        liveOutcome.kind === 'boundary' ||
-        (rendererFallback?.ok === true && rendererFallback.jobStatus === 'queued')
-      let durableHandoff: RunQueueJob | null = null
-      let durableLookupCompleted = false
-      if (!deliveryOwned && typeof window.api.getRunQueueJobs === 'function') {
-        try {
-          const latestJobs = await window.api.getRunQueueJobs({
-            chatId: targetChatId,
-            includeTerminal: true
-          })
-          durableLookupCompleted = true
-          durableHandoff = latestJobs.find((candidate) => candidate.runId === runId) || null
-          // A durable row means MAIN still owns the prompt or has recorded its
-          // terminal outcome. Never create a second composer-send path merely
-          // because the original IPC reply was lost.
-          deliveryOwned = Boolean(durableHandoff)
-        } catch {
-          // Unknown main state is not proof of non-admission. Keep the exact
-          // transcript carrier and priority reservation; do not offer a
-          // one-click duplicate under a new run id.
-        }
-      }
-      if (!deliveryOwned) {
-        setFailedQueuedSteerRunIds((previous) => {
-          if (previous.has(runId)) return previous
-          const next = new Set(previous)
-          next.add(runId)
-          return next
-        })
-        if (durableLookupCompleted) {
-          setChatPromptDraft(targetChatId, dispatchRequest.displayPrompt || dispatchRequest.prompt)
-          if (dispatchRequest.imageAttachments.length > 0) {
-            setImageAttachmentsByChatId((prev) => ({
-              ...prev,
-              [targetChatId]: mergeImageAttachments(
-                prev[targetChatId] || [],
-                dispatchRequest.imageAttachments
-              )
-            }))
+            durableLookupCompleted = true
+            durableHandoff = latestJobs.find((candidate) => candidate.runId === runId) || null
+            // A durable row means MAIN still owns the prompt or has recorded its
+            // terminal outcome. Never create a second composer-send path merely
+            // because the original IPC reply was lost.
+            deliveryOwned = Boolean(durableHandoff)
+          } catch {
+            // Unknown main state is not proof of non-admission. Keep the exact
+            // transcript carrier and priority reservation; do not offer a
+            // one-click duplicate under a new run id.
           }
         }
-        appendFailure(
-          'Queued-row steer could not cross its durable handoff',
-          durableLookupCompleted
-            ? 'main has no durable row for this request; a draft copy is ready in the composer'
-            : 'main delivery state is unknown; the transcript row is retained and no duplicate draft was created'
-        )
-        clearQueuedSteerInFlight()
-        return
-      }
+        if (!deliveryOwned) {
+          setFailedQueuedSteerRunIds((previous) => {
+            if (previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.add(runId)
+            return next
+          })
+          if (durableLookupCompleted) {
+            setChatPromptDraft(targetChatId, dispatchRequest.displayPrompt || dispatchRequest.prompt)
+            if (dispatchRequest.imageAttachments.length > 0) {
+              setImageAttachmentsByChatId((prev) => ({
+                ...prev,
+                [targetChatId]: mergeImageAttachments(
+                  prev[targetChatId] || [],
+                  dispatchRequest.imageAttachments
+                )
+              }))
+            }
+          }
+          appendFailure(
+            'Queued-row steer could not cross its durable handoff',
+            durableLookupCompleted
+              ? 'main has no durable row for this request; a draft copy is ready in the composer'
+              : 'main delivery state is unknown; the transcript row is retained and no duplicate draft was created'
+          )
+          clearQueuedSteerInFlight()
+          return
+        }
 
-      if (
-        durableHandoff?.status === 'failed' ||
-        durableHandoff?.status === 'cancelled' ||
-        (durableHandoff?.status === 'steer_promoting' &&
-          durableHandoff.steerDeliveryPhase !== 'provider_admission_pending')
-      ) {
-        setFailedQueuedSteerRunIds((previous) => {
-          if (previous.has(runId)) return previous
-          const next = new Set(previous)
-          next.add(runId)
-          return next
+        if (
+          durableHandoff?.status === 'failed' ||
+          durableHandoff?.status === 'cancelled' ||
+          (durableHandoff?.status === 'steer_promoting' &&
+            durableHandoff.steerDeliveryPhase !== 'provider_admission_pending')
+        ) {
+          setFailedQueuedSteerRunIds((previous) => {
+            if (previous.has(runId)) return previous
+            const next = new Set(previous)
+            next.add(runId)
+            return next
+          })
+          appendFailure(
+            'Queued-row steer needs attention',
+            durableHandoff.lastError ||
+              durableHandoff.statusReason ||
+              'main retained a terminal steering outcome and did not create a duplicate retry'
+          )
+          clearQueuedSteerInFlight()
+          return
+        }
+
+        appendThreadRawLog(targetChatId, {
+          type: 'info',
+          content:
+            liveOutcome.kind === 'accepted'
+              ? `Queued message accepted for live ${liveOutcome.result.strategy} delivery to ${providerLabel}.`
+              : `Queued steer appended to the transcript and reserved for the next safe ${providerLabel} boundary.`
         })
-        appendFailure(
-          'Queued-row steer needs attention',
-          durableHandoff.lastError ||
-            durableHandoff.statusReason ||
-            'main retained a terminal steering outcome and did not create a duplicate retry'
-        )
         clearQueuedSteerInFlight()
-        return
+      } finally {
+        clearQueuedSteerInFlight()
       }
-
-      appendThreadRawLog(targetChatId, {
-        type: 'info',
-        content:
-          liveOutcome.kind === 'accepted'
-            ? `Queued message accepted for live ${liveOutcome.result.strategy} delivery to ${providerLabel}.`
-            : `Queued steer appended to the transcript and reserved for the next safe ${providerLabel} boundary.`
-      })
-      clearQueuedSteerInFlight()
     },
     // Queued steering only needs this callback to refresh when the target chat changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -28031,22 +28067,44 @@ function App(): React.JSX.Element {
       chat.ensemble.fanoutPolicy,
       chat.ensemble.concurrentModeEnabled
     )
+    const slashRoundMode = isEnsembleActiveRoundDispatchLive(chat.ensemble.activeRound)
+      ? 'steer'
+      : 'normal'
+    const slashRoundPayload = {
+      chatId: chat.appChatId,
+      prompt: promptText,
+      concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+      fanoutPolicy,
+      imageAttachments: attachments.map((attachment) => ({
+        id: attachment.id,
+        path: attachment.path,
+        name: attachment.name,
+        ...attachmentKindMetadata(attachment),
+        ...persistedAttachmentMetadata(attachment)
+      }))
+    }
     void window.api
-      .runEnsembleRound({
-        chatId: chat.appChatId,
-        prompt: promptText,
-        mode: isEnsembleActiveRoundDispatchLive(chat.ensemble.activeRound) ? 'steer' : 'normal',
-        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-        fanoutPolicy,
-        imageAttachments: attachments.map((attachment) => ({
-          id: attachment.id,
-          path: attachment.path,
-          name: attachment.name,
-          ...attachmentKindMetadata(attachment),
-          ...persistedAttachmentMetadata(attachment)
-        }))
-      })
-      .then(() => {
+      .runEnsembleRound({ ...slashRoundPayload, mode: slashRoundMode })
+      .then(async (receipt) => {
+        // A STEER MUST LAND. A refusal is main stating it did not retain the
+        // prompt, so re-sending as an ordinary round cannot double-deliver: a
+        // live round queues it, an idle chat starts it.
+        const settled =
+          slashRoundMode === 'steer' && ensembleRoundDispatchRefusal(receipt)
+            ? await window.api.runEnsembleRound({ ...slashRoundPayload, mode: 'normal' })
+            : receipt
+        const refusal = ensembleRoundDispatchRefusal(settled)
+        if (refusal) {
+          // Every refusal arrives as a FULFILLED promise, so this used to fall
+          // straight through: the draft was cleared, the attachments dropped
+          // and the Thinking badge lit for a round that was never started.
+          // The .catch below only ever sees a thrown IPC.
+          setRawLogs((prev) => [
+            ...prev,
+            { type: 'info', content: `${displayPrompt} was not sent: ${refusal.message}` }
+          ])
+          return
+        }
         if (attachments.length > 0) {
           setImageAttachmentsByChatId((prev) => ({ ...prev, [chat.appChatId]: [] }))
         }
