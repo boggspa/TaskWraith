@@ -71,3 +71,84 @@ describe('getChatTranscriptPage falls back to the canonical page read', () => {
     expect(invoke).toHaveBeenCalledWith('get-chat-transcript-page', request)
   })
 })
+
+describe('one thread’s run history never blanks every other thread’s', () => {
+  const projection = (id: string) => ({
+    revision: 1,
+    summary: {
+      chatId: id,
+      title: id,
+      provider: 'claude',
+      scope: 'global',
+      chatKind: 'single',
+      createdAt: 1,
+      updatedAt: 2,
+      archived: false,
+      messageCount: 1,
+      runCount: 1
+    },
+    recovery: {
+      unsettledRuns: 0,
+      soloWakeups: 0,
+      ensembleWakeups: 0,
+      workerEvents: 0,
+      joinPolicies: 0,
+      nextBlackboardExpiryAt: null
+    }
+  })
+
+  /** `bad` is the chat whose run-summary read fails; `good` always succeeds. */
+  const invokeWith = (badPage: unknown) => {
+    const served = new Set<string>()
+    return makeInvoke({
+      'thread-catalogue:read': (q: any) => {
+        if (q.method === 'list')
+          return {
+            available: true,
+            data: {
+              entries: [{ projection: projection('good') }, { projection: projection('bad') }],
+              next: null
+            }
+          }
+        if (q.method === 'open')
+          return { available: true, data: { leaseId: `lease-${q.chatId}` } }
+        if (q.method === 'release') return { available: true, data: null }
+        if (q.method === 'objects') {
+          if (q.leaseId === 'lease-bad') return { available: true, data: badPage }
+          if (served.has(q.leaseId)) return { available: true, data: [] }
+          served.add(q.leaseId)
+          return {
+            available: true,
+            data: [{ kind: 'inline', ordinal: 0, value: { runId: 'r1' } }]
+          }
+        }
+        throw new Error(`unexpected method ${q.method}`)
+      },
+      'get-chat-list': () => [{ appChatId: 'FALLBACK' }]
+    })
+  }
+
+  // Both of these threw out of getChatRunSummaries with only a `finally` to
+  // catch them, so a single unreadable thread rejected the entire runs list and
+  // the surface went blank -- the same shape as the lease-release bug above.
+  it('survives a thread whose run-summary page is incomplete', async () => {
+    const chats = await createThreadCatalogueReads(invokeWith(null)).getChatRunSummaries()
+    expect(chats.map((c) => c.appChatId)).toEqual(['good', 'bad'])
+    expect(chats[0].runsSummary).toHaveLength(1)
+    expect(chats[1].runsSummary).toBeUndefined()
+  })
+
+  it('survives a thread whose run summary exceeds its metadata budget', async () => {
+    const oversized = [{ kind: 'reference', ordinal: 0, reference: { byteLength: 99 } }]
+    const chats = await createThreadCatalogueReads(invokeWith(oversized)).getChatRunSummaries()
+    expect(chats.map((c) => c.appChatId)).toEqual(['good', 'bad'])
+    expect(chats[0].runsSummary).toHaveLength(1)
+    expect(chats[1].runsSummary).toBeUndefined()
+  })
+
+  it('does not fall back to the whole-profile disk parse for a single bad thread', async () => {
+    const invoke = invokeWith(null)
+    await createThreadCatalogueReads(invoke).getChatRunSummaries()
+    expect(invoke).not.toHaveBeenCalledWith('get-chat-list', undefined)
+  })
+})

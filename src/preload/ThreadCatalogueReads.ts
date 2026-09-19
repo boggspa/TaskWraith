@@ -123,6 +123,13 @@ export function createThreadCatalogueReads(invoke: Invoke) {
             }
           }
           chat.runsSummary = summaries
+        } catch {
+          // A thread whose run history is unreadable leaves ITS OWN summaries
+          // unset and nothing else. These throws previously escaped the loop --
+          // only a `finally` stood between them and the caller -- so one bad
+          // thread rejected the entire runs list and every thread's runs went
+          // blank. Same shape as the lease-release bug above: an auxiliary
+          // failure must never replace a completed read's value.
         } finally {
           await releaseLease(leaseId)
         }
