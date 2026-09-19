@@ -1,4 +1,4 @@
 {
-  "byteExactSourcePins": 141,
+  "byteExactSourcePins": 138,
   "note": "Byte-exact multi-line source-assertion ratchet. Lower this when the count drops; never raise it. See scripts/source-pin-ratchet.cjs."
 }

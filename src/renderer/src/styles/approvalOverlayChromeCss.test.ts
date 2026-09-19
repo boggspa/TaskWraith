@@ -27,7 +27,9 @@ describe('approval overlay chrome', () => {
 
     const hideListFor = (rail: string): RegExp =>
       new RegExp(
-        `html:has\\(:is\\([^)]*\\.composer-permission-card--overlay[^)]*\\)\\)\\s*${rail}\\s*\\{\\s*display:\\s*none\\s*!important`
+        // Whitespace-tolerant: prettier wraps the `html:has(` / `:is(` lists
+        // across lines, and the pin must survive formatting, not enforce it.
+        `html:has\\(\\s*:is\\([^)]*\\.composer-permission-card--overlay[^)]*\\)\\s*\\)\\s*${rail}\\s*\\{\\s*display:\\s*none\\s*!important`
       )
     expect(css).toMatch(hideListFor('\\.transcript-participant-filter-rail'))
     expect(css).toMatch(hideListFor('\\.transcript-user-gutter'))

@@ -19,8 +19,22 @@ const tokenChartSource = readFileSync(
 )
 
 function cssBlock(css: string, selector: string): string {
-  const start = css.lastIndexOf(`${selector} {`)
-  expect(start, `${selector} missing`).toBeGreaterThan(-1)
+  // Whitespace- and quote-tolerant: prettier wraps selector lists (inside
+  // `:is(...)`, before the element) across lines and formats attribute
+  // selectors with either quote style. Escape the selector, accept both
+  // quotes, and let every whitespace run match any whitespace. Last match
+  // wins, preserving the original lastIndexOf(`${selector} {`) semantics.
+  const pattern = selector
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/["']/g, `["']`)
+    .replace(/\s+/g, '\\s*')
+    // Prettier also ADDS whitespace where the pin had none: after an opening
+    // paren and before a closing one (`:is(\n  .a,\n  .b\n)`).
+    .replace(/\\\(/g, '\\(\\s*')
+    .replace(/\\\)/g, '\\s*\\)')
+  const matches = [...css.matchAll(new RegExp(`${pattern}\\s*\\{`, 'g'))]
+  expect(matches.length, `${selector} missing`).toBeGreaterThan(0)
+  const start = matches[matches.length - 1].index as number
   return css.slice(start, css.indexOf('\n}', start))
 }
 
@@ -76,7 +90,7 @@ describe('Thread Home activity-cycle visual contract', () => {
       /\.usage-heatmap-provider-filter-tab\s*\{[\s\S]*?background:\s*transparent/
     )
     expect(welcomeTreatment).toMatch(
-      /\.usage-heatmap-provider-filter-tab\[data-active="true"\][\s\S]*?currentColor 58%/
+      /\.usage-heatmap-provider-filter-tab\s*\[\s*data-active=["']true["']\s*\][\s\S]*?currentColor 58%/
     )
   })
 

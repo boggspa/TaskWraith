@@ -91,7 +91,13 @@ function allCssRules(): CssRule[] {
 function declarationOf(source: string, identifier: string): string {
   const at = source.indexOf(`const ${identifier} =`)
   expect(at, `no declaration of ${identifier}`).toBeGreaterThan(-1)
-  const end = source.indexOf('\n    const ', at + 1)
+  // Indentation-anchored, not a hard-coded 4-space tab: the component body
+  // may be reindented (it has been), and unrelated nested code inserted
+  // between two declarations must not be swept into the slice. The next
+  // `const` at the SAME indentation is the following top-level declaration.
+  const lineStart = source.lastIndexOf('\n', at - 1) + 1
+  const indent = source.slice(lineStart, at)
+  const end = source.indexOf(`\n${indent}const `, at + 1)
   expect(end, `unterminated declaration of ${identifier}`).toBeGreaterThan(at)
   return source.slice(at, end)
 }
@@ -490,7 +496,10 @@ describe('Large is the first size that exercises the clamped-furniture floor', (
 describe('the size reaches every transcript', () => {
   it('is threaded into the panel by a prop that carries the NAME', () => {
     expect(PANEL).toContain('transcriptTextSize?: TranscriptTextSize')
-    expect(PANEL).toContain('\n    transcriptTextSize,\n')
+    // Indentation-agnostic: the destructured-props list has been reindented
+    // (4-space -> 2-space) at least once; the pin is that the prop is
+    // received, not at which column.
+    expect(PANEL).toMatch(/\n\s+transcriptTextSize,\n/)
   })
 
   it('reaches the main pane, the side chat and the settings panel', () => {
