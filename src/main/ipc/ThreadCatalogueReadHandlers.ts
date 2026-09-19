@@ -1,14 +1,55 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ThreadCatalogueMirror } from '../store/ThreadCatalogueMirror'
-import { decodeThreadCatalogueReadQuery } from '../../shared/threadCatalogueProtocol'
+import {
+  decodeThreadCatalogueReadQuery,
+  type ThreadCatalogueReadQuery
+} from '../../shared/threadCatalogueProtocol'
+import { threadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 import type { SenderChatReadScope } from './chatHandlers'
 import type { ThreadCatalogueOpenResult } from '../store/ThreadCatalogueClient'
+
+/**
+ * Attempts after the first for a retryable catalogue read. The background
+ * importer re-indexes a changed thread ~100ms later
+ * (ThreadCatalogueWorkerService.notifyChanged), so a short bounded wait covers
+ * the race without making a genuine failure slow to surface.
+ */
+const THREAD_CATALOGUE_READ_RETRIES = 2
+const defaultRetryDelayMs = (attempt: number): number => 80 * attempt
+
+/**
+ * A retryable catalogue error means the read never ran -- history moved under
+ * the indexer, a lease aged out, the source was not settled yet. Re-reading is
+ * the correct response and the background importer already does exactly that.
+ * Letting one escape here instead turned a benign indexing race into
+ * "Run execution failed unexpectedly" and killed the user's run, which is why
+ * this is bounded-retried rather than propagated. `lease_erased` is the one
+ * code the taxonomy marks non-retryable: that page was deliberately
+ * invalidated, so it still surfaces immediately.
+ */
+async function queryWithRetry(
+  mirror: ThreadCatalogueMirror,
+  request: ThreadCatalogueReadQuery,
+  retryDelayMs: (attempt: number) => number
+): Promise<unknown> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await mirror.port.query(request)
+    } catch (error) {
+      const requestError = threadCatalogueRequestError(error)
+      if (!requestError?.retryable || attempt > THREAD_CATALOGUE_READ_RETRIES) throw error
+      await new Promise<void>((resolve) => setTimeout(resolve, retryDelayMs(attempt)))
+    }
+  }
+}
 
 /** A lease is bound to its actual opener, never to a renderer-supplied chat label. */
 export function registerThreadCatalogueReadHandlers(
   scopeFor: (event: IpcMainInvokeEvent) => SenderChatReadScope,
-  getMirror: () => ThreadCatalogueMirror | null = () => null
+  getMirror: () => ThreadCatalogueMirror | null = () => null,
+  options?: { retryDelayMs?: (attempt: number) => number }
 ): void {
+  const retryDelayMs = options?.retryDelayMs ?? defaultRetryDelayMs
   ipcMain.handle('thread-catalogue:status', (event) => {
     scopeFor(event)
     return getMirror()?.status ?? { complete: true, loaded: 0, failed: 0, error: null }
@@ -66,7 +107,7 @@ export function registerThreadCatalogueReadHandlers(
       if (query.method === 'chunk' && query.reference.chatId !== lease.chatId)
         throw new Error('History reference belongs to another chat')
     }
-    const data = await mirror.port.query(query)
+    const data = await queryWithRetry(mirror, query, retryDelayMs)
     if (query.method === 'open' && data) {
       const opened = data as ThreadCatalogueOpenResult
       owned.set(opened.leaseId, { chatId: query.chatId, expires: Date.now() + 120_000 })
