@@ -9,6 +9,8 @@ import {
   deriveWorkspaceMutationClaims,
   WorkspaceMutationClaimDerivationError
 } from './WorkspaceMutationClaims'
+import type { WorkspaceMutationCall } from './WorkspaceMutationClaims'
+import type { ProviderNativeActionContext } from '../shared/providerActionTaxonomy'
 import type {
   WorkspaceExternalMutationAuthorityReceipt,
   WorkspaceLockRuntime,
@@ -139,6 +141,25 @@ export interface WorkspaceLockMcpAdmissionInput<
    * direct user approval can. Absent means `resolved-policy`.
    */
   unscopedProcessAuthority?: 'resolved-policy' | 'explicit-one-shot'
+  /**
+   * Provider-native provenance. Present when the mutation will be performed by
+   * the provider's OWN tool and TaskWraith is admitting it at the permission
+   * seam rather than executing it in the brokered critical section.
+   *
+   * `toolName` stays the CANONICAL catalog tool the native action resolved to,
+   * so contract, lane validation, owner identity and acquisition all behave
+   * exactly as they do for a brokered write -- that reuse is the point, because
+   * a parallel native admission path would be a second place for lane scope to
+   * silently stop binding. Only claim derivation differs: it resolves through
+   * the provider's closed adapter, and promoteNativeHunkClaims demotes hunk
+   * claims to whole-file ones, since TaskWraith cannot hold a hunk's
+   * coordinates across a write it does not perform.
+   */
+  nativeMutation?: {
+    /** The native action as the provider reported it, for strict resolution. */
+    action: string
+    nativeContext?: ProviderNativeActionContext
+  }
 }
 
 export type WorkspaceLockMcpAdmission =
@@ -297,14 +318,26 @@ export class WorkspaceLockMcpAdmissionCoordinator {
     const chat = input.context.appChatId ? this.deps.getChat(input.context.appChatId) : null
     const baseWorkspacePath = resolve(chat?.workspacePath || effectiveWorkspacePath)
     const laneId = input.context.ensembleRun?.laneId
-    const mutation = {
-      source: 'taskwraith-catalog' as const,
-      provider: input.provider,
-      workspacePath: baseWorkspacePath,
-      worktreePath: effectiveWorkspacePath,
-      action: input.toolName,
-      args: input.args
-    }
+    const mutation: WorkspaceMutationCall = input.nativeMutation
+      ? {
+          source: 'provider-native' as const,
+          provider: input.provider,
+          workspacePath: baseWorkspacePath,
+          worktreePath: effectiveWorkspacePath,
+          action: input.nativeMutation.action,
+          ...(input.nativeMutation.nativeContext
+            ? { nativeContext: input.nativeMutation.nativeContext }
+            : {}),
+          args: input.args
+        }
+      : {
+          source: 'taskwraith-catalog' as const,
+          provider: input.provider,
+          workspacePath: baseWorkspacePath,
+          worktreePath: effectiveWorkspacePath,
+          action: input.toolName,
+          args: input.args
+        }
     let resourcePaths: readonly string[] | undefined
     try {
       resourcePaths =
@@ -394,7 +427,13 @@ export class WorkspaceLockMcpAdmissionCoordinator {
       })
     }
 
-    bindSharedWorkspaceActor(input.context, input.provider, input.toolName, acquired.owner.lockOwnerId)
+    bindSharedWorkspaceActor(
+      input.context,
+      input.provider,
+      input.toolName,
+      acquired.owner.lockOwnerId,
+      input.nativeMutation ? 'provider-native' : 'broker'
+    )
     return {
       ok: true,
       owner: acquired.claims.length ? acquired.owner : undefined,
