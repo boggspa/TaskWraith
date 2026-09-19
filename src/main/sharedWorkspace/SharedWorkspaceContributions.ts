@@ -86,6 +86,29 @@ export async function touchSharedWorkspaceIntent(root: string): Promise<void> {
 }
 
 /** Recovery snapshots are Git objects under local refs. They are separate from authority-free provenance metadata. */
+/**
+ * The ONLY canonical tools this journal can record.
+ *
+ * A record is a whole-file `before`/`after` blob pair, and `after` is a
+ * non-nullable Buffer, so a tool with no after-bytes (delete_path, the source
+ * side of move_path/rename_path) or no file bytes at all (create_directory)
+ * has no representable shape here. apply_patch is excluded because the
+ * brokered path does not journal it either.
+ *
+ * Exported so that any gate which ADMITS a mutation can ask the journal what
+ * it is able to capture, instead of keeping a second copy of this list. A
+ * mutation admitted for a tool outside this set would land with no snapshot
+ * and no Undo -- which for delete_path means an unrecoverable removal.
+ */
+export const SHARED_WORKSPACE_CAPTURABLE_TOOLS = ['write_file', 'replace'] as const
+
+export function isSharedWorkspaceCapturableTool(tool: string | null | undefined): boolean {
+  return (
+    typeof tool === 'string' &&
+    (SHARED_WORKSPACE_CAPTURABLE_TOOLS as readonly string[]).includes(tool)
+  )
+}
+
 export async function prepareSharedWorkspaceEdit(
   authority: { rootPath: string; targetPath: string },
   before: Buffer | null,
@@ -102,7 +125,7 @@ async function prepareEdit(
   executable: boolean
 ): Promise<SharedWorkspaceEditReceipt | null> {
   const actor = currentSharedWorkspaceActor()
-  if (!actor || !['write_file', 'replace'].includes(currentSharedWorkspaceTool() || '')) return null
+  if (!actor || !isSharedWorkspaceCapturableTool(currentSharedWorkspaceTool())) return null
   if (after.length > MAX_BYTES || (before && before.length > MAX_BYTES) || before?.equals(after))
     return null
   // Bookkeeping never keeps a mutation lock while waiting indefinitely for audit I/O.
@@ -438,6 +461,12 @@ async function contribution(
     provider: actor.provider,
     ...(actor.chatId ? { chatId: actor.chatId } : {}),
     ...(actor.participantId ? { participantId: actor.participantId } : {}),
+    // Surfaced so a reviewer can tell a descriptor-fenced brokered capture from
+    // an unfenced provider-native one before they act on Undo. Absent means
+    // brokered, which is every contribution written before native capture.
+    ...(actor.mutationOrigin && actor.mutationOrigin !== 'broker'
+      ? { mutationOrigin: actor.mutationOrigin }
+      : {}),
     paths: [...files.keys()],
     editCount: selected.length,
     updatedAt: selected[selected.length - 1].record.createdAt,

@@ -3,6 +3,25 @@ import { createHash } from 'node:crypto'
 import type { BigIntStats } from 'node:fs'
 import { resolve } from 'node:path'
 
+/**
+ * Where a mutation was executed, which is NOT the same question as who asked
+ * for it.
+ *
+ * 'broker' means TaskWraith performed the write itself, inside the brokered
+ * critical section: the `before` bytes come from a pinned O_RDWR descriptor
+ * with an inode/mtime re-check immediately before truncation, so they are
+ * provably the bytes that were replaced.
+ *
+ * 'provider-native' means the provider's own tool performed the write in its
+ * own process and TaskWraith observed it. The snapshot is two ordinary disk
+ * reads taken around that write, with no descriptor and no fence, so a peer or
+ * the user's editor can change the file in between. That degrades safely --
+ * the journal re-hashes on preview and flips the row to 'changed' -- but it is
+ * a genuinely weaker guarantee and whoever clicks Undo is entitled to know
+ * which one they have.
+ */
+export type SharedWorkspaceMutationOrigin = 'broker' | 'provider-native'
+
 export interface SharedWorkspaceActor {
   key: string
   chatId?: string
@@ -11,6 +30,8 @@ export interface SharedWorkspaceActor {
   participantId?: string
   laneId?: string
   lockOwnerId?: string
+  /** Absent is read as 'broker'; only a native seat ever sets this. */
+  mutationOrigin?: SharedWorkspaceMutationOrigin
 }
 
 interface OperationContext {
@@ -55,7 +76,8 @@ export function bindSharedWorkspaceActor(
   },
   provider: string,
   toolName: string,
-  lockOwnerId?: string
+  lockOwnerId?: string,
+  mutationOrigin?: SharedWorkspaceMutationOrigin
 ): void {
   const operation = operationContext.getStore()
   if (!operation) return
@@ -71,7 +93,8 @@ export function bindSharedWorkspaceActor(
     ...(context.appChatId ? { chatId: context.appChatId } : {}),
     ...(participantId ? { participantId } : {}),
     ...(laneId ? { laneId } : {}),
-    ...(lockOwnerId ? { lockOwnerId } : {})
+    ...(lockOwnerId ? { lockOwnerId } : {}),
+    ...(mutationOrigin && mutationOrigin !== 'broker' ? { mutationOrigin } : {})
   }
 }
 

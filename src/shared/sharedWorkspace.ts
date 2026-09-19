@@ -9,6 +9,14 @@ export interface SharedWorkspaceContribution {
   updatedAt: string
   state: 'ready' | 'changed' | 'interrupted'
   reason?: string
+  /**
+   * How the mutation was executed. Absent means 'broker': TaskWraith wrote the
+   * file itself and the snapshot came from a pinned descriptor, so it provably
+   * captures the bytes that were replaced. 'provider-native' means the
+   * provider's own tool wrote it and TaskWraith read the file either side --
+   * a weaker guarantee with no fence against a concurrent editor.
+   */
+  mutationOrigin?: 'broker' | 'provider-native'
 }
 
 export interface SharedWorkspaceContributionPreview extends SharedWorkspaceContribution {
