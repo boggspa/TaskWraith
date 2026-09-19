@@ -575,7 +575,7 @@ export function isCatastrophicDeletionShellCommand(command: unknown): boolean {
  * targets must sit under the resolved root. Shared by the deletion proof and
  * the inbound-fetch proof so the two agree on what containment means.
  */
-function pathProvablyInsideWorkspace(target: string, workspaceRoot: string): boolean {
+export function pathProvablyInsideWorkspace(target: string, workspaceRoot: string): boolean {
   if (target.startsWith('~')) return false
   if (target.split('/').some((segment) => segment === '..')) return false
   if (!path.isAbsolute(target)) return true

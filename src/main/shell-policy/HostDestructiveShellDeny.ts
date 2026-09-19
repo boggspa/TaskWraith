@@ -9,7 +9,7 @@
  * This module classifies strings only. It never spawns a process.
  */
 
-const STRIPPABLE_BIN_PREFIX = /^(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)/
+export const STRIPPABLE_BIN_PREFIX = /^(?:\/usr\/bin\/|\/bin\/|\/usr\/local\/bin\/|\/opt\/homebrew\/bin\/)/
 const POWER_HEADS = new Set(['shutdown', 'reboot', 'halt'])
 const SHELL_HEADS = new Set(['bash', 'sh', 'zsh', 'dash', 'ksh'])
 const SUDO_VALUE_FLAGS = new Set(['-u', '-g', '-C', '--user', '--group', '--close-from'])
@@ -106,7 +106,7 @@ function looksLikeDestroyHead(text: string): boolean {
   )
 }
 
-function chainSegmentsOf(command: string): string[] | null {
+export function chainSegmentsOf(command: string): string[] | null {
   const segments: string[] = []
   let quote: 'single' | 'double' | null = null
   let segmentStart = 0
@@ -161,7 +161,7 @@ function chainSegmentsOf(command: string): string[] | null {
   return segments
 }
 
-function tokenize(command: string): string[] | null {
+export function tokenize(command: string): string[] | null {
   const tokens: string[] = []
   let token = ''
   let started = false
@@ -230,7 +230,7 @@ function argvIsDestructive(tokens: string[], hadSudo: boolean): boolean {
   return false
 }
 
-function unwrap(tokens: string[], hadSudo: boolean): { argv: string[]; sudo: boolean } | null {
+export function unwrap(tokens: string[], hadSudo: boolean): { argv: string[]; sudo: boolean } | null {
   let index = 0
   let sudo = hadSudo
   while (index < tokens.length) {
