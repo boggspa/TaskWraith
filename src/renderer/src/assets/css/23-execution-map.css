@@ -16,12 +16,14 @@
 
 .execution-graph-diagnostics-notice {
   position: fixed;
-  top: 36px;
-  right: 14px;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
   z-index: 8600;
-  width: min(420px, calc(100vw - 28px));
+  width: min(520px, calc(100vw - 28px));
   color: var(--text-primary);
   font-size: 11px;
+  overflow-wrap: anywhere;
 }
 
 .execution-graph-diagnostics-notice details {
