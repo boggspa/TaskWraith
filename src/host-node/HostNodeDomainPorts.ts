@@ -192,6 +192,14 @@ export interface HostNodeDomainPortsOptions {
   readonly maxConcurrentRuns?: number
   /** Bounded waiter limit for starts that cannot admit yet. Overflow rejects. */
   readonly maxQueuedStarts?: number
+  /**
+   * Test seam: a pre-built run-admission instance. When present, the domain
+   * uses THIS exact instance for acquire/occupancy/cancel/shutdown instead of
+   * constructing one from maxConcurrentRuns/maxQueuedStarts, so an
+   * out-of-process fixture can witness the same admission object the domain
+   * holds. Absence preserves the existing construction and behavior exactly.
+   */
+  readonly runAdmission?: HostNodeRunAdmission
   /** Optional recorder for control_response and round_start span telemetry. Absence is safe. */
   readonly workSpanRecorder?: WorkSpanRecorder
   /**
@@ -225,8 +233,9 @@ export interface HostNodeDomainPortsOptions {
    */
   readonly queuedStartOnDispatchSettled?: (
     commandId: string,
+    threadId: string,
     result: HostCommandExecutionResult
-  ) => void
+  ) => void | Promise<void>
 }
 
 type AuthOperation = {
@@ -576,12 +585,16 @@ export class HostNodeDomainPorts {
 
   constructor(private readonly options: HostNodeDomainPortsOptions) {
     this.now = options.now ?? (() => Date.now())
-    this.runAdmission = createHostNodeRunAdmission({
-      ...(options.maxConcurrentRuns !== undefined
-        ? { maxConcurrentRuns: options.maxConcurrentRuns }
-        : {}),
-      ...(options.maxQueuedStarts !== undefined ? { maxQueuedStarts: options.maxQueuedStarts } : {})
-    })
+    this.runAdmission =
+      options.runAdmission ??
+      createHostNodeRunAdmission({
+        ...(options.maxConcurrentRuns !== undefined
+          ? { maxConcurrentRuns: options.maxConcurrentRuns }
+          : {}),
+        ...(options.maxQueuedStarts !== undefined
+          ? { maxQueuedStarts: options.maxQueuedStarts }
+          : {})
+      })
     this.queuedStartLifecycle = resolveQueuedStartLifecycle(options)
     this.profileRecordExecutor = new HostProfileRecordCommandExecutor({
       ...(options.profilePath ? { profilePath: options.profilePath } : {}),
@@ -1276,17 +1289,20 @@ export class HostNodeDomainPorts {
       // pending. Do not skip the persist wait: onStarted fires in beginRun
       // before providers append the user prompt.
       const commandId = command.commandId
+      const threadId = command.target.threadId
       const dispatch = this.executeCommand(context, command, target, {
         persistProof: 'monotonic'
       })
         .then(
-          (result) => {
-            this.options.queuedStartOnDispatchSettled?.(commandId, result)
-          },
-          () => {
-            this.options.queuedStartOnDispatchSettled?.(commandId, failed('run_not_started'))
-          }
+          (result) => this.options.queuedStartOnDispatchSettled?.(commandId, threadId, result),
+          () =>
+            this.options.queuedStartOnDispatchSettled?.(
+              commandId,
+              threadId,
+              failed('run_not_started')
+            )
         )
+        .then(() => undefined)
         .finally(() => {
           this.queuedDispatches.delete(commandId)
         })

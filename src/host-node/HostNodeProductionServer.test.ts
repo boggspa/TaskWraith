@@ -16,6 +16,7 @@ import {
 } from './HostNodeDomainPorts'
 import type { HostStandaloneCompositionInput } from '../host-runtime/HostStandaloneComposition'
 import { HostNodeInteractionRegistry } from './HostNodeInteractionRegistry'
+import { ThreadCatalogueHostRunWindow } from './ThreadCatalogueHostRunWindow'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
 
 const profiles: string[] = []
@@ -756,7 +757,7 @@ describe('HostNodeProductionServer', () => {
     expect(started).toHaveBeenCalledTimes(1)
     expect(started).toHaveBeenCalledWith(view)
     const result = { status: 'succeeded' as const, resultSummary: 'run_started' }
-    on.domainQueuedStartOnDispatchSettled()?.('cmd-started', result)
+    await on.domainQueuedStartOnDispatchSettled()?.('cmd-started', 'thread-1', result)
     expect(settled).toHaveBeenCalledTimes(1)
     expect(settled).toHaveBeenCalledWith('cmd-started', result)
 
@@ -774,6 +775,39 @@ describe('HostNodeProductionServer', () => {
       id: 'tui-1'
     })
     await on.server.stop()
+  })
+
+  it('refreshes the exact queued-start run before dispatching successful settlement', async () => {
+    const refreshFor = vi
+      .spyOn(ThreadCatalogueHostRunWindow.prototype, 'refreshFor')
+      .mockResolvedValue(true)
+    const h = harness({
+      profilePath: profile(),
+      acquireLease: undefined,
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
+    })
+    let started = false
+    try {
+      await h.server.start()
+      started = true
+      const settled = vi.fn()
+      h.compositionQueuedStartDispatchSettledBind()?.(settled)
+      const succeeded = { status: 'succeeded' as const, resultSummary: 'run_started' }
+
+      await h.domainQueuedStartOnDispatchSettled()?.('cmd-refresh', 'thread-refresh', succeeded)
+
+      expect(refreshFor).toHaveBeenCalledTimes(1)
+      expect(refreshFor).toHaveBeenCalledWith('thread-refresh', 'cmd-refresh')
+      expect(settled).toHaveBeenCalledWith('cmd-refresh', succeeded)
+
+      const failed = { status: 'failed' as const, errorCode: 'run_not_started' }
+      await h.domainQueuedStartOnDispatchSettled()?.('cmd-failed', 'thread-failed', failed)
+      expect(refreshFor).toHaveBeenCalledTimes(1)
+      expect(settled).toHaveBeenCalledWith('cmd-failed', failed)
+    } finally {
+      if (started) await h.server.stop()
+      refreshFor.mockRestore()
+    }
   })
 
   it('omits queued-start callbacks and ports when the injected environment is off', async () => {
@@ -812,6 +846,9 @@ describe('HostNodeProductionServer', () => {
     expect(cleanup.indexOf('await this.domain?.shutdown()')).toBeGreaterThan(-1)
     expect(cleanup.indexOf('await this.domain?.shutdown()')).toBeLessThan(
       cleanup.indexOf('await this.composition?.shutdown()')
+    )
+    expect(cleanup.indexOf('await this.composition?.shutdown()')).toBeLessThan(
+      cleanup.indexOf('this.hostRunWindow?.dispose()')
     )
 
     const compositionSrc = readFileSync(

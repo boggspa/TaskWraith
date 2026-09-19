@@ -408,7 +408,15 @@ export class HostNodeProductionServer {
           ? {
               queuedStartOnStarting: queuedStartSlot.dispatchStarting,
               queuedStartOnStarted: queuedStartSlot.dispatch,
-              queuedStartOnDispatchSettled: queuedStartSlot.dispatchSettled
+              queuedStartOnDispatchSettled: async (commandId, threadId, result) => {
+                if (result.status === 'succeeded') {
+                  // The Host run window intentionally debounces display refreshes.
+                  // A short-start publication cannot: refresh the exact persisted
+                  // run now, before the coordinator captures its proof snapshot.
+                  await this.hostRunWindow?.refreshFor(threadId, commandId)
+                }
+                queuedStartSlot.dispatchSettled(commandId, result)
+              }
             }
           : {})
       })
@@ -591,7 +599,6 @@ export class HostNodeProductionServer {
         listenerFailure = asError(error)
       }
     }
-    this.hostRunWindow?.dispose()
     this.hostRecovery?.dispose()
     this.threadRecovery?.dispose()
     try {
@@ -608,6 +615,11 @@ export class HostNodeProductionServer {
         cause: error
       })
     }
+    // Keep the run window available until Domain's queued dispatches have
+    // crossed their exact-run refresh barrier and composition has drained
+    // their receipt publication. A failed earlier cleanup remains retryable
+    // with the window intact.
+    this.hostRunWindow?.dispose()
     try {
       if (this.disposeResources && (await this.disposeResources()) !== true) {
         throw new Error('resource disposal was not proven')

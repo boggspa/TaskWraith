@@ -38,6 +38,7 @@ import {
   isHostQueuedStartEnabled
 } from './HostNodeDomainPorts'
 import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
+import { createHostNodeRunAdmission } from './HostNodeRunAdmission'
 import { createHostNodeCodexProvider } from './HostNodeCodexProvider'
 import { createHostNodeKimiProvider } from './HostNodeKimiProvider'
 
@@ -2610,6 +2611,135 @@ describe('HostNodeDomainPorts', () => {
     await domain.shutdown()
   })
 
+  it('runAdmission seam: the injected exact instance owns acquire/occupancy/cancel, and absence preserves construction', async () => {
+    // M2 out-of-process seam pin. The injected instance is the SAME object the
+    // domain acquires from, reports occupancy from, cancels queued waiters on,
+    // and shuts down — that identity is what lets the forked-child fixture
+    // witness the domain's real admission over IPC. RED-FIRST: without the
+    // seam the domain constructs its own private instance, so occupancy
+    // observed on the injected object would never move and the acquire spy
+    // would never fire.
+    const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const firstThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    const secondThread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    for (const thread of [firstThread, secondThread]) {
+      store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const admission = createHostNodeRunAdmission({ maxConcurrentRuns: 1, maxQueuedStarts: 1 })
+    const acquire = vi.spyOn(admission, 'acquire')
+    const cancelQueued = vi.spyOn(admission, 'cancelQueued')
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      runAdmission: admission,
+      shutdownTimeoutMs: 1_000
+    })
+
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-seam-hold',
+          { threadId: firstThread.appChatId },
+          { text: 'hold' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    // The domain acquired from THIS instance, not a private one.
+    expect(acquire).toHaveBeenCalledTimes(1)
+    expect(admission.inflightCount()).toBe(1)
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 0 })
+
+    const queued = domain.executeCommand(
+      context,
+      command(
+        'composer.send',
+        'run-seam-queued',
+        { threadId: secondThread.appChatId },
+        { text: 'queued' }
+      ),
+      { id: 'target' }
+    )
+    await vi.waitFor(() => expect(admission.queuedCount()).toBe(1))
+    expect(domain.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 1 })
+
+    // Cancel routes through the injected instance too.
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'run.cancel',
+          'cmd-seam-cancel',
+          { threadId: secondThread.appChatId },
+          { expectedWorkId: 'run-seam-queued' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_cancellation_requested' })
+    expect(cancelQueued).toHaveBeenCalled()
+    await expect(queued).resolves.toMatchObject({
+      status: 'failed',
+      errorCode: 'run_start_cancelled'
+    })
+    expect(admission.queuedCount()).toBe(0)
+
+    releaseRun()
+    await domain.shutdown()
+
+    // Absence: no runAdmission option constructs exactly as before — the
+    // maxConcurrentRuns/maxQueuedStarts bounds still own behavior.
+    const second = open({ killReleases: false })
+    const secondRegistered = second.store.registerWorkspace({ path: second.workspace })
+    const capped = second.store.createThread({
+      scope: 'workspace',
+      workspaceId: secondRegistered.id
+    })
+    const overflow = second.store.createThread({
+      scope: 'workspace',
+      workspaceId: secondRegistered.id
+    })
+    for (const thread of [capped, overflow]) {
+      second.store.configureThread({
+        threadId: thread.appChatId,
+        providerId: 'muse',
+        modelId: 'muse-spark-1.2',
+        postureId: 'workspace_write',
+        postureConsent: true
+      })
+    }
+    const unseamed = new HostNodeDomainPorts({
+      ...second.domainOptions,
+      maxConcurrentRuns: 1,
+      maxQueuedStarts: 0,
+      shutdownTimeoutMs: 1_000
+    })
+    await expect(
+      unseamed.executeCommand(
+        context,
+        command('composer.send', 'run-unseamed-1', { threadId: capped.appChatId }, { text: 'a' }),
+        { id: 'target' }
+      )
+    ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+    await expect(
+      unseamed.executeCommand(
+        context,
+        command('composer.send', 'run-unseamed-2', { threadId: overflow.appChatId }, { text: 'b' }),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'failed', errorCode: 'host_saturated' })
+    expect(unseamed.runAdmissionOccupancy()).toEqual({ inflight: 1, queued: 0 })
+    second.releaseRun()
+    await unseamed.shutdown()
+  })
+
   it('queues one extra start, recovers the slot, and cancels a waiter without silent loss', async () => {
     const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
     const registered = store.registerWorkspace({ path: workspace })
@@ -3988,7 +4118,15 @@ describe('HostNodeDomainPorts', () => {
           postureConsent: true
         })
       }
-      const onDispatchSettled = vi.fn()
+      let releaseDispatchSettlement!: () => void
+      const dispatchSettlementHeld = new Promise<void>((resolve) => {
+        releaseDispatchSettlement = resolve
+      })
+      const onDispatchSettled = vi.fn(
+        async (_commandId: string, _threadId: string, _result: unknown) => {
+          await dispatchSettlementHeld
+        }
+      )
       const domain = new HostNodeDomainPorts({
         ...domainOptions,
         maxConcurrentRuns: 1,
@@ -4023,12 +4161,21 @@ describe('HostNodeDomainPorts', () => {
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
       await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
       expect(onDispatchSettled.mock.calls[0][0]).toBe('run-saturated-ack')
-      expect(onDispatchSettled.mock.calls[0][1]).toMatchObject({
+      expect(onDispatchSettled.mock.calls[0][1]).toBe(threads[1]!.appChatId)
+      expect(onDispatchSettled.mock.calls[0][2]).toMatchObject({
         status: 'failed',
         errorCode: 'host_saturated'
       })
       releaseRun()
-      await domain.shutdown()
+      let stopped = false
+      const stopping = domain.shutdown().then(() => {
+        stopped = true
+      })
+      await Promise.resolve()
+      expect(stopped).toBe(false)
+      releaseDispatchSettlement()
+      await stopping
+      expect(stopped).toBe(true)
     })
 
     it('queued persist proof retains start after beginRun, user prompt, and immediate finish', async () => {
@@ -4126,7 +4273,8 @@ describe('HostNodeDomainPorts', () => {
       ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_queued' })
       await vi.waitFor(() => expect(onDispatchSettled).toHaveBeenCalled())
       expect(onDispatchSettled.mock.calls[0][0]).toBe('run-fast-finish-on')
-      expect(onDispatchSettled.mock.calls[0][1]).toMatchObject({ status: 'succeeded' })
+      expect(onDispatchSettled.mock.calls[0][1]).toBe(thread.appChatId)
+      expect(onDispatchSettled.mock.calls[0][2]).toMatchObject({ status: 'succeeded' })
       await on.shutdown()
     })
 

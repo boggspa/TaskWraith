@@ -1,4 +1,5 @@
 import type { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
+import type { ThreadCatalogueOpenResult } from '../shared/threadCatalogueTypes'
 import type { HostCatalogueRunWindow, HostProfileRun } from '../host-runtime/HostProfileDomainStore'
 
 type RunWindowEntry = { chatId: string; sourceWitness: string; run: HostProfileRun }
@@ -8,7 +9,7 @@ export class ThreadCatalogueHostRunWindow {
   private rows: RunWindowEntry[] = []
   private total = 0
   private settled = false
-  private running = false
+  private refreshPromise: Promise<boolean> | null = null
   private stopped = false
   private timer: ReturnType<typeof setTimeout> | undefined
   private readonly unsubscribe: () => void
@@ -29,7 +30,7 @@ export class ThreadCatalogueHostRunWindow {
         (row) => this.mirror.sourceWitnessFor(row.chatId) === row.sourceWitness
       ),
       total: this.total,
-      complete: this.settled && this.mirror.complete && !this.running
+      complete: this.settled && this.mirror.complete && this.refreshPromise === null
     }
   }
   private schedule(): void {
@@ -40,33 +41,92 @@ export class ThreadCatalogueHostRunWindow {
     }, 100)
     this.timer.unref?.()
   }
-  private async refresh(): Promise<void> {
-    if (this.running || this.stopped) {
+
+  private cancelScheduledRefresh(): void {
+    if (!this.timer) return
+    clearTimeout(this.timer)
+    this.timer = undefined
+  }
+
+  private refresh(): Promise<boolean> {
+    if (this.stopped) return Promise.resolve(false)
+    if (this.refreshPromise) {
       this.schedule()
-      return
+      return this.refreshPromise
     }
-    this.running = true
+    const pending = this.performRefresh().finally(() => {
+      this.refreshPromise = null
+      if (!this.stopped) this.changed()
+    })
+    this.refreshPromise = pending
+    return pending
+  }
+
+  private async performRefresh(): Promise<boolean> {
     try {
       const rows: RunWindowEntry[] = []
+      let total = 0
       let offset: number | null = 0
       do {
         const page: { entries: RunWindowEntry[]; total: number; next: number | null } =
           await this.mirror.port.query({ method: 'host-runs', offset })
         rows.push(...page.entries)
-        this.total = page.total
+        total = page.total
         offset = page.next
       } while (offset !== null && !this.stopped)
-      if (!this.stopped) {
-        this.rows = rows.filter(
-          (row) => this.mirror.sourceWitnessFor(row.chatId) === row.sourceWitness
-        )
-        this.settled = this.rows.length === rows.length
-      }
+      if (this.stopped) return false
+      this.rows = rows.filter(
+        (row) => this.mirror.sourceWitnessFor(row.chatId) === row.sourceWitness
+      )
+      this.total = total
+      this.settled = this.rows.length === rows.length
+      return true
     } catch {
       if (!this.stopped) this.schedule()
+      return false
+    }
+  }
+
+  /**
+   * Bypass the 100 ms display-window debounce for a persist-proven queued
+   * start. An older refresh is not sufficient: wait for it, then query again
+   * so the result is current with respect to the mirror observation that
+   * invalidated the command's prior run row.
+   */
+  async refreshFor(chatId: string, runId: string): Promise<boolean> {
+    if (this.stopped) return false
+    this.cancelScheduledRefresh()
+    const olderRefresh = this.refreshPromise
+    if (olderRefresh) await olderRefresh
+    if (this.stopped) return false
+    // The older refresh (or a mirror observation during it) may have armed a
+    // new debounce. This explicit barrier owns the next query.
+    this.cancelScheduledRefresh()
+    let opened: ThreadCatalogueOpenResult | null = null
+    try {
+      // `changed` only arms the worker's own 100 ms debounce. The mirror's
+      // established metadata-open barrier awaits foreground indexing, making
+      // the new source witness queryable now without an arbitrary sleep.
+      opened = await this.mirror.port.query({ method: 'open', chatId, mode: 'metadata' })
+      if (
+        !opened ||
+        opened.entry.snapshot ||
+        opened.entry.projection.sourceComplete === false ||
+        !(await this.refresh())
+      ) {
+        return false
+      }
+      return this.snapshot().entries.some(
+        (entry) => entry.chatId === chatId && entry.run.runId === runId
+      )
+    } catch {
+      return false
     } finally {
-      this.running = false
-      if (!this.stopped) this.changed()
+      if (opened) {
+        await this.mirror.port
+          .query({ method: 'release', leaseId: opened.leaseId })
+          .catch(() => undefined)
+      }
     }
   }
   dispose(): void {
