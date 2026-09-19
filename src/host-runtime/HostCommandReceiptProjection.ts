@@ -87,6 +87,9 @@ export function projectHostCommandReceipt(
     createdAt: record.createdAt,
     updatedAt: record.updatedAt
   }
+  if (record.phase !== undefined) {
+    candidate.phase = record.phase
+  }
   if (record.resultSummary !== undefined) {
     candidate.resultSummary = record.resultSummary
   }

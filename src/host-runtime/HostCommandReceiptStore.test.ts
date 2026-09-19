@@ -145,6 +145,184 @@ describe('HostCommandReceiptStore', () => {
     expect(completed?.cursor).toBe(7)
   })
 
+  it('persists monotonic pending phases and makes repeated phases write-free', () => {
+    position = { generation: 4, cursor: 12 }
+    const store = openStore({ compactAfterRecords: 1000 })
+    const begun = store.begin(baseInput())
+    expect(begun.kind).toBe('created')
+    if (begun.kind !== 'created') return
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const original = begun.receipt
+    clock = '2026-08-03T17:00:01.000Z'
+    const queued = store.updatePhase('cmd-1', 'queued')
+    expect(queued.kind).toBe('updated')
+    if (queued.kind !== 'updated') return
+    expect(queued.receipt).toMatchObject({
+      commandId: original.commandId,
+      idempotencyKey: original.idempotencyKey,
+      commandFingerprint: original.commandFingerprint,
+      status: 'pending',
+      phase: 'queued',
+      actor: original.actor,
+      generation: 4,
+      cursor: 12,
+      updatedAt: clock
+    })
+    expect(queued.receipt.completedAt).toBeUndefined()
+
+    const afterQueued = readFileSync(journalPath, 'utf8')
+    clock = '2026-08-03T17:00:02.000Z'
+    const repeated = store.updatePhase('cmd-1', 'queued')
+    expect(repeated.kind).toBe('unchanged')
+    if (repeated.kind !== 'unchanged') return
+    expect(repeated.receipt.updatedAt).toBe(queued.receipt.updatedAt)
+    expect(readFileSync(journalPath, 'utf8')).toBe(afterQueued)
+
+    const starting = store.updatePhase('cmd-1', 'starting')
+    expect(starting).toMatchObject({
+      kind: 'updated',
+      receipt: { status: 'pending', phase: 'starting' }
+    })
+    if (starting.kind !== 'updated') return
+    expect(starting.receipt).not.toHaveProperty('completedAt')
+
+    clock = '2026-08-03T17:00:03.000Z'
+    const started = store.updatePhase('cmd-1', 'started')
+    expect(started).toMatchObject({
+      kind: 'updated',
+      receipt: { status: 'pending', phase: 'started' }
+    })
+    if (started.kind !== 'updated') return
+    expect(started.receipt).not.toHaveProperty('completedAt')
+
+    const afterStarted = readFileSync(journalPath, 'utf8')
+    expect(store.updatePhase('cmd-1', 'starting')).toEqual({
+      kind: 'regression_refused',
+      currentPhase: 'started',
+      requestedPhase: 'starting'
+    })
+    expect(readFileSync(journalPath, 'utf8')).toBe(afterStarted)
+    const found = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
+    expect(found?.phase).toBe('started')
+    expect(found?.generation).toBe(4)
+    expect(found?.cursor).toBe(12)
+  })
+
+  it('accepts a direct forward phase and rejects invalid or missing inputs without writes', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+
+    const started = store.updatePhase('cmd-1', 'started')
+    expect(started).toMatchObject({
+      kind: 'updated',
+      receipt: { status: 'pending', phase: 'started' }
+    })
+    const beforeRefusals = readFileSync(journalPath, 'utf8')
+
+    expect(store.updatePhase('missing-command', 'queued')).toEqual({ kind: 'not_found' })
+    expect(store.updatePhase('   ', 'queued')).toEqual({
+      kind: 'invalid',
+      code: 'invalid_command_id'
+    })
+    expect(store.updatePhase('cmd-1', 'invalid-phase' as never)).toEqual({
+      kind: 'invalid',
+      code: 'invalid_phase'
+    })
+    expect(readFileSync(journalPath, 'utf8')).toBe(beforeRefusals)
+  })
+
+  it('refuses phase updates after terminal or indeterminate fencing without mutation', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    expect(store.updatePhase('cmd-1', 'starting').kind).toBe('updated')
+    store.complete({ commandId: 'cmd-1', status: 'succeeded' })
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    const terminalBefore = readFileSync(journalPath, 'utf8')
+    const terminalReceipt = store.getByCommandId('cmd-1', OWNER_ACTOR)
+    expect(store.updatePhase('cmd-1', 'started')).toEqual({
+      kind: 'status_refused',
+      status: 'succeeded'
+    })
+    expect(readFileSync(journalPath, 'utf8')).toBe(terminalBefore)
+    expect(store.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual(terminalReceipt)
+
+    store.begin(
+      baseInput({
+        commandId: 'cmd-fenced',
+        idempotencyKey: 'idem-fenced'
+      })
+    )
+    store.markIndeterminate(markInput({ commandId: 'cmd-fenced' }))
+    const fencedBefore = readFileSync(journalPath, 'utf8')
+    const fencedReceipt = store.getByCommandId('cmd-fenced', OWNER_ACTOR)
+    expect(store.updatePhase('cmd-fenced', 'started')).toEqual({
+      kind: 'status_refused',
+      status: 'indeterminate'
+    })
+    expect(readFileSync(journalPath, 'utf8')).toBe(fencedBefore)
+    expect(store.getByCommandId('cmd-fenced', OWNER_ACTOR)).toEqual(fencedReceipt)
+  })
+
+  it('retains phase through journal, checkpoint, and pending recovery promotion', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    expect(store.updatePhase('cmd-1', 'started').kind).toBe('updated')
+
+    const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
+    expect(readFileSync(journalPath, 'utf8')).toContain('"phase":"started"')
+
+    store.compact()
+    const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
+      records: Array<{ commandId: string; phase?: string }>
+    }
+    expect(checkpoint.records).toContainEqual(
+      expect.objectContaining({ commandId: 'cmd-1', phase: 'started' })
+    )
+
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+    expect(durable?.phase).toBe('started')
+    expect(durable?.recoveryState).toBe('recoverable-indeterminate')
+    expect(durable?.completedAt).toBeUndefined()
+  })
+
+  it('keeps legacy phase absence valid through checkpoint and reopen', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.compact()
+
+    const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
+      records: Array<Record<string, unknown>>
+    }
+    expect(checkpoint.records[0]).not.toHaveProperty('phase')
+
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+    expect(durable).not.toHaveProperty('phase')
+  })
+
+  it('fails closed on an invalid stored phase', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.compact()
+
+    const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
+      records: Array<Record<string, unknown>>
+    }
+    checkpoint.records[0]!.phase = 'not-a-host-phase'
+    writeFileSync(checkpointPath, `${JSON.stringify(checkpoint)}\n`)
+
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    expect(reopened.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
+    expect(reopened.size).toBe(0)
+  })
+
   it('emits a receipt_delivery span when a thread receipt completes', () => {
     let ms = 1000
     const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 16 })

@@ -38,8 +38,10 @@ import { join } from 'node:path'
 
 import {
   decodeHostResultRef,
+  HOST_QUEUED_START_PHASES,
   type HostClientClass,
   type HostCommandName,
+  type HostQueuedStartPhase,
   type HostResultRef
 } from '../shared/hostProtocol'
 import type { WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
@@ -126,6 +128,11 @@ export interface HostCommandReceiptRecord {
   idempotencyKey: string
   commandFingerprint: string
   status: HostCommandReceiptStatus
+  /**
+   * Optional queued-start lifecycle phase. Separate from status: phase-only
+   * updates are pending-only and never certify command completion.
+   */
+  phase?: HostQueuedStartPhase
   actor: HostCommandReceiptActor
   target: HostCommandReceiptTarget
   authority: HostCommandReceiptAuthority
@@ -295,6 +302,21 @@ export type HostCommandReceiptBeginResult =
        */
       receipt?: HostCommandReceiptRecord
     }
+
+export type HostCommandReceiptPhaseUpdateResult =
+  | { kind: 'updated'; receipt: HostCommandReceiptRecord }
+  | { kind: 'unchanged'; receipt: HostCommandReceiptRecord }
+  | { kind: 'not_found' }
+  | {
+      kind: 'status_refused'
+      status: Exclude<HostCommandReceiptStatus, 'pending'>
+    }
+  | {
+      kind: 'regression_refused'
+      currentPhase: HostQueuedStartPhase
+      requestedPhase: HostQueuedStartPhase
+    }
+  | { kind: 'invalid'; code: 'invalid_command_id' | 'invalid_phase' }
 
 /** Actor-bound receipt lookup — never returns another actor's receipt body. */
 export type HostCommandReceiptLookupResult =
@@ -555,6 +577,62 @@ export class HostCommandReceiptStore {
     return [...this.recordsByCommandId.values()]
       .map(cloneRecord)
       .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
+  }
+
+  /**
+   * Persist a monotonic queued-start phase on an existing pending receipt.
+   * This is storage/projection foundation only: it does not establish the
+   * lifecycle witness or complete the command.
+   */
+  updatePhase(
+    commandIdInput: string,
+    phaseInput: HostQueuedStartPhase
+  ): HostCommandReceiptPhaseUpdateResult {
+    let commandId: string
+    try {
+      commandId = normalizeId(commandIdInput, 'commandId')
+    } catch {
+      return { kind: 'invalid', code: 'invalid_command_id' }
+    }
+
+    let phase: HostQueuedStartPhase
+    try {
+      phase = normalizeQueuedStartPhase(phaseInput)
+    } catch {
+      return { kind: 'invalid', code: 'invalid_phase' }
+    }
+
+    const current = this.recordsByCommandId.get(commandId)
+    if (!current) return { kind: 'not_found' }
+    if (current.status !== 'pending') {
+      return { kind: 'status_refused', status: current.status }
+    }
+    if (current.phase === phase) {
+      return { kind: 'unchanged', receipt: cloneRecord(current) }
+    }
+    if (
+      current.phase !== undefined &&
+      queuedStartPhaseRank(phase) < queuedStartPhaseRank(current.phase)
+    ) {
+      return {
+        kind: 'regression_refused',
+        currentPhase: current.phase,
+        requestedPhase: phase
+      }
+    }
+
+    const next: HostCommandReceiptRecord = {
+      ...current,
+      phase,
+      updatedAt: this.now()
+    }
+    // Phase is non-terminal evidence and must never stamp completion.
+    delete next.completedAt
+
+    this.indexRecord(next)
+    this.appendJournalEvent({ op: 'upsert', record: next })
+    this.maybeCompact()
+    return { kind: 'updated', receipt: cloneRecord(next) }
   }
 
   /**
@@ -1316,6 +1394,20 @@ function normalizeResultRef(value: unknown): HostResultRef {
   return decoded.value
 }
 
+function normalizeQueuedStartPhase(value: unknown): HostQueuedStartPhase {
+  if (
+    typeof value !== 'string' ||
+    !(HOST_QUEUED_START_PHASES as readonly string[]).includes(value)
+  ) {
+    throw new Error('HostCommandReceiptStore: queued-start phase is invalid')
+  }
+  return value as HostQueuedStartPhase
+}
+
+function queuedStartPhaseRank(phase: HostQueuedStartPhase): number {
+  return HOST_QUEUED_START_PHASES.indexOf(phase)
+}
+
 function normalizeAuthority(authority: HostCommandReceiptAuthority): HostCommandReceiptAuthority {
   const decision = authority.decision
   if (decision !== 'allowed' && decision !== 'denied' && decision !== 'deferred') {
@@ -1402,6 +1494,9 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
     ) {
       record.generation = raw.generation
       record.cursor = raw.cursor
+    }
+    if (raw.phase !== undefined) {
+      record.phase = normalizeQueuedStartPhase(raw.phase)
     }
     if (typeof raw.completedAt === 'string') record.completedAt = raw.completedAt
     if (typeof raw.errorCode === 'string')

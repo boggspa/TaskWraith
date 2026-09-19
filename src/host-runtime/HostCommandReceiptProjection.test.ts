@@ -86,11 +86,51 @@ describe('HostCommandReceiptProjection', () => {
     expect(projected.value).not.toHaveProperty('target')
     expect(projected.value).not.toHaveProperty('policy')
     expect(projected.value).not.toHaveProperty('recoveryState')
+    expect(projected.value).not.toHaveProperty('phase')
     expect(JSON.stringify(projected.value)).not.toMatch(/"policy"|"target"|"recoveryState"/)
 
     // Round-trip through the shared decoder.
     const decoded = decodeHostCommandReceipt(projected.value)
     expect(decoded.ok).toBe(true)
+  })
+
+  it('projects a pending queued-start phase through the shared wire decoder', () => {
+    const store = openStore(5)
+    const begun = store.begin({
+      commandId: 'cmd-phase',
+      idempotencyKey: 'idem-phase',
+      commandName: 'composer.send',
+      commandFingerprint: 'b'.repeat(64),
+      actor: OWNER,
+      target: { kind: 'thread', id: 'thread-phase' },
+      authority: { decision: 'allowed' }
+    })
+    expect(begun.kind).toBe('created')
+    expect(store.updatePhase('cmd-phase', 'started').kind).toBe('updated')
+
+    const found = store.getByCommandId('cmd-phase', OWNER)
+    expect(found.kind).toBe('found')
+    if (found.kind !== 'found') return
+
+    const projected = projectHostCommandReceipt(found.receipt)
+    expect(projected.ok).toBe(true)
+    if (!projected.ok) return
+    expect(projected.value).toMatchObject({
+      commandId: 'cmd-phase',
+      status: 'pending',
+      phase: 'started',
+      generation: 1,
+      cursor: 5
+    })
+    expect(projected.value).not.toHaveProperty('target')
+    expect(projected.value).not.toHaveProperty('policy')
+    expect(projected.value).not.toHaveProperty('recoveryState')
+
+    const decoded = decodeHostCommandReceipt(projected.value)
+    expect(decoded).toMatchObject({
+      ok: true,
+      value: { commandId: 'cmd-phase', status: 'pending', phase: 'started' }
+    })
   })
 
   it('maps denied store authority to wire deny with required reason', () => {
