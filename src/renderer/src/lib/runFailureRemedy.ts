@@ -35,6 +35,7 @@ export type FailureRemedyKind =
   | 'missing-cli'
   | 'dispatch'
   | 'network'
+  | 'catalogue-reindexing'
 
 /**
  * Auth-failure markers. Sources: AcpTransientPromptFailure's NEVER_TRANSIENT
@@ -81,6 +82,15 @@ const NETWORK_MARKER_PATTERN =
   /econnrefused|etimedout|enotfound|network error|failed to fetch|fetch failed|connection refused|connection timed out/i
 
 /**
+ * The thread-catalogue indexing race: a background reindex moved history
+ * under a foreground read. Retryable by the tree's own taxonomy
+ * (ThreadCatalogueRequestError.retryable) — a timing hiccup, never a problem
+ * with the user's request.
+ */
+const CATALOGUE_REINDEXING_MARKER_PATTERN =
+  /threadcataloguerequesterror|history changed during indexing|thread-catalogue:read|source_changed/i
+
+/**
  * Classify failure text into its remedy family, or null when nothing
  * actionable matches (the card then stays a generic failure). Auth wins when
  * both match — a 403 from an expired token must not read as a quota wall.
@@ -88,6 +98,7 @@ const NETWORK_MARKER_PATTERN =
 export function classifyFailureRemedy(text: string): FailureRemedyKind | null {
   if (!text) return null
   if (AUTH_MARKER_PATTERN.test(text)) return 'auth'
+  if (CATALOGUE_REINDEXING_MARKER_PATTERN.test(text)) return 'catalogue-reindexing'
   if (MODEL_RETIRED_MARKER_PATTERN.test(text)) return 'model-retired'
   if (isContextOverflowErrorText(text)) return 'context-overflow'
   if (USAGE_LIMIT_MARKER_PATTERN.test(text)) return 'usage-limit'
@@ -248,6 +259,12 @@ export function describeFailureRemedyCopy(
       return {
         title: `${subject} couldn’t connect`,
         body: 'The provider could not be reached. Check the network or the provider’s status, then retry.'
+      }
+    case 'catalogue-reindexing':
+      return {
+        title: 'A background refresh interrupted this run',
+        body: 'TaskWraith was refreshing its thread index when this run tried to read it — a timing hiccup, not a problem with your request. Nothing was lost.',
+        note: 'The index has settled — retry the run.'
       }
   }
 }

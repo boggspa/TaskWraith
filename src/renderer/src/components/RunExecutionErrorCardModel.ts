@@ -48,6 +48,7 @@ export type RunErrorKind =
   | 'dispatch-failed'
   | 'network-issue'
   | 'run-interrupted'
+  | 'catalogue-reindexing'
 
 export interface RunErrorDescription {
   readonly kind: RunErrorKind
@@ -97,8 +98,22 @@ const RUN_KIND_BY_REMEDY: Record<FailureRemedyKind, RunErrorKind> = {
   'context-overflow': 'context-overflow',
   'missing-cli': 'missing-cli',
   dispatch: 'dispatch-failed',
-  network: 'network-issue'
+  network: 'network-issue',
+  'catalogue-reindexing': 'catalogue-reindexing'
 }
+
+/**
+ * Kinds where "Retry run" is the honest primary action: transient failures
+ * where nothing needs to change first. Auth/quota/retired need their remedy
+ * BEFORE a retry; host needs the restart; an interrupted run has nothing
+ * pending to retry.
+ */
+export const RETRYABLE_RUN_KINDS: ReadonlySet<RunErrorKind> = new Set([
+  'catalogue-reindexing',
+  'network-issue',
+  'dispatch-failed',
+  'run-failed'
+])
 
 export function describeRunError(content: string): RunErrorDescription {
   const raw = content.trim()

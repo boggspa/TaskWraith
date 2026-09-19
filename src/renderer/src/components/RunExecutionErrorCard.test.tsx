@@ -22,7 +22,8 @@ import {
   describeProviderRunFailureMessage,
   describeRunError,
   describeRunErrorHostControl,
-  hostActionPrompt
+  hostActionPrompt,
+  RETRYABLE_RUN_KINDS
 } from './RunExecutionErrorCardModel'
 
 const HOST_ERROR =
@@ -111,6 +112,17 @@ describe('classifyRunError', () => {
     expect(
       classifyRunError('Run execution failed unexpectedly: Error: connect ECONNREFUSED 10.0.0.1')
     ).toBe('network-issue')
+  })
+
+  it('classifies the catalogue indexing race', () => {
+    expect(
+      classifyRunError(
+        "Run execution failed unexpectedly: Error: Error invoking remote method 'thread-catalogue:read': ThreadCatalogueRequestError: History changed during indexing."
+      )
+    ).toBe('catalogue-reindexing')
+    expect(RETRYABLE_RUN_KINDS.has('catalogue-reindexing')).toBe(true)
+    expect(RETRYABLE_RUN_KINDS.has('auth-required')).toBe(false)
+    expect(RETRYABLE_RUN_KINDS.has('host-unavailable')).toBe(false)
   })
 })
 
@@ -318,6 +330,30 @@ describe('RunExecutionErrorCard', () => {
     )
     expect(html).toContain('run-error-card-time')
     expect(html).toContain('2026-09-19T00:25:00.000Z')
+  })
+
+  it('offers Retry run for transient kinds and gates it off for remedy-first kinds', () => {
+    const transient = renderToStaticMarkup(
+      <RunExecutionErrorCard
+        message={message(
+          "Run execution failed unexpectedly: Error: Error invoking remote method 'thread-catalogue:read': ThreadCatalogueRequestError: History changed during indexing."
+        )}
+        onCopy={() => undefined}
+        onRetryRun={() => undefined}
+      />
+    )
+    expect(transient).toContain('A background refresh interrupted this run')
+    expect(transient).toContain('Retry run')
+
+    const auth = renderToStaticMarkup(
+      <RunExecutionErrorCard
+        message={message('Failed to start Codex: Error: HTTP error: 401 Unauthorized')}
+        onCopy={() => undefined}
+        onRetryRun={() => undefined}
+      />
+    )
+    expect(auth).not.toContain('Retry run')
+    expect(auth).toContain('Log in to Codex')
   })
 })
 

@@ -3720,6 +3720,26 @@ export const TranscriptPanel = memo(function TranscriptPanel({
     () => projectBlackboardUpdateStacks(displayMessages),
     [displayMessages]
   )
+  /**
+   * "Retry run" anchors for run-error cards. Offered only for a FRESH failure
+   * — the error is the chat's last row — so the rewind-resend discards
+   * nothing but the failed attempt's own card. The anchor is the nearest
+   * preceding user message, whose content is what gets re-sent.
+   */
+  const runRetryAnchorByErrorId = useMemo(() => {
+    const map = new Map<string, { id: string; content: string }>()
+    if (!onEditAndResendFromHere) return map
+    const lastMessage = messages.length > 0 ? messages[messages.length - 1] : undefined
+    if (!lastMessage || lastMessage.role !== 'error') return map
+    for (let i = messages.length - 2; i >= 0; i--) {
+      const candidate = messages[i]
+      if (candidate.role === 'user' && candidate.content?.trim()) {
+        map.set(lastMessage.id, { id: candidate.id, content: candidate.content })
+        break
+      }
+    }
+    return map
+  }, [messages, onEditAndResendFromHere])
   // Map every (pre-collapse) message id → its round id, so navigation
   // (jump-to-message, pinned, side-chat seed) can auto-expand the round
   // a target lives in before scrolling — otherwise a jump into a
@@ -6419,6 +6439,16 @@ export const TranscriptPanel = memo(function TranscriptPanel({
                         retryEnsembleParticipant(currentChat, participantId)
                       }
                       copied={copiedId === msg.id}
+                      {...(runRetryAnchorByErrorId.has(msg.id) && onEditAndResendFromHere
+                        ? {
+                            onRetryRun: () => {
+                              const anchor = runRetryAnchorByErrorId.get(msg.id)
+                              if (anchor) {
+                                void onEditAndResendFromHere(anchor.id, anchor.content)
+                              }
+                            }
+                          }
+                        : {})}
                     />
                   ) : msg.metadata?.seatChange ? (
                     <SeatChangeRow key={msg.id} message={msg} />
@@ -7146,6 +7176,20 @@ export const TranscriptPanel = memo(function TranscriptPanel({
                                     message={msg}
                                     onCopy={onCopyMessage}
                                     copied={copiedId === msg.id}
+                                    {...(runRetryAnchorByErrorId.has(msg.id) &&
+                                    onEditAndResendFromHere
+                                      ? {
+                                          onRetryRun: () => {
+                                            const anchor = runRetryAnchorByErrorId.get(msg.id)
+                                            if (anchor) {
+                                              void onEditAndResendFromHere(
+                                                anchor.id,
+                                                anchor.content
+                                              )
+                                            }
+                                          }
+                                        }
+                                      : {})}
                                   />
                                 ) : (
                                   msg.content

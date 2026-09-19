@@ -38,6 +38,7 @@ import {
   describeRunError,
   describeRunErrorHostControl,
   hostActionPrompt,
+  RETRYABLE_RUN_KINDS,
   type RunErrorDescription
 } from './RunExecutionErrorCardModel'
 
@@ -52,6 +53,9 @@ export interface RunExecutionErrorCardViewProps {
   readonly onLogin?: () => void
   /** Retry affordance — present when the failure names a retryable seat. */
   readonly onRetry?: () => void
+  /** Retry the whole failed run (rewind-resend from its own user message) —
+   * offered for transient kinds only, and only on a fresh (last-row) failure. */
+  readonly onRetryRun?: () => void
   /** Left-aligned guidance/outcome line in the actions row. */
   readonly remedyNote?: string
   readonly onCopy: () => void
@@ -68,6 +72,7 @@ export function RunExecutionErrorCardView({
   loginLabel,
   onLogin,
   onRetry,
+  onRetryRun,
   remedyNote,
   onCopy,
   copied,
@@ -120,6 +125,16 @@ export function RunExecutionErrorCardView({
               Retry
             </PillButton>
           ) : null}
+          {onRetryRun ? (
+            <PillButton
+              variant="primary"
+              size="compact"
+              onClick={onRetryRun}
+              title="Retry this run — re-sends its prompt. The failed attempt's card is replaced by the new run."
+            >
+              Retry run
+            </PillButton>
+          ) : null}
           {hostControl?.action && onHostAction ? (
             <button
               type="button"
@@ -150,6 +165,9 @@ export interface RunExecutionErrorCardProps {
   /** Retry the failed seat — offered when the failure names an ensemble
    * participant (providerRunFailure cards carry its roster id). */
   readonly onRetryParticipant?: (participantId: string) => EnsembleParticipantRetryResult
+  /** Rewind-resend the failed run's own prompt. Rendered only for transient
+   * kinds; the card itself gates which kinds qualify. */
+  readonly onRetryRun?: () => void
   /** Injected only by tests; production resolves the preload conduit lazily. */
   readonly lifecycleClient?: HostLifecycleIpcClient
 }
@@ -159,6 +177,7 @@ export function RunExecutionErrorCard({
   onCopy,
   copied = false,
   onRetryParticipant,
+  onRetryRun: onRetryRunProp,
   lifecycleClient: injectedLifecycleClient
 }: RunExecutionErrorCardProps): React.JSX.Element {
   // One presentation for every failure origin: structured providerRunFailure
@@ -198,6 +217,12 @@ export function RunExecutionErrorCard({
               : result.reason
           )
         }
+      : undefined
+  // Seat retry wins when both exist (it is the more specific action); run
+  // retry is offered only for transient kinds (RETRYABLE_RUN_KINDS).
+  const onRetryRun =
+    !onRetry && onRetryRunProp && RETRYABLE_RUN_KINDS.has(description.kind)
+      ? onRetryRunProp
       : undefined
   const loginCapability = remedyProvider ? providerLoginCapability(remedyProvider) : undefined
   const onLogin =
@@ -277,6 +302,7 @@ export function RunExecutionErrorCard({
       {...(loginLabel ? { loginLabel } : {})}
       {...(onLogin ? { onLogin } : {})}
       {...(onRetry ? { onRetry } : {})}
+      {...(onRetryRun ? { onRetryRun } : {})}
       {...(remedyNote ? { remedyNote } : {})}
       timestamp={message.timestamp}
       onCopy={() => onCopy(message.id, description.raw)}

@@ -58,6 +58,14 @@ describe('classifyFailureRemedy', () => {
     expect(classifyFailureRemedy('connect ECONNREFUSED 127.0.0.1:11434')).toBe('network')
     expect(classifyFailureRemedy('spawn codex ENOENT')).toBe('missing-cli')
   })
+
+  it('classifies the thread-catalogue indexing race as transient', () => {
+    expect(
+      classifyFailureRemedy(
+        "Run execution failed unexpectedly: Error: Error invoking remote method 'thread-catalogue:read': ThreadCatalogueRequestError: History changed during indexing."
+      )
+    ).toBe('catalogue-reindexing')
+  })
 })
 
 describe('describeFailureRemedyCopy', () => {
@@ -78,6 +86,16 @@ describe('describeFailureRemedyCopy', () => {
     })
     expect(copy.title).toBe('The run couldn’t start')
     expect(copy.body).toContain('Nothing was sent')
+  })
+
+  it('voices the catalogue race as a timing hiccup, never the user’s fault', () => {
+    const copy = describeFailureRemedyCopy('catalogue-reindexing', {
+      subject: 'The run',
+      surface: 'run'
+    })
+    expect(copy.title).toBe('A background refresh interrupted this run')
+    expect(copy.body).toContain('Nothing was lost')
+    expect(copy.note).toContain('retry the run')
   })
 })
 
