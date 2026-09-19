@@ -15,6 +15,7 @@ import {
   normalizeMistralModel,
   normalizeMistralThinkingLevel
 } from '../mistral/MistralCliArgs'
+import { mistralNativeShellPermitted } from '../mistral/MistralNativeShellGate'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import {
@@ -283,7 +284,16 @@ export async function buildMistralSealEvidence(
       server: placeheldServer
     },
     userMcpConfiguration: facts.userMcpConfiguration,
-    nativeToolPolicy: { ...MISTRAL_NATIVE_TOOL_POLICY, selectedSessionMode: sessionMode },
+    nativeToolPolicy: {
+      ...MISTRAL_NATIVE_TOOL_POLICY,
+      selectedSessionMode: sessionMode,
+      // Resolved from THE producer, never re-derived here, so a sealed
+      // occurrence and the runtime gate cannot answer this differently.
+      nativeShellPermitted: mistralNativeShellPermitted({
+        readOnlySeat,
+        shellPolicy: facts.effectivePermissions.agenticServices.shellCommands
+      })
+    },
     brokerPolicy: {
       kind: facts.taskWraithMcpAdvertised ? 'taskwraith-bridge-broker' : 'none',
       approvalGate: 'signed-run-posture'

@@ -1775,6 +1775,10 @@ import {
   type MistralHttpMcpTransportHandle
 } from './mistral/MistralMcpTransport'
 import { createMistralPermissionHandler, mistralPermissionLedgerRecord } from './mistral/MistralPermissionPolicy'
+import {
+  createMistralNativeShellGate,
+  mistralNativeShellPermitted
+} from './mistral/MistralNativeShellGate'
 import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
 import {
@@ -26007,6 +26011,14 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     return child as unknown as AcpChildProcess
   }
 
+  // Native shell reaches the shared approval chokepoint only when this seat's
+  // signed posture permits it. MistralNativeShellGate owns that decision and
+  // the launch seal reads the same producer, so a scheduled occurrence cannot
+  // be minted with a different answer than the runtime gives.
+  const mistralNativeShell = mistralNativeShellPermitted({
+    readOnlySeat: mistralReadOnlySeat,
+    shellPolicy: payload.effectivePermissions?.agenticServices.shellCommands
+  })
   // Preserve the existing native gate and attach its host refusal provenance.
   const mistralPermissionHandler = createMistralPermissionHandler({
     isBrokerTool: mistralTaskWraithBrokerToolRequested,
@@ -26018,10 +26030,25 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
       toolKind: request.toolKind,
       rawToolCall: request.rawToolCall,
       workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
-      runtimeSandboxed: false
+      runtimeSandboxed: false,
+      nativeShellPermittedUnsandboxed: mistralNativeShell
     }),
     isReadOnlyShell: grokReadOnlyShellRequestAllowed,
-    readOnlySeat: mistralReadOnlySeat
+    readOnlySeat: mistralReadOnlySeat,
+    ...(mistralNativeShell
+      ? {
+          gateNativeShell: createMistralNativeShellGate({
+            requestApproval: (approval) =>
+              requestAgenticServiceApproval(
+                event.sender,
+                'mistral',
+                'shellCommands',
+                payload.scope === 'global' ? undefined : payload.workspace,
+                { ...approval, runId: route.appRunId ?? undefined }
+              )
+          })
+        }
+      : {})
   })
 
   const finishMistralAcpTurn = (

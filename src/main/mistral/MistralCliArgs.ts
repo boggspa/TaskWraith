@@ -129,7 +129,18 @@ export const MISTRAL_NATIVE_TOOL_POLICY = {
   legacyWriteModeIds: ['default'],
   ungatedModesNeverSelected: [...MISTRAL_UNGATED_SESSION_MODES],
   allToolCallsRaisePermissionRequest: true,
-  clientFsCapabilityAdvertised: false
+  clientFsCapabilityAdvertised: false,
+  // Native shell is no longer refused outright on a write-capable seat whose
+  // signed shell posture permits it; it is routed to the host approval gate,
+  // where the non-grantable host-destructive wall and the destructive-command
+  // ask wall both apply. Recorded here because the occurrence seal digests this
+  // document: an unattended run's signed posture has to state which containment
+  // it was minted under. Adding these fields changes the digest, so previously
+  // minted Mistral occurrence seals no longer verify and their scheduled tasks
+  // need re-sealing. That is the intended behaviour of a containment change.
+  nativeShell: 'host-approval-gated-when-posture-permits',
+  nativeShellRuntimeSandbox: 'none-available',
+  nativeShellDenyWall: 'host-destructive+destructive-shell-ask'
 } as const
 
 /**
