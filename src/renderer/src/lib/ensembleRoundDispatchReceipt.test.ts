@@ -33,6 +33,46 @@ describe('ensembleRoundDispatchRefusal', () => {
   })
 })
 
+describe('a cause-specific refusal reason from main reaches the surface', () => {
+  // Main knows WHY it refused -- not-owned, rolled-over, append-unavailable --
+  // but the receipt type had no channel for it, so every refusal rendered as
+  // the same generic sentence. The canonical case is the orchestrator's
+  // 'No active Ensemble round' for a round the user can watch running: text
+  // that names the wrong cause is worse than text that names none.
+  it('prefers the reason main sent over the canned message', () => {
+    const refusal = ensembleRoundDispatchRefusal({
+      status: 'ignored',
+      error: 'That round rolled over while the message was in flight.'
+    })
+    expect(refusal?.reason).toBe('ignored')
+    expect(refusal?.message).toBe('That round rolled over while the message was in flight.')
+  })
+
+  it('prefers it over the unknown-status fallback too', () => {
+    expect(
+      ensembleRoundDispatchRefusal({ status: 'brand-new-status', error: 'Seat is not accepting.' })
+        ?.message
+    ).toBe('Seat is not accepting.')
+  })
+
+  it('falls back to the canned message when the reason is absent or blank', () => {
+    expect(ensembleRoundDispatchRefusal({ status: 'busy', error: '   ' })?.message).toBe(
+      'Ensemble is still finishing another round.'
+    )
+    expect(
+      ensembleRoundDispatchRefusal({ status: 'busy', error: 42 as unknown as string })?.message
+    ).toBe('Ensemble is still finishing another round.')
+    expect(ensembleRoundDispatchRefusal({ status: 'busy' })?.message).toBe(
+      'Ensemble is still finishing another round.'
+    )
+  })
+
+  it('never turns an accepted send into a refusal because a reason rode along', () => {
+    expect(ensembleRoundDispatchRefusal({ status: 'steered', error: 'stale' })).toBeNull()
+    expect(ensembleRoundDispatchRefusal({ status: 'queued', error: 'stale' })).toBeNull()
+  })
+})
+
 describe('the ensemble send call site consumes the dispatch receipt', () => {
   const app = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
   const MARKER = 'await window.api.runEnsembleRound('

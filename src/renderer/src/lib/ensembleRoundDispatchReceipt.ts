@@ -14,6 +14,19 @@ import { isAcceptedEnsembleSteerResult } from './composerDraftSubmission'
 export interface EnsembleRoundDispatchReceipt {
   status?: string
   roundId?: string
+  /**
+   * Why main refused, when main knows. Main often does know -- the round was
+   * not owned, it rolled over, the append dep was unwired -- but the receipt
+   * had no channel for it, so every refusal rendered as the same generic
+   * sentence and the orchestrator's own `No active Ensemble round` named the
+   * wrong cause for a round the user could watch running.
+   *
+   * Must be a CLOSED set of code-authored literals: no provider text, no
+   * paths, no transcript content, nothing interpolated from a record. Free
+   * text crossing a process boundary is exactly what the fixed-by-code
+   * messages in `threadCatalogueRequestError` exist to prevent.
+   */
+  error?: string
 }
 
 export interface EnsembleRoundDispatchRefusal {
@@ -43,8 +56,9 @@ export function ensembleRoundDispatchRefusal(
   if (isAcceptedEnsembleSteerResult(receipt)) return null
   const status = typeof receipt?.status === 'string' ? receipt.status.trim() : ''
   const reason = status || 'no-receipt'
+  const detail = typeof receipt?.error === 'string' ? receipt.error.trim() : ''
   return {
     reason,
-    message: REFUSAL_MESSAGES[reason] ?? `Ensemble refused the round (${reason}).`
+    message: detail || REFUSAL_MESSAGES[reason] || `Ensemble refused the round (${reason}).`
   }
 }
