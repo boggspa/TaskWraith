@@ -62,10 +62,11 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
   // row a user needs to pick out of that list. Covers the retired Ox Alpha
   // too, which was the same kind of route.
   'openrouter/stealth': { label: 'Stealth', hueClass: 'stealth' },
-  // Unbiased (Pareto) and TypeSafe (Jev) both ship marks whose brand reds sit
-  // inside the palette's most crowded band, so each wears a TaskWraith design
-  // token at the palette's iso-luminant band instead — see theme.css for the
-  // derivation and dE bookkeeping.
+  // Unbiased (Pareto) wears a burnt vermilion that keeps its brand's red while
+  // clearing the palette's three vivid reds, and TypeSafe (Jev) wears a magenta
+  // that matches its pink mark. The two swapped on 2026-09-18 — the magenta was
+  // minted for Pareto first. See theme.css for both derivations and the dE
+  // bookkeeping.
   'openrouter/unbiased': { label: 'Unbiased', hueClass: 'unbiased' },
   'openrouter/typesafe': { label: 'TypeSafe', hueClass: 'typesafe' }
 }
