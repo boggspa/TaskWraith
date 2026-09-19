@@ -20,6 +20,7 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { shellCommandFromApprovalPreview } from '../ReadOnlyGitShellCommand'
 import { isIsolateSharedBranchHold } from '../IsolateSharedBranchHold'
 import { shellCommandTierHold } from '../ShellCommandTierPolicy'
+import { destructiveShellAskEscalation } from '../shell-policy/DestructiveShellAsk'
 import { isHostDestructiveShellCommand } from '../shell-policy/HostDestructiveShellDeny'
 import {
   workspaceInspectionExecutionPlan,
@@ -693,6 +694,21 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       return false
     }
 
+    // Owner-approved 2026-09-19, phase 1 of opening native shell/writes on the
+    // Mistral, Kimi, Grok and Muse seats: a destructive command takes the prompt
+    // at EVERY tier, including the three write tiers `shellCommandTierHold` stops
+    // looking at. Ask-hold, never a deny — the non-grantable wall above still owns
+    // the narrow host-wipe set and still wins. Computed here rather than inline in
+    // `neverAutoAllow` because that const is a bare boolean disjunction with
+    // nowhere to put a reason, and the reason has to reach the card and the ledger.
+    const destructiveShellAskHold =
+      service === 'shellCommands'
+        ? destructiveShellAskEscalation(
+            shellCommandFromApprovalPreview(request.preview),
+            workspacePath
+          )
+        : null
+
     // Phase J3: session-scoped YOLO override. Auto-allows every approval
     // for the rest of the process lifetime (or until the user disables
     // it). Sits AFTER the deny check above so an explicit user opt-out
@@ -747,7 +763,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
           service,
           shellCommand: shellCommandFromApprovalPreview(request.preview),
           workspacePath
-        }))
+        })) ||
+      destructiveShellAskHold !== null
     const trustedSessionExternalWrite =
       !request.forcePrompt &&
       !neverAutoAllow &&
@@ -1027,6 +1044,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         body = `${body}\n\nAdding this exact command to the Allowlist creates a revocable rule for this executable hash, literal arguments, relative cwd, and workspace. Future matches run directly in the TaskWraith host process, outside a workspace sandbox and without workspace locks. Task runners may execute repository-controlled scripts whose contents change later. It does not allow other shell commands.`
       }
     }
+    if (destructiveShellAskHold) {
+      body = `${body}\n\nTaskWraith held this command for review: ${destructiveShellAskHold.reason} Commands in this class always ask, whatever permission tier or standing grant this run carries.`
+    }
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
@@ -1084,6 +1104,16 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         body,
         preview: {
           ...(request.preview || {}),
+          ...(destructiveShellAskHold
+            ? {
+                riskLabels: [
+                  ...(Array.isArray((request.preview as { riskLabels?: unknown })?.riskLabels)
+                    ? (request.preview as { riskLabels: string[] }).riskLabels
+                    : []),
+                  `Destructive command held for review (${destructiveShellAskHold.ruleId})`
+                ]
+              }
+            : {}),
           ...(service === 'canvasEval'
             ? {
                 securityClass: 'signed-elevated',
