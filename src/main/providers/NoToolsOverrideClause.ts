@@ -10,7 +10,8 @@
  * "system-level no-tools override", stopped, and asked whether it had any tool
  * surface at all. The clause therefore (1) says it applies only when such an
  * instruction actually appears, (2) gives the model a concrete test (can it
- * quote one?), and (3) only then names what not to call.
+ * quote one?), and (3) closes on the affirmative rather than the prohibition,
+ * so the last thing the seat reads about tools is that it may use them.
  *
  * Prompt wording only. The host gate remains the safety floor; nothing here
  * widens or narrows any capability.
@@ -18,9 +19,9 @@
 export function noToolsOverrideClause(forbidden: string): string {
   return (
     'The tool allowances above are overridden only by an explicit no-tools instruction that ' +
-    'actually appears in the user request or your role brief. If you cannot quote such an ' +
-    'instruction, no override is in effect and you should use the listed tools. When one ' +
-    `does appear, do not call ${forbidden}.`
+    'actually appears in the user request or your role brief. If you can quote such an ' +
+    `instruction, do not call ${forbidden}. If you cannot quote such an instruction, no ` +
+    'override is in effect: use the listed tools.'
   )
 }
 
