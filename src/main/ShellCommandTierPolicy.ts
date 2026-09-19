@@ -1007,6 +1007,11 @@ export interface ShellCommandTierHoldArgs {
  *    there; Full Access runs it automatically; Accept Edits already prompts
  *    for shell by policy).
  */
+// NOTE: the early return below disables every hold documented above at
+// `default`, `workspace_write` and `full_access`; the three carve-out branches
+// after it are reachable only on the ask/plan tiers. Destructive commands are
+// held at the write tiers by the separate ask wall in DestructiveShellAsk,
+// folded into `neverAutoAllow` at the approval chokepoint (744b03836).
 export function shellCommandTierHold(args: ShellCommandTierHoldArgs): boolean {
   if (args.service !== 'shellCommands') return false
   // Accept Edits / Full WS / Full Access authorize ordinary bash. Host-destructive

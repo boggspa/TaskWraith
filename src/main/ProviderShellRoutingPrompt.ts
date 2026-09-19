@@ -83,7 +83,7 @@ export function buildProviderShellRoutingPrompt(input: {
     ? [
         `- For tests, builds, Git, npm, and other shell work, call \`${shellTool}\` if it is listed in your tool surface. ${shellGrantSentence(shellPolicy)}`,
         shellPolicy === 'allow' || shellPolicy === 'workspace'
-          ? '- Ordinary shell is already authorized for this seat. Host-destructive commands (disk wipe, power-off) are still refused.'
+          ? '- Ordinary shell is already authorized for this seat. Host-destructive commands (disk wipe, power-off) are refused; other destructive ones raise an approval card first — review, not denial.'
           : '- This seat prompts for each shell invocation; wait for the user. Timeout does not mean decline. If the user declines, respect it.',
         `- If TaskWraith reports a permission boundary, ${permissionRoute}. That opens an auditable one-shot approval showing the exact command and cwd.`,
         `- A refusal from a native Bash/Shell/terminal tool can be a containment route, not a denial of the effective shell permission. Do not repeat the native call; route once through \`${shellTool}\`. If the user declines either approval, respect it, continue from available evidence, and finish the turn instead of cancelling.`

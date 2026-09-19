@@ -21,6 +21,10 @@ describe('buildProviderShellRoutingPrompt', () => {
     expect(prompt).toContain('TaskWraith__run_shell_command')
     expect(prompt).toContain('already allowed shell commands')
     expect(prompt).toContain('already authorized')
+    // Rule 6, doctrine is executable: this line is the only thing telling a
+    // seat that a held command is a review step rather than a refusal.
+    expect(prompt).toContain('raise an approval card first')
+    expect(prompt).not.toContain('are still refused')
     expect(prompt).not.toContain('Opaque process side effects')
     expect(prompt).toContain('permissionOpportunity')
     expect(prompt).toContain('permissionRetry')
