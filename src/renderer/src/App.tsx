@@ -18031,30 +18031,51 @@ function App(): React.JSX.Element {
             setDraft: setChatPromptDraft,
             subscribeToDraft: composerDraftState.subscribeToChat
           })
+      const ensembleRoundPayload = {
+        chatId: targetChatId,
+        prompt: request.prompt,
+        concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
+        fanoutPolicy,
+        ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+        ...(rewind ? { rewind } : {}),
+        ...(request.exactPickerParticipantId
+          ? { exactPickerParticipantId: request.exactPickerParticipantId }
+          : {}),
+        imageAttachments: request.imageAttachments.map((attachment) => ({
+          id: attachment.id,
+          path: attachment.path,
+          name: attachment.name,
+          ...attachmentKindMetadata(attachment),
+          ...persistedAttachmentMetadata(attachment)
+        }))
+      }
       try {
-        const result = await window.api.runEnsembleRound({
-          chatId: targetChatId,
-          prompt: request.prompt,
-          // Keep the explicit steer intent on the wire. Main absorbs a plain
-          // text interjection into a genuinely-live round without cancellation;
-          // shape-changing requests (attachments/directed routing) retain their
-          // separate round boundary, and an idle chat starts normally.
-          mode: 'steer',
-          concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
-          fanoutPolicy,
-          ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
-          ...(rewind ? { rewind } : {}),
-          ...(request.exactPickerParticipantId
-            ? { exactPickerParticipantId: request.exactPickerParticipantId }
-            : {}),
-          imageAttachments: request.imageAttachments.map((attachment) => ({
-            id: attachment.id,
-            path: attachment.path,
-            name: attachment.name,
-            ...attachmentKindMetadata(attachment),
-            ...persistedAttachmentMetadata(attachment)
-          }))
+        // Keep the explicit steer intent on the wire. Main absorbs a plain
+        // text interjection into a genuinely-live round without cancellation;
+        // shape-changing requests (attachments/directed routing) retain their
+        // separate round boundary, and an idle chat starts normally.
+        let result = await window.api.runEnsembleRound({
+          ...ensembleRoundPayload,
+          mode: 'steer'
         })
+        if (!isAcceptedEnsembleSteerResult(result)) {
+          // A STEER MUST LAND. A refusal here is main stating it did not retain
+          // the prompt -- isAcceptedEnsembleSteerResult admits exactly the
+          // statuses that prove retention -- so re-dispatching cannot
+          // double-deliver. Send it as an ordinary round instead: a live round
+          // QUEUES it (full retention, delivered at the next boundary) and an
+          // idle chat starts it. Previously this returned, and the text was
+          // only restored to the composer when the user had not typed since --
+          // so a user who kept typing simply lost what they had sent.
+          //
+          // The steer lane is chosen upstream by a predicate that reports live
+          // during a turn handoff while main's absorb gate refuses, so this
+          // refusal is routine rather than exceptional.
+          result = await window.api.runEnsembleRound({
+            ...ensembleRoundPayload,
+            mode: 'normal'
+          })
+        }
         if (!isAcceptedEnsembleSteerResult(result)) {
           draftSubmission?.restoreIfUntouched()
           return
