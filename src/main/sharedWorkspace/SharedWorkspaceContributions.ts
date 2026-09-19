@@ -17,6 +17,14 @@ import {
 } from './SharedWorkspaceSession'
 
 const MAX_BYTES = 5 * 1024 * 1024
+
+/**
+ * The per-side blob ceiling. Exported so a gate can refuse a capture it knows
+ * the journal would silently drop: prepareEdit returns null past this size, and
+ * a mutation admitted on a promise of capture that then returns null is a
+ * mutation with no Undo.
+ */
+export const SHARED_WORKSPACE_MAX_CAPTURE_BYTES = MAX_BYTES
 const MAX_RECORDS = 2000
 const LEASE_MS = 20 * 60 * 1000
 const HASH = /^[a-f0-9]{64}$/
