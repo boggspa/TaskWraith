@@ -18,6 +18,7 @@ import {
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   GROK_ACP_READ_ONLY_DENY_RULES,
   GROK_ACP_WRITE_MODE_DENY_RULES,
+  GROK_ACP_WRITE_MODE_NATIVE_TOOLS,
   GROK_READ_ONLY_DENY_RULES,
   GROK_WRITE_MODE_DENY_RULES
 } from './GrokCliArgs'
@@ -25,6 +26,10 @@ import {
   AMBIGUOUS_NO_TOOLS_OVERRIDE_PHRASE,
   noToolsOverrideClause
 } from '../providers/NoToolsOverrideClause'
+import {
+  PROVIDER_ACTION_ADAPTERS,
+  compactProviderActionIdentifier
+} from '../../shared/providerActionTaxonomy'
 import type { ActiveGoal } from '../store/types'
 
 const grokNativeGoal: ActiveGoal = {
@@ -132,7 +137,7 @@ describe('buildGrokCliArgs', () => {
   it('disables the complete built-in tool set while retaining separately configured MCP', () => {
     const args = buildGrokCliArgs(base)
     expect(args[args.indexOf('--tools') + 1]).toBe('')
-    const acpArgs = buildGrokAcpCliArgs({ readOnlySeat: false })
+    const acpArgs = buildGrokAcpCliArgs({ readOnlySeat: true })
     expect(acpArgs[acpArgs.indexOf('--tools') + 1]).toBe('')
   })
 
@@ -235,18 +240,49 @@ describe('buildGrokCliArgs', () => {
     expect(denied).not.toContain('Grep(*)')
   })
 
-  it('keeps ACP native edits broker-only on write-capable seats while preserving reads', () => {
+  it('routes ACP native edits and shell to the host gate on write-capable seats', () => {
     const args = buildGrokAcpCliArgs({ readOnlySeat: false })
     const denied = args
       .map((value, index) => (value === '--deny' ? args[index + 1] : null))
       .filter((value): value is string => value !== null)
 
+    // A write seat denies nothing at argv. The mediation floor is the host:
+    // session/request_permission -> preflightNativeWorkspaceTool (closed grok
+    // adapter + path scope) -> approval chokepoint + DestructiveShellAsk.
     expect(denied).toEqual([...GROK_ACP_WRITE_MODE_DENY_RULES])
-    expect(denied).toContain('Edit(*)')
-    expect(denied).toContain('Write(*)')
-    expect(denied).toContain('Bash(*)')
-    expect(denied).toContain('Shell(*)')
-    expect(denied).not.toContain('Read(*)')
+    expect(denied).toEqual([])
+  })
+
+  it('offers a write-capable ACP seat only the natives the grok adapter declares', () => {
+    const args = buildGrokAcpCliArgs({ readOnlySeat: false })
+    const tools = args[args.indexOf('--tools') + 1].split(',').filter(Boolean)
+
+    expect(tools).toEqual([...GROK_ACP_WRITE_MODE_NATIVE_TOOLS])
+    // The point of the widening: native shell is present, alongside reads.
+    expect(tools).toContain('Bash')
+    expect(tools).toContain('Shell')
+    expect(tools).toContain('Read')
+    // Native writes stay broker-only: the seat policy denies access==='write',
+    // so offering these would be a guaranteed refusal on every call.
+    expect(tools).not.toContain('Write')
+    expect(tools).not.toContain('Edit')
+
+    // Every offered tool must compact onto an action the closed `grok` adapter
+    // declares. A tool the adapter does not declare is denied on EVERY call,
+    // which hard-cancels the turn and burns quota for no deliverable -- so the
+    // allowlist is pinned to the declared set, not merely to "no shell".
+    const declared = new Set(
+      Object.values(PROVIDER_ACTION_ADAPTERS.grok.nativeActionMappings).flatMap((mapping) =>
+        mapping.aliases.map((alias) => compactProviderActionIdentifier(alias))
+      )
+    )
+    for (const tool of tools) {
+      expect(declared.has(compactProviderActionIdentifier(tool))).toBe(true)
+    }
+    for (const undeclared of ['MultiEdit', 'TodoWrite', 'BashOutput', 'KillShell', 'Agent']) {
+      expect(declared.has(compactProviderActionIdentifier(undeclared))).toBe(false)
+      expect(tools).not.toContain(undeclared)
+    }
   })
 
   it('does not pass effort for Grok Composer 2.5 Fast', () => {

@@ -1779,6 +1779,10 @@ import {
   createMistralNativeShellGate,
   mistralNativeShellPermitted
 } from './mistral/MistralNativeShellGate'
+import {
+  createNativeShellApprovalGate,
+  nativeShellPermitted
+} from './native-tools/NativeShellApprovalGate'
 import { createRuntimeToolCapabilityRecorder, configureRunManagedToolReceipt } from './providers/RunToolCapabilityRuntime'
 import { readRunToolCapabilityReceipt } from './providers/RunToolCapabilityStore'
 import {
@@ -24767,6 +24771,24 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
   let grokMcpServers: unknown[] = []
   const grokWriteSeat = grokWriteCapable(payload.approvalMode)
   const grokReadOnlySeat = !grokWriteSeat
+  // Native shell reaches the shared approval chokepoint only when this seat's
+  // posture permits it -- same producer as the Mistral seat, so the two
+  // providers cannot drift apart on what "permitted" means.
+  const grokNativeShell = nativeShellPermitted({
+    readOnlySeat: grokReadOnlySeat,
+    shellPolicy: payload.effectivePermissions?.agenticServices.shellCommands
+  })
+  const grokNativeShellGate = createNativeShellApprovalGate({
+    provider: 'grok',
+    requestApproval: (approval) =>
+      requestAgenticServiceApproval(
+        event.sender,
+        'grok',
+        'shellCommands',
+        payload.scope === 'global' ? undefined : payload.workspace,
+        { ...approval, runId: route.appRunId ?? undefined }
+      )
+  })
   const grokReadOnlyAdvertiseFlag = grokReadOnlyMcpAdvertiseEnabled()
   const grokBridgeEnabled = Boolean(AppStore.getSettings().geminiMcpBridgeEnabled)
   const grokAdvertiseTaskWraithMcp = payload.taskWraithMcpAdvertised === true
@@ -24948,18 +24970,33 @@ async function runGrokAcpProviderAfterWorkspaceLockAdmission(
       rawToolCall: request.rawToolCall,
       workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
       // Grok ACP exposes a permission hook but no hard native-shell workspace
-      // sandbox. File tools can be path-preflighted; shell stays fail-closed
-      // until the runtime can attest a workspace-rooted sandbox.
-      runtimeSandboxed: false
+      // sandbox. File tools can be path-preflighted; shell is fail-closed
+      // unless this seat's posture explicitly permits it, in which case the
+      // approval chokepoint -- not a sandbox attestation -- is the floor.
+      runtimeSandboxed: false,
+      nativeShellPermittedUnsandboxed: grokNativeShell
     })
     if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
     if (networkRead) return 'allow'
     if (nativeWorkspacePreflight.kind === 'allow' && nativeWorkspacePreflight.access === 'read') {
       return 'allow'
     }
+    // Native shell on a write-capable seat whose posture permits it. Below the
+    // read fast path, so `ls` is not pushed through a card it never needed.
+    if (
+      nativeWorkspacePreflight.kind === 'allow' &&
+      nativeWorkspacePreflight.access === 'shell' &&
+      grokNativeShell
+    ) {
+      const gated = await grokNativeShellGate(request)
+      // Grok's ACP permission hook is string-valued, so a structured refusal
+      // collapses to 'deny' here. The provenance is not lost, only not carried
+      // on this seam: the gate has already recorded it.
+      return gated === 'allow' ? 'allow' : 'deny'
+    }
     // Opaque native mutations cannot join an exact TaskWraith edit
-    // transaction. The argv deny-list prevents these calls; this is the
-    // defense-in-depth floor if a provider version reports one anyway.
+    // transaction, so they stay denied even on a write-capable seat; the argv
+    // allowlist keeps them off the seat so this is the defense-in-depth floor.
     return 'deny'
   }
 
@@ -26038,6 +26075,7 @@ async function runMistralAcpProvider(event: Electron.IpcMainInvokeEvent, payload
     ...(mistralNativeShell
       ? {
           gateNativeShell: createMistralNativeShellGate({
+            provider: 'mistral',
             requestApproval: (approval) =>
               requestAgenticServiceApproval(
                 event.sender,

@@ -1,11 +1,13 @@
 import {
-  GROK_READ_ONLY_DENY_RULES,
+  GROK_ACP_READ_ONLY_DENY_RULES,
+  GROK_ACP_WRITE_MODE_DENY_RULES,
+  GROK_ACP_WRITE_MODE_NATIVE_TOOLS,
   GROK_READ_ONLY_PROMPT_PREAMBLE,
-  GROK_WRITE_MODE_DENY_RULES,
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   buildGrokAcpCliArgs,
   grokWriteCapable
 } from '../grok/GrokCliArgs'
+import { nativeShellPermitted } from '../native-tools/NativeShellApprovalGate'
 import type { ProviderLaunchAuthorityInputByProvider } from '../ProviderLaunchAuthorityDigest'
 import type { EffectiveRunPermissions, TaskWraithMcpProfileId } from '../store/types'
 import {
@@ -30,8 +32,14 @@ import {
  * (`grok … agent stdio`) — the only managed Grok transport.
  *
  * Mirrors runGrokAcpProvider: the seat tier comes from
- * grokWriteCapable(approvalMode); native shell/fs tools are deny-walled by
- * the shared rule set on BOTH tiers (writes flow through the MCP broker);
+ * grokWriteCapable(approvalMode). A READ-ONLY tier is deny-walled and ships an
+ * empty `--tools`, so every action flows through the MCP broker. A
+ * WRITE-CAPABLE tier denies nothing at argv and is offered the native reads
+ * plus shell that the closed `grok` adapter declares; native writes still flow
+ * through the broker, and native shell is admitted only when
+ * nativeShellPermitted() says this seat's signed posture allows it, which is
+ * sealed below so a scheduled occurrence cannot execute under a different
+ * answer than it was minted with;
  * the TaskWraith MCP server attaches to session/new as a stdio bridge
  * subprocess; the ACP argv never enables provider web search and network
  * authority stays host-gated. ACP seats are one-shot: no provider session
@@ -91,7 +99,18 @@ export async function buildGrokSealEvidence(
   }
   const writeCapable = grokWriteCapable(facts.approvalMode)
   const readOnlySeat = !writeCapable
-  const denyRules = readOnlySeat ? GROK_READ_ONLY_DENY_RULES : GROK_WRITE_MODE_DENY_RULES
+  // ACP seat, so the ACP rule sets -- not the non-ACP provider ones, which deny
+  // reads and were never what `grok ... agent stdio` ships.
+  const denyRules: readonly string[] = readOnlySeat
+    ? GROK_ACP_READ_ONLY_DENY_RULES
+    : GROK_ACP_WRITE_MODE_DENY_RULES
+  const toolsFlag = readOnlySeat ? '' : GROK_ACP_WRITE_MODE_NATIVE_TOOLS.join(',')
+  // Resolved from THE producer, never re-derived here, so a sealed occurrence
+  // and the runtime gate cannot answer this differently.
+  const grokNativeShellPermitted = nativeShellPermitted({
+    readOnlySeat,
+    shellPolicy: facts.effectivePermissions.agenticServices.shellCommands
+  })
   const preamble = writeCapable ? GROK_WRITE_MODE_PROMPT_PREAMBLE : GROK_READ_ONLY_PROMPT_PREAMBLE
   const argvTemplate = buildGrokAcpCliArgs({
     model: facts.model,
@@ -128,7 +147,7 @@ export async function buildGrokSealEvidence(
       kind: 'grok-acp-managed',
       denyRules: [...denyRules],
       autoUpdateDisabled: true,
-      builtinToolsDisabled: true
+      builtinToolsDisabled: readOnlySeat
     },
     capabilityContract: facts.capabilityContract
   })
@@ -144,7 +163,8 @@ export async function buildGrokSealEvidence(
     nativeToolPolicy: {
       kind: 'grok-native-deny-wall',
       denyRules: [...denyRules],
-      toolsFlag: ''
+      toolsFlag,
+      nativeShellPermitted: grokNativeShellPermitted
     },
     brokerPolicy: {
       kind: facts.taskWraithMcpAdvertised ? 'taskwraith-bridge-broker' : 'none',
