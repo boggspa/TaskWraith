@@ -326,8 +326,11 @@ describe('Multiview pane Composer context parity', () => {
     expect(runtimeProfileControl).not.toContain(
       'disabled={!currentChat || isCurrentComposerLocked}'
     )
-    expect(layoutSource).toContain(
-      'applyEnsemblePermissionsToAllParticipantsForChat(\n      sideChat.appChatId,'
+    // Squashed: this pins that the layout targets the PANE chat id, not the
+    // call's line shape. The byte-exact form reddened when the call collapsed
+    // onto one line, while the thing it guards never changed.
+    expect(layoutSource.replace(/\s+/g, '')).toContain(
+      'applyEnsemblePermissionsToAllParticipantsForChat(sideChat.appChatId,'.replace(/\s+/g, '')
     )
     expect(layoutSource).not.toContain(
       'participants: sideChat.ensemble.participants.map((participant: any) =>'
