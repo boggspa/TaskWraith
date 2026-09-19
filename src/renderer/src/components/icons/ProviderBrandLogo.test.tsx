@@ -8,7 +8,15 @@ import {
   resolveProviderBrandLogoSource
 } from './providerBrandLogoAssets'
 
-const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity', 'mistral'] as const
+const STATIC_PROVIDERS = [
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'antigravity',
+  'mistral',
+  'muse'
+] as const
 const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama', 'pi', 'devin'] as const
 const KNOWN_PROVIDERS = [...STATIC_PROVIDERS, ...THEMED_PROVIDERS] as const
 const SUPPLEMENTAL_UPSTREAM_BRANDS = ['deepseek', 'cerebras'] as const
@@ -130,6 +138,7 @@ describe('ProviderBrandLogo', () => {
         'provider-logo-pi-on-dark.png'
       ],
       ['provider-logo-mistral.png', 'provider-logo-mistral.png', 'provider-logo-mistral.png'],
+      ['provider-logo-meta.png', 'provider-logo-meta.png', 'provider-logo-meta.png'],
       [
         'provider-logo-devin-on-light.png',
         'provider-logo-devin-on-light.png',

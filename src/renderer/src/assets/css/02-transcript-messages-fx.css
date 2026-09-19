@@ -3901,6 +3901,19 @@ html:has(
   --provider-brand-logo-scale: 1.08;
 }
 
+/* Show the complete leading Meta mark (340 x 237) from the intact 1024 x 237
+ * wordmark, matching the local source apps' compact icon presentation. */
+.provider-brand-logo-muse {
+  overflow: hidden;
+}
+.provider-brand-logo-muse .provider-brand-logo-image {
+  inset: 50% auto auto 0;
+  width: calc(100% * 1024 / 340);
+  max-width: none;
+  height: auto;
+  transform: translateY(-50%);
+}
+
 .provider-glyph-line,
 .provider-glyph-accent {
   fill: none;

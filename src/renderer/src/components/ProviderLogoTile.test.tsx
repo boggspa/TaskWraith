@@ -15,6 +15,7 @@ describe('ProviderLogoTile', () => {
       'antigravity',
       'pi',
       'mistral',
+      'muse',
       'deepseek',
       'cerebras'
     ] as const) {
