@@ -3111,7 +3111,7 @@ export interface AppSettings {
    */
   approvalModeElevationAcknowledgements?: Record<string, boolean>
   bridgeDaemonEnabled?: boolean
-  /** Separate AppKit/Metal Studio companion. Default-on on macOS; the
+  /** Separate AppKit/Metal Studio companion. Opt-in on macOS; the
    * TASKWRAITH_STUDIO_COMPANION env override preserves force-on/off staging. */
   studioCompanionEnabled?: boolean
   /** iOS remote bridge (relay + E2EE transport). Settings-first so
