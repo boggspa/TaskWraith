@@ -71,6 +71,19 @@ export function clearPendingEnsembleSeatSelection(
   return next
 }
 
+/** A reply belongs to one edit, even when a later edit selects identical values. */
+export function replacePendingEnsembleSeatSelectionIfCurrent(
+  selections: PendingEnsembleSeatSelections,
+  chatId: string,
+  expected: EnsembleParticipant,
+  replacement: EnsembleParticipant | null | undefined
+): PendingEnsembleSeatSelections {
+  if (selections[chatId]?.[expected.id] !== expected) return selections
+  return replacement
+    ? setPendingEnsembleSeatSelection(selections, chatId, replacement)
+    : clearPendingEnsembleSeatSelection(selections, chatId, expected.id)
+}
+
 export function overlayPendingEnsembleSeatSelections(
   participants: readonly EnsembleParticipant[],
   selections: Record<string, EnsembleParticipant> | null | undefined
@@ -88,10 +101,14 @@ export function reconcilePendingEnsembleSeatSelections(
     chatId: string
     participants: readonly EnsembleParticipant[]
     roundLive: boolean
+    writesPending?: boolean
   }
 ): PendingEnsembleSeatSelections {
   const chatSelections = selections[input.chatId]
   if (!chatSelections) return selections
+  // Idle edits now use the same authoritative lane. A stale idle broadcast
+  // cannot erase the choice while its write is still queued or in flight.
+  if (input.writesPending) return selections
   if (!input.roundLive) {
     return clearPendingEnsembleSeatSelection(selections, input.chatId)
   }

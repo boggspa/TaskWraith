@@ -1076,13 +1076,13 @@ import {
 import { useChatSurfaceHydration } from './hooks/useChatSurfaceHydration'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
+import { tryCommitEnsembleSeatPatch } from './lib/ensembleSeatPatchCommit'
+import { needsDispatchHistoryHydration } from './lib/dispatchHistoryHydration'
 import {
-  clearPendingEnsembleSeatSelection,
-  ensembleParticipantSelectionsEqual,
   overlayPendingEnsembleSeatSelections,
   queuePendingEnsembleSeatSelection,
   reconcilePendingEnsembleSeatSelections,
-  setPendingEnsembleSeatSelection,
+  replacePendingEnsembleSeatSelectionIfCurrent,
   type PendingEnsembleSeatSelections
 } from './lib/pendingEnsembleSeatSelection'
 import { resolveSoleEnsembleSoloCandidate } from './lib/ensembleRosterFloor'
@@ -14554,16 +14554,7 @@ function App(): React.JSX.Element {
         : { ...baseRequest, appRunId: createAppRunId() }
       requestForClaimCleanup = request
       let runChat = request.chatRecord || currentChat
-      // A projection is un-dispatchable whether it ADVERTISES itself with
-      // `summaryOnly` or merely DROPS the transcript: `messages`/`runs` are
-      // declared required on ChatRecord, so tsc cannot flag the reads below,
-      // yet catalogue rows ship without them. Hydrate on either signal.
-      if (
-        runChat &&
-        (isChatSummaryRecord(runChat) ||
-          !Array.isArray(runChat.messages) ||
-          !Array.isArray(runChat.runs))
-      ) {
+      if (runChat && needsDispatchHistoryHydration(runChat, request.workflowMode)) {
         const hydrated = await refreshSingleChat(runChat.appChatId)
         if (hydrated) {
           runChat = hydrated
@@ -14692,6 +14683,9 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
+        // The pending picker choice must reach main before it resolves the
+        // roster for this round. This waits only for seat edits, not history.
+        await authoritativeParticipantSeatChangeQueueRef.current.get(runChat.appChatId)
         const workflowModeForRound = request.workflowMode || 'normal'
         if (runChat.workflowMode !== workflowModeForRound) {
           const updatedRunChat: ChatRecord = {
@@ -21976,6 +21970,8 @@ function App(): React.JSX.Element {
   const [pendingEnsembleSeatSelections, setPendingEnsembleSeatSelections] =
     useState<PendingEnsembleSeatSelections>({})
   const pendingEnsembleSeatSelectionsRef = useRef<PendingEnsembleSeatSelections>({})
+  // Preserve chat-wide order for rapid edits and multi-seat operations.
+  const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const replacePendingEnsembleSeatSelections = useCallback(
     (next: PendingEnsembleSeatSelections): void => {
       if (next === pendingEnsembleSeatSelectionsRef.current) return
@@ -21990,7 +21986,8 @@ function App(): React.JSX.Element {
       reconcilePendingEnsembleSeatSelections(pendingEnsembleSeatSelectionsRef.current, {
         chatId: currentChat.appChatId,
         participants: currentChat.ensemble.participants,
-        roundLive: isEnsembleActiveRoundDispatchLive(currentChat.ensemble.activeRound)
+        roundLive: isEnsembleActiveRoundDispatchLive(currentChat.ensemble.activeRound),
+        writesPending: authoritativeParticipantSeatChangeQueueRef.current.has(currentChat.appChatId)
       })
     )
   }, [
@@ -22172,10 +22169,6 @@ function App(): React.JSX.Element {
     setCurrentChat((prev) => (prev?.appChatId === nextChat.appChatId ? nextChat : prev))
     setChats((prev) => prev.map((c) => (c.appChatId === nextChat.appChatId ? nextChat : c)))
   }, [])
-  // Model, reasoning, and permission clicks can be one rapid picker edit.
-  // Preserve chat-wide order so multi-seat mutations such as "Apply to all"
-  // build every authoritative response on the previous canonical snapshot.
-  const authoritativeParticipantSeatChangeQueueRef = useRef<Map<string, Promise<void>>>(new Map())
   const requestAuthoritativeParticipantSeatChange = useCallback(
     (
       sourceChat: ChatRecord,
@@ -22198,20 +22191,13 @@ function App(): React.JSX.Element {
       )
       replacePendingEnsembleSeatSelections(optimistic.selections)
       const replaceIfLatest = (replacement: EnsembleParticipant | null | undefined): void => {
-        const current = pendingEnsembleSeatSelectionsRef.current[queueKey]?.[participantId]
-        if (!ensembleParticipantSelectionsEqual(current, optimistic.participant)) return
         replacePendingEnsembleSeatSelections(
-          replacement
-            ? setPendingEnsembleSeatSelection(
-                pendingEnsembleSeatSelectionsRef.current,
-                queueKey,
-                replacement
-              )
-            : clearPendingEnsembleSeatSelection(
-                pendingEnsembleSeatSelectionsRef.current,
-                queueKey,
-                participantId
-              )
+          replacePendingEnsembleSeatSelectionIfCurrent(
+            pendingEnsembleSeatSelectionsRef.current,
+            queueKey,
+            optimistic.participant,
+            replacement
+          )
         )
       }
       const previous = authoritativeParticipantSeatChangeQueueRef.current.get(queueKey)
@@ -22314,12 +22300,28 @@ function App(): React.JSX.Element {
   )
   const patchEnsembleParticipantForChat = useCallback(
     (chatId: string, participantId: string, patch: Partial<EnsembleParticipant>): void => {
+      if (
+        tryCommitEnsembleSeatPatch({
+          chat: chatByIdRef.current.get(chatId),
+          participantId,
+          patch,
+          runtimePatch: buildRuntimeSeatPatch(patch),
+          request: requestAuthoritativeParticipantSeatChange
+        })
+      ) {
+        return
+      }
       updateChatById(chatId, (sourceChat) => {
         if (!sourceChat.ensemble) return sourceChat
         return patchParticipantWithSeatGate(sourceChat, participantId, patch) || sourceChat
       })
     },
-    [patchParticipantWithSeatGate, updateChatById]
+    [
+      buildRuntimeSeatPatch,
+      requestAuthoritativeParticipantSeatChange,
+      patchParticipantWithSeatGate,
+      updateChatById
+    ]
   )
   const applyEnsembleRosterPresetToChat = useCallback(
     (chatId: string, preset: EnsembleRosterPreset): void => {
