@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import * as ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { buildTranscriptViewMenuItems } from '../components/TranscriptViewPicker'
 import {
@@ -34,6 +35,48 @@ function renderer(relative: string): string {
 
 function main(relative: string): string {
   return readFileSync(join(MAIN_SRC, relative), 'utf8')
+}
+
+/**
+ * Names destructured from `component`'s props parameter.
+ *
+ * The text pin this replaced embedded a newline and four spaces, so a11edac52
+ * reindenting the parameter list — `memo(\n  function TranscriptPanel({` became
+ * `memo(function TranscriptPanel({` — reddened it without touching the claim.
+ * Walking the binding pattern is indentation-independent, and THROWS when the
+ * component is renamed or deleted rather than passing over an absent subject.
+ */
+function destructuredProps(source: string, component: string): string[] {
+  const file = ts.createSourceFile(
+    `${component}.tsx`,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  )
+  let pattern: ts.ObjectBindingPattern | undefined
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) &&
+      node.name?.text === component &&
+      node.parameters[0] &&
+      ts.isObjectBindingPattern(node.parameters[0].name)
+    ) {
+      pattern = node.parameters[0].name
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(file)
+
+  if (!pattern) {
+    throw new Error(
+      `no \`function ${component}\` destructuring its props parameter. It was renamed, ` +
+        'moved or rewritten to read props.x — update this test to the claim that replaced it.'
+    )
+  }
+  return pattern.elements.flatMap((element) =>
+    ts.isIdentifier(element.name) ? [element.name.text] : []
+  )
 }
 
 describe('the default resolves the same way everywhere', () => {
@@ -113,7 +156,7 @@ describe('the default reaches every transcript and the menu', () => {
   it('is threaded into the panel hook by the panel prop', () => {
     const panel = renderer('components/TranscriptPanel.tsx')
     expect(panel).toContain('defaultTranscriptView?: TranscriptView')
-    expect(panel).toContain('\n    defaultTranscriptView,\n')
+    expect(destructuredProps(panel, 'TranscriptPanel')).toContain('defaultTranscriptView')
     expect(panel).toContain('useTranscriptView(chatId, defaultTranscriptView)')
   })
 
