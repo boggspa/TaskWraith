@@ -107,6 +107,7 @@ import { resolvePrimaryPaneIndex } from '../../lib/multiviewPrimaryPane'
 import { AuditRunCard } from '../../components/AuditRunCard'
 import { AuditRunNotice } from '../../components/AuditRunNotice'
 import { MultiviewPaneGrid } from '../../components/MultiviewPaneGrid'
+import { MultiviewThreadDropRegion } from '../../components/MultiviewThreadDropRegion'
 import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
 import { Composer, type ComposerProps } from '../../components/Composer'
@@ -1880,7 +1881,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         }`}
         style={chatSplitStyle}
       >
-        <div className="chat-split-main">
+        <MultiviewThreadDropRegion
+          multiview={multiview}
+          visibleChatId={threadHomeOpen ? null : currentChatAppChatId}
+          resolveThreadTitle={(chatId) => {
+            const chat =
+              chatByIdRef.current.get(chatId) || chats.find((item) => item.appChatId === chatId)
+            return chat ? chat.title || 'Untitled thread' : null
+          }}
+          onOpenSingleThread={selectThreadFromHome}
+        >
           {/* The fog/mist sky warp filter — defined ONCE for the whole region
            * (CSS references it by a fixed id, so it can't be per-instance).
            * Present whenever FX is on so any sky (focused or pane, single or
@@ -2551,7 +2561,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               )
             }}
           />
-        </div>
+        </MultiviewThreadDropRegion>
 
         {dockPresence.mounted && (
           <>

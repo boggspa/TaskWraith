@@ -301,12 +301,10 @@ export function MultiviewPaneGrid(props: MultiviewPaneGridProps) {
       }}
     >
       {spec.cellAreas.map((area, paneIndex) => (
-        // Keyed by paneIndex (not pane id) on purpose: the refs pool and the
-        // focused-cell placement are index-based, so changing the React key
-        // would reshuffle DOM/refs. Stable identity for per-pane SETTINGS lives
-        // in `paneSettings`; `data-pane-id` exposes it for styling/diagnostics.
+        // Reordering a layout moves the existing pane runtime with its record.
+        // The refs pool is keyed by pane id too, so drafts and scroll survive.
         <div
-          key={paneIndex}
+          key={props.panes[paneIndex]?.id ?? paneIndex}
           className={`multiview-cell${
             paneIndex === focusedPaneIndex ? ' multiview-cell-focused' : ''
           }`}

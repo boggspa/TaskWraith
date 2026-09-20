@@ -15,6 +15,7 @@ import {
   type ReactNode
 } from 'react'
 import { createPortal } from 'react-dom'
+import { sidebarThreadDragSession } from '../lib/sidebarThreadDragSession'
 import { MascotGhost, SidebarRunningGhost, WorkflowGlyphIcon } from './AppChromeSymbols'
 import { ChatAgeLabel } from './ChatAgeLabel'
 import { HighlightMatch } from './HighlightMatch'
@@ -3492,6 +3493,7 @@ export function Sidebar({
       draggable: true,
       onDragStart: (event) => {
         const payload = { listId, chatId: chat.appChatId }
+        sidebarThreadDragSession.start(payload)
         draggedThreadPayloadRef.current = payload
         setDraggedThreadPayload(payload)
         event.dataTransfer.effectAllowed = canPin ? 'copyMove' : 'move'
@@ -3503,6 +3505,7 @@ export function Sidebar({
         event.dataTransfer.setData('text/plain', chat.title)
       },
       onDragEnd: () => {
+        sidebarThreadDragSession.end()
         draggedThreadPayloadRef.current = null
         setDraggedThreadPayload(null)
         setDraggedChatId(null)
@@ -4653,6 +4656,30 @@ export function Sidebar({
       className={`app-sidebar${animationClassName ? ` ${animationClassName}` : ''}${
         footerPopoverActive ? ' has-footer-popover' : ''
       }`}
+      onDragEnterCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        setPinDropActive(false)
+        setThreadDropTarget(null)
+      }}
+      onDragOverCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        event.dataTransfer.dropEffect = 'none'
+      }}
+      onDropCapture={(event) => {
+        if (!sidebarThreadDragSession.blocksSidebarDrop()) return
+        event.preventDefault()
+        event.stopPropagation()
+        sidebarThreadDragSession.end()
+        draggedThreadPayloadRef.current = null
+        setDraggedThreadPayload(null)
+        setDraggedChatId(null)
+        setPinDropActive(false)
+        setThreadDropTarget(null)
+      }}
     >
       <div className="sidebar-titlebar-fill" aria-hidden />
       <div className="sidebar-content">

@@ -2,6 +2,12 @@ import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { MutableRefObject, RefObject } from 'react'
 import type { CachedChatScrollState } from '../lib/TranscriptScroll'
 import {
+  applyMultiviewThreadPlacement,
+  planMultiviewThreadPlacement,
+  type MultiviewThreadDropRequest,
+  type MultiviewThreadPlacement
+} from '../lib/multiviewThreadPlacement'
+import {
   DEFAULT_MULTIVIEW_LAYOUT,
   clampFocusedPaneIndex,
   defaultColumnFractions,
@@ -923,6 +929,8 @@ export interface UseMultiviewStateResult extends MultiviewCoreState {
   assignToFocusedPane: (chatId: string) => void
   /** Open a chat in a non-focused pane (grows the layout if needed); keeps focus. */
   openInNewPane: (chatId: string, outgoingFocusedChatId?: string | null) => void
+  previewThreadDrop: (request: MultiviewThreadDropRequest) => MultiviewThreadPlacement
+  commitThreadDrop: (placement: MultiviewThreadPlacement) => boolean
   /** Detach an A/V player into a non-focused pane (grows if needed); keeps focus. */
   openMediaInNewPane: (mediaRef: MultiviewPaneMediaRef) => void
   /** Drag a gutter: move `deltaPx` between two adjacent tracks (clamped at min). */
@@ -1024,6 +1032,18 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
   const openMediaInNewPane = useCallback((mediaRef: MultiviewPaneMediaRef) => {
     commitState((s) => applyOpenMediaInNewPane(s, mediaRef))
   }, [commitState])
+  const previewThreadDrop = useCallback((request: MultiviewThreadDropRequest) => {
+    return planMultiviewThreadPlacement(stateRef.current, request)
+  }, [])
+  const commitThreadDrop = useCallback((placement: MultiviewThreadPlacement) => {
+    let applied = false
+    commitState((current) => {
+      const next = applyMultiviewThreadPlacement(current, placement)
+      applied = next !== current
+      return next
+    })
+    return applied
+  }, [commitState])
   const resizeTrack = useCallback((args: ApplyResizeTrackArgs) => {
     commitState((s) => applyResizeTrack(s, args))
   }, [commitState])
@@ -1089,6 +1109,8 @@ export function useMultiviewState(options: UseMultiviewStateOptions = {}): UseMu
     dismissPane,
     assignToFocusedPane,
     openInNewPane,
+    previewThreadDrop,
+    commitThreadDrop,
     openMediaInNewPane,
     resizeTrack,
     resetTrackSizes,

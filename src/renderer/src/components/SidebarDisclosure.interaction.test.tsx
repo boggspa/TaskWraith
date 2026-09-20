@@ -3,6 +3,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChatRecord, WorkspaceRecord } from '../../../main/store/types'
 import { useSidebarHierarchyDrag } from '../hooks/useSidebarHierarchyDrag'
+import { sidebarThreadDragSession } from '../lib/sidebarThreadDragSession'
 import { ActiveRunsSection } from './ActiveRunsSection'
 import { Sidebar } from './Sidebar'
 
@@ -119,6 +120,9 @@ class TestElement extends TestNode {
       selectors.some((entry) => {
         if (entry === '[data-sidebar-section-id]') {
           return typeof this.dataset.sidebarSectionId === 'string'
+        }
+        if (entry === '[data-sidebar-thread-id]') {
+          return typeof this.dataset.sidebarThreadId === 'string'
         }
         return entry.startsWith('.') && classNames.includes(entry.slice(1))
       })
@@ -288,6 +292,7 @@ function installDom(): {
 afterEach(() => {
   act(() => mountedRoot?.unmount())
   mountedRoot = null
+  sidebarThreadDragSession.end()
   for (const [name, descriptor] of Object.entries(originalDescriptors)) {
     if (descriptor) Object.defineProperty(globalThis, name, descriptor)
     else delete (globalThis as Record<string, unknown>)[name]
@@ -296,6 +301,113 @@ afterEach(() => {
 })
 
 describe('threads sidebar disclosure interactions', () => {
+  it.each([
+    ['pin', false],
+    ['pin', true],
+    ['reorder', false],
+    ['reorder', true]
+  ] as const)('handles %s with multiview cancellation %s', async (destination, entered) => {
+    const { container, storage } = installDom()
+    storage.set('taskwraith-sidebar-collapsed-sections', '[]')
+    storage.set('taskwraith-sidebar-collapsed-sections-default-version', 'hierarchy-disclosures-v2')
+    const chats = ['first', 'second'].map((id, index) => ({
+      appChatId: id,
+      scope: 'global',
+      provider: 'codex',
+      title: `Thread ${id}`,
+      createdAt: 1,
+      updatedAt: 2 - index,
+      archived: false,
+      pinned: false,
+      messages: [],
+      runs: []
+    })) as ChatRecord[]
+    const pin = vi.fn()
+    await act(async () => {
+      mountedRoot = createRoot(container as unknown as Element)
+      mountedRoot.render(
+        createElement(Sidebar, {
+          workspaces: [],
+          currentWorkspace: null,
+          chats,
+          currentChat: chats[0],
+          activeChatId: 'first',
+          usageSummary: [],
+          runningChatIds: [],
+          onSelectWorkspace: vi.fn(),
+          onRemoveWorkspace: vi.fn(),
+          onSelectWorkspaceDialog: vi.fn(),
+          onNewChat: vi.fn(),
+          onNewGlobalChat: vi.fn(),
+          onNewEnsemble: vi.fn(),
+          onSelectChat: vi.fn(),
+          onOpenSettings: vi.fn(),
+          onTogglePinChat: pin
+        })
+      )
+      await Promise.resolve()
+    })
+    const source = findElement(container, (node) => node.dataset.sidebarThreadId === 'first')!
+    expect(source).not.toBeNull()
+    const data = new Map<string, string>()
+    const transfer = {
+      get types() {
+        return [...data.keys()]
+      },
+      setData: (type: string, value: string) => data.set(type, value),
+      getData: (type: string) => data.get(type) ?? '',
+      effectAllowed: 'none',
+      dropEffect: 'none'
+    }
+    act(() => {
+      ;(reactProps(source).onDragStart as (event: unknown) => void)({ dataTransfer: transfer })
+      if (entered) sidebarThreadDragSession.enterMultiview()
+    })
+    const sidebar = findElement(container, (node) =>
+      (node.attributes.get('class') ?? '').split(' ').includes('app-sidebar')
+    )!
+    const listId = source.dataset.sidebarThreadList
+    const target = findElement(container, (node) =>
+      destination === 'pin'
+        ? node.attributes.get('class') === 'sidebar-pin-drop-placeholder'
+        : node.dataset.sidebarThreadList === listId &&
+          typeof maybeReactProps(node)?.onDrop === 'function'
+    )!
+    expect(target).not.toBeNull()
+    const row =
+      destination === 'pin'
+        ? target
+        : findElement(target, (node) => node.dataset.sidebarThreadId === 'second')!
+    const event = {
+      currentTarget: sidebar,
+      target: row,
+      dataTransfer: transfer,
+      clientY: 25,
+      preventDefault: vi.fn(),
+      stopPropagation: vi.fn()
+    }
+    const before = new Map(storage)
+    act(() => {
+      ;(reactProps(sidebar).onDropCapture as (event: unknown) => void)(event)
+      if (!event.stopPropagation.mock.calls.length) {
+        event.currentTarget = target
+        ;(reactProps(target).onDrop as (event: unknown) => void)(event)
+      }
+      ;(reactProps(source).onDragEnd as () => void)()
+    })
+    if (entered) {
+      expect(event.stopPropagation).toHaveBeenCalledOnce()
+      expect(pin).not.toHaveBeenCalled()
+      expect(storage).toEqual(before)
+    } else if (destination === 'pin') {
+      expect(pin).toHaveBeenCalledExactlyOnceWith('first')
+    } else {
+      expect(storage).not.toEqual(before)
+      expect(pin).not.toHaveBeenCalled()
+    }
+    expect(sidebarThreadDragSession.getSnapshot()).toBeNull()
+  })
+
   it.each([
     ['plain click', []],
     ['small pointer jitter', [pointerEvent('pointermove', 15, 12)]]
