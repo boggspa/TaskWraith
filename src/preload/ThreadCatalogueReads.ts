@@ -45,9 +45,9 @@ export function createThreadCatalogueReads(invoke: Invoke) {
     return JSON.parse(new TextDecoder().decode(bytes)) as T
   }
   /**
-   * Releasing a lease is best-effort cleanup. Awaiting it bare inside a
-   * `finally` meant a failed release REPLACED a completed read's value with
-   * its own rejection -- turning a successful load into a blank surface.
+   * Releasing a lease is best-effort cleanup. Dispatch it after the final
+   * object read, but do not make completed data wait for its acknowledgement.
+   * A busy or unavailable main process must not hold the page off screen.
    */
   const releaseLease = async (leaseId: string): Promise<void> => {
     try {
@@ -131,7 +131,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           // blank. Same shape as the lease-release bug above: an auxiliary
           // failure must never replace a completed read's value.
         } finally {
-          await releaseLease(leaseId)
+          void releaseLease(leaseId)
         }
       }
       return chats
@@ -149,7 +149,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
         })
         return ordinal === null ? null : await one<ChatMessage>(leaseId, 'message', ordinal)
       } finally {
-        await releaseLease(leaseId)
+        void releaseLease(leaseId)
       }
     },
     async getChat(chatId: string): Promise<ChatRecord | null> {
@@ -164,7 +164,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
       try {
         return await one<ChatRecord>(reply.data.leaseId, 'record')
       } finally {
-        await releaseLease(reply.data.leaseId)
+        void releaseLease(reply.data.leaseId)
       }
     },
     async getChatTranscriptPage(request: TranscriptPageRequest): Promise<TranscriptPage | null> {
@@ -317,7 +317,7 @@ export function createThreadCatalogueReads(invoke: Invoke) {
           ...(shell ? { shell } : {})
         }
       } finally {
-        await releaseLease(leaseId)
+        void releaseLease(leaseId)
       }
     }
   }

@@ -37,7 +37,82 @@ describe('getChat falls back to the canonical disk read', () => {
   })
 })
 
-describe('a failing lease release never demotes a completed read', () => {
+describe('lease cleanup never blocks or replaces a completed read', () => {
+  it.each(['record', 'message', 'page'] as const)(
+    'returns a completed %s while cleanup is still pending',
+    async (kind) => {
+      vi.useFakeTimers()
+      let rejectRelease!: (error: Error) => void
+      const release = new Promise<never>((_resolve, reject) => {
+        rejectRelease = reject
+      })
+      const message = {
+        id: 'message-1',
+        role: 'assistant',
+        content: 'Ready to display',
+        timestamp: '2026-09-20T12:00:00.000Z'
+      }
+      const invoke = makeInvoke({
+        'thread-catalogue:read': (q: { method: string; kind?: string }) => {
+          if (q.method === 'open') {
+            return {
+              available: true,
+              data: {
+                leaseId: 'lease-1',
+                entry: { projection: { summary: { messageCount: 1, updatedAt: 2 } } }
+              }
+            }
+          }
+          if (q.method === 'ordinal') return { available: true, data: 0 }
+          if (q.method === 'page-runs') return { available: true, data: [] }
+          if (q.method === 'objects') {
+            return {
+              available: true,
+              data: [
+                {
+                  kind: 'inline',
+                  value: q.kind === 'record' ? RECORD : message,
+                  ordinal: 0,
+                  byteLength: 100
+                }
+              ]
+            }
+          }
+          if (q.method === 'release') return release
+          throw new Error(`unexpected method ${q.method}`)
+        }
+      })
+      const reads = createThreadCatalogueReads(invoke)
+      const completed = vi.fn()
+      try {
+        const read =
+          kind === 'record'
+            ? reads.getChat('chat-1')
+            : kind === 'message'
+              ? reads.getTranscriptMessage('chat-1', 'message-1')
+              : reads.getChatTranscriptPage({ chatId: 'chat-1', maxMessages: 1 })
+        void read.then(completed)
+        await vi.advanceTimersByTimeAsync(0)
+        expect(invoke).toHaveBeenCalledWith('thread-catalogue:read', {
+          method: 'release',
+          leaseId: 'lease-1'
+        })
+        expect(completed).toHaveBeenCalledWith(
+          kind === 'record'
+            ? RECORD
+            : kind === 'message'
+              ? message
+              : expect.objectContaining({ messages: [message] })
+        )
+      } finally {
+        // A late cleanup failure is handled even after its consumer has the data.
+        rejectRelease(new Error('late cleanup failure'))
+        await vi.advanceTimersByTimeAsync(0)
+        vi.useRealTimers()
+      }
+    }
+  )
+
   it('returns the record even when releasing its lease rejects', async () => {
     const invoke = makeInvoke({
       'thread-catalogue:read': (q: { method: string }) => {
@@ -98,7 +173,7 @@ describe('one thread’s run history never blanks every other thread’s', () =>
   })
 
   /** `bad` is the chat whose run-summary read fails; `good` always succeeds. */
-  const invokeWith = (badPage: unknown) => {
+  const invokeWith = (badPage: unknown, release?: Promise<unknown>) => {
     const served = new Set<string>()
     return makeInvoke({
       'thread-catalogue:read': (q: any) => {
@@ -110,9 +185,8 @@ describe('one thread’s run history never blanks every other thread’s', () =>
               next: null
             }
           }
-        if (q.method === 'open')
-          return { available: true, data: { leaseId: `lease-${q.chatId}` } }
-        if (q.method === 'release') return { available: true, data: null }
+        if (q.method === 'open') return { available: true, data: { leaseId: `lease-${q.chatId}` } }
+        if (q.method === 'release') return release ?? { available: true, data: null }
         if (q.method === 'objects') {
           if (q.leaseId === 'lease-bad') return { available: true, data: badPage }
           if (served.has(q.leaseId)) return { available: true, data: [] }
@@ -127,6 +201,30 @@ describe('one thread’s run history never blanks every other thread’s', () =>
       'get-chat-list': () => [{ appChatId: 'FALLBACK' }]
     })
   }
+
+  it('continues reading the next thread while prior cleanup is pending', async () => {
+    vi.useFakeTimers()
+    let finishRelease!: (value: unknown) => void
+    const release = new Promise((resolve) => {
+      finishRelease = resolve
+    })
+    const completed = vi.fn()
+    const invoke = invokeWith([], release)
+    try {
+      void createThreadCatalogueReads(invoke).getChatRunSummaries().then(completed)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(completed).toHaveBeenCalledWith([
+        expect.objectContaining({ appChatId: 'good', runsSummary: [{ runId: 'r1' }] }),
+        expect.objectContaining({ appChatId: 'bad', runsSummary: [] })
+      ])
+      const releases = invoke.mock.calls.filter(([, query]) => query.method === 'release')
+      expect(releases).toHaveLength(2)
+    } finally {
+      finishRelease({ available: true, data: null })
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
 
   // Both of these threw out of getChatRunSummaries with only a `finally` to
   // catch them, so a single unreadable thread rejected the entire runs list and
