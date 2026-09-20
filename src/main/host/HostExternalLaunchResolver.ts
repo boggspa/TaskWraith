@@ -102,7 +102,9 @@ export async function resolveHostExternalLaunch(
   return {
     executable,
     args: hostArgs(cli, profile),
-    cwd: api.dirname(cli),
+    // The detached Host survives app updates, which can replace the payload
+    // directory underneath it. userData is already a canonical durable root.
+    cwd: profile,
     env: environment,
     payloadVersion
   }
