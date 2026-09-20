@@ -74,6 +74,7 @@
     "perf:baseline:dry": "node scripts/perf/runBaseline.cjs --dry-run --workload=30seat",
     "perf:t2:smoke-plan": "node scripts/perf/runT2Baseline.cjs --smoke-plan --workload=dual_run --scale-down=40",
     "perf:t2:dry": "node scripts/perf/runT2Baseline.cjs --dry-run --workload=dual_run --lean --scale-down=40",
+    "perf:t2:matrix:dry": "node scripts/perf/runT2Matrix.cjs --dry-run",
     "perf:test": "vitest run scripts/perf/perfHarness.test.ts",
     "test:composer-ghost-layout": "node scripts/perf/composerGhostLayoutProbe.cjs",
     "acceptance:studio": "node scripts/studio-acceptance-harness.cjs --pretty",
