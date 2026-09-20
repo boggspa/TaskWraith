@@ -421,15 +421,7 @@ export class ChatUpdateInterestRuntime {
     const state = this.getState()
     const chatId = invalidation.chatId
     const baseline = this.pageReadBaselines.get(page)
-    // A completed read may be useful even while newer invalidations arrive,
-    // but must never roll back a tail push or a history navigation that has
-    // already changed the visible window since the request began.
-    if (
-      !baseline ||
-      baseline.windowGeneration !== state.hydrationRuntime.transcriptStore.generation(chatId)
-    ) {
-      return false
-    }
+    if (!baseline) return false
     const current =
       state.chatByIdRef.current.get(chatId) ||
       (state.currentChat?.appChatId === chatId ? state.currentChat : null)
@@ -442,11 +434,22 @@ export class ChatUpdateInterestRuntime {
       (!current && state.isChatPopoutWindow && state.chatPopoutChatId === chatId) ||
       (current && isChatSummaryRecord(current) && shouldPageTranscriptOnOpen(current))
     )
-    if ((!alreadyPaged && !awaitingFirstPage) || !this.visiblePagedChatCanRefresh(chatId)) {
+    if (!alreadyPaged && !awaitingFirstPage) {
       this.deferredPagedInvalidations.set(chatId, invalidation)
       return false
     }
     if (!page.shell || !isTranscriptPagedShell(page.shell) || page.shell.appChatId !== chatId) {
+      return false
+    }
+    // A newer shell may have arrived through another hydration/mutation while
+    // this read was pending. Compare like revisions; legacy shells use time.
+    if (
+      current &&
+      (typeof current.persistenceRevision === 'number' &&
+      typeof page.shell.persistenceRevision === 'number'
+        ? page.shell.persistenceRevision < current.persistenceRevision
+        : page.shell.updatedAt < current.updatedAt)
+    ) {
       return false
     }
 
@@ -468,6 +471,17 @@ export class ChatUpdateInterestRuntime {
     // Presentation arrays live only in the transcript store. The marked shell
     // remains empty and can never be mistaken for a saveable ChatRecord.
     const store = state.hydrationRuntime.transcriptStore
+    const canRefreshWindow = this.visiblePagedChatCanRefresh(chatId)
+    if (baseline.windowGeneration !== store.generation(chatId) || !canRefreshWindow) {
+      // Streamed rows and history navigation fence the transcript, not its
+      // independent run/seat metadata. Rejecting both can freeze the Working
+      // indicator for an entire stream, including an old run's elapsed time.
+      if (alreadyPaged) this.replaceChatRecord(committed)
+      if (!canRefreshWindow) this.deferredPagedInvalidations.set(chatId, invalidation)
+      // Keep the page retry outstanding: publishing chrome does not prove the
+      // missing transcript rows or the watchdog's announcements were covered.
+      return false
+    }
     const refreshed =
       alreadyPaged && !this.visiblePagedChatFollowsLatest(chatId)
         ? store.refreshChatTranscriptTailPage(page)

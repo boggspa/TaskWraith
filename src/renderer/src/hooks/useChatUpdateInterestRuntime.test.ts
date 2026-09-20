@@ -12,6 +12,7 @@ import type {
 } from '../../../shared/transcriptPage'
 import { createChatHydrationRuntime } from '../lib/chatHydrationRuntime'
 import { isChatSummaryRecord } from '../lib/chatRecordMerge'
+import { deriveActiveEnsembleWorkingPresentation } from '../lib/workingIndicatorPresentation'
 import {
   buildTranscriptTailResync,
   buildTranscriptTailUpdate,
@@ -341,6 +342,68 @@ describe('paged refresh progress during an active stream', () => {
     const selected = store.ingestPage(older)
     replies[0](page('large', 2_001))
     await vi.advanceTimersByTimeAsync(0)
+    expect(store.get('large')).toBe(selected)
+    runtime.stop()
+  })
+
+  it('publishes restarted seat metadata even when a tail push supersedes the page rows', async () => {
+    const { runtime, harness, store, replies, invalidate, push } = liveRefreshHarness()
+    invalidate(2_001)
+    await vi.advanceTimersByTimeAsync(50)
+    const row = { ...store.get('large')!.messages[0], content: 'newer streamed text' }
+    push(
+      buildTranscriptTailUpdate({
+        chatId: 'large',
+        sequence: 1,
+        messageCount: 2_000,
+        rows: [{ index: 1_999, message: row }],
+        appendedAtMs: Date.now()
+      })!
+    )
+    const pushed = store.get('large')
+    const refreshed = page('large', 2_001)
+    refreshed.shell!.chatKind = 'ensemble'
+    refreshed.shell!.ensemble = {
+      participants: [{ id: 'seat-1', provider: 'codex', role: 'Boss', model: 'gpt-6-astra' }],
+      activeRound: {
+        roundId: 'restarted-round',
+        status: 'running',
+        activeParticipantId: 'seat-1',
+        startedAt: '2026-09-20T20:06:08.000Z',
+        participants: [
+          {
+            participantId: 'seat-1',
+            provider: 'codex',
+            role: 'Boss',
+            status: 'running',
+            runId: 'fresh-run',
+            startedAt: '2026-09-20T20:06:15.000Z'
+          }
+        ]
+      }
+    } as unknown as ChatRecord['ensemble']
+    replies[0](refreshed)
+    await vi.advanceTimersByTimeAsync(20)
+    expect(store.get('large')).toBe(pushed)
+    expect(deriveActiveEnsembleWorkingPresentation(harness.getState().currentChat)).toMatchObject({
+      participantId: 'seat-1',
+      roleLabel: 'Boss',
+      runId: 'fresh-run',
+      startedAt: '2026-09-20T20:06:15.000Z'
+    })
+    runtime.stop()
+  })
+
+  it('cannot roll newer chrome back when an older page finishes after navigation', async () => {
+    const { runtime, harness, store, replies, invalidate } = liveRefreshHarness()
+    invalidate(2_001)
+    await vi.advanceTimersByTimeAsync(50)
+    const newer = { ...page('large', 2_002).shell!, title: 'newer canonical title' }
+    harness.chatByIdRef.current.set('large', newer)
+    const selected = store.ingestPage({ ...page('large', 50), hasNewer: true })
+    replies[0](page('large', 2_001))
+    await vi.advanceTimersByTimeAsync(20)
+    expect(harness.chatByIdRef.current.get('large')).toBe(newer)
     expect(store.get('large')).toBe(selected)
     runtime.stop()
   })
