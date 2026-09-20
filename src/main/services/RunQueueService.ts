@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto'
 import { normalizeDiscordContextSelection } from '../channels/DiscordContextService'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
+import { resolveHostCommandActionId } from '../host/HostCommandIdentity'
 import type { RunQueueJobInput } from '../RunQueue'
 import type { RunSession } from '../RunManager'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
@@ -249,6 +250,8 @@ export interface RunQueuePrepareOptions {
     ownerToken: string
     queueMessageId: string
   }
+  /** Main-only Host receipt correlation; never read from the renderer request. */
+  readonly hostCommandActionId?: string
 }
 
 export type RunQueueAttachmentStageResult =
@@ -371,7 +374,8 @@ export class RunQueueService {
       input,
       options.authorizedFilePaths,
       options.authorizedDirectoryPickerPaths,
-      options.executionGraph
+      options.executionGraph,
+      options.hostCommandActionId
     )
   }
 
@@ -629,7 +633,8 @@ export class RunQueueService {
     value: unknown,
     authorizedFilePaths?: string[],
     authorizedDirectoryPickerPaths?: string[],
-    executionGraph?: ExecutionGraphQueueBinding
+    executionGraph?: ExecutionGraphQueueBinding,
+    trustedHostCommandActionId?: string
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
     const record = requireRecord(value, 'Run queue request')
     const provider = assertRunnableProviderId(record.provider)
@@ -688,6 +693,7 @@ export class RunQueueService {
       chatId,
       workspaceId,
       workspacePath,
+      hostCommandActionId: resolveHostCommandActionId(trustedHostCommandActionId),
       ...(authorizedFilePaths ? { authorizedFilePaths } : {}),
       ...(authorizedDirectoryPickerPaths ? { authorizedDirectoryPickerPaths } : {})
     })
@@ -746,6 +752,7 @@ export class RunQueueService {
       workspaceId?: string
       workspacePath?: string
       authorizedFilePaths?: string[]
+      hostCommandActionId?: string
     }
   ): { request: RunQueueRequestSnapshot; attachmentError?: string } | undefined {
     if (!isRecord(value)) return undefined
@@ -847,7 +854,7 @@ export class RunQueueService {
         guestParentChatId: optionalString(value.guestParentChatId),
         guestRole: optionalString(value.guestRole),
         remoteComposer: isRecord(value.remoteComposer)
-          ? sanitizeRemoteComposer(value.remoteComposer)
+          ? sanitizeRemoteComposer(value.remoteComposer, context.hostCommandActionId)
           : undefined,
         claudeFastMode:
           typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
@@ -1130,7 +1137,8 @@ function sanitizeWorkspaceGeminiWorktree(
 }
 
 function sanitizeRemoteComposer(
-  value: unknown
+  value: unknown,
+  hostCommandActionId?: string
 ): RunQueueRequestSnapshot['remoteComposer'] | undefined {
   if (!isRecord(value)) return undefined
   const approvalMode = optionalString(value.approvalMode)
@@ -1154,6 +1162,7 @@ function sanitizeRemoteComposer(
     threadId: optionalString(value.threadId) || '',
     provider: optionalString(value.provider) || 'gemini',
     text: optionalString(value.text) || '',
+    ...(hostCommandActionId ? { hostCommandActionId } : {}),
     ...(approvalMode ? { approvalMode } : {}),
     ...(workflowMode ? { workflowMode } : {}),
     ...(permissionPresetId ? { permissionPresetId } : {}),

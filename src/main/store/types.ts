@@ -6523,6 +6523,11 @@ export interface RunQueueRequestSnapshot {
     threadId: string
     provider: string
     text: string
+    /**
+     * Main/Host-stamped correlation for the original Host receipt. This is
+     * durable queue metadata only and is never reused as a Bridge dispatch id.
+     */
+    readonly hostCommandActionId?: string
     approvalMode?: string
     workflowMode?: ChatWorkflowMode
     permissionPresetId?: string
@@ -6585,6 +6590,7 @@ export interface RunQueueDispatchReceipt {
   remoteComposer?: {
     workspaceId?: string
     threadId?: string
+    hostCommandActionId?: string
     provider?: string
     approvalMode?: string
     workflowMode?: ChatWorkflowMode

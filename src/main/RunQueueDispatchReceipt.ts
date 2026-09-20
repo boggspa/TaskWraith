@@ -20,6 +20,7 @@ export function buildRunQueueDispatchReceipt(
     ? {
         workspaceId: optionalString(remoteComposer.workspaceId),
         threadId: optionalString(remoteComposer.threadId),
+        hostCommandActionId: optionalString(remoteComposer.hostCommandActionId),
         provider: optionalString(remoteComposer.provider),
         approvalMode: optionalString(remoteComposer.approvalMode),
         workflowMode: remoteComposer.workflowMode
@@ -72,6 +73,16 @@ export function buildRunQueueDispatchReceipt(
     ...body,
     receiptHash: hashStableJson(body)
   }
+}
+
+/**
+ * Verifies that a persisted receipt still binds the exact queue request.
+ * Legacy jobs without a receipt remain a caller policy decision.
+ */
+export function runQueueDispatchReceiptIsExact(job: RunQueueDispatchReceiptInput): boolean {
+  const actual = job.dispatchReceipt
+  if (!actual) return false
+  return stableJson(actual) === stableJson(buildRunQueueDispatchReceipt(job, actual.generatedAt))
 }
 
 function optionalString(value: unknown): string | undefined {

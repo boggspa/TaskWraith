@@ -1,4 +1,6 @@
 import type { BridgeComposerPromptAction } from '../BridgeActionPayload'
+import { resolveHostCommandActionId } from '../host/HostCommandIdentity'
+import { runQueueDispatchReceiptIsExact } from '../RunQueueDispatchReceipt'
 import type { AllowlistDecision, PrepareStartTurnEvaluation } from '../RemoteWorkspaceAllowlist'
 import type { RunQueueJob, RunQueueJobStatus } from '../store/types'
 
@@ -18,6 +20,11 @@ export interface RemoteComposerQueueDispatchActionContract {
    * share the same run identity for lifecycle mapping.
    */
   appRunId: string
+  /**
+   * Original Host receipt correlation, kept separate from the fresh Bridge
+   * dispatch action id used by the queue flush.
+   */
+  hostCommandActionId?: string
   /**
    * Original provenance; remote composer queue jobs must remain 'remote' so
    * downstream projection and policy checks can inspect source.
@@ -77,7 +84,16 @@ export function buildRemoteComposerQueueDispatchAction(
   job: RunQueueJob
 ): RemoteComposerQueueDispatchActionContract | null {
   if (job.source !== 'remote' || !job.request?.remoteComposer) return null
+  if (job.status !== 'queued' && job.status !== 'starting') return null
   const remote = job.request.remoteComposer
+  const rawHostCommandActionId = remote.hostCommandActionId
+  const hostCommandActionId = resolveHostCommandActionId(rawHostCommandActionId)
+  if (
+    rawHostCommandActionId !== undefined &&
+    (!hostCommandActionId || !runQueueDispatchReceiptIsExact(job))
+  ) {
+    return null
+  }
   const frozenPreset = job.permissionPosture?.presetId
   const dispatchPermissionPresetId =
     frozenPreset === 'full_access' || frozenPreset === 'workspace_write'
@@ -88,6 +104,7 @@ export function buildRemoteComposerQueueDispatchAction(
   return {
     queueRunId: job.runId,
     appRunId: job.runId,
+    ...(hostCommandActionId ? { hostCommandActionId } : {}),
     source: 'remote',
     action: {
       kind: 'composerPrompt',

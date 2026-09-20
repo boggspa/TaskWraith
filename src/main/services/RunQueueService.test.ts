@@ -22,6 +22,11 @@ import {
 } from '../executionGraph/ExecutionGraphPermissionAuthority'
 import { executionGraphRunTemplatePermissionCeilingDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type { JsonObject } from '../executionGraph/ExecutionGraphModel'
+import {
+  buildRunQueueDispatchReceipt,
+  runQueueDispatchReceiptIsExact
+} from '../RunQueueDispatchReceipt'
+import { buildRemoteComposerQueueDispatchAction } from './RemoteComposerQueueService'
 import type {
   AppSettings,
   ChatRecord,
@@ -31,6 +36,9 @@ import type {
   RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
+
+const HOST_ACTION_ID_A = 'host:command:11111111-1111-4111-8111-111111111111'
+const HOST_ACTION_ID_B = 'host:command:22222222-2222-4222-8222-222222222222'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -1159,32 +1167,38 @@ describe('RunQueueService', () => {
     )
   })
 
-  it('preserves remote source and remoteComposer snapshot fields', () => {
+  it('preserves a trusted Host correlation through queue persistence and restart hydration', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
-    service.requestJob({
-      runId: 'remote-run',
-      provider: 'codex',
-      workspacePath: '/input',
-      chatId: 'chat-1',
-      source: 'remote',
-      request: {
-        prompt: 'From device',
-        workflowMode: 'plan',
-        remoteComposer: {
-          workspaceId: 'workspace-1',
-          threadId: 'thread-2',
-          provider: 'codex',
-          text: 'From paired device',
-          approvalMode: 'default',
+    const queued = service.requestJob(
+      {
+        runId: 'remote-run',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From device',
           workflowMode: 'plan',
-          permissionPresetId: 'full_access',
-          model: 'opus',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From paired device',
+            approvalMode: 'default',
+            workflowMode: 'plan',
+            permissionPresetId: 'full_access',
+            model: 'opus',
+            hostCommandActionId: HOST_ACTION_ID_B,
+            scheduledRunAt: '2026-07-08T21:15:00.000Z'
+          },
           scheduledRunAt: '2026-07-08T21:15:00.000Z'
-        },
-        scheduledRunAt: '2026-07-08T21:15:00.000Z'
+        }
+      },
+      {
+        hostCommandActionId: HOST_ACTION_ID_A
       }
-    })
+    )
     expect(repository.saveRunQueueJob).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: 'remote-run',
@@ -1200,12 +1214,102 @@ describe('RunQueueService', () => {
             workflowMode: 'plan',
             permissionPresetId: 'full_access',
             model: 'opus',
+            hostCommandActionId: HOST_ACTION_ID_A,
             scheduledRunAt: '2026-07-08T21:15:00.000Z'
           },
           scheduledRunAt: '2026-07-08T21:15:00.000Z'
         })
       })
     )
+    expect(queued.dispatchReceipt?.remoteComposer?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(runQueueDispatchReceiptIsExact(queued)).toBe(true)
+
+    const restartedRepository = makeRepository({
+      getRunQueueJobs: vi.fn(() => [queued])
+    })
+    const restarted = new RunQueueService({
+      ...deps,
+      getRunRepository: () => restartedRepository
+    }).getJobs({ includeTerminal: true })
+    expect(restarted[0].request?.remoteComposer?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    const dispatch = buildRemoteComposerQueueDispatchAction(restarted[0])
+    expect(dispatch?.hostCommandActionId).toBe(HOST_ACTION_ID_A)
+    expect(dispatch?.action).not.toHaveProperty('actionId')
+  })
+
+  it.each([
+    undefined,
+    '',
+    'phone:action:1',
+    'host:command:not-a-uuid',
+    'host:command:' + 'a'.repeat(300),
+    'host:command:11111111-1111-4111-8111-111111111111:extra',
+    'host:command:AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA'
+  ])('strips untrusted or invalid Host correlation %#', (hostCommandActionId) => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const prepared = service.prepareJob(
+      {
+        runId: 'remote-invalid-correlation',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From device',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From paired device',
+            hostCommandActionId: HOST_ACTION_ID_A
+          }
+        }
+      },
+      hostCommandActionId === undefined ? {} : { hostCommandActionId }
+    )
+    expect(prepared.request?.remoteComposer).not.toHaveProperty('hostCommandActionId')
+  })
+
+  it('binds Host correlation into the dispatch receipt and rejects a swapped value', () => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const prepared = service.prepareJob(
+      {
+        runId: 'remote-receipt-binding',
+        provider: 'codex',
+        workspacePath: '/input',
+        chatId: 'chat-1',
+        source: 'remote',
+        request: {
+          prompt: 'From Host',
+          remoteComposer: {
+            workspaceId: 'workspace-1',
+            threadId: 'thread-2',
+            provider: 'codex',
+            text: 'From Host'
+          }
+        }
+      },
+      { hostCommandActionId: HOST_ACTION_ID_A }
+    )
+    const receiptA = buildRunQueueDispatchReceipt(prepared, '2026-09-20T00:00:00.000Z')
+    const swapped = {
+      ...prepared,
+      request: {
+        ...prepared.request!,
+        remoteComposer: {
+          ...prepared.request!.remoteComposer!,
+          hostCommandActionId: HOST_ACTION_ID_B
+        }
+      },
+      dispatchReceipt: receiptA
+    }
+    const receiptB = buildRunQueueDispatchReceipt(swapped, receiptA.generatedAt)
+
+    expect(receiptA.receiptHash).not.toBe(receiptB.receiptHash)
+    expect(runQueueDispatchReceiptIsExact({ ...prepared, dispatchReceipt: receiptA })).toBe(true)
+    expect(runQueueDispatchReceiptIsExact(swapped)).toBe(false)
   })
 
   it('rejects invalid request objects before persisting', () => {
