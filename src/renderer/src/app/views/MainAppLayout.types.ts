@@ -2,6 +2,7 @@ import type { ComponentProps, Dispatch, SetStateAction } from 'react'
 import type { AppSettings } from '../../../../main/store/types'
 import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
+import type { SelectedChatHydrationState } from '../../lib/SelectedChatHydrationRecovery'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
 import type {
   RightDockCanvasSurface,
@@ -510,6 +511,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   roundFileChangeSummaries: any
   runCompleteDurationText: any
   runCompleteNotice: any
+  selectedChatHydrationState: SelectedChatHydrationState | null
+  retrySelectedChatHydration: () => void
   runDiff: any
   runFxStatus: any
   runPreviewTargetAction: any

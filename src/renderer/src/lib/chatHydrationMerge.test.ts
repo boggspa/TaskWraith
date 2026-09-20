@@ -99,7 +99,7 @@ describe('resolveChatHydration', () => {
     // the slice silently runs to EOF, so the assertions below judge the whole
     // rest of App.tsx instead of the after-paint helper (this happened when
     // PROVIDER_SCOPED_COMPOSER_METADATA_KEYS moved out of App.tsx).
-    const selectedStart = source.indexOf('const hydrateSelectedChatAfterPaint =')
+    const selectedStart = source.indexOf('const selectedChatHydration =')
     const selectedEnd = source.indexOf('const rememberChatComposerSelectionById =')
     expect(selectedStart).toBeGreaterThanOrEqual(0)
     expect(selectedEnd).toBeGreaterThan(selectedStart)
@@ -108,7 +108,8 @@ describe('resolveChatHydration', () => {
     expect(refresh).toContain('const localAtRequestStart =')
     expect(refresh).toContain('applyHydratedChat(hydrated, { localAtRequestStart })')
     expect(refresh).toContain('requestPool.run(chatId, async () =>')
-    expect(selected).toContain('refreshSingleChat(chat.appChatId)')
+    expect(selected).toContain('useSelectedChatHydrationRecovery(currentChat,')
+    expect(selected).toContain('refreshSingleChat(chatId)')
     expect(selected).not.toContain('window.api.getChat')
     expect(selected).not.toContain('applyHydratedChat')
     expect(selected).not.toContain('setCurrentChat(hydrated)')

@@ -101,6 +101,7 @@ import {
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
 import { WelcomeHeatmaps } from '../../components/WelcomeHeatmaps'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
+import { TranscriptHydrationNotice } from '../../components/TranscriptHydrationNotice'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
 import { ThreadHomeWorkspace, type ThreadHomeWorkspaceHandle } from '../../components/ThreadHome'
 import { resolvePrimaryPaneIndex } from '../../lib/multiviewPrimaryPane'
@@ -438,6 +439,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     rightTab,
     roundFileChangeSummaries,
     runCompleteDurationText,
+    selectedChatHydrationState,
+    retrySelectedChatHydration,
     runDiff,
     runFxStatus,
     runPreviewTargetAction,
@@ -2348,6 +2351,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                           onNext={() => selectThreadSearchMatch(activeThreadSearchIndex + 1)}
                           onPrevious={() => selectThreadSearchMatch(activeThreadSearchIndex - 1)}
                           onClose={closeThreadSearch}
+                        />
+                        <TranscriptHydrationNotice
+                          state={selectedChatHydrationState}
+                          onRetry={retrySelectedChatHydration}
                         />
                         <TranscriptPanel
                           key={isWelcomeChat ? 'welcome' : 'transcript'}

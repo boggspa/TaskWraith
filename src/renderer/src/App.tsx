@@ -793,7 +793,6 @@ import {
   compactShortcutHint,
   hasGitSnapshotSubscriptionApi,
   runIdFromStreamFlushItemKey,
-  scheduleAfterNextPaint,
   scheduleAfterPaint,
   streamFlushItemKey
 } from './app/appScheduleAndCopyHelpers'
@@ -1074,6 +1073,7 @@ import {
   useMultiviewState
 } from './hooks/useMultiviewState'
 import { useChatSurfaceHydration } from './hooks/useChatSurfaceHydration'
+import { useSelectedChatHydrationRecovery } from './hooks/useSelectedChatHydrationRecovery'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
 import { tryCommitEnsembleSeatPatch } from './lib/ensembleSeatPatchCommit'
@@ -6769,44 +6769,54 @@ function App(): React.JSX.Element {
     }
   }
 
-  const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
-    if (!isChatSummaryRecord(chat)) return
-    const transcriptStore = chatHydrationRuntime.transcriptStore
-    // Already paged-hydrated: re-selecting the same shell must not refetch.
-    if (isTranscriptPagedShell(chat) && transcriptStore.isPaged(chat.appChatId)) return
-    scheduleAfterNextPaint(() => {
-      // Stage 1b: oversized transcripts open as shell + tail page; anything
-      // smaller hydrates in full exactly as before (the tail page IS the
-      // whole transcript there). A missing page falls back to full hydration.
-      void (
-        shouldPageTranscriptOnOpen(chat)
-          ? hydratePagedChatShell(chat.appChatId, chat)
-              // Paging is an optimisation, never a correctness gate. Only a
-              // RESOLVED null escalated; a rejection fell through to the outer
-              // .catch and left the transcript blank forever. Every other chat
-              // surface already catches here (chatSurfacePagedHydration.ts).
-              .catch(() => null)
-              .then((paged) =>
-                paged
-                  ? applyPagedHydratedChat(paged.shell, paged.page)
-                  : refreshSingleChat(chat.appChatId)
-              )
-          : refreshSingleChat(chat.appChatId)
-      )
-        .then((resolved) => {
-          if (!resolved || currentChatIdRef.current !== resolved.appChatId) return
-          const provider = getChatProvider(resolved)
-          startTransition(() => {
-            applyChatComposerSelection(resolved, provider)
-            setRunCompleteNotice(
-              deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
+  const selectedChatHydration = useSelectedChatHydrationRecovery(currentChat, {
+    needsHydration: (chatId) => {
+      if (currentChatIdRef.current !== chatId || clearedChatIdsRef.current.has(chatId)) return false
+      const chat = chatByIdRef.current.get(chatId)
+      return Boolean(chat && !isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore))
+    },
+    subscribe: (chatId, listener) =>
+      chatHydrationRuntime.transcriptStore.subscribe(chatId, listener),
+    hydrate: async (chatId) => {
+      const chat = chatByIdRef.current.get(chatId)
+      if (
+        !chat ||
+        !isChatSummaryRecord(chat) ||
+        isSurfaceChatHydrated(chat, chatHydrationRuntime.transcriptStore)
+      ) {
+        return chat ?? null
+      }
+      // Retry the same paged/full chain. A slow successful read has no deadline;
+      // only a rejection or missing result consumes the bounded retry budget.
+      const resolved = await (shouldPageTranscriptOnOpen(chat)
+        ? hydratePagedChatShell(chatId, chat)
+            .catch(() => null)
+            .then((paged) =>
+              paged ? applyPagedHydratedChat(paged.shell, paged.page) : refreshSingleChat(chatId)
             )
-            setRawLogs(rawLogSnapshotForChat(resolved.appChatId))
-            syncThinkingForChat(resolved)
-          })
-        })
-        .catch(() => {})
-    })
+        : refreshSingleChat(chatId))
+      if (
+        !resolved ||
+        currentChatIdRef.current !== chatId ||
+        clearedChatIdsRef.current.has(chatId)
+      ) {
+        return resolved
+      }
+      const provider = getChatProvider(resolved)
+      startTransition(() => {
+        applyChatComposerSelection(resolved, provider)
+        setRunCompleteNotice(
+          deriveChatRunCompleteNotice(resolved, runningChatIds.has(resolved.appChatId))
+        )
+        setRawLogs(rawLogSnapshotForChat(resolved.appChatId))
+        syncThinkingForChat(resolved)
+      })
+      return resolved
+    }
+  })
+
+  const hydrateSelectedChatAfterPaint = (chat: ChatRecord) => {
+    selectedChatHydration.select(chat.appChatId)
   }
 
   const rememberChatComposerSelectionById = (chatId: string, patch: Record<string, unknown>) => {
@@ -32566,6 +32576,8 @@ function App(): React.JSX.Element {
     roundFileChangeSummaries: completionRoundFileChangeSummaries,
     runCompleteDurationText,
     runCompleteNotice,
+    selectedChatHydrationState: selectedChatHydration.state,
+    retrySelectedChatHydration: selectedChatHydration.retry,
     runDiff,
     runFxStatus,
     runPreviewTargetAction,
