@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
-import { promises as fs } from 'node:fs'
+import { promises as fs, type BigIntStats } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { devNull } from 'node:os'
 
@@ -15,6 +15,11 @@ import {
   withSharedWorkspaceOperation,
   type SharedWorkspaceActor
 } from './SharedWorkspaceSession'
+import {
+  sameSharedWorkspaceRecordFileIdentity,
+  SharedWorkspaceRecordCache,
+  type SharedWorkspaceRecordFileIdentity
+} from './SharedWorkspaceRecordCache'
 
 const MAX_BYTES = 5 * 1024 * 1024
 
@@ -26,6 +31,7 @@ const MAX_BYTES = 5 * 1024 * 1024
  */
 export const SHARED_WORKSPACE_MAX_CAPTURE_BYTES = MAX_BYTES
 const MAX_RECORDS = 2000
+const MAX_RECORD_FILE_BYTES = 32_768
 const LEASE_MS = 20 * 60 * 1000
 const HASH = /^[a-f0-9]{64}$/
 const OID = /^[a-f0-9]{40}(?:[a-f0-9]{24})?$/
@@ -58,6 +64,8 @@ interface JournalEntry {
   record: EditRecord
   state: 'prepared' | 'applied' | 'settled' | 'aborted'
 }
+
+const preparedRecordCache = new SharedWorkspaceRecordCache<EditRecord>()
 
 export interface SharedWorkspaceEditReceipt {
   intentClaim: boolean
@@ -631,7 +639,15 @@ async function readEntries(
   const activeRecords = rootNames.filter((name) =>
     /^[a-f0-9]{64}\.[a-f0-9-]{36}\.active$/.test(name)
   )
-  const activeActors = new Set(activeRecords.map((name) => name.slice(0, 64)))
+  const activeRecordIdsByActor = new Map<string, Set<string>>()
+  for (const name of activeRecords) {
+    const contributionId = name.slice(0, 64)
+    const recordId = name.slice(65, 101)
+    const ids = activeRecordIdsByActor.get(contributionId) || new Set<string>()
+    ids.add(recordId)
+    activeRecordIdsByActor.set(contributionId, ids)
+  }
+  const activeActors = new Set(activeRecordIdsByActor.keys())
   const directories = onlyId ? [onlyId] : rootNames.filter((n) => HASH.test(n))
   const entries: JournalEntry[] = []
   let incomplete = false
@@ -656,39 +672,21 @@ async function readEntries(
       /* A missing/stale summary cannot hide new work. */
     }
     const names = await readDirectory(directory)
+    const present = new Set(names)
+    const activeRecordIds = activeRecordIdsByActor.get(contributionId)
+    if (activeRecordIds && [...activeRecordIds].some((id) => !present.has(`${id}.prepared.json`)))
+      incomplete = true
     if (!names.length) continue
     if (++activeDirectories > 256) {
       incomplete = true
       break
     }
     const prepared = names.filter((n) => /^[a-f0-9-]{36}\.prepared\.json$/.test(n)).sort()
-    const present = new Set(names)
-    if (
-      activeRecords.some(
-        (name) =>
-          name.startsWith(`${contributionId}.`) &&
-          !present.has(`${name.slice(65, 101)}.prepared.json`)
-      )
-    )
-      incomplete = true
     if (prepared.length + entries.length > MAX_RECORDS) incomplete = true
     for (const name of prepared.slice(0, Math.max(0, MAX_RECORDS - entries.length))) {
       const path = join(directory, name)
       try {
-        const stat = await fs.lstat(path)
-        if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 32768) {
-          incomplete = true
-          continue
-        }
-        const record = JSON.parse(await fs.readFile(path, 'utf8')) as EditRecord
-        if (
-          !validRecord(record) ||
-          record.contributionId !== contributionId ||
-          name !== `${record.id}.prepared.json`
-        ) {
-          incomplete = true
-          continue
-        }
+        const record = await readPreparedRecord(path, contributionId, name)
         const state = present.has(`${record.id}.settled.json`)
           ? 'settled'
           : present.has(`${record.id}.aborted.json`)
@@ -703,6 +701,61 @@ async function readEntries(
     }
   }
   return { entries, truncated: incomplete }
+}
+
+async function readPreparedRecord(
+  preparedPath: string,
+  contributionId: string,
+  name: string
+): Promise<EditRecord> {
+  const before = await fs.lstat(preparedPath, { bigint: true })
+  assertPreparedRecordStat(before)
+  const beforeIdentity = preparedRecordIdentity(before)
+  const cached = preparedRecordCache.get(preparedPath, beforeIdentity)
+  if (cached) {
+    assertPreparedRecord(cached, contributionId, name)
+    return cached
+  }
+
+  const body = await fs.readFile(preparedPath, 'utf8')
+  const after = await fs.lstat(preparedPath, { bigint: true })
+  assertPreparedRecordStat(after)
+  const afterIdentity = preparedRecordIdentity(after)
+  if (!sameSharedWorkspaceRecordFileIdentity(beforeIdentity, afterIdentity)) {
+    preparedRecordCache.delete(preparedPath)
+    throw new Error('Contribution record changed while it was read.')
+  }
+  const record = JSON.parse(body) as EditRecord
+  assertPreparedRecord(record, contributionId, name)
+  preparedRecordCache.set(preparedPath, afterIdentity, Buffer.byteLength(body), record)
+  return record
+}
+
+function assertPreparedRecordStat(stat: BigIntStats): void {
+  if (!stat.isFile() || stat.isSymbolicLink() || stat.size > BigInt(MAX_RECORD_FILE_BYTES)) {
+    throw new Error('Contribution record is not a bounded regular file.')
+  }
+}
+
+function preparedRecordIdentity(stat: BigIntStats): SharedWorkspaceRecordFileIdentity {
+  return {
+    dev: stat.dev,
+    ino: stat.ino,
+    size: stat.size,
+    mtimeNs: stat.mtimeNs,
+    ctimeNs: stat.ctimeNs,
+    mode: stat.mode
+  }
+}
+
+function assertPreparedRecord(record: EditRecord, contributionId: string, name: string): void {
+  if (
+    !validRecord(record) ||
+    record.contributionId !== contributionId ||
+    name !== `${record.id}.prepared.json`
+  ) {
+    throw new Error('Contribution record is invalid.')
+  }
 }
 
 async function directoryVersion(path: string): Promise<string | null> {

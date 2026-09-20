@@ -25,6 +25,7 @@ import {
 const roots: string[] = []
 const runtimes: WorkspaceLockRuntime[] = []
 afterEach(() => {
+  vi.restoreAllMocks()
   vi.unstubAllEnvs()
   for (const runtime of runtimes.splice(0)) runtime.dispose()
   for (const root of roots.splice(0)) fs.rmSync(root, { recursive: true, force: true })
@@ -113,6 +114,25 @@ async function edit(root: string, chat: string, file: string, content: string, p
     () => writeScopedUtf8FileWithLegacyCreate(authority, { maxBytes: 100000, content }),
     provider
   )
+}
+
+function journalDirectory(root: string): string {
+  const worktreeId = createHash('sha256').update(root).digest('hex')
+  return path.join(root, '.git', 'taskwraith', 'shared-workspace-v1', worktreeId)
+}
+
+function preparedRecordPath(
+  root: string,
+  preview: Awaited<ReturnType<typeof previewSharedWorkspaceContribution>>
+): string {
+  return path.join(journalDirectory(root), preview.id, `${preview.recordIds[0]}.prepared.json`)
+}
+
+function preparedBodyReadCount(
+  readFile: { mock: { calls: unknown[][] } },
+  recordPath: string
+): number {
+  return readFile.mock.calls.filter(([candidate]) => String(candidate) === recordPath).length
 }
 
 function executorDependencies(): WorkspaceToolExecutorDependencies {
@@ -503,6 +523,140 @@ describe('shared workspace contribution workflow', () => {
     ).rejects.toThrow('after this contribution')
     expect(fs.readFileSync(path.join(root, 'source.txt'), 'utf8')).toContain('later peer')
     expect(git(root, 'log', '-1', '--format=%s')).toBe('initial')
+  })
+
+  it('reuses validated prepared bodies for full and contribution-only scans', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'cached body\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+
+    expect((await listSharedWorkspaceContributions(root)).contributions).toHaveLength(1)
+    expect((await previewSharedWorkspaceContribution(root, preview.id)).id).toBe(preview.id)
+    expect((await listSharedWorkspaceContributions(root)).contributions).toHaveLength(1)
+    expect((await previewSharedWorkspaceContribution(root, preview.id)).id).toBe(preview.id)
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(0)
+  })
+
+  it('keeps a full scan warm beyond 512 prepared records', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'large warm scan\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const actorDirectory = path.dirname(recordPath)
+    const template = JSON.parse(fs.readFileSync(recordPath, 'utf8'))
+    for (let index = 0; index < 600; index += 1) {
+      const id = randomUUID()
+      fs.writeFileSync(
+        path.join(actorDirectory, `${id}.prepared.json`),
+        `${JSON.stringify({ ...template, id, createdAt: new Date(Date.parse(template.createdAt) + index + 1).toISOString() })}\n`
+      )
+    }
+    expect((await listSharedWorkspaceContributions(root)).contributions[0].editCount).toBe(601)
+
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+    expect((await listSharedWorkspaceContributions(root)).contributions[0].editCount).toBe(601)
+    const preparedReads = readFile.mock.calls.filter(([candidate]) =>
+      String(candidate).endsWith('.prepared.json')
+    )
+    expect(preparedReads).toEqual([])
+  })
+
+  it('invalidates replaced, corrupt, and restored in-place prepared bodies', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'cache invalidation\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const body = fs.readFileSync(recordPath, 'utf8')
+    const replacement = `${recordPath}.replacement`
+    fs.writeFileSync(replacement, body)
+    fs.renameSync(replacement, recordPath)
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+
+    expect((await listSharedWorkspaceContributions(root)).truncated).toBe(false)
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(1)
+
+    readFile.mockClear()
+    fs.writeFileSync(recordPath, `!${body.slice(1)}`)
+    const corrupt = await listSharedWorkspaceContributions(root)
+    expect(corrupt.truncated).toBe(true)
+    expect(corrupt.contributions).toEqual([])
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(1)
+
+    readFile.mockClear()
+    fs.writeFileSync(recordPath, body)
+    expect((await listSharedWorkspaceContributions(root)).truncated).toBe(false)
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(1)
+  })
+
+  it('derives sibling state freshly and keeps a missing active record incomplete', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'fresh sibling state\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const actorDirectory = path.dirname(recordPath)
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+
+    fs.writeFileSync(path.join(actorDirectory, `${preview.recordIds[0]}.settled.json`), '{}\n')
+    expect((await listSharedWorkspaceContributions(root)).contributions).toEqual([])
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(0)
+
+    fs.rmSync(path.join(actorDirectory, `${preview.recordIds[0]}.settled.json`))
+    fs.rmSync(recordPath)
+    const incomplete = await listSharedWorkspaceContributions(root)
+    expect(incomplete.truncated).toBe(true)
+    expect(incomplete.contributions).toEqual([])
+    expect(
+      fs.existsSync(
+        path.join(journalDirectory(root), `${preview.id}.${preview.recordIds[0]}.active`)
+      )
+    ).toBe(true)
+  })
+
+  it('continues to observe foreign live workspace bytes on every scan', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'recorded bytes\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+
+    fs.writeFileSync(path.join(root, 'source.txt'), 'foreign live bytes\n')
+    const rescanned = await listSharedWorkspaceContributions(root)
+    expect(rescanned.contributions[0]).toMatchObject({ id: preview.id, state: 'changed' })
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(0)
+  })
+
+  it('does not cache a prepared body whose identity changes during its read', async () => {
+    const root = fixture()
+    await edit(root, randomUUID(), 'source.txt', 'identity race\n')
+    const first = await listSharedWorkspaceContributions(root)
+    const preview = await previewSharedWorkspaceContribution(root, first.contributions[0].id)
+    const recordPath = preparedRecordPath(root, preview)
+    const body = fs.readFileSync(recordPath, 'utf8')
+    const replacement = `${recordPath}.replacement`
+    fs.writeFileSync(replacement, body)
+    fs.renameSync(replacement, recordPath)
+
+    const realLstat = fs.promises.lstat.bind(fs.promises)
+    let preparedStats = 0
+    const lstat = vi.spyOn(fs.promises, 'lstat').mockImplementation(async (candidate, options) => {
+      if (String(candidate) === recordPath && ++preparedStats === 2) {
+        fs.appendFileSync(recordPath, ' ')
+      }
+      return realLstat(candidate, options as never)
+    })
+    expect((await listSharedWorkspaceContributions(root)).truncated).toBe(true)
+    lstat.mockRestore()
+
+    const readFile = vi.spyOn(fs.promises, 'readFile')
+    expect((await listSharedWorkspaceContributions(root)).truncated).toBe(false)
+    expect(preparedBodyReadCount(readFile, recordPath)).toBe(1)
   })
 })
 
