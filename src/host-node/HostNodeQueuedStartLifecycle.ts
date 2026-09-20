@@ -129,11 +129,15 @@ export interface HostQueuedStartExecutionClaim {
 }
 
 /**
- * Execution-claim store port. The in-memory default below is for tests and
- * this unwired slice; the file-backed store arrives with integration.
- * `record` must be durable before `claim` resolves; `list` is consulted only
- * by `reopen`, which always passes `{ recoveryHeadSequence }` (omit the
- * number to read the whole journal).
+ * Execution-claim store port. Standalone HostNodeProductionServer injects
+ * the file-backed store behind the default-OFF queued-start gate; direct and
+ * test lifecycle construction retains the in-memory fallback below. `claim`
+ * awaits `record` before provider side effects, and production supplies the
+ * fsynced implementation. Within `reopen`'s declared-coverage guard, `list`
+ * is called with `{ recoveryHeadSequence }` (omit the number to read the
+ * whole journal). The file-backed store currently declares no durable absence
+ * coverage; production recovery and journal retention/compaction remain later
+ * work.
  */
 export interface HostQueuedStartExecutionClaimListOptions {
   /**
