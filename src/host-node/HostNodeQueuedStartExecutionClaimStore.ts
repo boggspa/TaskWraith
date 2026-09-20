@@ -12,8 +12,11 @@
  * rollback to an older valid prefix. This store therefore never declares
  * durable absence coverage. `list` may stop at an optional recovery-head
  * sequence so a later receipt contract can bound the read; the truncated
- * prefix is still not absence proof. This module is deliberately not wired
- * into production yet.
+ * prefix is still not absence proof. The standalone HostNodeProductionServer
+ * opens this journal only behind the default-OFF queued-start gate and passes
+ * it through HostNodeDomainPorts; lifecycle `claim` awaits the fsynced record
+ * before provider side effects. Production recovery and journal
+ * retention/compaction remain separate work.
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'

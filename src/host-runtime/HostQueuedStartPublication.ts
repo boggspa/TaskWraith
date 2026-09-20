@@ -25,10 +25,12 @@
  * mints a second one.
  *
  * Receipt phase is stored/projected by HostCommandReceiptStore and advanced
- * here without changing receipt status. `openHostNodeQueuedStartExecutionClaimStore`
- * still has no production caller; HostMainComposition (in-main desktop) is not wired —
- * standalone HostNodeProductionServer is the production short-start route.
- * Flag default remains OFF.
+ * here without changing receipt status. Standalone HostNodeProductionServer
+ * opens the file-backed execution-claim journal behind the default-OFF gate
+ * and injects it through HostNodeDomainPorts; lifecycle `claim` awaits its
+ * fsynced record before provider side effects. The journal still declares no
+ * durable absence coverage. Lifecycle recovery, retention/compaction, and
+ * HostMainComposition wiring remain separate work. Flag default remains OFF.
  */
 
 import type {
