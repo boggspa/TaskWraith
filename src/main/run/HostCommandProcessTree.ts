@@ -4,6 +4,8 @@ export interface HostCommandProcessTreeJoinOptions {
   signal: (signal: 'SIGTERM' | 'SIGKILL') => void
   isAlive: () => boolean
   wait?: (ms: number) => Promise<void>
+  /** Monotonic clock for the termination grace deadline. */
+  now?: () => number
   killGraceMs?: number
   pollMs?: number
 }
@@ -42,12 +44,14 @@ function posixProcessGroupController(processGroupId: number): KillController {
  */
 export class HostCommandProcessTreeJoin {
   private readonly wait: (ms: number) => Promise<void>
+  private readonly now: () => number
   private readonly killGraceMs: number
   private readonly pollMs: number
   private joinPromise: Promise<void> | null = null
 
   constructor(private readonly options: HostCommandProcessTreeJoinOptions) {
     this.wait = options.wait ?? wait
+    this.now = options.now ?? (() => performance.now())
     this.killGraceMs = options.killGraceMs ?? 4_000
     this.pollMs = options.pollMs ?? 50
     if (!Number.isFinite(this.killGraceMs) || this.killGraceMs < 0) {
@@ -65,9 +69,18 @@ export class HostCommandProcessTreeJoin {
 
   private async join(): Promise<void> {
     if (!this.options.isAlive()) return
+    const graceDeadline = this.now() + this.killGraceMs
     this.trySignal('SIGTERM')
-    await this.wait(this.killGraceMs)
-    if (this.options.isAlive()) this.trySignal('SIGKILL')
+    // Most descendants exit promptly. Observe that evidence during grace
+    // instead of imposing the entire grace delay on every command result.
+    while (this.options.isAlive()) {
+      const remaining = graceDeadline - this.now()
+      if (remaining <= 0) {
+        this.trySignal('SIGKILL')
+        break
+      }
+      await this.wait(Math.min(this.pollMs, remaining))
+    }
     while (this.options.isAlive()) {
       await this.wait(this.pollMs)
     }
