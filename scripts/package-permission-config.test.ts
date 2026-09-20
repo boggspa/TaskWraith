@@ -53,6 +53,14 @@ describe('macOS package permission metadata', () => {
   it.each([
     ['release', releaseExtendInfo],
     ['debug', debugExtendInfo]
+  ])('starts %s processes without a Dock tile until desktop promotion', (_label, extendInfo) => {
+    expect(extendInfo.LSUIElement).toBe(true)
+    expect(extendInfo.LSBackgroundOnly).not.toBe(true)
+  })
+
+  it.each([
+    ['release', releaseExtendInfo],
+    ['debug', debugExtendInfo]
   ])('keeps required native permission keys flat in the %s config', (_label, extendInfo) => {
     for (const key of REQUIRED_NATIVE_PERMISSION_KEYS) {
       expect(extendInfo).toHaveProperty(key)

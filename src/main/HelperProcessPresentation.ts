@@ -1,5 +1,6 @@
 import { isPeopleMigrationHelper } from './startup/PeopleMigrationHelperProtocol'
 import { GEMINI_MCP_BRIDGE_ARG_SUFFIX, GEMINI_MCP_BRIDGE_ENV } from './geminiMcpConstants'
+import { isTuiHeadlessHostLaunchRequest } from './TuiHeadlessHostSession'
 
 export function isTaskWraithHelperProcess(
   argv: readonly string[] = process.argv,
@@ -13,5 +14,8 @@ export function shouldSuppressMacAppPresentation(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  return platform === 'darwin' && isTaskWraithHelperProcess(argv, env)
+  return (
+    platform === 'darwin' &&
+    (isTaskWraithHelperProcess(argv, env) || isTuiHeadlessHostLaunchRequest(argv))
+  )
 }

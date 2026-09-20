@@ -8,7 +8,11 @@ import { basename, isAbsolute, parse, resolve } from 'node:path'
 import { app, protocol } from 'electron'
 import type { Event } from 'electron'
 import { isPeopleMigrationHelper } from './startup/PeopleMigrationHelperProtocol'
-import { isTaskWraithHelperProcess } from './HelperProcessPresentation'
+import {
+  isTaskWraithHelperProcess,
+  shouldSuppressMacAppPresentation
+} from './HelperProcessPresentation'
+import { setMacAppPresentation } from './MacAppPresentation'
 import { migrateLegacyUserDataSync } from './LegacyUserDataMigration'
 import { bootstrapMainProcess, type SecondInstanceEventArguments } from './MainProcessBootstrap'
 import { isDesktopExternalHostEnabled } from './host/DesktopExternalHostPolicy'
@@ -182,6 +186,9 @@ void (
         // index.ts retains its existing guard during this extraction. Electron's
         // requestSingleInstanceLock is idempotent for the process that owns it.
         prepareMainProcess: async () => {
+          // LSUIElement keeps every launch out of the Dock until the primary
+          // desktop wins the singleton. Helpers and TUI Hosts stay hidden.
+          if (!shouldSuppressMacAppPresentation()) setMacAppPresentation(app, true)
           const profilePath = canonicalProfilePath(app.getPath('userData'))
           const migration = migrateLegacyUserDataSync({
             userDataPath: profilePath,

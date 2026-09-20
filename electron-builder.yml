@@ -239,6 +239,9 @@ mac:
   # _taskwraith-quic._udp carrier was being dropped before reaching
   # the daemon: NSBonjourServices was sitting under "5", not at root.
   extendInfo:
+    # Start without a Dock tile, including CLI bridge invocations. Bootstrap
+    # promotes only the primary desktop process to a regular application.
+    LSUIElement: true
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
     NSSpeechRecognitionUsageDescription: TaskWraith transcribes audio files you point it at with macOS Speech Recognition without sending audio from your Mac, so agents can read back what was said.

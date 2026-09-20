@@ -18,6 +18,12 @@ import {
   parseMcpBridgeRouteFromEnv
 } from './mcp/McpBridgeRoute'
 import { serveMcpBridgeWithoutAuthority } from './mcp/McpBridgeNoAuthorityServer'
+import { shouldSuppressMacAppPresentation } from './HelperProcessPresentation'
+import { setMacAppPresentation } from './MacAppPresentation'
+
+// Also runs before a refused static bridge keeps only its stdio handshake
+// alive: that path never reaches bootstrap.ts or the full main module.
+if (shouldSuppressMacAppPresentation()) setMacAppPresentation(app, false)
 
 // Dev (electron-vite, unpackaged) runs under the package.json name "taskwraith",
 // which on macOS's case-INSENSITIVE filesystem resolves to the SAME userData

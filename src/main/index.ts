@@ -113,6 +113,7 @@ import {
   isTaskWraithHelperProcess,
   shouldSuppressMacAppPresentation
 } from './HelperProcessPresentation'
+import { setMacAppPresentation } from './MacAppPresentation'
 import { TuiHeadlessHostSession } from './TuiHeadlessHostSession'
 import { createQuitPersistenceCoordinator } from './QuitPersistenceCoordinator'
 import {
@@ -3755,29 +3756,13 @@ const appliedNativeGlassStates = new WeakMap<BrowserWindow, string>()
 const isGeminiMcpBridgeProcess = isTaskWraithHelperProcess(process.argv, process.env)
 const tuiHeadlessHostSession = new TuiHeadlessHostSession()
 function restoreDesktopAppPresentation(): void {
-  if (process.platform !== 'darwin') return
-  try {
-    app.setActivationPolicy('regular')
-    void app.dock?.show()
-  } catch {
-    // Best-effort. A user-requested window can still be created and focused.
-  }
+  setMacAppPresentation(app, true)
 }
 if (
   shouldSuppressMacAppPresentation(process.argv, process.env) ||
   tuiHeadlessHostSession.shouldSuppressMacPresentation
 ) {
-  try {
-    app.setActivationPolicy('prohibited')
-  } catch {
-    // Best-effort: bridge children must still serve stdio even if macOS rejects
-    // a presentation-policy change on an older Electron/macOS combination.
-  }
-  try {
-    app.dock?.hide()
-  } catch {
-    // Best-effort, see activation-policy note above.
-  }
+  setMacAppPresentation(app, false)
 }
 const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
 const externalPathGrantExecutionRegistry = new ExternalPathGrantExecutionRegistry()
