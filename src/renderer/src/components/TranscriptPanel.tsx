@@ -80,6 +80,7 @@ import type {
 import { CloseoutFileChangesSection } from './CloseoutFileChangesSection'
 import { RunCompleteEpicStack } from './RunCompleteEpicStack'
 import { decideMeasurePass, MAX_MEASURE_REWRITE_PASSES } from '../lib/transcriptMeasureConvergence'
+import { createTranscriptMeasureScheduler } from '../lib/transcriptMeasureScheduler'
 import {
   USER_SCROLL_GESTURE_WINDOW_MS,
   decidePhase1AnchorCorrection,
@@ -122,7 +123,6 @@ import {
   geometryKey,
   getRowHeight,
   measurementKey,
-  isActiveLiveRowKey,
   measurementContentVersion,
   structuralRowSetKey,
   widthBucket,
@@ -1925,6 +1925,16 @@ export function useTranscriptVirtualization(params: {
   const [measureTick, setMeasureTick] = useState(0)
   const bumpScroll = useCallback(() => setScrollTick((t) => (t + 1) % 0x7fffffff), [])
   const bumpMeasure = useCallback(() => setMeasureTick((t) => (t + 1) % 0x7fffffff), [])
+  const measureScheduler = useMemo(
+    () =>
+      createTranscriptMeasureScheduler({
+        bump: bumpMeasure,
+        requestFrame: (callback) => window.requestAnimationFrame(callback),
+        cancelFrame: (frame) => window.cancelAnimationFrame(frame)
+      }),
+    [bumpMeasure]
+  )
+  useLayoutEffect(() => () => measureScheduler.reset(), [measureScheduler, chatId, enabled])
   const scheduleDeferredAnchorCorrection = useCallback(() => {
     deferredPendingRef.current = true
     if (deferredAnchorCorrectionTimerRef.current !== null) {
@@ -2484,7 +2494,6 @@ export function useTranscriptVirtualization(params: {
     }
     let sawNewKey = false
     let sawRewrite = false
-    let sawLiveGrowth = false
     for (let i = 0; i < mountedRows.length; i++) {
       const row = mountedRows[i]
       // 1.0.7 — element + measurement maps key on `rowKey` (`${id}#${occurrence}`),
@@ -2518,7 +2527,6 @@ export function useTranscriptVirtualization(params: {
       // tracks. The dataset property name is derived from the attribute the JSX
       // stamps, so the two cannot drift.
       if (!admitsMeasuredRowDelta(slot, el.dataset[FANOUT_LANE_SLOT_DATASET_KEY])) continue
-      const isActiveLiveRow = isActiveLiveRowKey(row.rowKey, activeLiveRowKeys)
       const key = measurementKey(
         row.rowKey,
         measurementContentVersion(row, activeLiveRowKeys),
@@ -2536,26 +2544,17 @@ export function useTranscriptVirtualization(params: {
         sawNewKey = true
       } else if (Math.abs(prev - slot) > 0.5) {
         // Live cards can shrink when their content settles or a solo lane
-        // becomes a paired lead (whose slot is zero). Retaining the mounted
-        // band makes those real measurements safe; a monotonic max invents
-        // space that the DOM no longer occupies.
-        const nextSlot = slot
-        if (Math.abs(prev - nextSlot) > 0.5) {
-          measurements.set(key, nextSlot)
-          if (isActiveLiveRow && nextSlot > prev) {
-            sawLiveGrowth = true
-          } else {
-            sawRewrite = true
-          }
-        }
+        // becomes a paired lead (whose slot is zero). Growth under the SAME
+        // key is also a rewrite: exempting it resets the guard on every other
+        // pass of a grow/shrink oscillation and permits an infinite loop.
+        measurements.set(key, slot)
+        sawRewrite = true
       }
     }
-    // 1.0.7 — gate the re-measure bump through the convergence guard. A new key
-    // (genuine content/growth) always converges and resets the budget; a run of
-    // rewrite-only passes (oscillation) is capped so it can't spin React's
-    // nested-update limit and crash the transcript surface.
+    // Cap repeated rewrites. New keys may still cascade through a long page,
+    // so the scheduler also bounds synchronous work independently of the key.
     const decision = decideMeasurePass({
-      sawNewKey: sawNewKey || sawLiveGrowth,
+      sawNewKey,
       sawRewrite,
       rewritePasses: measureRewritePassesRef.current,
       alreadyWarned: measureWarnedRef.current
@@ -2565,7 +2564,7 @@ export function useTranscriptVirtualization(params: {
     // 1.0.7 — record whether THIS pass fully converged (nothing changed). The
     // next pre-paint pass's Phase-1 anchor restore reads this so it only fires
     // once heights have settled — never mid-measure.
-    measureConvergedRef.current = !sawNewKey && !sawLiveGrowth && !sawRewrite
+    measureConvergedRef.current = !sawNewKey && !sawRewrite
     if (decision.shouldWarn) {
       console.warn(
         '[transcript] measurement did not converge after ' +
@@ -2573,7 +2572,8 @@ export function useTranscriptVirtualization(params: {
           'A mounted row height is likely oscillating (concurrent streams / scrollbar reflow).'
       )
     }
-    if (decision.bump) bumpMeasure()
+    if (decision.bump) measureScheduler.request()
+    else measureScheduler.reset()
   }, [
     activeLiveRowKeys,
     bumpMeasure,
@@ -2585,6 +2585,7 @@ export function useTranscriptVirtualization(params: {
     getUserScrollGestureLive,
     hiddenRowKeys,
     layoutEpoch,
+    measureScheduler,
     measureTick,
     // The pass WRITES both keys under the measured bucket, so a column reflow
     // must re-run it even at Medium, where the epoch is gated to 0.
