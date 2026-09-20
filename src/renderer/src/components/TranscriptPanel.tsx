@@ -92,6 +92,10 @@ import {
 } from '../lib/useChatTranscript'
 import { useVisibleChatTranscript } from '../lib/useVisibleChatTranscript'
 import {
+  useTranscriptEdgePrefetch,
+  type TranscriptPrefetchDirection
+} from '../lib/useTranscriptEdgePrefetch'
+import {
   requestLatestTranscriptPage,
   requestNewerTranscriptPage,
   requestOlderTranscriptPage
@@ -5126,47 +5130,36 @@ export const TranscriptPanel = memo(function TranscriptPanel({
     syncVirtualizerScrollPosition
   ])
 
-  // Pull in the adjacent window once the rendered range comes within a few
-  // rows of either edge.
-  //
-  // This deliberately reads the virtualizer's own range instead of observing
-  // sentinel elements: a sentinel in the transcript flow contributes height
-  // the virtualizer's geometry does not account for, which would drift every
-  // spacer and scroll-position calculation downstream of it.
-  //
-  // Both transcript modes route through here — paged chats fetch the adjacent
-  // page over IPC, fully hydrated chats grow their local window — so history
-  // reads identically whether or not the thread was large enough to page. No
-  // "loading" latch is needed: the pager dedupes in-flight requests per chat
-  // and direction, and local growth stops changing the window once it has
-  // reached the end.
-  useEffect(() => {
-    if (!chatId || !storeReady || !virtualizeEnabled) return
-    const rowCount = displayMessages.length
-    if (rowCount === 0) return
-    const store = getChatTranscriptStore()
-    const paged = store.isPaged(chatId)
-    if (storeTranscript.hasOlder && virtualWindow.startIndex <= TRANSCRIPT_EDGE_PREFETCH_ROWS) {
-      if (paged) requestOlderTranscriptPage(chatId, store)
-      else store.extendOlderPage(chatId)
-    }
-    if (
-      storeTranscript.hasNewer &&
-      virtualWindow.endIndex >= rowCount - TRANSCRIPT_EDGE_PREFETCH_ROWS
-    ) {
-      if (paged) requestNewerTranscriptPage(chatId, store)
-      else store.extendNewerPage(chatId)
-    }
-  }, [
-    chatId,
-    displayMessages.length,
-    storeReady,
-    storeTranscript.hasNewer,
-    storeTranscript.hasOlder,
-    virtualWindow.endIndex,
-    virtualWindow.startIndex,
-    virtualizeEnabled
-  ])
+  // Overscan may contain both ends after thousands of raw rows fold into a
+  // few cards. Loading both edges makes the bounded store repeatedly evict
+  // and reload the opposite page. Select one edge from settled DOM geometry.
+  const loadAdjacentTranscriptPage = useCallback(
+    (direction: TranscriptPrefetchDirection) => {
+      if (!chatId) return
+      const store = getChatTranscriptStore()
+      const paged = store.isPaged(chatId)
+      if (direction === 'older') {
+        if (paged) requestOlderTranscriptPage(chatId, store)
+        else store.extendOlderPage(chatId)
+      } else {
+        if (paged) requestNewerTranscriptPage(chatId, store)
+        else store.extendNewerPage(chatId)
+      }
+    },
+    [chatId]
+  )
+  useTranscriptEdgePrefetch({
+    enabled: Boolean(chatId && storeReady && virtualizeEnabled && displayMessages.length > 0),
+    scrollRef,
+    autoFollowRef,
+    hasOlder: storeTranscript.hasOlder,
+    hasNewer: storeTranscript.hasNewer,
+    nearOlder: virtualWindow.startIndex <= TRANSCRIPT_EDGE_PREFETCH_ROWS,
+    nearNewer: virtualWindow.endIndex >= displayMessages.length - TRANSCRIPT_EDGE_PREFETCH_ROWS,
+    windowStart: storeTranscript.windowStart,
+    windowEnd: storeTranscript.windowEnd,
+    load: loadAdjacentTranscriptPage
+  })
 
   // Messages mounted this frame, each paired with its collision-proof
   // `rowKey` (`${id}#${occurrence}`). The window slice when virtualised, else

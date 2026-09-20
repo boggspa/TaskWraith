@@ -4,6 +4,7 @@
 // Real-layout regression probe; uses synthetic rows and a private Electron
 // profile. Run with: node scripts/perf/transcriptWindowLayoutProbe.cjs
 // Add --baseline=<git-ref> to exercise the same fixture against an older hook.
+// Add --paging to render the full panel over heavily grouped history.
 const { execFileSync, spawn } = require('node:child_process')
 const { mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs')
 const { tmpdir } = require('node:os')
@@ -69,15 +70,21 @@ async function runElectron() {
       })
     }
     const result = await require('esbuild').build({
-      entryPoints: [path.join(__dirname, 'transcriptWindowLayoutFixture.tsx')],
+      entryPoints: [
+        path.join(
+          __dirname,
+          process.argv.includes('--paging')
+            ? 'transcriptPagingLayoutFixture.tsx'
+            : 'transcriptWindowLayoutFixture.tsx'
+        )
+      ],
       bundle: true,
       write: false,
       platform: 'browser',
       format: 'iife',
       jsx: 'automatic',
       plugins,
-      // The fixture renders the production hook with simple cards. Vite's
-      // unrelated icon catalogue and component styles are not part of it.
+      // Vite's unrelated icon catalogue is not part of either fixture.
       define: {
         'process.env.NODE_ENV': '"production"',
         'import.meta.env.DEV': 'false',
