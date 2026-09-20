@@ -20125,8 +20125,12 @@ export class EnsembleOrchestrator {
       retainedExistingTimelineMessage = true
       if (!plainDataEqual(message, replacement)) {
         recordTranscriptMutation((author) => author.update(replacement))
+        reconciledMessages.push(replacement)
+      } else {
+        // The tail broadcaster compares row identity. Rebuilding unchanged
+        // speech/tool rows makes one streamed delta exceed its update budget.
+        reconciledMessages.push(message)
       }
-      reconciledMessages.push(replacement)
       currentMessageIndex += 1
     }
     messages = reconciledMessages
