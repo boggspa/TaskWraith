@@ -5,6 +5,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   unlinkSync,
   utimesSync,
@@ -556,6 +557,199 @@ describe('HostNodeQueuedStartExecutionClaimStore', () => {
     expect(() => store.record(claim({ claimedAt: 999 }))).toThrow()
     expect(store.declaresDurableCoverage).toBe(false)
     expect(existsSync(join(dir, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME))).toBe(false)
+  })
+
+  it('upgrades v1 by compacting retained claims with stable cursors and append sequence', () => {
+    const dir = dataDir('compact-upgrade')
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A,
+      compactAfterRecords: 3
+    })
+    const first = claim({ commandId: 'command-1', claimedAt: 1 })
+    const second = claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 })
+    const third = claim({ commandId: 'command-3', threadId: 'thread-3', claimedAt: 3 })
+    const fourth = claim({ commandId: 'command-4', threadId: 'thread-4', claimedAt: 4 })
+    const firstCursor = store.record(first) as HostQueuedStartExecutionClaimCursor
+    const secondCursor = store.record(second) as HostQueuedStartExecutionClaimCursor
+    const thirdCursor = store.record(third) as HostQueuedStartExecutionClaimCursor
+    store.record(fourth)
+    expect(JSON.parse(readFileSync(store.path, 'utf8').split('\n')[0]!).schemaVersion).toBe(1)
+
+    expect(store.compact!(new Set(['command-1', 'command-3']))).toEqual({
+      kind: 'compacted',
+      physicalClaims: 4,
+      retainedClaims: 2,
+      nextSequence: 5
+    })
+    expect(JSON.parse(readFileSync(store.path, 'utf8').split('\n')[0]!)).toMatchObject({
+      schemaVersion: 2,
+      coverageEpoch: EPOCH_A,
+      nextSequence: 5
+    })
+    expect(store.list()).toEqual([first, third])
+    expect(store.list({ recoveryHeadSequence: 2 })).toEqual([first])
+    expect(store.list({ recoveryHeadSequence: 3 })).toEqual([first, third])
+    expect(store.readClaims!([firstCursor, secondCursor, thirdCursor])).toEqual([
+      first,
+      null,
+      third
+    ])
+    expect(store.declaresDurableCoverage).toBe(false)
+
+    const compacted = readFileSync(store.path, 'utf8')
+    expect(store.record(claim({ ...third, claimedAt: 999 }))).toEqual(thirdCursor)
+    expect(readFileSync(store.path, 'utf8')).toBe(compacted)
+
+    const fifth = claim({ commandId: 'command-5', threadId: 'thread-5', claimedAt: 5 })
+    const fifthCursor = store.record(fifth) as HostQueuedStartExecutionClaimCursor
+    expect(fifthCursor).toEqual({ coverageEpoch: EPOCH_A, sequence: 5 })
+
+    const reopened = openHostNodeQueuedStartExecutionClaimStore({ dataDir: dir })
+    expect(reopened.list()).toEqual([first, third, fifth])
+    expect(reopened.readClaims!([firstCursor, thirdCursor, fifthCursor])).toEqual([
+      first,
+      third,
+      fifth
+    ])
+  })
+
+  it('does not rewrite below threshold or when every claim is retained', () => {
+    const dir = dataDir('compact-noop')
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A,
+      compactAfterRecords: 3
+    })
+    store.record(claim({ commandId: 'command-1', claimedAt: 1 }))
+    store.record(claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 }))
+    const belowThreshold = readFileSync(store.path, 'utf8')
+    expect(store.compact!(new Set(['command-1']))).toEqual({
+      kind: 'unchanged',
+      physicalClaims: 2,
+      retainedClaims: 1
+    })
+    expect(readFileSync(store.path, 'utf8')).toBe(belowThreshold)
+
+    store.record(claim({ commandId: 'command-3', threadId: 'thread-3', claimedAt: 3 }))
+    const allRetained = readFileSync(store.path, 'utf8')
+    expect(store.compact!(new Set(['command-1', 'command-2', 'command-3']))).toEqual({
+      kind: 'unchanged',
+      physicalClaims: 3,
+      retainedClaims: 3
+    })
+    expect(readFileSync(store.path, 'utf8')).toBe(allRetained)
+  })
+
+  it('fails closed when compact temp fsync or atomic rename is refused', () => {
+    for (const failure of ['fsync', 'rename'] as const) {
+      const dir = dataDir(`compact-${failure}`)
+      const seed = openHostNodeQueuedStartExecutionClaimStore({
+        dataDir: dir,
+        createCoverageEpoch: () => EPOCH_A
+      })
+      seed.record(claim({ commandId: 'command-1', claimedAt: 1 }))
+      seed.record(claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 }))
+      const before = readFileSync(seed.path, 'utf8')
+      const store = openHostNodeQueuedStartExecutionClaimStore({
+        dataDir: dir,
+        expectedCoverageEpoch: EPOCH_A,
+        compactAfterRecords: 2,
+        journalIo: {
+          write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
+          fsyncFile: () => {
+            if (failure === 'fsync') throw new Error('simulated compact fsync refusal')
+          },
+          rename: (source, destination) => {
+            if (failure === 'rename') throw new Error('simulated compact rename refusal')
+            renameSync(source, destination)
+          }
+        }
+      })
+
+      expect(() => store.compact!(new Set(['command-1']))).toThrow(
+        new RegExp(`compact ${failure} refusal`)
+      )
+      expect(readFileSync(seed.path, 'utf8')).toBe(before)
+      expect(() => store.list()).toThrow(/unavailable/)
+      expect(openHostNodeQueuedStartExecutionClaimStore({ dataDir: dir }).list()).toHaveLength(2)
+    }
+  })
+
+  it('rejects a same-byte destination inode substituted by the rename seam', () => {
+    const dir = dataDir('compact-substituted-destination')
+    const seed = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    seed.record(claim({ commandId: 'command-1', claimedAt: 1 }))
+    seed.record(claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 }))
+    const store = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      expectedCoverageEpoch: EPOCH_A,
+      compactAfterRecords: 2,
+      journalIo: {
+        write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
+        fsyncFile: vi.fn(),
+        rename: (source, destination) => {
+          const substitute = `${destination}.same-bytes-substitute`
+          writeFileSync(substitute, readFileSync(source), { mode: 0o600 })
+          renameSync(source, destination)
+          renameSync(substitute, destination)
+        }
+      }
+    })
+
+    expect(() => store.compact!(new Set(['command-1']))).toThrow(/substituted file/)
+    expect(() => store.list()).toThrow(/unavailable/)
+    // Logical bytes are valid, but this fresh instance never confuses that
+    // with proof that the prior store published the inode it fsynced.
+    expect(openHostNodeQueuedStartExecutionClaimStore({ dataDir: dir }).list()).toEqual([
+      claim({ commandId: 'command-1', claimedAt: 1 })
+    ])
+  })
+
+  it('poisons on directory-sync or inode uncertainty without inventing evidence', () => {
+    const syncDir = dataDir('compact-directory-sync')
+    const syncSeed = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: syncDir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    syncSeed.record(claim({ commandId: 'command-1', claimedAt: 1 }))
+    syncSeed.record(claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 }))
+    const syncStore = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: syncDir,
+      expectedCoverageEpoch: EPOCH_A,
+      compactAfterRecords: 2,
+      journalIo: {
+        write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
+        fsyncFile: vi.fn(),
+        fsyncDirectory: () => {
+          throw new Error('simulated directory sync uncertainty')
+        }
+      }
+    })
+    expect(() => syncStore.compact!(new Set(['command-1']))).toThrow(/directory sync uncertainty/)
+    expect(() => syncStore.list()).toThrow(/unavailable/)
+    expect(openHostNodeQueuedStartExecutionClaimStore({ dataDir: syncDir }).list()).toEqual([
+      claim({ commandId: 'command-1', claimedAt: 1 })
+    ])
+
+    const inodeDir = dataDir('compact-inode')
+    const inodeStore = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: inodeDir,
+      createCoverageEpoch: () => EPOCH_B,
+      compactAfterRecords: 2
+    })
+    inodeStore.record(claim({ commandId: 'command-1', claimedAt: 1 }))
+    inodeStore.record(claim({ commandId: 'command-2', threadId: 'thread-2', claimedAt: 2 }))
+    const sameBytes = readFileSync(inodeStore.path, 'utf8')
+    writeFileSync(inodeStore.path, sameBytes, { mode: 0o600 })
+    const future = new Date(Date.now() + 60_000)
+    utimesSync(inodeStore.path, future, future)
+    expect(() => inodeStore.compact!(new Set(['command-1']))).toThrow(/changed before compaction/)
+    expect(() => inodeStore.list()).toThrow(/unavailable/)
+    expect(openHostNodeQueuedStartExecutionClaimStore({ dataDir: inodeDir }).list()).toHaveLength(2)
   })
 
   it('truncates list at the recovery-head sequence bound', () => {

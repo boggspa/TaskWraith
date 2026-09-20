@@ -135,6 +135,14 @@ export interface HostStandaloneCompositionInput {
   readonly queuedStartRecovery?: (
     receipts: readonly HostCommandReceiptRecord[]
   ) => unknown | Promise<unknown>
+  /**
+   * Bounded companion-evidence retention. Production supplies the same
+   * operational claim store used by Domain; composition supplies only the
+   * receipt store's exact retained command IDs.
+   */
+  readonly queuedStartClaimCompaction?: (
+    retainedCommandIds: ReadonlySet<string>
+  ) => unknown | Promise<unknown>
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
@@ -311,24 +319,43 @@ export function createHostStandaloneComposition(
   // Each task's enqueue→start wait is recorded as host_queue_wait on
   // host_chain; the seam changes neither FIFO order nor results.
   const runProjectionOperation = createHostProjectionSerialQueue({ spans: hostPerf.spans })
-  let stopped = false
+  let shutdownPromise: Promise<void> | null = null
+  let shutdownComplete = false
   let reconciler: HostProjectionReconciler | null = null
   let drainQueuedStartPublication: () => Promise<void> = async () => undefined
-  const shutdown = async (): Promise<void> => {
-    if (stopped) return
-    stopped = true
-    // Fence is domain.beginShutdown (ProductionServer calls domain.shutdown
-    // first). Drain start publications after dispatches have quiesced and
-    // before runtime.flush so a snapshot-only drain cannot miss work.
-    await drainQueuedStartPublication()
-    await reconciler?.stop()
-    await runProjectionOperation(async () => undefined)
-    // Diagnostics stop after the queue drains so the drain's own span is
-    // recorded; the transport stops before the meter it reads.
-    snapshotFile?.stop()
-    hostPerf.stop()
-    runtime.flush()
-    await input.onShutdown?.()
+  const shutdown = (): Promise<void> => {
+    if (shutdownComplete) return Promise.resolve()
+    if (shutdownPromise) return shutdownPromise
+    const attempt = async (): Promise<void> => {
+      // Fence is domain.beginShutdown (ProductionServer calls domain.shutdown
+      // first). Drain start publications after dispatches have quiesced and
+      // before runtime.flush so a snapshot-only drain cannot miss work.
+      await drainQueuedStartPublication()
+      await reconciler?.stop()
+      await runProjectionOperation(async () => undefined)
+      // Diagnostics stop after the queue drains so the drain's own span is
+      // recorded; the transport stops before the meter it reads.
+      snapshotFile?.stop()
+      hostPerf.stop()
+      runtime.flush()
+      // Production reaches this only after Domain has fenced new starts and
+      // awaited queued dispatches. Receipt flush fixes the exact retention
+      // authority before companion claim evidence is rewritten.
+      await input.queuedStartClaimCompaction?.(runtime.retainedReceiptCommandIds())
+      await input.onShutdown?.()
+    }
+    shutdownPromise = attempt().then(
+      () => {
+        shutdownComplete = true
+      },
+      (error: unknown) => {
+        // A failed cleanup remains retryable. Concurrent callers observe this
+        // same rejection rather than a false success from a one-way flag.
+        shutdownPromise = null
+        throw error
+      }
+    )
+    return shutdownPromise
   }
 
   const authority = new AppStoreHostAuthority({
@@ -428,7 +455,11 @@ export function createHostStandaloneComposition(
     getPosition: () => runtime.getPosition(),
     subscribeDeltas: (listener) => runtime.deltaStore.subscribe(listener),
     recoverQueuedStarts: async () => {
-      await input.queuedStartRecovery?.(runtime.receiptStore.list())
+      const receipts = runtime.receiptStore.list()
+      await input.queuedStartRecovery?.(receipts)
+      // Recovery must consume positive evidence before any obsolete claim row
+      // can be removed. This still runs before reconciliation/listener startup.
+      await input.queuedStartClaimCompaction?.(runtime.retainedReceiptCommandIds())
     },
     startProjectionReconciliation: () => reconciler!.start(),
     reconcileProjection: () => reconciler!.reconcileNow(),

@@ -102,6 +102,14 @@ export class HostRuntimeBootstrap {
     return this.deltaStore.getPosition()
   }
 
+  /**
+   * Exact receipt-store retention authority for companion durable evidence.
+   * Includes terminal receipts as well as every protected restart anchor.
+   */
+  retainedReceiptCommandIds(): ReadonlySet<string> {
+    return new Set(this.receiptStore.list().map((receipt) => receipt.commandId))
+  }
+
   getRecoverySummary(): HostRuntimeRecoverySummaryWithDeferred {
     const receipts = this.receiptStore.list()
     const receiptIndeterminate = receipts.filter((receipt) => receipt.status === 'indeterminate')

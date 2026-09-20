@@ -65,6 +65,7 @@ function harness(
   let domainQueuedStartOnStarted: HostNodeDomainPortsOptions['queuedStartOnStarted']
   let domainQueuedStartOnDispatchSettled: HostNodeDomainPortsOptions['queuedStartOnDispatchSettled']
   let compositionQueuedStartRecovery: HostStandaloneCompositionInput['queuedStartRecovery']
+  let compositionQueuedStartClaimCompaction: HostStandaloneCompositionInput['queuedStartClaimCompaction']
   let compositionQueuedComposerSend: HostStandaloneCompositionInput['queuedComposerSend']
   let compositionQueuedStartStartingBind: HostStandaloneCompositionInput['queuedStartStartingBind']
   let compositionQueuedStartStartedBind: HostStandaloneCompositionInput['queuedStartStartedBind']
@@ -109,11 +110,17 @@ function harness(
     recoverQueuedStarts: vi.fn(async () => {
       order.push('queued.recovery')
       await compositionQueuedStartRecovery?.([])
+      if (compositionQueuedStartClaimCompaction) {
+        order.push('queued.compaction')
+        await compositionQueuedStartClaimCompaction(new Set())
+      }
     }),
     startProjectionReconciliation: vi.fn(async () => order.push('reconcile.start')),
     reconcileProjection: vi.fn(async () => order.push('reconcile.now')),
     subscribeDeltas: vi.fn(() => () => {}),
-    shutdown: vi.fn(async () => order.push('composition.shutdown'))
+    shutdown: vi.fn(async () => {
+      order.push('composition.shutdown')
+    })
   }
   const domain = {
     setupExecutor: { execute: vi.fn() },
@@ -201,6 +208,7 @@ function harness(
       composedPerf = input.perf
       composedResolveReceiptSpanChatId = input.resolveReceiptSpanChatId
       compositionQueuedStartRecovery = input.queuedStartRecovery
+      compositionQueuedStartClaimCompaction = input.queuedStartClaimCompaction
       compositionQueuedComposerSend = input.queuedComposerSend
       compositionQueuedStartStartingBind = input.queuedStartStartingBind
       compositionQueuedStartStartedBind = input.queuedStartStartedBind
@@ -243,6 +251,7 @@ function harness(
     domainQueuedStartOnStarted: () => domainQueuedStartOnStarted,
     domainQueuedStartOnDispatchSettled: () => domainQueuedStartOnDispatchSettled,
     compositionQueuedStartRecovery: () => compositionQueuedStartRecovery,
+    compositionQueuedStartClaimCompaction: () => compositionQueuedStartClaimCompaction,
     compositionQueuedComposerSend: () => compositionQueuedComposerSend,
     compositionQueuedStartStartingBind: () => compositionQueuedStartStartingBind,
     compositionQueuedStartStartedBind: () => compositionQueuedStartStartedBind,
@@ -530,6 +539,27 @@ describe('HostNodeProductionServer', () => {
     expect(h.lease.release).toHaveBeenCalledOnce()
   })
 
+  it('retains the profile lease until a failed runtime compaction cleanup retries successfully', async () => {
+    const h = harness()
+    await h.server.start()
+    h.composition.shutdown
+      .mockRejectedValueOnce(new Error('simulated claim compaction refusal'))
+      .mockImplementationOnce(async () => {
+        h.order.push('composition.shutdown.retry')
+      })
+
+    await expect(h.server.stop()).rejects.toThrow('runtime cleanup failed')
+    expect(h.lease.release).not.toHaveBeenCalled()
+    expect(h.composition.shutdown).toHaveBeenCalledTimes(1)
+
+    await expect(h.server.stop()).resolves.toBeUndefined()
+    expect(h.composition.shutdown).toHaveBeenCalledTimes(2)
+    expect(h.order.indexOf('composition.shutdown.retry')).toBeLessThan(
+      h.order.indexOf('lease.release')
+    )
+    expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
   it('rejects a second start after terminal lifecycle state', async () => {
     const h = harness()
     await h.server.start()
@@ -748,8 +778,10 @@ describe('HostNodeProductionServer', () => {
       true
     )
     expect(on.compositionQueuedStartRecovery()).toBeTypeOf('function')
-    expect(on.order.indexOf('queued.recovery')).toBeLessThan(on.order.indexOf('reconcile.start'))
-    expect(on.order.indexOf('queued.recovery')).toBeLessThan(on.order.indexOf('listener.start'))
+    expect(on.compositionQueuedStartClaimCompaction()).toBeTypeOf('function')
+    expect(on.order.indexOf('queued.recovery')).toBeLessThan(on.order.indexOf('queued.compaction'))
+    expect(on.order.indexOf('queued.compaction')).toBeLessThan(on.order.indexOf('reconcile.start'))
+    expect(on.order.indexOf('queued.compaction')).toBeLessThan(on.order.indexOf('listener.start'))
     expect(on.domainQueuedStartOnStarting()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnStarted()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnDispatchSettled()).toBeTypeOf('function')
@@ -1046,6 +1078,7 @@ describe('HostNodeProductionServer', () => {
     expect(off.domainHostQueuedStartEnabled()).toBe(false)
     expect(off.domainExecutionClaimStore()).toBeUndefined()
     expect(off.compositionQueuedStartRecovery()).toBeUndefined()
+    expect(off.compositionQueuedStartClaimCompaction()).toBeUndefined()
     expect(existsSync(claimPath)).toBe(false)
     expect(off.domainQueuedStartOnStarting()).toBeUndefined()
     expect(off.domainQueuedStartOnStarted()).toBeUndefined()
@@ -1061,6 +1094,7 @@ describe('HostNodeProductionServer', () => {
     expect(empty.domainHostQueuedStartEnabled()).toBe(false)
     expect(empty.domainExecutionClaimStore()).toBeUndefined()
     expect(empty.compositionQueuedStartRecovery()).toBeUndefined()
+    expect(empty.compositionQueuedStartClaimCompaction()).toBeUndefined()
     expect(existsSync(claimPath)).toBe(false)
     expect(empty.compositionQueuedComposerSend()).toBeUndefined()
     expect(empty.domainQueuedStartOnStarting()).toBeUndefined()
@@ -1068,7 +1102,7 @@ describe('HostNodeProductionServer', () => {
     await empty.server.stop()
   })
 
-  it('production cleanup awaits domain shutdown before composition, and composition drains publication before flush', () => {
+  it('orders domain drain, publication drain, receipt flush, and claim compaction before release', () => {
     const serverSrc = readFileSync(join(__dirname, 'HostNodeProductionServer.ts'), 'utf8')
     const cleanupStart = serverSrc.indexOf('private async cleanup(): Promise<void> {')
     const cleanup = serverSrc.slice(
@@ -1087,7 +1121,7 @@ describe('HostNodeProductionServer', () => {
       join(__dirname, '../host-runtime/HostStandaloneComposition.ts'),
       'utf8'
     )
-    const shutdownStart = compositionSrc.indexOf('const shutdown = async (): Promise<void> => {')
+    const shutdownStart = compositionSrc.indexOf('const shutdown = (): Promise<void> => {')
     const shutdown = compositionSrc.slice(
       shutdownStart,
       compositionSrc.indexOf('const authority = new AppStoreHostAuthority')
@@ -1095,6 +1129,9 @@ describe('HostNodeProductionServer', () => {
     expect(shutdown.indexOf('await drainQueuedStartPublication()')).toBeGreaterThan(-1)
     expect(shutdown.indexOf('await drainQueuedStartPublication()')).toBeLessThan(
       shutdown.indexOf('runtime.flush()')
+    )
+    expect(shutdown.indexOf('runtime.flush()')).toBeLessThan(
+      shutdown.indexOf('await input.queuedStartClaimCompaction')
     )
   })
 })

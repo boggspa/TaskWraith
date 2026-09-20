@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +7,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { WorkSpanAggregates } from '../host-shared/perf/WorkSpanRecorder'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
+import { HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME } from './HostCommandReceiptStore'
 import { createHostPerfInstrumentation } from './HostPerfSnapshot'
 import type { HostPerfSnapshotFileFs, HostPerfSnapshotFileTimers } from './HostPerfSnapshotFile'
 import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
@@ -105,13 +106,21 @@ describe('HostStandaloneComposition', () => {
       coverageEpoch: 'b'.repeat(64),
       sequence: 2
     })
-    const queuedStartRecovery = vi.fn(async (_receipts: readonly object[]) => undefined)
+    const order: string[] = []
+    const queuedStartRecovery = vi.fn(async (_receipts: readonly object[]) => {
+      order.push('recovery')
+    })
+    const queuedStartClaimCompaction = vi.fn(async (_ids: ReadonlySet<string>) => {
+      order.push('compaction')
+    })
     const composition = createHostStandaloneComposition({
       ...input(runtimePath, { assertHeld: vi.fn() }),
-      queuedStartRecovery
+      queuedStartRecovery,
+      queuedStartClaimCompaction
     })
     try {
       expect(queuedStartRecovery).not.toHaveBeenCalled()
+      expect(queuedStartClaimCompaction).not.toHaveBeenCalled()
       await composition.recoverQueuedStarts()
       expect(queuedStartRecovery).toHaveBeenCalledTimes(1)
       expect(queuedStartRecovery.mock.calls[0]![0]).toEqual([
@@ -122,9 +131,94 @@ describe('HostStandaloneComposition', () => {
           executionClaimCursor: { coverageEpoch: 'b'.repeat(64), sequence: 2 }
         })
       ])
+      expect(queuedStartClaimCompaction).toHaveBeenCalledTimes(1)
+      expect([...queuedStartClaimCompaction.mock.calls[0]![0]]).toEqual(['recover-command'])
+      expect(order).toEqual(['recovery', 'compaction'])
     } finally {
       await composition.shutdown()
     }
+  })
+
+  it('compacts retained claims after publication drain and receipt flush on shutdown', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-compaction-'))
+    paths.push(runtimePath)
+    const order: string[] = []
+    const queuedStartClaimCompaction = vi.fn(async (ids: ReadonlySet<string>) => {
+      expect([...ids]).toEqual([])
+      expect(existsSync(join(runtimePath, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME))).toBe(true)
+      order.push('compaction')
+    })
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      queuedStartClaimCompaction,
+      onShutdown: async () => {
+        order.push('onShutdown')
+      }
+    })
+    const drain = vi
+      .spyOn(
+        composition.authority as unknown as {
+          drainQueuedStartPublication(): Promise<void>
+        },
+        'drainQueuedStartPublication'
+      )
+      .mockImplementation(async () => {
+        order.push('publication')
+      })
+
+    await composition.shutdown()
+
+    expect(drain).toHaveBeenCalledOnce()
+    expect(queuedStartClaimCompaction).toHaveBeenCalledOnce()
+    expect(order).toEqual(['publication', 'compaction', 'onShutdown'])
+  })
+
+  it('shares a held compaction shutdown and retries after the same rejection', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-compaction-retry-'))
+    paths.push(runtimePath)
+    let rejectFirst!: (error: Error) => void
+    const firstAttempt = new Promise<void>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    const queuedStartClaimCompaction = vi
+      .fn<(ids: ReadonlySet<string>) => Promise<void>>()
+      .mockImplementationOnce(() => firstAttempt)
+      .mockResolvedValueOnce(undefined)
+    const onShutdown = vi.fn(async () => undefined)
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      queuedStartClaimCompaction,
+      onShutdown
+    })
+
+    const first = composition.shutdown()
+    const second = composition.shutdown()
+    expect(second).toBe(first)
+    await vi.waitFor(() => expect(queuedStartClaimCompaction).toHaveBeenCalledOnce())
+    let secondSettled = false
+    void second.then(
+      () => {
+        secondSettled = true
+      },
+      () => {
+        secondSettled = true
+      }
+    )
+    await Promise.resolve()
+    expect(secondSettled).toBe(false)
+
+    const refusal = new Error('simulated compaction refusal')
+    rejectFirst(refusal)
+    const results = await Promise.allSettled([first, second])
+    expect(results).toEqual([
+      { status: 'rejected', reason: refusal },
+      { status: 'rejected', reason: refusal }
+    ])
+    expect(onShutdown).not.toHaveBeenCalled()
+
+    await expect(composition.shutdown()).resolves.toBeUndefined()
+    expect(queuedStartClaimCompaction).toHaveBeenCalledTimes(2)
+    expect(onShutdown).toHaveBeenCalledOnce()
   })
 
   it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {

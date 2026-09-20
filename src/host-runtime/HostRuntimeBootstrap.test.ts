@@ -372,6 +372,47 @@ describe('HostRuntimeBootstrap', () => {
     expect(restarted.getRecoverySummary().receipts.indeterminate).toBe(1)
   })
 
+  it('exposes the exact retained receipt ids including terminal and restart anchors', () => {
+    const first = new HostRuntimeBootstrap({
+      hostDataDir,
+      receipts: { maxRecords: 2, compactAfterRecords: 1000 }
+    })
+    first.receiptStore.begin({
+      commandId: 'terminal-command',
+      idempotencyKey: 'terminal-key',
+      commandName: 'ping',
+      commandFingerprint: 'd'.repeat(64),
+      actor: ACTOR,
+      target: { kind: 'host', id: 'host-1' },
+      authority: { decision: 'allowed' }
+    })
+    first.receiptStore.complete({ commandId: 'terminal-command', status: 'succeeded' })
+    first.receiptStore.begin({
+      commandId: 'pending-command',
+      idempotencyKey: 'pending-key',
+      commandName: 'composer.send',
+      commandFingerprint: 'e'.repeat(64),
+      actor: ACTOR,
+      target: { kind: 'thread', id: 'thread-1' },
+      authority: { decision: 'allowed' }
+    })
+    first.flush()
+
+    const restarted = new HostRuntimeBootstrap({
+      hostDataDir,
+      receipts: { maxRecords: 2, compactAfterRecords: 1000 }
+    })
+    expect([...restarted.retainedReceiptCommandIds()].sort()).toEqual([
+      'pending-command',
+      'terminal-command'
+    ])
+    const pending = restarted.receiptStore.getByCommandId('pending-command', ACTOR)
+    expect(pending.kind).toBe('found')
+    if (pending.kind === 'found') {
+      expect(pending.receipt.recoveryState).toBe('recoverable-indeterminate')
+    }
+  })
+
   it('flushes both stores through their existing compaction boundaries', () => {
     const runtime = new HostRuntimeBootstrap({ hostDataDir })
     runtime.deltaStore.append({ kind: 'upsert', family: 'warning', entityId: 'w1' })

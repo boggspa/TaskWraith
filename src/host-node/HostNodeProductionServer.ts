@@ -581,6 +581,12 @@ export class HostNodeProductionServer {
                     openHostNodeQueuedStartExecutionClaimStore({ dataDir: runtimePath }),
                   receipts
                 }),
+              queuedStartClaimCompaction: (retainedCommandIds) => {
+                if (typeof queuedStartExecutionClaimStore.compact !== 'function') {
+                  throw new Error('Queued-start execution claim compaction is unavailable')
+                }
+                return queuedStartExecutionClaimStore.compact(retainedCommandIds)
+              },
               queuedComposerSend: (command, context) =>
                 this.domain!.acknowledgeQueuedComposerSend(context, command, {
                   id: context.client.clientId

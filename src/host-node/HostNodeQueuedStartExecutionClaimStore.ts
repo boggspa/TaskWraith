@@ -17,8 +17,10 @@
  * it through HostNodeDomainPorts; lifecycle `claim` awaits the fsynced record
  * before provider side effects. Restart recovery reopens the journal lazily
  * only for receipt-bound cursors and authenticates all requested positions in
- * one unbounded read. Absence remains unprovable; retention/compaction remains
- * separate work.
+ * one unbounded read. Receipt-authorized compaction rewrites only after a
+ * bounded threshold, preserves original claim cursors and the monotonic append
+ * sequence, and never upgrades absence into proof. `declaresDurableCoverage`
+ * therefore remains false.
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -32,6 +34,7 @@ import {
   openSync,
   readFileSync,
   realpathSync,
+  renameSync,
   type Stats,
   unlinkSync,
   writeSync
@@ -47,12 +50,16 @@ import type {
 export const HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME =
   'host-queued-start-execution-claims-v1.jsonl'
 
-const SCHEMA_VERSION = 1
+const LEGACY_SCHEMA_VERSION = 1
+const COMPACTED_SCHEMA_VERSION = 2
 const OWNER_FILE_MODE = 0o600
 const MAX_FIELD_CHARS = 512
 const MAX_LINE_BYTES = 4 * 1024
+const DEFAULT_COMPACT_AFTER_RECORDS = 4096
 const EPOCH_PATTERN = /^[0-9a-f]{64}$/
 const DIGEST_PATTERN = /^[0-9a-f]{64}$/
+
+type JournalSchemaVersion = typeof LEGACY_SCHEMA_VERSION | typeof COMPACTED_SCHEMA_VERSION
 
 type JournalFileIdentity = {
   readonly dev: string
@@ -62,15 +69,25 @@ type JournalFileIdentity = {
   readonly ctimeMs: number
 }
 
-type HeaderBody = {
+type LegacyHeaderBody = {
   readonly kind: 'header'
-  readonly schemaVersion: typeof SCHEMA_VERSION
+  readonly schemaVersion: typeof LEGACY_SCHEMA_VERSION
   readonly coverageEpoch: string
 }
 
+type CompactedHeaderBody = {
+  readonly kind: 'header'
+  readonly schemaVersion: typeof COMPACTED_SCHEMA_VERSION
+  readonly coverageEpoch: string
+  /** First sequence available to a post-compaction append. */
+  readonly nextSequence: number
+}
+
+type HeaderBody = LegacyHeaderBody | CompactedHeaderBody
+
 type ClaimBody = HostQueuedStartExecutionClaim & {
   readonly kind: 'claim'
-  readonly schemaVersion: typeof SCHEMA_VERSION
+  readonly schemaVersion: JournalSchemaVersion
   readonly sequence: number
   readonly previousDigest: string
 }
@@ -83,6 +100,10 @@ export interface HostNodeQueuedStartExecutionClaimJournalIo {
   write(fd: number, buffer: Uint8Array, offset: number, length: number): number
   /** Test seam for a file-fsync refusal. */
   fsyncFile(fd: number): void
+  /** Test seam for an atomic same-directory replacement refusal. */
+  rename?: (source: string, destination: string) => void
+  /** Test seam for a directory-fsync refusal. */
+  fsyncDirectory?: (path: string) => void
 }
 
 export interface HostNodeQueuedStartExecutionClaimStoreOptions {
@@ -92,9 +113,24 @@ export interface HostNodeQueuedStartExecutionClaimStoreOptions {
   readonly expectedCoverageEpoch?: string
   /** Creation seam; output must be lowercase 64-hex. */
   readonly createCoverageEpoch?: () => string
+  /** Rewrite only after this many physical claim rows; defaults to 4096. */
+  readonly compactAfterRecords?: number
   /** Narrow fault-injection seam; omitted in production. */
   readonly journalIo?: HostNodeQueuedStartExecutionClaimJournalIo
 }
+
+export type HostNodeQueuedStartExecutionClaimCompactionResult =
+  | {
+      readonly kind: 'unchanged'
+      readonly physicalClaims: number
+      readonly retainedClaims: number
+    }
+  | {
+      readonly kind: 'compacted'
+      readonly physicalClaims: number
+      readonly retainedClaims: number
+      readonly nextSequence: number
+    }
 
 export interface HostQueuedStartExecutionClaimListOptions {
   /**
@@ -111,11 +147,20 @@ export interface HostNodeQueuedStartExecutionClaimStore extends HostQueuedStartE
   /** Absolute journal path, exposed for diagnostics and focused recovery tests. */
   readonly path: string
   list(options?: HostQueuedStartExecutionClaimListOptions): readonly HostQueuedStartExecutionClaim[]
+  /**
+   * Rewrite durable evidence to the receipt store's retained command set.
+   * Original claim sequences and the monotonic append cursor are preserved.
+   */
+  compact?(
+    retainedCommandIds: ReadonlySet<string>
+  ): HostNodeQueuedStartExecutionClaimCompactionResult
 }
 
 const DEFAULT_JOURNAL_IO: HostNodeQueuedStartExecutionClaimJournalIo = {
   write: (fd, buffer, offset, length) => writeSync(fd, buffer, offset, length),
-  fsyncFile: (fd) => fsyncSync(fd)
+  fsyncFile: (fd) => fsyncSync(fd),
+  rename: (source, destination) => renameSync(source, destination),
+  fsyncDirectory: (path) => syncDirectory(path)
 }
 
 function digestBody(body: HeaderBody | ClaimBody): string {
@@ -202,19 +247,38 @@ function parseHeader(raw: unknown): HeaderLine {
   }
   const value = raw as Record<string, unknown>
   if (
-    !exactKeys(value, ['kind', 'schemaVersion', 'coverageEpoch', 'digest']) ||
     value.kind !== 'header' ||
-    value.schemaVersion !== SCHEMA_VERSION ||
     !validEpoch(value.coverageEpoch) ||
     typeof value.digest !== 'string' ||
     !DIGEST_PATTERN.test(value.digest)
   ) {
     throw new Error('Invalid queued-start execution claim journal header')
   }
-  const body: HeaderBody = {
-    kind: 'header',
-    schemaVersion: SCHEMA_VERSION,
-    coverageEpoch: value.coverageEpoch
+  let body: HeaderBody
+  if (
+    value.schemaVersion === LEGACY_SCHEMA_VERSION &&
+    exactKeys(value, ['kind', 'schemaVersion', 'coverageEpoch', 'digest'])
+  ) {
+    body = {
+      kind: 'header',
+      schemaVersion: LEGACY_SCHEMA_VERSION,
+      coverageEpoch: value.coverageEpoch
+    }
+  } else if (
+    value.schemaVersion === COMPACTED_SCHEMA_VERSION &&
+    exactKeys(value, ['kind', 'schemaVersion', 'coverageEpoch', 'nextSequence', 'digest']) &&
+    typeof value.nextSequence === 'number' &&
+    Number.isSafeInteger(value.nextSequence) &&
+    value.nextSequence >= 1
+  ) {
+    body = {
+      kind: 'header',
+      schemaVersion: COMPACTED_SCHEMA_VERSION,
+      coverageEpoch: value.coverageEpoch,
+      nextSequence: value.nextSequence
+    }
+  } else {
+    throw new Error('Invalid queued-start execution claim journal header')
   }
   if (digestBody(body) !== value.digest) {
     throw new Error('Invalid queued-start execution claim journal header digest')
@@ -222,11 +286,18 @@ function parseHeader(raw: unknown): HeaderLine {
   return { ...body, digest: value.digest }
 }
 
-function parseClaim(raw: unknown, sequence: number, previousDigest: string): ClaimLine {
+function parseClaim(
+  raw: unknown,
+  schemaVersion: JournalSchemaVersion,
+  legacySequence: number,
+  previousSequence: number,
+  previousDigest: string
+): ClaimLine {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
     throw new Error('Invalid queued-start execution claim journal record')
   }
   const value = raw as Record<string, unknown>
+  const sequence = value.sequence
   if (
     !exactKeys(value, [
       'kind',
@@ -240,8 +311,13 @@ function parseClaim(raw: unknown, sequence: number, previousDigest: string): Cla
       'digest'
     ]) ||
     value.kind !== 'claim' ||
-    value.schemaVersion !== SCHEMA_VERSION ||
-    value.sequence !== sequence ||
+    value.schemaVersion !== schemaVersion ||
+    typeof sequence !== 'number' ||
+    !Number.isSafeInteger(sequence) ||
+    sequence < 1 ||
+    (schemaVersion === LEGACY_SCHEMA_VERSION
+      ? sequence !== legacySequence
+      : sequence <= previousSequence) ||
     value.previousDigest !== previousDigest ||
     typeof value.digest !== 'string' ||
     !DIGEST_PATTERN.test(value.digest)
@@ -259,7 +335,7 @@ function parseClaim(raw: unknown, sequence: number, previousDigest: string): Cla
   }
   const body: ClaimBody = {
     kind: 'claim',
-    schemaVersion: SCHEMA_VERSION,
+    schemaVersion,
     sequence,
     previousDigest,
     ...claim
@@ -272,9 +348,11 @@ function parseClaim(raw: unknown, sequence: number, previousDigest: string): Cla
 
 type LoadedJournal = {
   readonly identity: JournalFileIdentity
+  readonly schemaVersion: JournalSchemaVersion
   readonly coverageEpoch: string
   readonly lastDigest: string
   readonly nextSequence: number
+  readonly physicalClaimCount: number
   readonly claims: Map<string, HostQueuedStartExecutionClaim>
   readonly claimSequences: Map<string, number>
 }
@@ -349,23 +427,59 @@ function loadJournal(
       throw new Error('Queued-start execution claim journal changed before read')
     }
     const source = readFileSync(fd, 'utf8')
-    const lines = journalLinesForRead(source, options?.recoveryHeadSequence)
+    const firstLineEnd = source.indexOf('\n')
+    if (firstLineEnd < 0 || firstLineEnd > MAX_LINE_BYTES) {
+      throw new Error('Queued-start execution claim journal header is invalid')
+    }
+    const sourceHeader = parseHeader(JSON.parse(source.slice(0, firstLineEnd)))
+    // Legacy journals retain the original prefix-read behavior. Compacted
+    // journals can contain sparse logical sequences, so they are authenticated
+    // in full and filtered by sequence rather than physical line number.
+    const lines =
+      sourceHeader.schemaVersion === LEGACY_SCHEMA_VERSION
+        ? journalLinesForRead(source, options?.recoveryHeadSequence)
+        : journalLinesForRead(source, undefined)
     const header = parseHeader(JSON.parse(lines[0]))
     const claims = new Map<string, HostQueuedStartExecutionClaim>()
     const claimSequences = new Map<string, number>()
+    const seenCommandIds = new Set<string>()
     let previousDigest = header.digest
+    let previousSequence = 0
+    let nextSequence =
+      header.schemaVersion === COMPACTED_SCHEMA_VERSION ? header.nextSequence : lines.length
     for (let index = 1; index < lines.length; index += 1) {
-      const record = parseClaim(JSON.parse(lines[index]), index, previousDigest)
-      if (claims.has(record.commandId)) {
+      const record = parseClaim(
+        JSON.parse(lines[index]),
+        header.schemaVersion,
+        index,
+        previousSequence,
+        previousDigest
+      )
+      if (seenCommandIds.has(record.commandId)) {
         throw new Error('Queued-start execution claim journal repeats a command identity')
       }
-      claims.set(record.commandId, {
-        commandId: record.commandId,
-        threadId: record.threadId,
-        fingerprint: record.fingerprint,
-        claimedAt: record.claimedAt
-      })
-      claimSequences.set(record.commandId, record.sequence)
+      seenCommandIds.add(record.commandId)
+      if (header.schemaVersion === COMPACTED_SCHEMA_VERSION) {
+        if (record.sequence >= header.nextSequence) {
+          if (record.sequence !== nextSequence) {
+            throw new Error('Queued-start execution claim journal append sequence is invalid')
+          }
+          nextSequence += 1
+        }
+      }
+      if (
+        options?.recoveryHeadSequence === undefined ||
+        record.sequence <= options.recoveryHeadSequence
+      ) {
+        claims.set(record.commandId, {
+          commandId: record.commandId,
+          threadId: record.threadId,
+          fingerprint: record.fingerprint,
+          claimedAt: record.claimedAt
+        })
+        claimSequences.set(record.commandId, record.sequence)
+      }
+      previousSequence = record.sequence
       previousDigest = record.digest
     }
     const after = lstatSync(path)
@@ -375,9 +489,11 @@ function loadJournal(
     }
     return {
       identity: beforeIdentity,
+      schemaVersion: header.schemaVersion,
       coverageEpoch: header.coverageEpoch,
       lastDigest: previousDigest,
-      nextSequence: lines.length,
+      nextSequence,
+      physicalClaimCount: lines.length - 1,
       claims,
       claimSequences
     }
@@ -417,14 +533,22 @@ function createJournal(
   coverageEpoch: string,
   io: HostNodeQueuedStartExecutionClaimJournalIo
 ): void {
-  const header: HeaderBody = { kind: 'header', schemaVersion: SCHEMA_VERSION, coverageEpoch }
+  const header: HeaderBody = {
+    kind: 'header',
+    schemaVersion: LEGACY_SCHEMA_VERSION,
+    coverageEpoch
+  }
   const temp = join(
     dataDir,
     `.${HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME}.${process.pid}.${randomUUID()}.tmp`
   )
   let fd: number | null = null
   try {
-    fd = openSync(temp, 'wx', OWNER_FILE_MODE)
+    fd = openSync(
+      temp,
+      constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0),
+      OWNER_FILE_MODE
+    )
     writeAll(io, fd, encodeLine(header).bytes)
     io.fsyncFile(fd)
     closeSync(fd)
@@ -446,30 +570,40 @@ function createJournal(
 class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExecutionClaimStore {
   readonly coverageEpoch: string
   readonly path: string
+  private readonly dataDir: string
   private readonly io: HostNodeQueuedStartExecutionClaimJournalIo
   private readonly writeAllowed: boolean
+  private readonly compactAfterRecords: number
+  private schemaVersion: JournalSchemaVersion
   private claims: Map<string, HostQueuedStartExecutionClaim>
   private claimSequences: Map<string, number>
   private identity: JournalFileIdentity
   private lastDigest: string
   private nextSequence: number
+  private physicalClaimCount: number
   private poisoned = false
 
   constructor(input: {
+    dataDir: string
     path: string
     io: HostNodeQueuedStartExecutionClaimJournalIo
     loaded: LoadedJournal
     writeAllowed: boolean
+    compactAfterRecords: number
   }) {
+    this.dataDir = input.dataDir
     this.path = input.path
     this.io = input.io
     this.coverageEpoch = input.loaded.coverageEpoch
     this.writeAllowed = input.writeAllowed
+    this.compactAfterRecords = input.compactAfterRecords
+    this.schemaVersion = input.loaded.schemaVersion
     this.claims = input.loaded.claims
     this.claimSequences = input.loaded.claimSequences
     this.identity = input.loaded.identity
     this.lastDigest = input.loaded.lastDigest
     this.nextSequence = input.loaded.nextSequence
+    this.physicalClaimCount = input.loaded.physicalClaimCount
   }
 
   get declaresDurableCoverage(): boolean {
@@ -502,7 +636,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
 
     const body: ClaimBody = {
       kind: 'claim',
-      schemaVersion: SCHEMA_VERSION,
+      schemaVersion: this.schemaVersion,
       sequence: this.nextSequence,
       previousDigest: this.lastDigest,
       commandId: claim.commandId,
@@ -551,6 +685,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
       this.identity = nextIdentity
       this.lastDigest = encoded.digest
       this.nextSequence += 1
+      this.physicalClaimCount += 1
       this.claims.set(claim.commandId, { ...claim })
       this.claimSequences.set(claim.commandId, body.sequence)
       return { coverageEpoch: this.coverageEpoch, sequence: body.sequence }
@@ -610,6 +745,180 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
     }
   }
 
+  compact(
+    retainedCommandIds: ReadonlySet<string>
+  ): HostNodeQueuedStartExecutionClaimCompactionResult {
+    if (this.poisoned) {
+      throw new Error('Queued-start execution claim journal is unavailable')
+    }
+    if (!this.writeAllowed) {
+      throw new Error('Queued-start execution claim journal epoch does not match its writer')
+    }
+    if (
+      !retainedCommandIds ||
+      typeof retainedCommandIds !== 'object' ||
+      typeof retainedCommandIds[Symbol.iterator] !== 'function'
+    ) {
+      throw new Error('Invalid queued-start execution claim retention set')
+    }
+    const retainedIds = new Set<string>()
+    for (const commandId of retainedCommandIds) {
+      if (!validOpaque(commandId)) {
+        throw new Error('Invalid queued-start execution claim retention identity')
+      }
+      retainedIds.add(commandId)
+    }
+    const retainedCount = [...this.claims.keys()].filter((commandId) =>
+      retainedIds.has(commandId)
+    ).length
+    if (this.physicalClaimCount < this.compactAfterRecords || retainedCount === this.claims.size) {
+      return {
+        kind: 'unchanged',
+        physicalClaims: this.physicalClaimCount,
+        retainedClaims: retainedCount
+      }
+    }
+
+    const temp = join(
+      this.dataDir,
+      `.${HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME}.${process.pid}.${randomUUID()}.compact`
+    )
+    let fd: number | null = null
+    let durableTempIdentity: JournalFileIdentity | null = null
+    try {
+      const loaded = loadJournal(this.path)
+      if (
+        loaded.coverageEpoch !== this.coverageEpoch ||
+        !sameFile(loaded.identity, this.identity) ||
+        loaded.lastDigest !== this.lastDigest ||
+        loaded.nextSequence !== this.nextSequence
+      ) {
+        throw new Error('Queued-start execution claim journal changed before compaction')
+      }
+      const retained = [...loaded.claimSequences.entries()]
+        .filter(([commandId]) => retainedIds.has(commandId))
+        .sort((left, right) => left[1] - right[1])
+        .map(([commandId, sequence]) => ({
+          claim: loaded.claims.get(commandId)!,
+          sequence
+        }))
+      if (retained.length === loaded.claims.size) {
+        return {
+          kind: 'unchanged',
+          physicalClaims: loaded.physicalClaimCount,
+          retainedClaims: retained.length
+        }
+      }
+
+      const header: CompactedHeaderBody = {
+        kind: 'header',
+        schemaVersion: COMPACTED_SCHEMA_VERSION,
+        coverageEpoch: this.coverageEpoch,
+        nextSequence: loaded.nextSequence
+      }
+      fd = openSync(
+        temp,
+        constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | (constants.O_NOFOLLOW || 0),
+        OWNER_FILE_MODE
+      )
+      let expectedSize = 0
+      const encodedHeader = encodeLine(header)
+      writeAll(this.io, fd, encodedHeader.bytes)
+      expectedSize += encodedHeader.bytes.byteLength
+      let previousDigest = encodedHeader.digest
+      for (const entry of retained) {
+        const body: ClaimBody = {
+          kind: 'claim',
+          schemaVersion: COMPACTED_SCHEMA_VERSION,
+          sequence: entry.sequence,
+          previousDigest,
+          ...entry.claim
+        }
+        const encoded = encodeLine(body)
+        writeAll(this.io, fd, encoded.bytes)
+        expectedSize += encoded.bytes.byteLength
+        previousDigest = encoded.digest
+      }
+      this.io.fsyncFile(fd)
+      const durable = fstatSync(fd)
+      assertSafeFileStat(durable)
+      durableTempIdentity = fileIdentity(durable)
+      if (durable.size !== expectedSize) {
+        throw new Error('Queued-start execution claim compaction was not durable')
+      }
+      closeSync(fd)
+      fd = null
+
+      const beforeReplace = lstatSync(this.path)
+      assertSafeFileStat(beforeReplace)
+      if (
+        !sameFile(loaded.identity, fileIdentity(beforeReplace)) ||
+        realpathSync(this.path) !== this.path
+      ) {
+        throw new Error('Queued-start execution claim journal changed before replacement')
+      }
+      ;(this.io.rename ?? renameSync)(temp, this.path)
+      const published = lstatSync(this.path)
+      assertSafeFileStat(published)
+      const publishedIdentity = fileIdentity(published)
+      if (
+        !durableTempIdentity ||
+        publishedIdentity.dev !== durableTempIdentity.dev ||
+        publishedIdentity.ino !== durableTempIdentity.ino ||
+        publishedIdentity.size !== durableTempIdentity.size
+      ) {
+        // A valid rename can update ctime, so continuity is dev+ino+size.
+        // Content equality alone cannot prove the fsynced inode was published.
+        throw new Error('Queued-start execution claim compaction published a substituted file')
+      }
+      ;(this.io.fsyncDirectory ?? syncDirectory)(this.dataDir)
+      if (realpathSync(this.path) !== this.path) {
+        throw new Error('Queued-start execution claim journal replacement is not canonical')
+      }
+
+      const compacted = loadJournal(this.path)
+      if (
+        compacted.schemaVersion !== COMPACTED_SCHEMA_VERSION ||
+        compacted.coverageEpoch !== this.coverageEpoch ||
+        compacted.nextSequence !== loaded.nextSequence ||
+        compacted.claims.size !== retained.length ||
+        retained.some(
+          ({ claim, sequence }) =>
+            compacted.claimSequences.get(claim.commandId) !== sequence ||
+            compacted.claims.get(claim.commandId)?.threadId !== claim.threadId ||
+            compacted.claims.get(claim.commandId)?.fingerprint !== claim.fingerprint ||
+            compacted.claims.get(claim.commandId)?.claimedAt !== claim.claimedAt
+        )
+      ) {
+        throw new Error('Queued-start execution claim compaction verification failed')
+      }
+      this.schemaVersion = compacted.schemaVersion
+      this.identity = compacted.identity
+      this.lastDigest = compacted.lastDigest
+      this.nextSequence = compacted.nextSequence
+      this.physicalClaimCount = compacted.physicalClaimCount
+      this.claims = compacted.claims
+      this.claimSequences = compacted.claimSequences
+      return {
+        kind: 'compacted',
+        physicalClaims: loaded.physicalClaimCount,
+        retainedClaims: retained.length,
+        nextSequence: compacted.nextSequence
+      }
+    } catch (error) {
+      this.poisoned = true
+      throw error
+    } finally {
+      if (fd !== null) closeSync(fd)
+      try {
+        unlinkSync(temp)
+      } catch {
+        // Only our private temporary path is eligible for cleanup. After a
+        // successful rename it no longer exists; every other case removes it.
+      }
+    }
+  }
+
   list(
     options?: HostQueuedStartExecutionClaimListOptions
   ): readonly HostQueuedStartExecutionClaim[] {
@@ -633,8 +942,10 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
         ) {
           throw new Error('Queued-start execution claim journal changed before listing')
         }
+        this.schemaVersion = loaded.schemaVersion
         this.claims = loaded.claims
         this.claimSequences = loaded.claimSequences
+        this.physicalClaimCount = loaded.physicalClaimCount
         return [...this.claims.values()].map((claim) => ({ ...claim }))
       }
       // A prefix read must not replace the writer cursor or require the tail
@@ -668,8 +979,18 @@ export function openHostNodeQueuedStartExecutionClaimStore(
   if (options.expectedCoverageEpoch !== undefined && !validEpoch(options.expectedCoverageEpoch)) {
     throw new Error('Invalid expected queued-start claim coverage epoch')
   }
+  const compactAfterRecords = options.compactAfterRecords ?? DEFAULT_COMPACT_AFTER_RECORDS
+  if (!Number.isSafeInteger(compactAfterRecords) || compactAfterRecords < 1) {
+    throw new Error('Invalid queued-start execution claim compaction threshold')
+  }
   const io = options.journalIo ?? DEFAULT_JOURNAL_IO
-  if (!io || typeof io.write !== 'function' || typeof io.fsyncFile !== 'function') {
+  if (
+    !io ||
+    typeof io.write !== 'function' ||
+    typeof io.fsyncFile !== 'function' ||
+    (io.rename !== undefined && typeof io.rename !== 'function') ||
+    (io.fsyncDirectory !== undefined && typeof io.fsyncDirectory !== 'function')
+  ) {
     throw new Error('Queued-start execution claim store requires valid journal I/O')
   }
   const path = join(options.dataDir, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME)
@@ -712,9 +1033,11 @@ export function openHostNodeQueuedStartExecutionClaimStore(
   }
 
   return new FileBackedQueuedStartExecutionClaimStore({
+    dataDir: options.dataDir,
     path,
     io,
     loaded,
+    compactAfterRecords,
     writeAllowed:
       createdByThisOpen || options.expectedCoverageEpoch === undefined || expectedMatches
   })
