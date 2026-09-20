@@ -10,6 +10,7 @@ import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import { createHostPerfInstrumentation } from './HostPerfSnapshot'
 import type { HostPerfSnapshotFileFs, HostPerfSnapshotFileTimers } from './HostPerfSnapshotFile'
 import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
+import { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import {
   createHostStandaloneComposition,
   HOST_PERF_SNAPSHOT_FILE_INTERVAL_MS
@@ -87,6 +88,45 @@ function input(runtimePath: string, lease: { assertHeld(): void }) {
 }
 
 describe('HostStandaloneComposition', () => {
+  it('hands restart-promoted receipts to queued-start recovery on explicit startup', async () => {
+    const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-recovery-'))
+    paths.push(runtimePath)
+    const seed = new HostRuntimeBootstrap({ hostDataDir: runtimePath })
+    seed.receiptStore.begin({
+      commandId: 'recover-command',
+      idempotencyKey: 'recover-key',
+      commandName: 'composer.send',
+      commandFingerprint: 'a'.repeat(64),
+      actor,
+      target: { kind: 'thread', id: 'thread-1' },
+      authority: { decision: 'allowed' }
+    })
+    seed.receiptStore.updatePhase('recover-command', 'starting', {
+      coverageEpoch: 'b'.repeat(64),
+      sequence: 2
+    })
+    const queuedStartRecovery = vi.fn(async (_receipts: readonly object[]) => undefined)
+    const composition = createHostStandaloneComposition({
+      ...input(runtimePath, { assertHeld: vi.fn() }),
+      queuedStartRecovery
+    })
+    try {
+      expect(queuedStartRecovery).not.toHaveBeenCalled()
+      await composition.recoverQueuedStarts()
+      expect(queuedStartRecovery).toHaveBeenCalledTimes(1)
+      expect(queuedStartRecovery.mock.calls[0]![0]).toEqual([
+        expect.objectContaining({
+          commandId: 'recover-command',
+          status: 'indeterminate',
+          recoveryState: 'recoverable-indeterminate',
+          executionClaimCursor: { coverageEpoch: 'b'.repeat(64), sequence: 2 }
+        })
+      ])
+    } finally {
+      await composition.shutdown()
+    }
+  })
+
   it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {
     const runtimePath = mkdtempSync(join(tmpdir(), 'host-standalone-phases-'))
     paths.push(runtimePath)

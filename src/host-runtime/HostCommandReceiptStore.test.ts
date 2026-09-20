@@ -179,13 +179,33 @@ describe('HostCommandReceiptStore', () => {
     expect(repeated.receipt.updatedAt).toBe(queued.receipt.updatedAt)
     expect(readFileSync(journalPath, 'utf8')).toBe(afterQueued)
 
-    const starting = store.updatePhase('cmd-1', 'starting')
+    const executionClaimCursor = { coverageEpoch: 'a'.repeat(64), sequence: 7 }
+    const starting = store.updatePhase('cmd-1', 'starting', executionClaimCursor)
     expect(starting).toMatchObject({
       kind: 'updated',
-      receipt: { status: 'pending', phase: 'starting' }
+      receipt: {
+        status: 'pending',
+        phase: 'starting',
+        executionClaimCursor
+      }
     })
     if (starting.kind !== 'updated') return
     expect(starting.receipt).not.toHaveProperty('completedAt')
+    const startingJournal = readFileSync(journalPath, 'utf8')
+    const startingEvent = JSON.parse(startingJournal.trimEnd().split('\n').at(-1)!)
+    expect(startingEvent.record).toMatchObject({
+      phase: 'starting',
+      executionClaimCursor
+    })
+    expect(store.updatePhase('cmd-1', 'starting', executionClaimCursor).kind).toBe('unchanged')
+    expect(readFileSync(journalPath, 'utf8')).toBe(startingJournal)
+    expect(
+      store.updatePhase('cmd-1', 'starting', {
+        coverageEpoch: 'b'.repeat(64),
+        sequence: 7
+      })
+    ).toEqual({ kind: 'invalid', code: 'execution_claim_cursor_conflict' })
+    expect(readFileSync(journalPath, 'utf8')).toBe(startingJournal)
 
     clock = '2026-08-03T17:00:03.000Z'
     const started = store.updatePhase('cmd-1', 'started')
@@ -205,6 +225,7 @@ describe('HostCommandReceiptStore', () => {
     expect(readFileSync(journalPath, 'utf8')).toBe(afterStarted)
     const found = expectFound(store.getByCommandId('cmd-1', OWNER_ACTOR), 'pending')
     expect(found?.phase).toBe('started')
+    expect(found?.executionClaimCursor).toEqual(executionClaimCursor)
     expect(found?.generation).toBe(4)
     expect(found?.cursor).toBe(12)
   })
@@ -269,6 +290,8 @@ describe('HostCommandReceiptStore', () => {
   it('retains phase through journal, checkpoint, and pending recovery promotion', () => {
     const store = openStore({ compactAfterRecords: 1000 })
     store.begin(baseInput())
+    const executionClaimCursor = { coverageEpoch: 'c'.repeat(64), sequence: 3 }
+    expect(store.updatePhase('cmd-1', 'starting', executionClaimCursor).kind).toBe('updated')
     expect(store.updatePhase('cmd-1', 'started').kind).toBe('updated')
 
     const journalPath = join(dataDir, HOST_COMMAND_RECEIPT_JOURNAL_FILENAME)
@@ -277,15 +300,24 @@ describe('HostCommandReceiptStore', () => {
     store.compact()
     const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
     const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
-      records: Array<{ commandId: string; phase?: string }>
+      records: Array<{
+        commandId: string
+        phase?: string
+        executionClaimCursor?: unknown
+      }>
     }
     expect(checkpoint.records).toContainEqual(
-      expect.objectContaining({ commandId: 'cmd-1', phase: 'started' })
+      expect.objectContaining({
+        commandId: 'cmd-1',
+        phase: 'started',
+        executionClaimCursor
+      })
     )
 
     const reopened = openStore({ compactAfterRecords: 1000 })
     const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
     expect(durable?.phase).toBe('started')
+    expect(durable?.executionClaimCursor).toEqual(executionClaimCursor)
     expect(durable?.recoveryState).toBe('recoverable-indeterminate')
     expect(durable?.completedAt).toBeUndefined()
   })
@@ -321,6 +353,27 @@ describe('HostCommandReceiptStore', () => {
     const reopened = openStore({ compactAfterRecords: 1000 })
     expect(reopened.getByCommandId('cmd-1', OWNER_ACTOR)).toEqual({ kind: 'not_found' })
     expect(reopened.size).toBe(0)
+  })
+
+  it('drops a malformed stored claim cursor while retaining the conservative receipt', () => {
+    const store = openStore({ compactAfterRecords: 1000 })
+    store.begin(baseInput())
+    store.compact()
+
+    const checkpointPath = join(dataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME)
+    const checkpoint = JSON.parse(readFileSync(checkpointPath, 'utf8')) as {
+      records: Array<Record<string, unknown>>
+    }
+    checkpoint.records[0]!.executionClaimCursor = {
+      coverageEpoch: 'malformed',
+      sequence: 0
+    }
+    writeFileSync(checkpointPath, `${JSON.stringify(checkpoint)}\n`)
+
+    const reopened = openStore({ compactAfterRecords: 1000 })
+    const durable = expectFound(reopened.getByCommandId('cmd-1', OWNER_ACTOR), 'indeterminate')
+    expect(durable).not.toHaveProperty('executionClaimCursor')
+    expect(durable?.recoveryState).toBe('recoverable-indeterminate')
   })
 
   it('emits a receipt_delivery span when a thread receipt completes', () => {

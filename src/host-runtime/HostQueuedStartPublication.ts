@@ -44,6 +44,7 @@ import type { HostDomainDeltaPublishResult, HostDomainEffectDto } from './HostDo
 import type {
   HostCommandReceiptActor,
   HostCommandReceiptCompleteInput,
+  HostCommandReceiptExecutionClaimCursor,
   HostCommandReceiptLookupResult,
   HostCommandReceiptMarkIndeterminateInput,
   HostCommandReceiptMarkIndeterminateResult,
@@ -63,6 +64,7 @@ export interface HostQueuedStartStartedView {
   readonly threadId: string
   readonly fingerprint: string
   readonly phase: 'queued' | 'starting' | 'started'
+  readonly executionClaimCursor?: HostCommandReceiptExecutionClaimCursor
   readonly startedEvidence: boolean
   readonly terminalOutcome: string | null
 }
@@ -89,7 +91,8 @@ export interface HostQueuedStartPublicationPorts {
   ) => HostCommandReceiptMarkIndeterminateResult
   readonly updateReceiptPhase: (
     commandId: string,
-    phase: HostQueuedStartPhase
+    phase: HostQueuedStartPhase,
+    executionClaimCursor?: HostCommandReceiptExecutionClaimCursor
   ) => HostCommandReceiptPhaseUpdateResult
   readonly readScopedFamilies: (
     scope: HostMutationObservationScope
@@ -361,14 +364,15 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
 
   function advancePhase(
     input: HostQueuedStartPublicationRegisterInput,
-    phase: HostQueuedStartPhase
+    phase: HostQueuedStartPhase,
+    executionClaimCursor?: HostCommandReceiptExecutionClaimCursor
   ): HostQueuedStartPublicationOutcome {
     if (!stillPending(input.commandId, input.actor, input.fingerprint)) {
       return { kind: 'ignored', reason: 'receipt_not_pending' }
     }
     let result: HostCommandReceiptPhaseUpdateResult
     try {
-      result = ports.updateReceiptPhase(input.commandId, phase)
+      result = ports.updateReceiptPhase(input.commandId, phase, executionClaimCursor)
     } catch {
       promote(input.commandId, 'deferred_execution_may_have_begun')
       return { kind: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
@@ -473,7 +477,7 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
         promote(input.commandId, 'deferred_execution_may_have_begun')
         return { kind: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
       }
-      return advancePhase(input, 'starting')
+      return advancePhase(input, 'starting', view.executionClaimCursor)
     },
     onStarted(view) {
       // Witness only. Completing or advancing phase here races providers that

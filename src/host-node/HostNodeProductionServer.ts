@@ -51,7 +51,15 @@ import {
   type HostNodeDomainPortsOptions
 } from './HostNodeDomainPorts'
 import { createHostQueuedStartStartedSlot } from '../host-runtime/HostQueuedStartPublication'
-import { openHostNodeQueuedStartExecutionClaimStore } from './HostNodeQueuedStartExecutionClaimStore'
+import type { HostCommandReceiptRecord } from '../host-runtime/HostCommandReceiptStore'
+import {
+  openHostNodeQueuedStartExecutionClaimStore,
+  type HostNodeQueuedStartExecutionClaimStore
+} from './HostNodeQueuedStartExecutionClaimStore'
+import {
+  createHostNodeQueuedStartLifecycle,
+  type HostQueuedStartRecoverySummary
+} from './HostNodeQueuedStartLifecycle'
 
 export type HostNodeProductionPhase =
   | 'idle'
@@ -159,6 +167,67 @@ function ensureDefaultRuntimePath(profilePath: string, runtimePath: string): voi
     mkdirSync(runtimePath, { recursive: false, mode: 0o700 })
   }
   if (process.platform !== 'win32') chmodSync(runtimePath, 0o700)
+}
+
+/**
+ * Classify body-free restart candidates against positive durable claim
+ * evidence. A dedicated lifecycle is opened lazily only when at least one
+ * eligible receipt carries a cursor; Domain's operational lifecycle and store
+ * remain separate and live. Every current production result stays
+ * indeterminate and non-resubmittable.
+ */
+export async function recoverHostNodeQueuedStarts(input: {
+  readonly openExecutionClaimStore: () => HostNodeQueuedStartExecutionClaimStore
+  readonly receipts: readonly HostCommandReceiptRecord[]
+}): Promise<readonly HostQueuedStartRecoverySummary[]> {
+  const candidates = input.receipts.flatMap((receipt) => {
+    if (
+      receipt.status !== 'indeterminate' ||
+      receipt.recoveryState !== 'recoverable-indeterminate' ||
+      receipt.commandName !== 'composer.send' ||
+      receipt.target.kind !== 'thread' ||
+      typeof receipt.target.id !== 'string' ||
+      receipt.target.id.length === 0
+    ) {
+      return []
+    }
+    return [
+      {
+        commandId: receipt.commandId,
+        threadId: receipt.target.id,
+        fingerprint: receipt.commandFingerprint,
+        ...(receipt.executionClaimCursor
+          ? { executionClaimCursor: receipt.executionClaimCursor }
+          : {})
+      }
+    ]
+  })
+  if (!candidates.some((candidate) => candidate.executionClaimCursor !== undefined)) {
+    return candidates.map((candidate) => ({
+      commandId: candidate.commandId,
+      classification: 'unknown'
+    }))
+  }
+
+  const recoveryLifecycle = createHostNodeQueuedStartLifecycle({
+    executionClaimStore: input.openExecutionClaimStore()
+  })
+  const detailed = await recoveryLifecycle.reopenWithEvidence(candidates)
+  if (
+    detailed.outcomes.length !== candidates.length ||
+    detailed.summaries.length !== candidates.length ||
+    detailed.outcomes.some(
+      (outcome) => outcome.outcome !== 'indeterminate' || outcome.resubmittable !== null
+    ) ||
+    detailed.summaries.some(
+      (summary, index) =>
+        summary.commandId !== candidates[index]?.commandId ||
+        (summary.classification !== 'claimed' && summary.classification !== 'unknown')
+    )
+  ) {
+    throw new Error('Queued-start recovery attempted to grant resubmission without absence proof')
+  }
+  return detailed.summaries
 }
 
 /**
@@ -504,8 +573,14 @@ export class HostNodeProductionServer {
         },
         commandExecutor: (command, context) =>
           this.domain!.executeCommand(context, command, { id: context.client.clientId }),
-        ...(queuedStartSlot
+        ...(queuedStartSlot && queuedStartExecutionClaimStore
           ? {
+              queuedStartRecovery: (receipts) =>
+                recoverHostNodeQueuedStarts({
+                  openExecutionClaimStore: () =>
+                    openHostNodeQueuedStartExecutionClaimStore({ dataDir: runtimePath }),
+                  receipts
+                }),
               queuedComposerSend: (command, context) =>
                 this.domain!.acknowledgeQueuedComposerSend(context, command, {
                   id: context.client.clientId
@@ -541,6 +616,7 @@ export class HostNodeProductionServer {
           : {}),
         historySinceProvider: (request) => this.domain!.historySince(request)
       })
+      await this.composition.recoverQueuedStarts()
       projectionDirtyRef.current = () => {
         void this.composition!.reconcileProjection().catch(() => undefined)
       }

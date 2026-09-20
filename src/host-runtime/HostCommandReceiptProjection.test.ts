@@ -106,11 +106,14 @@ describe('HostCommandReceiptProjection', () => {
       authority: { decision: 'allowed' }
     })
     expect(begun.kind).toBe('created')
+    const executionClaimCursor = { coverageEpoch: 'e'.repeat(64), sequence: 9 }
+    expect(store.updatePhase('cmd-phase', 'starting', executionClaimCursor).kind).toBe('updated')
     expect(store.updatePhase('cmd-phase', 'started').kind).toBe('updated')
 
     const found = store.getByCommandId('cmd-phase', OWNER)
     expect(found.kind).toBe('found')
     if (found.kind !== 'found') return
+    expect(found.receipt.executionClaimCursor).toEqual(executionClaimCursor)
 
     const projected = projectHostCommandReceipt(found.receipt)
     expect(projected.ok).toBe(true)
@@ -125,6 +128,7 @@ describe('HostCommandReceiptProjection', () => {
     expect(projected.value).not.toHaveProperty('target')
     expect(projected.value).not.toHaveProperty('policy')
     expect(projected.value).not.toHaveProperty('recoveryState')
+    expect(projected.value).not.toHaveProperty('executionClaimCursor')
 
     const decoded = decodeHostCommandReceipt(projected.value)
     expect(decoded).toMatchObject({

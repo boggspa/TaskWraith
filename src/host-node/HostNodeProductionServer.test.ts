@@ -9,7 +9,11 @@ import {
   readHostProfileWriterFence,
   writeHostProfileWriterFence
 } from '../host-runtime/HostProfileWriterFence'
-import { HOST_PERF_SNAPSHOT_PATH_ENV, HostNodeProductionServer } from './HostNodeProductionServer'
+import {
+  HOST_PERF_SNAPSHOT_PATH_ENV,
+  HostNodeProductionServer,
+  recoverHostNodeQueuedStarts
+} from './HostNodeProductionServer'
 import {
   TASKWRAITH_HOST_QUEUED_START_ENV,
   type HostNodeDomainPortsOptions
@@ -60,6 +64,7 @@ function harness(
   let domainQueuedStartOnStarting: HostNodeDomainPortsOptions['queuedStartOnStarting']
   let domainQueuedStartOnStarted: HostNodeDomainPortsOptions['queuedStartOnStarted']
   let domainQueuedStartOnDispatchSettled: HostNodeDomainPortsOptions['queuedStartOnDispatchSettled']
+  let compositionQueuedStartRecovery: HostStandaloneCompositionInput['queuedStartRecovery']
   let compositionQueuedComposerSend: HostStandaloneCompositionInput['queuedComposerSend']
   let compositionQueuedStartStartingBind: HostStandaloneCompositionInput['queuedStartStartingBind']
   let compositionQueuedStartStartedBind: HostStandaloneCompositionInput['queuedStartStartedBind']
@@ -101,6 +106,10 @@ function harness(
           : { bootEpoch: harnessOptions.compositionBootEpoch })
       }
     },
+    recoverQueuedStarts: vi.fn(async () => {
+      order.push('queued.recovery')
+      await compositionQueuedStartRecovery?.([])
+    }),
     startProjectionReconciliation: vi.fn(async () => order.push('reconcile.start')),
     reconcileProjection: vi.fn(async () => order.push('reconcile.now')),
     subscribeDeltas: vi.fn(() => () => {}),
@@ -191,6 +200,7 @@ function harness(
       composedGitReadProvider = input.gitReadProvider as typeof composedGitReadProvider
       composedPerf = input.perf
       composedResolveReceiptSpanChatId = input.resolveReceiptSpanChatId
+      compositionQueuedStartRecovery = input.queuedStartRecovery
       compositionQueuedComposerSend = input.queuedComposerSend
       compositionQueuedStartStartingBind = input.queuedStartStartingBind
       compositionQueuedStartStartedBind = input.queuedStartStartedBind
@@ -232,6 +242,7 @@ function harness(
     domainQueuedStartOnStarting: () => domainQueuedStartOnStarting,
     domainQueuedStartOnStarted: () => domainQueuedStartOnStarted,
     domainQueuedStartOnDispatchSettled: () => domainQueuedStartOnDispatchSettled,
+    compositionQueuedStartRecovery: () => compositionQueuedStartRecovery,
     compositionQueuedComposerSend: () => compositionQueuedComposerSend,
     compositionQueuedStartStartingBind: () => compositionQueuedStartStartingBind,
     compositionQueuedStartStartedBind: () => compositionQueuedStartStartedBind,
@@ -266,6 +277,7 @@ describe('HostNodeProductionServer', () => {
       'store',
       'domain',
       'composition',
+      'queued.recovery',
       'reconcile.start',
       'listener',
       'listener.start'
@@ -735,6 +747,9 @@ describe('HostNodeProductionServer', () => {
     expect(existsSync(join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME))).toBe(
       true
     )
+    expect(on.compositionQueuedStartRecovery()).toBeTypeOf('function')
+    expect(on.order.indexOf('queued.recovery')).toBeLessThan(on.order.indexOf('reconcile.start'))
+    expect(on.order.indexOf('queued.recovery')).toBeLessThan(on.order.indexOf('listener.start'))
     expect(on.domainQueuedStartOnStarting()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnStarted()).toBeTypeOf('function')
     expect(on.domainQueuedStartOnDispatchSettled()).toBeTypeOf('function')
@@ -812,6 +827,23 @@ describe('HostNodeProductionServer', () => {
     await h.server.stop()
   })
 
+  it('rejects an ON gate with a missing custom runtime path before Domain and creates nothing', async () => {
+    const profilePath = realpathSync(profile())
+    const runtimePath = join(profilePath, 'missing-custom-runtime')
+    const claimPath = join(runtimePath, HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME)
+    const h = harness({
+      profilePath,
+      acquireLease: undefined,
+      environment: { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' },
+      runtimePath: () => runtimePath
+    })
+
+    await expect(h.server.start()).rejects.toThrow()
+    expect(h.order).not.toContain('domain')
+    expect(existsSync(runtimePath)).toBe(false)
+    expect(existsSync(claimPath)).toBe(false)
+  })
+
   it('reopens the same runtime claim journal and preserves durable claim presence', async () => {
     const runtimePath = realpathSync(profile())
     const environment = { [TASKWRAITH_HOST_QUEUED_START_ENV]: '1' }
@@ -844,6 +876,109 @@ describe('HostNodeProductionServer', () => {
     })
     expect(reopened.list().map((claim) => claim.commandId)).toEqual(['claim-one', 'claim-two'])
     await second.server.stop()
+  })
+
+  it('reports body-free claimed vs unknown evidence and opens recovery storage lazily', async () => {
+    const readClaims = vi.fn(() => [
+      {
+        commandId: 'recover-command',
+        threadId: 'recover-thread',
+        fingerprint: 'recover-fingerprint',
+        claimedAt: 1
+      }
+    ])
+    const store: HostNodeQueuedStartExecutionClaimStore = {
+      coverageEpoch: 'a'.repeat(64),
+      path: '/test/claims.jsonl',
+      declaresDurableCoverage: false,
+      record: vi.fn(),
+      list: vi.fn(() => []),
+      readClaims
+    }
+    const openExecutionClaimStore = vi.fn(() => store)
+    await expect(
+      recoverHostNodeQueuedStarts({
+        openExecutionClaimStore,
+        receipts: [
+          {
+            schemaVersion: 1,
+            commandId: 'recover-command',
+            idempotencyKey: 'recover-key',
+            commandFingerprint: 'recover-fingerprint',
+            commandName: 'composer.send',
+            status: 'indeterminate',
+            phase: 'starting',
+            executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 1 },
+            actor: { actorId: 'actor', clientId: 'client', clientClass: 'desktop' },
+            target: { kind: 'thread', id: 'recover-thread' },
+            authority: { decision: 'allowed' },
+            createdAt: '2026-09-20T00:00:00.000Z',
+            updatedAt: '2026-09-20T00:00:01.000Z',
+            recoveryState: 'recoverable-indeterminate'
+          }
+        ]
+      })
+    ).resolves.toEqual([{ commandId: 'recover-command', classification: 'claimed' }])
+    expect(openExecutionClaimStore).toHaveBeenCalledOnce()
+    expect(readClaims).toHaveBeenCalledOnce()
+    expect(readClaims).toHaveBeenCalledWith([{ coverageEpoch: 'a'.repeat(64), sequence: 1 }])
+    expect(store.list).not.toHaveBeenCalled()
+
+    openExecutionClaimStore.mockClear()
+    readClaims.mockClear()
+    await expect(
+      recoverHostNodeQueuedStarts({
+        openExecutionClaimStore,
+        receipts: [
+          {
+            schemaVersion: 1,
+            commandId: 'crash-before-cursor',
+            idempotencyKey: 'crash-before-cursor-key',
+            commandFingerprint: 'crash-before-cursor-fingerprint',
+            commandName: 'composer.send',
+            status: 'indeterminate',
+            actor: { actorId: 'actor', clientId: 'client', clientClass: 'desktop' },
+            target: { kind: 'thread', id: 'crash-thread' },
+            authority: { decision: 'allowed' },
+            createdAt: '2026-09-20T00:00:00.000Z',
+            updatedAt: '2026-09-20T00:00:01.000Z',
+            recoveryState: 'recoverable-indeterminate'
+          }
+        ]
+      })
+    ).resolves.toEqual([{ commandId: 'crash-before-cursor', classification: 'unknown' }])
+    expect(openExecutionClaimStore).not.toHaveBeenCalled()
+    expect(readClaims).not.toHaveBeenCalled()
+
+    const unsafeCoverage: HostNodeQueuedStartExecutionClaimStore = {
+      ...store,
+      declaresDurableCoverage: true,
+      readClaims: vi.fn(() => [null]),
+      list: vi.fn(() => [])
+    }
+    await expect(
+      recoverHostNodeQueuedStarts({
+        openExecutionClaimStore: () => unsafeCoverage,
+        receipts: [
+          {
+            schemaVersion: 1,
+            commandId: 'unclaimed-command',
+            idempotencyKey: 'unclaimed-key',
+            commandFingerprint: 'unclaimed-fingerprint',
+            commandName: 'composer.send',
+            status: 'indeterminate',
+            executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 2 },
+            actor: { actorId: 'actor', clientId: 'client', clientClass: 'desktop' },
+            target: { kind: 'thread', id: 'unclaimed-thread' },
+            authority: { decision: 'allowed' },
+            createdAt: '2026-09-20T00:00:00.000Z',
+            updatedAt: '2026-09-20T00:00:01.000Z',
+            recoveryState: 'recoverable-indeterminate'
+          }
+        ]
+      })
+    ).resolves.toEqual([{ commandId: 'unclaimed-command', classification: 'unknown' }])
+    expect(unsafeCoverage.list).toHaveBeenCalledWith({ recoveryHeadSequence: undefined })
   })
 
   it('fails closed on a corrupt queued-start claim journal without constructing Domain', async () => {
@@ -910,6 +1045,7 @@ describe('HostNodeProductionServer', () => {
     expect(process.env[TASKWRAITH_HOST_QUEUED_START_ENV]).toBe(previous)
     expect(off.domainHostQueuedStartEnabled()).toBe(false)
     expect(off.domainExecutionClaimStore()).toBeUndefined()
+    expect(off.compositionQueuedStartRecovery()).toBeUndefined()
     expect(existsSync(claimPath)).toBe(false)
     expect(off.domainQueuedStartOnStarting()).toBeUndefined()
     expect(off.domainQueuedStartOnStarted()).toBeUndefined()
@@ -924,6 +1060,7 @@ describe('HostNodeProductionServer', () => {
     await empty.server.start()
     expect(empty.domainHostQueuedStartEnabled()).toBe(false)
     expect(empty.domainExecutionClaimStore()).toBeUndefined()
+    expect(empty.compositionQueuedStartRecovery()).toBeUndefined()
     expect(existsSync(claimPath)).toBe(false)
     expect(empty.compositionQueuedComposerSend()).toBeUndefined()
     expect(empty.domainQueuedStartOnStarting()).toBeUndefined()

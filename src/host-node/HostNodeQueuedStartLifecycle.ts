@@ -62,16 +62,16 @@
  *   exactly once, though a lease may outlive its receipt's terminal outcome
  *   until provider completion/teardown.
  * - `reopen` implements the §7 #4 restart rule against the execution-claim
- *   store: claimed-or-unknown work stays `indeterminate` (a provider may
- *   already have started); only PROVABLY unclaimed work terminalizes as
- *   `host_shutting_down` and may be resubmitted under a NEW id. Absence is
- *   proof only when the store declares durable coverage and its listing is
- *   well-formed; any same-command claim, even under a different identity,
- *   is conflicting evidence. Queue payloads are never replayed. `reopen`
- *   always calls `list({ recoveryHeadSequence })` so a supplied inclusive
- *   1-based bound truncates the read (`0` is header-only). The bound does
- *   not make absence decidable; `declaresDurableCoverage` stays the store's
- *   contract and this module must not flip it.
+ *   store: receipt-bound cursors are validated in one batch and exact
+ *   positive evidence is classified `claimed`; everything else is
+ *   `unknown` while production coverage remains false. Both stay
+ *   `indeterminate` and non-resubmittable. Only PROVABLY unclaimed work may
+ *   terminalize as `host_shutting_down` under a NEW id. Absence is proof only
+ *   when the store declares durable coverage and its listing is well-formed;
+ *   queue payloads are never replayed. `reopen` still calls
+ *   `list({ recoveryHeadSequence })` for that separately guarded absence
+ *   path. The bound does not make absence decidable, and this module never
+ *   flips `declaresDurableCoverage`.
  *
  * Terminal outcomes map onto EXISTING transport codes only — no new wire
  * error codes (seat decoders are allowlists): see
@@ -128,16 +128,22 @@ export interface HostQueuedStartExecutionClaim {
   readonly claimedAt: number
 }
 
+/** Host-internal durable position of one fsynced execution claim. */
+export interface HostQueuedStartExecutionClaimCursor {
+  readonly coverageEpoch: string
+  readonly sequence: number
+}
+
 /**
  * Execution-claim store port. Standalone HostNodeProductionServer injects
  * the file-backed store behind the default-OFF queued-start gate; direct and
  * test lifecycle construction retains the in-memory fallback below. `claim`
  * awaits `record` before provider side effects, and production supplies the
- * fsynced implementation. Within `reopen`'s declared-coverage guard, `list`
- * is called with `{ recoveryHeadSequence }` (omit the number to read the
- * whole journal). The file-backed store currently declares no durable absence
- * coverage; production recovery and journal retention/compaction remain later
- * work.
+ * fsynced implementation. Production restart recovery batch-validates
+ * receipt-bound claim cursors for positive evidence while durable absence
+ * coverage remains false. Within `reopen`'s separate declared-coverage guard,
+ * `list` is called with `{ recoveryHeadSequence }` (omit the number to read
+ * the whole journal). Journal retention/compaction remains separate work.
  */
 export interface HostQueuedStartExecutionClaimListOptions {
   /**
@@ -149,10 +155,26 @@ export interface HostQueuedStartExecutionClaimListOptions {
 }
 
 export interface HostQueuedStartExecutionClaimStore {
-  record(claim: HostQueuedStartExecutionClaim): void | Promise<void>
+  record(
+    claim: HostQueuedStartExecutionClaim
+  ):
+    | HostQueuedStartExecutionClaimCursor
+    | void
+    | Promise<HostQueuedStartExecutionClaimCursor | void>
   list(
     options?: HostQueuedStartExecutionClaimListOptions
   ): readonly HostQueuedStartExecutionClaim[] | Promise<readonly HostQueuedStartExecutionClaim[]>
+  /**
+   * Strict positive-evidence batch lookup. Results align one-for-one with
+   * cursors; `null` means that exact durable position is unavailable. The
+   * file-backed store parses and authenticates the unbounded journal once per
+   * batch. Volatile/direct-test stores omit this and therefore prove nothing.
+   */
+  readClaims?(
+    cursors: readonly HostQueuedStartExecutionClaimCursor[]
+  ):
+    | readonly (HostQueuedStartExecutionClaim | null)[]
+    | Promise<readonly (HostQueuedStartExecutionClaim | null)[]>
   /**
    * Declare true ONLY when `record` is durable across Host restarts and
    * `list` reads that same durable domain for every command this lifecycle
@@ -191,6 +213,8 @@ export interface HostQueuedStartReservationView {
   readonly threadId: string
   readonly fingerprint: string
   readonly phase: HostQueuedStartPhase
+  /** Durable claim cursor, present only after a file-backed fsynced claim. */
+  readonly executionClaimCursor?: HostQueuedStartExecutionClaimCursor
   readonly terminalOutcome: HostQueuedStartTerminalOutcome | null
   readonly cancelLatched: boolean
   /** True once the start callback has been handed to foreign code (M2 L2). */
@@ -262,6 +286,24 @@ export type HostQueuedStartCancelResult =
   | { readonly kind: 'rejected'; readonly reason: 'identity_mismatch' }
   | { readonly kind: 'not_found' }
 
+export interface HostQueuedStartRecoveryCandidate {
+  readonly commandId: string
+  readonly threadId: string
+  readonly fingerprint: string
+  readonly executionClaimCursor?: HostQueuedStartExecutionClaimCursor
+}
+
+/** Body-free internal recovery classification; never projected to clients. */
+export interface HostQueuedStartRecoverySummary {
+  readonly commandId: string
+  readonly classification: 'claimed' | 'unknown' | 'unclaimed'
+}
+
+export interface HostQueuedStartReopenDetailedResult {
+  readonly outcomes: readonly HostQueuedStartReopenOutcome[]
+  readonly summaries: readonly HostQueuedStartRecoverySummary[]
+}
+
 export type HostQueuedStartReopenOutcome =
   | {
       readonly commandId: string
@@ -322,6 +364,7 @@ interface ReservationRecord {
   providerRunBegan: boolean
   providerWorkEnded: boolean
   startedEvidence: boolean
+  executionClaimCursor: HostQueuedStartExecutionClaimCursor | undefined
   lease: HostNodeRunAdmissionLease | null
   leaseReleased: boolean
   view: HostQueuedStartReservationView
@@ -346,6 +389,18 @@ function isExecutionClaim(value: unknown): value is HostQueuedStartExecutionClai
   }
   const claimedAt = (value as { claimedAt?: unknown }).claimedAt
   return typeof claimedAt === 'number' && Number.isFinite(claimedAt) && claimedAt >= 0
+}
+
+function isExecutionClaimCursor(value: unknown): value is HostQueuedStartExecutionClaimCursor {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const cursor = value as Record<string, unknown>
+  return (
+    typeof cursor.coverageEpoch === 'string' &&
+    /^[0-9a-f]{64}$/.test(cursor.coverageEpoch) &&
+    typeof cursor.sequence === 'number' &&
+    Number.isSafeInteger(cursor.sequence) &&
+    cursor.sequence >= 1
+  )
 }
 
 /**
@@ -384,9 +439,13 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
   providerRunEnded(commandId: string, evidence: HostQueuedStartEndEvidence): boolean
   beginShutdown(): void
   reopen(
-    candidates: readonly { commandId: string; threadId: string; fingerprint: string }[],
+    candidates: readonly HostQueuedStartRecoveryCandidate[],
     listOptions?: HostQueuedStartExecutionClaimListOptions
   ): Promise<HostQueuedStartReopenOutcome[]>
+  reopenWithEvidence(
+    candidates: readonly HostQueuedStartRecoveryCandidate[],
+    listOptions?: HostQueuedStartExecutionClaimListOptions
+  ): Promise<HostQueuedStartReopenDetailedResult>
   getReservation(commandId: string): HostQueuedStartReservationView | undefined
   stats(): {
     readonly reservations: number
@@ -456,6 +515,122 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
     return true
   }
 
+  const reopenWithEvidence = async (
+    candidates: readonly HostQueuedStartRecoveryCandidate[],
+    listOptions?: HostQueuedStartExecutionClaimListOptions
+  ): Promise<HostQueuedStartReopenDetailedResult> => {
+    shuttingDown = true
+    const classifications: Array<HostQueuedStartRecoverySummary['classification']> = candidates.map(
+      () => 'unknown'
+    )
+    const cursorEntries: Array<{
+      readonly candidateIndex: number
+      readonly cursor: HostQueuedStartExecutionClaimCursor
+    }> = []
+    for (const [candidateIndex, candidate] of candidates.entries()) {
+      if (
+        candidate.executionClaimCursor !== undefined &&
+        isExecutionClaimCursor(candidate.executionClaimCursor)
+      ) {
+        cursorEntries.push({ candidateIndex, cursor: candidate.executionClaimCursor })
+      }
+    }
+
+    // Validate every receipt-bound cursor in one authenticated journal read.
+    // Missing support, malformed cursors, a short result, or any read failure
+    // leaves the aligned candidate unknown and therefore non-resubmittable.
+    if (cursorEntries.length > 0 && typeof store.readClaims === 'function') {
+      try {
+        const claims = await store.readClaims(cursorEntries.map((entry) => entry.cursor))
+        if (Array.isArray(claims) && claims.length === cursorEntries.length) {
+          for (const [resultIndex, entry] of cursorEntries.entries()) {
+            const candidate = candidates[entry.candidateIndex]!
+            const claim = claims[resultIndex]
+            if (
+              isExecutionClaim(claim) &&
+              claim.commandId === candidate.commandId &&
+              claim.threadId === candidate.threadId &&
+              claim.fingerprint === candidate.fingerprint
+            ) {
+              classifications[entry.candidateIndex] = 'claimed'
+            }
+          }
+        }
+      } catch {
+        // A batch read is all-or-conservative: no partial positive result may
+        // escape an unreadable or concurrently replaced evidence journal.
+      }
+    }
+
+    // Absence-based classification is only as strong as the evidence domain.
+    // This path remains dormant in production while durable coverage is false.
+    let claimsByCommandId: ReadonlyMap<string, HostQueuedStartExecutionClaim> | null = null
+    let covered = false
+    try {
+      covered = store.declaresDurableCoverage === true
+    } catch {
+      // Unreadable coverage cannot establish an absence proof either.
+    }
+    if (covered) {
+      try {
+        const listed = await store.list({
+          recoveryHeadSequence: listOptions?.recoveryHeadSequence
+        })
+        if (Array.isArray(listed)) {
+          const claims = new Map<string, HostQueuedStartExecutionClaim>()
+          let malformed = false
+          for (const entry of listed) {
+            if (!isExecutionClaim(entry) || claims.has(entry.commandId)) {
+              malformed = true
+              break
+            }
+            claims.set(entry.commandId, entry)
+          }
+          if (!malformed) claimsByCommandId = claims
+        }
+      } catch {
+        // Unreadable evidence leaves every otherwise-unclassified candidate unknown.
+      }
+    }
+
+    for (const [candidateIndex, candidate] of candidates.entries()) {
+      if (
+        classifications[candidateIndex] === 'claimed' ||
+        candidate.executionClaimCursor !== undefined ||
+        !isClaimIdentity(candidate) ||
+        claimsByCommandId === null
+      ) {
+        continue
+      }
+      const claim = claimsByCommandId.get(candidate.commandId)
+      if (!claim) {
+        classifications[candidateIndex] = 'unclaimed'
+      } else if (
+        claim.threadId === candidate.threadId &&
+        claim.fingerprint === candidate.fingerprint
+      ) {
+        classifications[candidateIndex] = 'claimed'
+      }
+    }
+
+    const summaries: HostQueuedStartRecoverySummary[] = candidates.map(
+      (candidate, candidateIndex) => ({
+        commandId: candidate.commandId,
+        classification: classifications[candidateIndex]!
+      })
+    )
+    const outcomes: HostQueuedStartReopenOutcome[] = summaries.map((summary) =>
+      summary.classification === 'unclaimed'
+        ? {
+            commandId: summary.commandId,
+            outcome: 'host_shutting_down',
+            resubmittable: { newIdRequired: true }
+          }
+        : { commandId: summary.commandId, outcome: 'indeterminate', resubmittable: null }
+    )
+    return { outcomes, summaries }
+  }
+
   const api = {
     reserve(input: {
       commandId: string
@@ -490,6 +665,7 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         providerRunBegan: false,
         providerWorkEnded: false,
         startedEvidence: false,
+        executionClaimCursor: undefined,
         lease: null,
         leaseReleased: false,
         view: undefined as never
@@ -506,6 +682,9 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
         },
         get phase() {
           return record.phase
+        },
+        get executionClaimCursor() {
+          return record.executionClaimCursor
         },
         get terminalOutcome() {
           return record.terminalOutcome
@@ -584,7 +763,13 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
           claimedAt: now()
         }
         if (!isExecutionClaim(claim)) throw new Error('Invalid execution claim')
-        await store.record(claim)
+        const claimCursor = await store.record(claim)
+        if (claimCursor !== undefined) {
+          if (!isExecutionClaimCursor(claimCursor)) {
+            throw new Error('Invalid execution claim cursor')
+          }
+          record.executionClaimCursor = claimCursor
+        }
         if (record.terminalOutcome !== null) return refuse('already_terminal')
         if (shuttingDown) {
           settleTerminal(record, 'host_shutting_down')
@@ -807,68 +992,13 @@ export function createHostNodeQueuedStartLifecycle(options: HostQueuedStartLifec
     },
 
     async reopen(
-      candidates: readonly { commandId: string; threadId: string; fingerprint: string }[],
+      candidates: readonly HostQueuedStartRecoveryCandidate[],
       listOptions?: HostQueuedStartExecutionClaimListOptions
     ): Promise<HostQueuedStartReopenOutcome[]> {
-      shuttingDown = true
-      // Absence-based classification is only as strong as the evidence
-      // domain (M2 fix L4): the store must DECLARE durable coverage, the
-      // listing must be well-formed, and any same-command claim — even one
-      // recorded under a different thread or fingerprint — is conflicting
-      // evidence, never absence. Anything less proves nothing, and unproven
-      // work is indeterminate (a provider may already have started).
-      let claimedCommandIds: ReadonlySet<string> | null = null
-      let covered = false
-      try {
-        covered = store.declaresDurableCoverage === true
-      } catch {
-        // Unreadable coverage cannot establish an absence proof either.
-      }
-      if (covered) {
-        try {
-          // Always pass the bound object so list({ recoveryHeadSequence })
-          // has a production caller. Inclusive 1-based; 0 is header-only.
-          // Truncation is not absence proof — coverage still has to be declared.
-          const listed = await store.list({
-            recoveryHeadSequence: listOptions?.recoveryHeadSequence
-          })
-          if (Array.isArray(listed)) {
-            const ids = new Set<string>()
-            let malformed = false
-            for (const entry of listed) {
-              // Malformed evidence could conceal any candidate's claim.
-              // Validate every field without normalizing stored identities.
-              if (!isExecutionClaim(entry)) {
-                malformed = true
-                break
-              }
-              ids.add(entry.commandId)
-            }
-            if (!malformed) claimedCommandIds = ids
-          }
-        } catch {
-          // The claim evidence itself is unreadable: nothing is provably
-          // unclaimed, so EVERYTHING is unknown → indeterminate.
-        }
-      }
-      return candidates.map((candidate) => {
-        if (
-          !isClaimIdentity(candidate) ||
-          claimedCommandIds === null ||
-          claimedCommandIds.has(candidate.commandId)
-        ) {
-          return { commandId: candidate.commandId, outcome: 'indeterminate', resubmittable: null }
-        }
-        // Provably unclaimed: the durable-coverage store would have recorded
-        // a claim before any provider side effect, and it holds none for
-        // this command id.
-        return {
-          commandId: candidate.commandId,
-          outcome: 'host_shutting_down',
-          resubmittable: { newIdRequired: true }
-        }
-      })
+      return [...(await reopenWithEvidence(candidates, listOptions)).outcomes]
     },
+
+    reopenWithEvidence,
 
     getReservation(commandId: string): HostQueuedStartReservationView | undefined {
       return reservations.get(commandId)?.view

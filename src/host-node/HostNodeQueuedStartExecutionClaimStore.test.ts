@@ -15,7 +15,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { createHostNodeQueuedStartLifecycle } from './HostNodeQueuedStartLifecycle'
+import {
+  createHostNodeQueuedStartLifecycle,
+  type HostQueuedStartExecutionClaimCursor
+} from './HostNodeQueuedStartLifecycle'
 import type { HostNodeRunAdmissionLease } from './HostNodeRunAdmission'
 import {
   HOST_NODE_QUEUED_START_EXECUTION_CLAIM_FILENAME,
@@ -95,7 +98,9 @@ describe('HostNodeQueuedStartExecutionClaimStore', () => {
 
     expect(fresh.coverageEpoch).toBe(EPOCH_A)
     expect(fresh.declaresDurableCoverage).toBe(false)
-    fresh.record(claim())
+    const firstCursor = fresh.record(claim()) as HostQueuedStartExecutionClaimCursor
+    expect(firstCursor).toEqual({ coverageEpoch: EPOCH_A, sequence: 1 })
+    expect(fresh.readClaims!([firstCursor])).toEqual([claim()])
 
     const sourceAfterFirst = readFileSync(fresh.path, 'utf8')
     const rows = sourceAfterFirst
@@ -116,7 +121,7 @@ describe('HostNodeQueuedStartExecutionClaimStore', () => {
     expect('run' in fresh).toBe(false)
 
     // Same identity preserves the first durable time and appends nothing.
-    fresh.record(claim({ claimedAt: 999 }))
+    expect(fresh.record(claim({ claimedAt: 999 }))).toEqual(firstCursor)
     expect(readFileSync(fresh.path, 'utf8')).toBe(sourceAfterFirst)
 
     const reopened = openHostNodeQueuedStartExecutionClaimStore({
@@ -127,6 +132,37 @@ describe('HostNodeQueuedStartExecutionClaimStore', () => {
     expect(reopened.coverageEpoch).toBe(EPOCH_A)
     expect(reopened.declaresDurableCoverage).toBe(false)
     expect(reopened.list()).toEqual([claim()])
+  })
+
+  it('batch-validates aligned claim cursors in one strict unbounded journal read', () => {
+    const dir = dataDir('strict-cursor')
+    const fresh = openHostNodeQueuedStartExecutionClaimStore({
+      dataDir: dir,
+      createCoverageEpoch: () => EPOCH_A
+    })
+    const firstCursor = fresh.record(claim()) as HostQueuedStartExecutionClaimCursor
+    const afterFirst = readFileSync(fresh.path, 'utf8')
+    const second = claim({
+      commandId: 'command-2',
+      threadId: 'thread-2',
+      fingerprint: 'fingerprint-2'
+    })
+    const secondCursor = fresh.record(second) as HostQueuedStartExecutionClaimCursor
+    expect(secondCursor).toEqual({ coverageEpoch: EPOCH_A, sequence: 2 })
+    expect(
+      fresh.readClaims!([
+        secondCursor,
+        firstCursor,
+        { coverageEpoch: EPOCH_B, sequence: 1 },
+        { coverageEpoch: EPOCH_A, sequence: 99 },
+        { coverageEpoch: 'not-an-epoch', sequence: 0 }
+      ])
+    ).toEqual([second, claim(), null, null, null])
+
+    // A valid older prefix is still rollback relative to the store opened
+    // before the rollback, so the whole batch fails conservatively.
+    writeFileSync(fresh.path, afterFirst, { mode: 0o600 })
+    expect(() => fresh.readClaims!([secondCursor, firstCursor])).toThrow(/journal changed/i)
   })
 
   it('keeps absence indeterminate even under a matching caller-pinned epoch', async () => {

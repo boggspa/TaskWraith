@@ -295,7 +295,11 @@ describe('createHostQueuedStartPublication', () => {
         return { kind: 'marked' as const, receipt }
       }),
       updateReceiptPhase: vi.fn(
-        (commandId: string, phase: HostQueuedStartPhase): HostCommandReceiptPhaseUpdateResult => {
+        (
+          commandId: string,
+          phase: HostQueuedStartPhase,
+          executionClaimCursor?: HostCommandReceiptRecord['executionClaimCursor']
+        ): HostCommandReceiptPhaseUpdateResult => {
           if (receiptState.kind !== 'found' || receiptState.receipt.commandId !== commandId) {
             return { kind: 'not_found' }
           }
@@ -303,7 +307,10 @@ describe('createHostQueuedStartPublication', () => {
           if (current.status !== 'pending') {
             return { kind: 'status_refused', status: current.status }
           }
-          if (current.phase === phase) {
+          if (
+            current.phase === phase &&
+            (executionClaimCursor === undefined || current.executionClaimCursor !== undefined)
+          ) {
             return { kind: 'unchanged', receipt: current }
           }
           if (
@@ -317,7 +324,11 @@ describe('createHostQueuedStartPublication', () => {
               requestedPhase: phase
             }
           }
-          const receipt = { ...current, phase }
+          const receipt = {
+            ...current,
+            phase,
+            ...(executionClaimCursor ? { executionClaimCursor } : {})
+          }
           receiptState = { kind: 'found', receipt }
           phaseUpdates.push(phase)
           return { kind: 'updated', receipt }
@@ -384,11 +395,17 @@ describe('createHostQueuedStartPublication', () => {
   it('keeps onStarted witness-only and advances started only after dispatch settlement', async () => {
     const { publication, completes, phaseUpdates, published, ports } = setup()
     expect(publication.markQueued('cmd-1')).toEqual({ kind: 'queued' })
+    const executionClaimCursor = { coverageEpoch: 'a'.repeat(64), sequence: 4 }
     expect(
       publication.onStarting(
-        startedView('cmd-1', 'fp-1', { phase: 'starting', startedEvidence: false })
+        startedView('cmd-1', 'fp-1', {
+          phase: 'starting',
+          executionClaimCursor,
+          startedEvidence: false
+        })
       )
     ).toEqual({ kind: 'starting' })
+    expect(ports.updateReceiptPhase).toHaveBeenCalledWith('cmd-1', 'starting', executionClaimCursor)
     publication.onStarted(startedView('cmd-1', 'fp-1'))
     await publication.drain()
     expect(phaseUpdates).toEqual(['queued', 'starting'])
@@ -624,7 +641,7 @@ describe('residuals', () => {
   it('names HostMainComposition as an intentional standalone-only residual', () => {
     const src = readFileSync(join(__dirname, 'HostQueuedStartPublication.ts'), 'utf8')
     expect(src).toContain('HostMainComposition')
-    expect(src).toContain('standalone HostNodeProductionServer')
+    expect(src).toContain('Standalone HostNodeProductionServer')
   })
 })
 

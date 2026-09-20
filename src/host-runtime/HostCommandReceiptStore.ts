@@ -113,6 +113,12 @@ export type HostCommandReceiptPosition = {
   cursor: number
 }
 
+/** Host-internal fsynced execution-claim position; never projected to clients. */
+export interface HostCommandReceiptExecutionClaimCursor {
+  coverageEpoch: string
+  sequence: number
+}
+
 /**
  * Durable receipt record. `commandFingerprint` is a caller-supplied digest of
  * the canonical command (type + target + bounded arg digest). Raw args, tool
@@ -133,6 +139,8 @@ export interface HostCommandReceiptRecord {
    * updates are pending-only and never certify command completion.
    */
   phase?: HostQueuedStartPhase
+  /** Host-internal claim evidence anchor. Never projected onto the wire receipt. */
+  executionClaimCursor?: HostCommandReceiptExecutionClaimCursor
   actor: HostCommandReceiptActor
   target: HostCommandReceiptTarget
   authority: HostCommandReceiptAuthority
@@ -316,7 +324,14 @@ export type HostCommandReceiptPhaseUpdateResult =
       currentPhase: HostQueuedStartPhase
       requestedPhase: HostQueuedStartPhase
     }
-  | { kind: 'invalid'; code: 'invalid_command_id' | 'invalid_phase' }
+  | {
+      kind: 'invalid'
+      code:
+        | 'invalid_command_id'
+        | 'invalid_phase'
+        | 'invalid_execution_claim_cursor'
+        | 'execution_claim_cursor_conflict'
+    }
 
 /** Actor-bound receipt lookup — never returns another actor's receipt body. */
 export type HostCommandReceiptLookupResult =
@@ -586,7 +601,8 @@ export class HostCommandReceiptStore {
    */
   updatePhase(
     commandIdInput: string,
-    phaseInput: HostQueuedStartPhase
+    phaseInput: HostQueuedStartPhase,
+    executionClaimCursorInput?: HostCommandReceiptExecutionClaimCursor
   ): HostCommandReceiptPhaseUpdateResult {
     let commandId: string
     try {
@@ -602,12 +618,34 @@ export class HostCommandReceiptStore {
       return { kind: 'invalid', code: 'invalid_phase' }
     }
 
+    let executionClaimCursor: HostCommandReceiptExecutionClaimCursor | undefined
+    if (executionClaimCursorInput !== undefined) {
+      try {
+        executionClaimCursor = normalizeExecutionClaimCursor(executionClaimCursorInput)
+      } catch {
+        return { kind: 'invalid', code: 'invalid_execution_claim_cursor' }
+      }
+    }
+
     const current = this.recordsByCommandId.get(commandId)
     if (!current) return { kind: 'not_found' }
     if (current.status !== 'pending') {
       return { kind: 'status_refused', status: current.status }
     }
-    if (current.phase === phase) {
+    if (executionClaimCursor !== undefined && phase !== 'starting') {
+      return { kind: 'invalid', code: 'invalid_execution_claim_cursor' }
+    }
+    if (
+      current.executionClaimCursor &&
+      executionClaimCursor &&
+      (current.executionClaimCursor.coverageEpoch !== executionClaimCursor.coverageEpoch ||
+        current.executionClaimCursor.sequence !== executionClaimCursor.sequence)
+    ) {
+      return { kind: 'invalid', code: 'execution_claim_cursor_conflict' }
+    }
+    const cursorChanges =
+      executionClaimCursor !== undefined && current.executionClaimCursor === undefined
+    if (current.phase === phase && !cursorChanges) {
       return { kind: 'unchanged', receipt: cloneRecord(current) }
     }
     if (
@@ -624,6 +662,7 @@ export class HostCommandReceiptStore {
     const next: HostCommandReceiptRecord = {
       ...current,
       phase,
+      ...(executionClaimCursor ? { executionClaimCursor } : {}),
       updatedAt: this.now()
     }
     // Phase is non-terminal evidence and must never stamp completion.
@@ -1408,6 +1447,23 @@ function queuedStartPhaseRank(phase: HostQueuedStartPhase): number {
   return HOST_QUEUED_START_PHASES.indexOf(phase)
 }
 
+function normalizeExecutionClaimCursor(value: unknown): HostCommandReceiptExecutionClaimCursor {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('HostCommandReceiptStore: execution-claim cursor is invalid')
+  }
+  const cursor = value as Record<string, unknown>
+  if (
+    typeof cursor.coverageEpoch !== 'string' ||
+    !/^[0-9a-f]{64}$/.test(cursor.coverageEpoch) ||
+    typeof cursor.sequence !== 'number' ||
+    !Number.isSafeInteger(cursor.sequence) ||
+    cursor.sequence < 1
+  ) {
+    throw new Error('HostCommandReceiptStore: execution-claim cursor is invalid')
+  }
+  return { coverageEpoch: cursor.coverageEpoch, sequence: cursor.sequence }
+}
+
 function normalizeAuthority(authority: HostCommandReceiptAuthority): HostCommandReceiptAuthority {
   const decision = authority.decision
   if (decision !== 'allowed' && decision !== 'denied' && decision !== 'deferred') {
@@ -1497,6 +1553,14 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
     }
     if (raw.phase !== undefined) {
       record.phase = normalizeQueuedStartPhase(raw.phase)
+    }
+    if (raw.executionClaimCursor !== undefined) {
+      try {
+        record.executionClaimCursor = normalizeExecutionClaimCursor(raw.executionClaimCursor)
+      } catch {
+        // A malformed legacy/tampered cursor proves nothing. Retain the
+        // receipt without it so recovery remains conservative.
+      }
     }
     if (typeof raw.completedAt === 'string') record.completedAt = raw.completedAt
     if (typeof raw.errorCode === 'string')

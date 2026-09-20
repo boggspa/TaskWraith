@@ -1983,11 +1983,13 @@ describe('AppStoreHostAuthority', () => {
       value: { status: 'pending', phase: 'queued' }
     })
     const fingerprint = fingerprintHostCommand(send).fingerprint
+    const executionClaimCursor = { coverageEpoch: 'a'.repeat(64), sequence: 12 }
     authority.handleQueuedStartStarting({
       commandId: send.commandId,
       threadId: 'thread-1',
       fingerprint,
       phase: 'starting',
+      executionClaimCursor,
       startedEvidence: false,
       terminalOutcome: null
     })
@@ -1998,7 +2000,7 @@ describe('AppStoreHostAuthority', () => {
     })
     expect(phased).toMatchObject({
       kind: 'found',
-      receipt: { status: 'pending', phase: 'starting' }
+      receipt: { status: 'pending', phase: 'starting', executionClaimCursor }
     })
     authority.handleQueuedStartStarted({
       commandId: send.commandId,
@@ -2033,7 +2035,7 @@ describe('AppStoreHostAuthority', () => {
     })
     expect(found).toMatchObject({
       kind: 'found',
-      receipt: { status: 'succeeded', phase: 'started' }
+      receipt: { status: 'succeeded', phase: 'started', executionClaimCursor }
     })
     expect(runtime.getPosition().cursor).toBeGreaterThan(positionBefore.cursor)
   })

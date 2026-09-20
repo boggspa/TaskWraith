@@ -15,8 +15,10 @@
  * prefix is still not absence proof. The standalone HostNodeProductionServer
  * opens this journal only behind the default-OFF queued-start gate and passes
  * it through HostNodeDomainPorts; lifecycle `claim` awaits the fsynced record
- * before provider side effects. Production recovery and journal
- * retention/compaction remain separate work.
+ * before provider side effects. Restart recovery reopens the journal lazily
+ * only for receipt-bound cursors and authenticates all requested positions in
+ * one unbounded read. Absence remains unprovable; retention/compaction remains
+ * separate work.
  */
 
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
@@ -38,6 +40,7 @@ import { isAbsolute, join, parse, resolve } from 'node:path'
 
 import type {
   HostQueuedStartExecutionClaim,
+  HostQueuedStartExecutionClaimCursor,
   HostQueuedStartExecutionClaimStore
 } from './HostNodeQueuedStartLifecycle'
 
@@ -273,6 +276,7 @@ type LoadedJournal = {
   readonly lastDigest: string
   readonly nextSequence: number
   readonly claims: Map<string, HostQueuedStartExecutionClaim>
+  readonly claimSequences: Map<string, number>
 }
 
 function resolveRecoveryHeadSequence(
@@ -348,6 +352,7 @@ function loadJournal(
     const lines = journalLinesForRead(source, options?.recoveryHeadSequence)
     const header = parseHeader(JSON.parse(lines[0]))
     const claims = new Map<string, HostQueuedStartExecutionClaim>()
+    const claimSequences = new Map<string, number>()
     let previousDigest = header.digest
     for (let index = 1; index < lines.length; index += 1) {
       const record = parseClaim(JSON.parse(lines[index]), index, previousDigest)
@@ -360,6 +365,7 @@ function loadJournal(
         fingerprint: record.fingerprint,
         claimedAt: record.claimedAt
       })
+      claimSequences.set(record.commandId, record.sequence)
       previousDigest = record.digest
     }
     const after = lstatSync(path)
@@ -372,7 +378,8 @@ function loadJournal(
       coverageEpoch: header.coverageEpoch,
       lastDigest: previousDigest,
       nextSequence: lines.length,
-      claims
+      claims,
+      claimSequences
     }
   } finally {
     closeSync(fd)
@@ -442,6 +449,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
   private readonly io: HostNodeQueuedStartExecutionClaimJournalIo
   private readonly writeAllowed: boolean
   private claims: Map<string, HostQueuedStartExecutionClaim>
+  private claimSequences: Map<string, number>
   private identity: JournalFileIdentity
   private lastDigest: string
   private nextSequence: number
@@ -458,6 +466,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
     this.coverageEpoch = input.loaded.coverageEpoch
     this.writeAllowed = input.writeAllowed
     this.claims = input.loaded.claims
+    this.claimSequences = input.loaded.claimSequences
     this.identity = input.loaded.identity
     this.lastDigest = input.loaded.lastDigest
     this.nextSequence = input.loaded.nextSequence
@@ -468,7 +477,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
     return false
   }
 
-  record(claim: HostQueuedStartExecutionClaim): void {
+  record(claim: HostQueuedStartExecutionClaim): HostQueuedStartExecutionClaimCursor {
     if (this.poisoned) {
       throw new Error('Queued-start execution claim journal is unavailable')
     }
@@ -484,7 +493,9 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
         // Idempotence cannot bless an exact-file loss that happened after the
         // first call. Re-verify before reporting the prior claim as durable.
         this.list()
-        return
+        const sequence = this.claimSequences.get(claim.commandId)
+        if (!sequence) throw new Error('Queued-start execution claim sequence is unavailable')
+        return { coverageEpoch: this.coverageEpoch, sequence }
       }
       throw new Error('Queued-start execution claim identity conflict')
     }
@@ -541,11 +552,61 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
       this.lastDigest = encoded.digest
       this.nextSequence += 1
       this.claims.set(claim.commandId, { ...claim })
+      this.claimSequences.set(claim.commandId, body.sequence)
+      return { coverageEpoch: this.coverageEpoch, sequence: body.sequence }
     } catch (error) {
       this.poisoned = true
       throw error
     } finally {
       if (fd !== null) closeSync(fd)
+    }
+  }
+
+  readClaims(
+    cursors: readonly HostQueuedStartExecutionClaimCursor[]
+  ): readonly (HostQueuedStartExecutionClaim | null)[] {
+    if (this.poisoned) {
+      throw new Error('Queued-start execution claim journal is unavailable')
+    }
+    if (!Array.isArray(cursors)) {
+      throw new Error('Invalid queued-start execution claim cursor batch')
+    }
+    try {
+      // Authenticate the complete current journal exactly once. This both
+      // detects a valid-prefix rollback after open and avoids O(receipts ×
+      // journal) startup work when receipt retention reaches its bound.
+      const loaded = loadJournal(this.path)
+      if (
+        loaded.coverageEpoch !== this.coverageEpoch ||
+        !sameFile(loaded.identity, this.identity) ||
+        loaded.lastDigest !== this.lastDigest ||
+        loaded.nextSequence !== this.nextSequence
+      ) {
+        throw new Error('Queued-start execution claim journal changed before cursor read')
+      }
+      const commandIdsBySequence = new Map<number, string>()
+      for (const [commandId, sequence] of loaded.claimSequences) {
+        commandIdsBySequence.set(sequence, commandId)
+      }
+      return cursors.map((cursor) => {
+        if (
+          !cursor ||
+          typeof cursor !== 'object' ||
+          !validEpoch(cursor.coverageEpoch) ||
+          cursor.coverageEpoch !== loaded.coverageEpoch ||
+          !Number.isSafeInteger(cursor.sequence) ||
+          cursor.sequence < 1 ||
+          cursor.sequence >= loaded.nextSequence
+        ) {
+          return null
+        }
+        const commandId = commandIdsBySequence.get(cursor.sequence)
+        const claim = commandId ? loaded.claims.get(commandId) : undefined
+        return claim ? { ...claim } : null
+      })
+    } catch (error) {
+      this.poisoned = true
+      throw error
     }
   }
 
@@ -573,6 +634,7 @@ class FileBackedQueuedStartExecutionClaimStore implements HostNodeQueuedStartExe
           throw new Error('Queued-start execution claim journal changed before listing')
         }
         this.claims = loaded.claims
+        this.claimSequences = loaded.claimSequences
         return [...this.claims.values()].map((claim) => ({ ...claim }))
       }
       // A prefix read must not replace the writer cursor or require the tail

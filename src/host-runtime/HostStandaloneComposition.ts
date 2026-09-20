@@ -127,6 +127,14 @@ export interface HostStandaloneCompositionInput {
       result: import('./HostCommandExecutionResult').HostCommandExecutionResult
     ) => void
   ) => void
+  /**
+   * Startup-only conservative recovery against durable positive claim evidence.
+   * The returned body-free classification is internal and deliberately ignored
+   * by composition; the callback may also return void.
+   */
+  readonly queuedStartRecovery?: (
+    receipts: readonly HostCommandReceiptRecord[]
+  ) => unknown | Promise<unknown>
   readonly setupExecutor?: AppStoreHostAuthoritySetupExecutor
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
   readonly threadOffersProvider?: AppStoreHostAuthorityThreadOffersProvider
@@ -164,6 +172,7 @@ export interface HostStandaloneComposition {
   readonly perf: HostStandaloneCompositionPerf
   getPosition(): ReturnType<HostRuntimeBootstrap['getPosition']>
   subscribeDeltas(listener: HostDeltaAppendListener): () => void
+  recoverQueuedStarts(): Promise<void>
   startProjectionReconciliation(): Promise<void>
   reconcileProjection(): Promise<HostProjectionReconcileResult>
   stopProjectionReconciliation(): Promise<void>
@@ -418,6 +427,9 @@ export function createHostStandaloneComposition(
     },
     getPosition: () => runtime.getPosition(),
     subscribeDeltas: (listener) => runtime.deltaStore.subscribe(listener),
+    recoverQueuedStarts: async () => {
+      await input.queuedStartRecovery?.(runtime.receiptStore.list())
+    },
     startProjectionReconciliation: () => reconciler!.start(),
     reconcileProjection: () => reconciler!.reconcileNow(),
     stopProjectionReconciliation: () => reconciler!.stop(),

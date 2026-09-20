@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   createHostNodeQueuedStartLifecycle,
@@ -172,6 +172,7 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
     const store: HostQueuedStartExecutionClaimStore = {
       record() {
         order.push('claim-durable')
+        return { coverageEpoch: 'a'.repeat(64), sequence: 1 }
       },
       list() {
         return []
@@ -181,6 +182,10 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
       executionClaimStore: store,
       onStarting: (view) => {
         order.push(`starting:${view.phase}`)
+        expect(view.executionClaimCursor).toEqual({
+          coverageEpoch: 'a'.repeat(64),
+          sequence: 1
+        })
         expect(view.startedEvidence).toBe(false)
         expect(view.terminalOutcome).toBeNull()
       }
@@ -371,6 +376,86 @@ describe('HostNodeQueuedStartLifecycle (M2 prep, A1.3)', () => {
     const conflict = lifecycle.reserve(reserveInput({ fingerprint: 'fp-other' }))
     expect(conflict.kind).toBe('conflict')
     expect(lifecycle.stats().reservations).toBe(1)
+  })
+
+  it('batch-classifies only exact command, thread, and fingerprint evidence as claimed', async () => {
+    const readClaims = vi.fn(() => [
+      { commandId: 'cmd-1', threadId: 'thread-a', fingerprint: 'fp-1', claimedAt: 1 },
+      { commandId: 'other-command', threadId: 'thread-b', fingerprint: 'fp-2', claimedAt: 2 },
+      { commandId: 'cmd-3', threadId: 'other-thread', fingerprint: 'fp-3', claimedAt: 3 },
+      { commandId: 'cmd-4', threadId: 'thread-d', fingerprint: 'other-fingerprint', claimedAt: 4 }
+    ])
+    const list = vi.fn(() => {
+      throw new Error('coverage=false must not consult absence listing')
+    })
+    const lifecycle = createHostNodeQueuedStartLifecycle({
+      executionClaimStore: {
+        declaresDurableCoverage: false,
+        record() {
+          return undefined
+        },
+        list,
+        readClaims
+      }
+    })
+    const candidates = [
+      {
+        commandId: 'cmd-1',
+        threadId: 'thread-a',
+        fingerprint: 'fp-1',
+        executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 1 }
+      },
+      {
+        commandId: 'cmd-2',
+        threadId: 'thread-b',
+        fingerprint: 'fp-2',
+        executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 2 }
+      },
+      {
+        commandId: 'cmd-3',
+        threadId: 'thread-c',
+        fingerprint: 'fp-3',
+        executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 3 }
+      },
+      {
+        commandId: 'cmd-4',
+        threadId: 'thread-d',
+        fingerprint: 'fp-4',
+        executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 4 }
+      },
+      {
+        commandId: 'cmd-malformed',
+        threadId: 'thread-e',
+        fingerprint: 'fp-5',
+        executionClaimCursor: { coverageEpoch: 'malformed', sequence: 0 } as never
+      },
+      { commandId: 'cmd-legacy', threadId: 'thread-f', fingerprint: 'fp-legacy' }
+    ] as const
+    const detailed = await lifecycle.reopenWithEvidence(candidates)
+
+    expect(readClaims).toHaveBeenCalledOnce()
+    expect(readClaims).toHaveBeenCalledWith([
+      { coverageEpoch: 'a'.repeat(64), sequence: 1 },
+      { coverageEpoch: 'a'.repeat(64), sequence: 2 },
+      { coverageEpoch: 'a'.repeat(64), sequence: 3 },
+      { coverageEpoch: 'a'.repeat(64), sequence: 4 }
+    ])
+    expect(list).not.toHaveBeenCalled()
+    expect(detailed.summaries).toEqual([
+      { commandId: 'cmd-1', classification: 'claimed' },
+      { commandId: 'cmd-2', classification: 'unknown' },
+      { commandId: 'cmd-3', classification: 'unknown' },
+      { commandId: 'cmd-4', classification: 'unknown' },
+      { commandId: 'cmd-malformed', classification: 'unknown' },
+      { commandId: 'cmd-legacy', classification: 'unknown' }
+    ])
+    expect(detailed.outcomes).toEqual(
+      candidates.map((candidate) => ({
+        commandId: candidate.commandId,
+        outcome: 'indeterminate',
+        resubmittable: null
+      }))
+    )
   })
 
   it('hard_restart_claimed_indeterminate', async () => {

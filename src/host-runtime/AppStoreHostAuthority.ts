@@ -541,8 +541,8 @@ export class AppStoreHostAuthority implements HostAuthority {
             this.runtime.receiptStore.getByCommandId(commandId, actor),
           completeReceipt: (input) => this.runtime.receiptStore.complete(input),
           markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input),
-          updateReceiptPhase: (commandId, phase) =>
-            this.runtime.receiptStore.updatePhase(commandId, phase),
+          updateReceiptPhase: (commandId, phase, executionClaimCursor) =>
+            this.runtime.receiptStore.updatePhase(commandId, phase, executionClaimCursor),
           readScopedFamilies: async (scope) => {
             const donor = await this.readMutationSnapshotDonor()
             return scopeHostMutationObservationFamilies(donor, scope)
