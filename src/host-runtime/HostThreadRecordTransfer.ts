@@ -178,6 +178,8 @@ export interface HostThreadRecordTransferVerified {
 export interface HostThreadRecordTransferRemoveOptions {
   readonly profilePath: string
   readonly transferId: string
+  /** When cleaning up a verified artifact, leave any replacement inode alone. */
+  readonly expectedIdentity?: HostThreadRecordTransferIdentity
   readonly fs?: HostThreadRecordTransferFs
   readonly platform?: NodeJS.Platform
 }
@@ -481,6 +483,13 @@ export function removeHostThreadRecordTransfer(
   }
   assertRegularFile(stat, 'Host thread-record transfer artifact')
   assertOwnerOnlyMode(stat, platform, 'Host thread-record transfer artifact')
+  if (
+    options.expectedIdentity &&
+    (String(stat.dev) !== options.expectedIdentity.dev ||
+      String(stat.ino) !== options.expectedIdentity.ino)
+  ) {
+    return false
+  }
   return removeExactInode(fs, platform, path, { dev: stat.dev, ino: stat.ino })
 }
 

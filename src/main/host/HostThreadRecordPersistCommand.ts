@@ -31,9 +31,10 @@
 import { randomUUID } from 'node:crypto'
 
 import {
-  publishHostThreadRecordTransfer,
-  removeHostThreadRecordTransfer
+  removeHostThreadRecordTransfer,
+  type HostThreadRecordTransferDescriptor
 } from '../../host-runtime/HostThreadRecordTransfer'
+import { publishHostThreadRecordTransferOffLoop } from '../../host-runtime/HostThreadRecordTransferWorker'
 import type { HostActorIdentity, HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import {
   HOST_PROTOCOL_VERSION,
@@ -116,11 +117,11 @@ export interface HostThreadRecordPersistBrokerPort {
 
 /** Injectable artifact seam so callers and tests can stage publish failures. */
 export interface HostThreadRecordTransferPort {
-  publish(input: { profilePath: string; transferId: string; record: unknown }): {
+  publish(input: {
+    profilePath: string
     transferId: string
-    sha256: string
-    byteLength: number
-  }
+    record: unknown
+  }): HostThreadRecordTransferDescriptor | Promise<HostThreadRecordTransferDescriptor>
   remove(input: { profilePath: string; transferId: string }): boolean
 }
 
@@ -636,7 +637,7 @@ interface PersistLane {
 }
 
 const defaultTransferPort: HostThreadRecordTransferPort = {
-  publish: (input) => publishHostThreadRecordTransfer(input),
+  publish: (input) => publishHostThreadRecordTransferOffLoop(input),
   remove: (input) => removeHostThreadRecordTransfer(input)
 }
 
@@ -784,7 +785,7 @@ export class HostThreadRecordPersistClient
 
       let descriptor: { transferId: string; sha256: string; byteLength: number }
       try {
-        descriptor = recordCheckpointPrepareSpan(
+        const published = recordCheckpointPrepareSpan(
           this.spans,
           { chatId: input.chatId },
           () =>
@@ -795,6 +796,7 @@ export class HostThreadRecordPersistClient
             }),
           (published) => published.byteLength
         )
+        descriptor = published instanceof Promise ? await published : published
         staging?.finish('succeeded', { bytes: descriptor.byteLength })
       } catch (error) {
         staging?.finish('failed', { errorCode: 'artifact_publish_failed' })

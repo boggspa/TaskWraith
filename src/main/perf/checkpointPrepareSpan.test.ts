@@ -8,6 +8,43 @@ function tickingClock(start = 1_000, stepMs = 10): () => number {
 }
 
 describe('recordCheckpointPrepareSpan', () => {
+  it('measures through asynchronous settlement and keeps rejection identity', async () => {
+    const spans: unknown[] = []
+    let clock = 10
+    let complete!: (value: { byteLength: number }) => void
+    const published = recordCheckpointPrepareSpan(
+      {
+        record: (span) => {
+          spans.push(span)
+        }
+      },
+      { chatId: 'chat-a' },
+      () =>
+        new Promise<{ byteLength: number }>((resolve) => {
+          complete = resolve
+        }),
+      (result) => result.byteLength,
+      () => clock
+    )
+    expect(spans).toEqual([])
+    clock = 40
+    complete({ byteLength: 42 })
+    await expect(published).resolves.toEqual({ byteLength: 42 })
+    expect(spans).toEqual([expect.objectContaining({ startedAt: 10, durationMs: 30, bytes: 42 })])
+    const error = new Error('worker failed')
+    await expect(
+      recordCheckpointPrepareSpan(
+        {
+          record: () => {
+            throw new Error('broken sink')
+          }
+        },
+        { chatId: 'chat-a' },
+        () => Promise.reject(error)
+      )
+    ).rejects.toBe(error)
+  })
+
   it('records checkpoint_prepare with publisher byte length', () => {
     const recorder = createWorkSpanRecorder({
       process: 'main',

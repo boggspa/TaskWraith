@@ -217,6 +217,56 @@ function createClient(
 }
 
 describe('HostThreadRecordPersistClient command shape', () => {
+  it('holds submission and the durability barrier until async publication finishes', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const spans: unknown[] = []
+    let publish!: () => void
+    const client = createClient(broker, {
+      transfer: fakeTransfer({
+        publish: ({ transferId }) =>
+          new Promise((resolve) => {
+            publish = () => resolve({ transferId, sha256: 'a'.repeat(64), byteLength: 123 })
+          })
+      }),
+      spans: {
+        record: (span) => {
+          spans.push(span)
+        }
+      }
+    })
+    client.enqueue({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    let drained = false
+    const barrier = client.drain('chat-1').then(() => {
+      drained = true
+    })
+    await Promise.resolve()
+    expect(broker.commands).toEqual([])
+    expect(spans).toEqual([])
+    expect(drained).toBe(false)
+    publish()
+    await barrier
+    expect(broker.commands).toHaveLength(1)
+    expect(spans).toContainEqual(
+      expect.objectContaining({ kind: 'checkpoint_prepare', bytes: 123 })
+    )
+    expect(drained).toBe(true)
+  })
+
+  it('reports a rejected async publisher without submitting a Host command', async () => {
+    const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
+    const client = createClient(broker, {
+      transfer: fakeTransfer({
+        publish: async () => {
+          throw new Error('worker failed')
+        }
+      })
+    })
+    await expect(
+      client.persist({ chatId: 'chat-1', record: chatRecord(), expectedRevision: 0 })
+    ).rejects.toMatchObject({ code: 'artifact_publish_failed' })
+    expect(broker.commands).toEqual([])
+  })
+
   it('submits a descriptor-only thread.record.persist that the protocol accepts', async () => {
     const broker = scriptedBroker((command) => [receiptFor(command, 'succeeded')])
     const transfer = fakeTransfer()

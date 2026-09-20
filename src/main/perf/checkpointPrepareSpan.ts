@@ -54,7 +54,7 @@ export function recordCheckpointPrepareSpan<T>(
   sink: CheckpointPrepareSpanSink | undefined,
   attrs: CheckpointPrepareSpanAttrs,
   prepare: () => T,
-  bytesOf: (result: T) => number = () => 0,
+  bytesOf: (result: Awaited<T>) => number = () => 0,
   now: () => number = Date.now
 ): T {
   const chatId = isNonEmptyString(attrs.chatId) ? attrs.chatId.trim() : ''
@@ -68,34 +68,41 @@ export function recordCheckpointPrepareSpan<T>(
   if (typeof startedAt !== 'number' || !Number.isFinite(startedAt) || startedAt < 0) {
     return prepare()
   }
+  const finish = (result: Awaited<T> | undefined, succeeded: boolean): void => {
+    let endedAt: number
+    try {
+      endedAt = now()
+      if (!Number.isFinite(endedAt) || endedAt < 0) return
+    } catch {
+      return
+    }
+    let bytes = 0
+    try {
+      if (succeeded) bytes = bytesOf(result as Awaited<T>)
+    } catch {
+      /* Measurement cannot affect publication. */
+    }
+    emitCheckpointPrepare(sink, attrs, chatId, startedAt, Math.max(0, endedAt - startedAt), bytes)
+  }
   let result: T
   try {
     result = prepare()
   } catch (error) {
-    let endedAt: number
-    try {
-      endedAt = now()
-    } catch {
-      throw error
-    }
-    if (typeof endedAt === 'number' && Number.isFinite(endedAt) && endedAt >= 0) {
-      emitCheckpointPrepare(sink, attrs, chatId, startedAt, Math.max(0, endedAt - startedAt), 0)
-    }
+    finish(undefined, false)
     throw error
   }
-  let endedAt: number
-  try {
-    endedAt = now()
-  } catch {
-    return result
+  if (result instanceof Promise) {
+    return result.then(
+      (value: Awaited<T>) => {
+        finish(value, true)
+        return value
+      },
+      (error: unknown) => {
+        finish(undefined, false)
+        throw error
+      }
+    ) as T
   }
-  if (typeof endedAt !== 'number' || !Number.isFinite(endedAt) || endedAt < 0) return result
-  let bytes = 0
-  try {
-    bytes = bytesOf(result)
-  } catch {
-    bytes = 0
-  }
-  emitCheckpointPrepare(sink, attrs, chatId, startedAt, Math.max(0, endedAt - startedAt), bytes)
+  finish(result as Awaited<T>, true)
   return result
 }

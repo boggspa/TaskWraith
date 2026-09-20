@@ -73,7 +73,11 @@ export default defineConfig(({ mode }) => {
             // hot chat record can be ~16 MB. Unlike the scan workers above this
             // one is LONG-LIVED: a fork per chat save would cost more than the
             // fsync it avoids. Off unless TASKWRAITH_UTILITY_WRITE=1.
-            persistenceWriteWorker: resolve('src/main/workers/persistenceWriteWorker.ts')
+            persistenceWriteWorker: resolve('src/main/workers/persistenceWriteWorker.ts'),
+            // Portable Node worker, shared by Desktop and the standalone Host.
+            HostThreadRecordTransferWorkerEntry: resolve(
+              'src/host-runtime/HostThreadRecordTransferWorkerEntry.ts'
+            )
           },
           output: {
             // bootstrap.ts deliberately defers the full main graph behind a

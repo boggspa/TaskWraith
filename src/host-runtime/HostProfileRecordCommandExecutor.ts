@@ -14,12 +14,15 @@ import { validateHostCommandArguments } from './HostCommandArguments'
 import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostProfileDomainStore } from './HostProfileDomainStore'
 import {
-  decodeHostThreadRecordTransferBody,
   HostThreadRecordTransferIntegrityError,
   HostThreadRecordTransferMissingError,
   removeHostThreadRecordTransfer,
-  verifyHostThreadRecordTransfer
+  type HostThreadRecordTransferIdentity
 } from './HostThreadRecordTransfer'
+import {
+  readHostThreadRecordTransferOffLoop,
+  type DecodedHostThreadRecordTransfer
+} from './HostThreadRecordTransferWorker'
 
 export const HOST_PROFILE_RECORD_MUTATION_NAMES = [
   'thread.record.persist',
@@ -57,6 +60,8 @@ export interface HostProfileRecordCommandExecutorOptions {
   /** Optional M1 durable_commit sink. Absence is safe. */
   readonly workSpanRecorder?: WorkSpanRecorder
   readonly now?: () => number
+  /** Injectable verification seam; production reads/hashes/parses on the worker. */
+  readonly readTransfer?: typeof readHostThreadRecordTransferOffLoop
 }
 
 function failed(errorCode: string): HostCommandExecutionResult {
@@ -70,9 +75,13 @@ function failed(errorCode: string): HostCommandExecutionResult {
  * exactly as a consumed one would be). Never lets cleanup replace the
  * persistence outcome.
  */
-function removePublishedTransfer(profilePath: string, transferId: string): void {
+function removePublishedTransfer(
+  profilePath: string,
+  transferId: string,
+  expectedIdentity: HostThreadRecordTransferIdentity
+): void {
   try {
-    removeHostThreadRecordTransfer({ profilePath, transferId })
+    removeHostThreadRecordTransfer({ profilePath, transferId, expectedIdentity })
   } catch {
     // The persist result is the reportable outcome; a stranded artifact is
     // owner-only inside the profile and the publisher re-uses no ids.
@@ -84,6 +93,7 @@ export class HostProfileRecordCommandExecutor {
   private readonly store: HostProfileRecordCommandStore
   private readonly workSpanRecorder?: WorkSpanRecorder
   private readonly now: () => number
+  private readonly readTransfer: typeof readHostThreadRecordTransferOffLoop
 
   constructor(options: HostProfileRecordCommandExecutorOptions) {
     if (
@@ -100,6 +110,7 @@ export class HostProfileRecordCommandExecutor {
     this.store = options.store
     this.workSpanRecorder = options.workSpanRecorder
     this.now = options.now ?? (() => Date.now())
+    this.readTransfer = options.readTransfer ?? readHostThreadRecordTransferOffLoop
   }
 
   /**
@@ -122,7 +133,7 @@ export class HostProfileRecordCommandExecutor {
     }
   }
 
-  execute(command: HostCommand): HostCommandExecutionResult {
+  execute(command: HostCommand): HostCommandExecutionResult | Promise<HostCommandExecutionResult> {
     const validated = validateHostCommandArguments(command)
     if (!validated.ok) return failed('command_invalid')
     const hostCommand = validated.value
@@ -208,7 +219,9 @@ export class HostProfileRecordCommandExecutor {
     }
   }
 
-  private persistTransferredThreadRecord(command: HostCommand): HostCommandExecutionResult {
+  private persistTransferredThreadRecord(
+    command: HostCommand
+  ): HostCommandExecutionResult | Promise<HostCommandExecutionResult> {
     if (!this.profilePath) return failed('thread_record_transfer_unavailable')
 
     const descriptor = {
@@ -216,33 +229,38 @@ export class HostProfileRecordCommandExecutor {
       sha256: command.arguments.sha256 as string,
       byteLength: command.arguments.byteLength as number
     }
-    let verified: ReturnType<typeof verifyHostThreadRecordTransfer>
     try {
-      verified = verifyHostThreadRecordTransfer({
+      const verified = this.readTransfer({
         profilePath: this.profilePath,
         descriptor
       })
+      if (verified instanceof Promise) {
+        return verified.then(
+          (value) => this.persistVerifiedThreadRecord(command, value),
+          (error: unknown) => this.transferFailure(error)
+        )
+      }
+      return this.persistVerifiedThreadRecord(command, verified)
     } catch (error) {
-      if (error instanceof HostThreadRecordTransferMissingError) {
-        return failed('thread_record_transfer_missing')
-      }
-      if (error instanceof HostThreadRecordTransferIntegrityError) {
-        return failed('thread_record_transfer_integrity')
-      }
-      return failed('thread_record_transfer_failed')
+      return this.transferFailure(error)
     }
+  }
 
-    let record: Record<string, unknown>
-    try {
-      record = decodeHostThreadRecordTransferBody(verified.body)
-    } catch (error) {
-      removePublishedTransfer(this.profilePath, descriptor.transferId)
-      if (error instanceof HostThreadRecordTransferIntegrityError) {
-        return failed('thread_record_transfer_integrity')
-      }
-      return failed('thread_record_transfer_failed')
+  private transferFailure(error: unknown): HostCommandExecutionResult {
+    if (error instanceof HostThreadRecordTransferMissingError) {
+      return failed('thread_record_transfer_missing')
     }
+    if (error instanceof HostThreadRecordTransferIntegrityError) {
+      return failed('thread_record_transfer_integrity')
+    }
+    return failed('thread_record_transfer_failed')
+  }
 
+  private persistVerifiedThreadRecord(
+    command: HostCommand,
+    verified: DecodedHostThreadRecordTransfer
+  ): HostCommandExecutionResult {
+    const { record, descriptor } = verified
     try {
       let startedAt: number | undefined
       try {
@@ -265,13 +283,13 @@ export class HostProfileRecordCommandExecutor {
           byteLength: descriptor.byteLength
         }
       })
-      removePublishedTransfer(this.profilePath, descriptor.transferId)
+      removePublishedTransfer(this.profilePath, descriptor.transferId, verified.identity)
       if (startedAt !== undefined) {
         this.recordDurableCommit(command.target.threadId, command.commandId, startedAt)
       }
       return { status: 'succeeded', resultSummary: 'thread_record_persisted' }
     } catch (error) {
-      removePublishedTransfer(this.profilePath, descriptor.transferId)
+      removePublishedTransfer(this.profilePath, descriptor.transferId, verified.identity)
       const message = error instanceof Error ? error.message : ''
       if (message === 'Thread persistence revision mismatch' || message === 'Thread is not found') {
         return failed('thread_record_revision_conflict')
