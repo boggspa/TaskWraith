@@ -158,6 +158,37 @@ describe('HostProjectionReconciler', () => {
     reconciler.stop()
   })
 
+  it('aligns transport metadata without serializing the unchanged catalogue or mutating captures', async () => {
+    let snapshot = capture()
+    snapshot.threads = [{ ...thread(), latestPreview: 'Panel activity. '.repeat(120) }]
+    const original = structuredClone(snapshot)
+    const reconciler = open({ captureSnapshot: () => snapshot })
+    await reconciler.start()
+    const initialSnapshot = snapshot
+    snapshot = {
+      ...snapshot,
+      generatedAt: '2026-08-12T20:00:01.000Z',
+      freshness: 'cached',
+      health: { ...snapshot.health, freshness: 'cached' },
+      recovery: { reopenStatus: 'clean' }
+    }
+    const current = structuredClone(snapshot)
+    const stringify = vi.spyOn(JSON, 'stringify')
+    let result: Awaited<ReturnType<HostProjectionReconciler['reconcileNow']>>
+    let serializations: number
+    try {
+      result = await reconciler.reconcileNow()
+      serializations = stringify.mock.calls.length
+    } finally {
+      stringify.mockRestore()
+      reconciler.stop()
+    }
+    expect(result).toEqual({ kind: 'unchanged', position: { generation: 1, cursor: 0 } })
+    expect(serializations).toBe(0)
+    expect(initialSnapshot).toEqual(original)
+    expect(snapshot).toEqual(current)
+  })
+
   it('fails startup when it cannot establish a coherent baseline', async () => {
     const reconciler = open({ captureSnapshot: () => ({ broken: true }) })
     await expect(reconciler.start()).rejects.toThrow(

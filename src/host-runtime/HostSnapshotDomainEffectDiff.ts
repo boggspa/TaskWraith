@@ -254,7 +254,7 @@ export function diffHostSnapshotDomainEffects(
       if (
         left !== undefined &&
         right !== undefined &&
-        !deepEqualCanonical(comparableProjection(family, left), comparableProjection(family, right))
+        !equalProjection(comparableProjection(family, left), comparableProjection(family, right))
       ) {
         effects.push({
           kind: 'upsert',
@@ -310,7 +310,7 @@ function diffSingleton(
       entityId
     }
   }
-  if (before !== undefined && after !== undefined && !deepEqualCanonical(before, after)) {
+  if (before !== undefined && after !== undefined && !equalProjection(before, after)) {
     return {
       kind: 'upsert',
       family,
@@ -557,27 +557,37 @@ function comparableProjection(family: HostDeltaFamily, value: unknown): unknown 
   return { ...record, goal: comparableGoal }
 }
 
-/** Stable deep equality via canonicalized JSON (sorted object keys). */
-function deepEqualCanonical(left: unknown, right: unknown): boolean {
-  return canonicalize(left) === canonicalize(right)
-}
-
-function canonicalize(value: unknown): string {
-  return JSON.stringify(canonicalizeValue(value))
-}
-
-function canonicalizeValue(value: unknown): unknown {
-  if (value === null || typeof value !== 'object') {
-    return value
+/**
+ * Compare decoded projection values without sorting, cloning and serializing
+ * every unchanged row. The decoder bounds these to finite JSON data; object
+ * order is immaterial, array order is not. Undefined optional fields compare
+ * like absent JSON properties. Changed payloads still get an isolated clone.
+ */
+function equalProjection(left: unknown, right: unknown): boolean {
+  if (left === right) return true
+  if (left === null || right === null || typeof left !== 'object' || typeof right !== 'object') {
+    return false
   }
-  if (Array.isArray(value)) {
-    return value.map((entry) => canonicalizeValue(entry))
+  if (Array.isArray(left)) {
+    if (!Array.isArray(right) || left.length !== right.length) return false
+    for (let index = 0; index < left.length; index += 1) {
+      if (!equalProjection(left[index], right[index])) return false
+    }
+    return true
   }
-  const record = value as Record<string, unknown>
-  const keys = Object.keys(record).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
-  const out: Record<string, unknown> = {}
-  for (const key of keys) {
-    out[key] = canonicalizeValue(record[key])
+  if (Array.isArray(right)) return false
+  const leftRecord = left as Record<string, unknown>
+  const rightRecord = right as Record<string, unknown>
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined)
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined)
+  if (leftKeys.length !== rightKeys.length) return false
+  for (const key of leftKeys) {
+    if (
+      !Object.prototype.hasOwnProperty.call(rightRecord, key) ||
+      !equalProjection(leftRecord[key], rightRecord[key])
+    ) {
+      return false
+    }
   }
-  return out
+  return true
 }

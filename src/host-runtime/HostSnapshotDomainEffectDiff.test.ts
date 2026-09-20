@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_PROTOCOL_MAX_ID,
@@ -103,6 +103,98 @@ describe('diffHostSnapshotDomainEffects', () => {
       entityId: 'th-goal',
       payload: { goal: { status: 'completed', wallMs: 750_994_831, activeMs: 750_994_831 } }
     })
+  })
+
+  it('compares a large unchanged thread catalogue without serializing its rows', () => {
+    const before = baseSnapshot({
+      threads: Array.from({ length: 512 }, (_, index) => ({
+        id: `thread-${index}`,
+        workspaceId: null,
+        title: `Panel ${index}`,
+        chatKind: 'ensemble',
+        archived: false,
+        pinned: false,
+        updatedAt: 1,
+        messageCount: 1_500,
+        latestPreview: 'Panel activity. '.repeat(120)
+      }))
+    })
+    const after = cloneSnapshot(before)
+    const stringify = vi.spyOn(JSON, 'stringify')
+    let result: ReturnType<typeof diffHostSnapshotDomainEffects>
+    let serializations: number
+    try {
+      result = diffHostSnapshotDomainEffects(before, after)
+      serializations = stringify.mock.calls.length
+    } finally {
+      stringify.mockRestore()
+    }
+    expect(result).toEqual({ kind: 'effects', effects: [] })
+    expect(serializations).toBe(0)
+  })
+
+  it('detects nested array changes and optional field removal while isolating emitted payloads', () => {
+    const before = baseSnapshot({
+      threads: [
+        {
+          id: 'thread-1',
+          workspaceId: null,
+          title: 'Panel',
+          chatKind: 'ensemble',
+          archived: false,
+          pinned: false,
+          updatedAt: 1,
+          messageCount: 1,
+          modelId: 'model-1',
+          goal: {
+            id: 'goal-1',
+            objective: 'Complete the task',
+            status: 'active',
+            mode: 'build',
+            acceptanceCriteria: ['First', 'Second']
+          }
+        }
+      ]
+    })
+    const after = cloneSnapshot(before)
+    after.threads[0]!.goal!.acceptanceCriteria!.reverse()
+    expect(diffHostSnapshotDomainEffects(before, after)).toMatchObject({
+      kind: 'effects',
+      effects: [
+        { family: 'thread', payload: { goal: { acceptanceCriteria: ['Second', 'First'] } } }
+      ]
+    })
+    const modelRemoved = cloneSnapshot(before)
+    delete modelRemoved.threads[0]!.modelId
+    expect(diffHostSnapshotDomainEffects(before, modelRemoved)).toMatchObject({
+      kind: 'effects',
+      effects: [{ family: 'thread', entityId: 'thread-1' }]
+    })
+    const sparseCriteria = cloneSnapshot(before)
+    sparseCriteria.threads[0]!.goal!.acceptanceCriteria = new Array<string>(2)
+    expect(diffHostSnapshotDomainEffects(sparseCriteria, before)).toMatchObject({
+      kind: 'effects',
+      effects: [
+        { family: 'thread', payload: { goal: { acceptanceCriteria: ['First', 'Second'] } } }
+      ]
+    })
+    delete after.threads[0]!.modelId
+    const result = diffHostSnapshotDomainEffects(before, after)
+    expect(result.kind).toBe('effects')
+    if (result.kind !== 'effects') return
+    expect(result.effects).toHaveLength(1)
+    const effect = result.effects[0]!
+    expect(effect).toMatchObject({
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'thread-1',
+      payload: { goal: { acceptanceCriteria: ['Second', 'First'] } }
+    })
+    if (effect.kind !== 'upsert') return
+    expect(effect.payload).not.toHaveProperty('modelId')
+    after.threads[0]!.goal!.acceptanceCriteria!.push('Third')
+    expect(effect.payload).toMatchObject({ goal: { acceptanceCriteria: ['Second', 'First'] } })
+    expect(before.threads[0]!.goal!.acceptanceCriteria).toEqual(['First', 'Second'])
   })
 
   it('does not mutate caller inputs', () => {

@@ -90,10 +90,6 @@ function samePosition(left: HostSnapshot, right: HostSnapshot): boolean {
   return left.generation === right.generation && left.cursor === right.cursor
 }
 
-function cloneSnapshot(snapshot: HostSnapshot): HostSnapshot {
-  return JSON.parse(JSON.stringify(snapshot)) as HostSnapshot
-}
-
 /**
  * Metadata minted from the journal must not become a synthetic domain change.
  * Align it before using the strict before/after diff. Health freshness is also
@@ -101,7 +97,10 @@ function cloneSnapshot(snapshot: HostSnapshot): HostSnapshot {
  * itself did not change.
  */
 function comparableBaseline(baseline: HostSnapshot, current: HostSnapshot): HostSnapshot {
-  const comparable = cloneSnapshot(baseline)
+  // Only these metadata records change. Diffing and delta application both
+  // decode their inputs without mutating them, so copying every catalogue row
+  // through JSON here adds allocation and GC work to every reconciliation.
+  const comparable = { ...baseline }
   comparable.protocolVersion = current.protocolVersion
   comparable.projectionVersion = current.projectionVersion
   comparable.generation = current.generation
