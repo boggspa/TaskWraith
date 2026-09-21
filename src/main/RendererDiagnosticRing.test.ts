@@ -137,6 +137,7 @@ describe('RendererDiagnosticRing', () => {
         snapshots: 3,
         patches: 12,
         baselineDrops: 1,
+        patchBaselineRetentions: 0,
         producerDeltaMissing: 4,
         spliceRecoveries: 4,
         windowedDeliveries: 5,

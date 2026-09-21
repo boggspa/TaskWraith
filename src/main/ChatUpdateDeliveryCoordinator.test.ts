@@ -332,7 +332,57 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id).inFlight).toBe(1)
   })
 
-  it('keeps the patch timeout and its immediate latest-pending resync unchanged', () => {
+  it('retains the patch baseline across a timeout and resends the latest pending as a patch', () => {
+    vi.useFakeTimers()
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    const [seed, patch, latest] = projectSequence(
+      chat(1, ['one']),
+      chat(2, ['one', 'patch']),
+      chat(3, ['one', 'patch', 'latest'])
+    )
+    coordinator.enqueue(sink, seed)
+    const seedBaseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
+    coordinator.enqueue(sink, patch)
+    expect(sink.deliveries[1].kind).toBe('patch')
+    coordinator.enqueue(sink, latest)
+
+    vi.advanceTimersByTime(250)
+
+    expect(sink.deliveries).toHaveLength(3)
+    expect(sink.deliveries[2].kind).toBe('patch')
+    if (sink.deliveries[2].kind !== 'patch') throw new Error('Expected patch')
+    // Emulate a renderer that applied the timed-out patch and lost only the
+    // ACK: the resent patch must chain cleanly onto the same revision chain.
+    const firstPatchApplied = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[1]),
+      seedBaseline
+    )
+    if (!firstPatchApplied.ok) throw new Error(firstPatchApplied.reason)
+    const resentApplied = applyChatUpdateDelivery(
+      structuredClone(sink.deliveries[2]),
+      firstPatchApplied.baseline
+    )
+    expect(resentApplied.ok).toBe(true)
+    if (!resentApplied.ok) throw new Error(resentApplied.reason)
+    expect(resentApplied.baseline.chat.messages.map((row) => row.content)).toEqual([
+      'one',
+      'patch',
+      'latest'
+    ])
+    expect(coordinator.protocolCounters()).toMatchObject({
+      baselineDrops: 0,
+      patchBaselineRetentions: 1
+    })
+    ackAsRenderer(coordinator, sink, sink.deliveries[2], firstPatchApplied.baseline)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 0 })
+    vi.useRealTimers()
+  })
+
+  it('falls back to a snapshot once repeated patch timeouts exhaust the retention budget', () => {
     vi.useFakeTimers()
     const sink = target()
     const coordinator = new ChatUpdateDeliveryCoordinator({
@@ -350,12 +400,27 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries[1].kind).toBe('patch')
     coordinator.enqueue(sink, latest)
 
+    // First timeout: baseline retained, newest pending resent as a patch.
     vi.advanceTimersByTime(250)
-
     expect(sink.deliveries).toHaveLength(3)
-    expect(sink.deliveries[2].kind).toBe('snapshot')
-    if (sink.deliveries[2].kind !== 'snapshot') throw new Error('Expected snapshot')
-    expect(sink.deliveries[2].chat.updatedAt).toBe(3)
+    expect(sink.deliveries[2].kind).toBe('patch')
+
+    // Second timeout: budget exhausted, resend once more.
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(4)
+    expect(sink.deliveries[3].kind).toBe('patch')
+
+    // Third timeout: retention budget is spent — baseline drops and the
+    // next delivery repairs with a full snapshot, exactly as before.
+    vi.advanceTimersByTime(250)
+    expect(sink.deliveries).toHaveLength(5)
+    expect(sink.deliveries[4].kind).toBe('snapshot')
+    if (sink.deliveries[4].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[4].chat.updatedAt).toBe(3)
+    expect(coordinator.protocolCounters()).toMatchObject({
+      patchBaselineRetentions: 2,
+      baselineDrops: 1
+    })
     vi.useRealTimers()
   })
 

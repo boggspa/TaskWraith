@@ -26,6 +26,16 @@ import {
   resolveSnapshotRetryDelayMs
 } from './ChatUpdateSnapshotAckPolicy'
 
+/**
+ * Patch deliveries whose ACK window expires are resent this many times before
+ * the baseline is dropped and the renderer repairs with a full snapshot. A
+ * timed-out patch does not prove the renderer missed it — main-thread jank can
+ * lose the ACK alone — and a resent patch is revision-guarded either way: a
+ * renderer that never applied it fails the hash check and takes the snapshot
+ * path, while a renderer that did apply it simply chains the next patch.
+ */
+const MAX_PATCH_TIMEOUT_RESENDS = 2
+
 export interface ChatUpdateDeliveryTarget {
   id: number
   isDestroyed: () => boolean
@@ -148,6 +158,8 @@ interface TargetChatState {
   consecutiveRejects: number
   /** Consecutive full snapshots that exhausted their size-aware ACK window. */
   consecutiveSnapshotTimeouts: number
+  /** Consecutive patch deliveries that exhausted their ACK window. */
+  consecutivePatchTimeouts: number
   /** Earliest time another snapshot recovery may be sent for this chat. */
   snapshotRetryNotBefore: number
   lastSentAt: number
@@ -191,6 +203,8 @@ export interface ChatUpdateProtocolCounters {
   patches: number
   /** Times an acknowledged baseline was dropped (nack or ACK timeout). */
   baselineDrops: number
+  /** Patch ACK timeouts where the baseline was retained and the patch resent. */
+  patchBaselineRetentions: number
   /**
    * Deliveries where a baseline was held but the producer had no usable delta.
    *
@@ -458,6 +472,7 @@ export class ChatUpdateDeliveryCoordinator {
     snapshots: 0,
     patches: 0,
     baselineDrops: 0,
+    patchBaselineRetentions: 0,
     producerDeltaMissing: 0,
     spliceRecoveries: 0,
     windowedDeliveries: 0,
@@ -493,6 +508,7 @@ export class ChatUpdateDeliveryCoordinator {
         nextRevision: 0,
         consecutiveRejects: 0,
         consecutiveSnapshotTimeouts: 0,
+        consecutivePatchTimeouts: 0,
         snapshotRetryNotBefore: Number.NEGATIVE_INFINITY,
         lastSentAt: Number.NEGATIVE_INFINITY,
         lastTouchedAt: this.now()
@@ -723,6 +739,7 @@ export class ChatUpdateDeliveryCoordinator {
       }
       state.consecutiveRejects = 0
       state.consecutiveSnapshotTimeouts = 0
+      state.consecutivePatchTimeouts = 0
       state.snapshotRetryNotBefore = Number.NEGATIVE_INFINITY
     } else {
       // Degradation: the renderer could not apply the patch (or the revision /
@@ -1225,22 +1242,24 @@ export class ChatUpdateDeliveryCoordinator {
           state.ackTimer = undefined
           if (state.inFlight?.deliveryId !== deliveryId) return
           this.deliveryIndex.delete(deliveryId)
+          const timedOut = state.inFlight
           state.inFlight = undefined
-          // A renderer that cannot ACK cannot share a revision baseline. The
-          // newest pending update will therefore repair itself as a snapshot.
-          if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
           this.counters.ackRejections += 1
           this.counters.ackRejectReasons.ackTimeout =
             (this.counters.ackRejectReasons.ackTimeout ?? 0) + 1
-          state.acknowledged = undefined
-          state.baselineChat = undefined
-          state.baselineRevision = undefined
-          state.baselineUpdatedAt = undefined
-          state.baselineTitle = undefined
-          state.baselineThreadTitle = undefined
-          state.lastAccepted = undefined
-          state.consecutiveRejects += 1
           if (epochDelivery.kind === 'snapshot') {
+            // A renderer that cannot ACK a snapshot cannot share a revision
+            // baseline. The newest pending update will therefore repair itself
+            // as a snapshot after the bounded backoff below.
+            if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
+            state.acknowledged = undefined
+            state.baselineChat = undefined
+            state.baselineRevision = undefined
+            state.baselineUpdatedAt = undefined
+            state.baselineTitle = undefined
+            state.baselineThreadTitle = undefined
+            state.lastAccepted = undefined
+            state.consecutiveRejects += 1
             state.consecutiveSnapshotTimeouts += 1
             state.snapshotRetryNotBefore =
               this.now() +
@@ -1262,17 +1281,61 @@ export class ChatUpdateDeliveryCoordinator {
               }
               state.nextRevision += 1
             }
-          } else if (state.consecutiveRejects === 1 && !state.pending) {
-            // Patch behavior is unchanged: one immediate snapshot repairs a
-            // renderer that lost its acknowledged patch baseline.
-            state.pending = {
-              revision: state.nextRevision + 1,
-              chat: next.chat,
-              producer: next.producer,
-              retainedBytes: next.retainedBytes,
-              priority: next.priority
+          } else if (timedOut && state.consecutivePatchTimeouts < MAX_PATCH_TIMEOUT_RESENDS) {
+            // A timed-out patch does not prove the renderer missed it: jank can
+            // lose the ACK alone. Adopt the delivered record as the optimistic
+            // baseline and resend the newest content as a patch. If the renderer
+            // never applied the timed-out delivery, the resent patch fails its
+            // revision guard and the existing NACK path repairs with a snapshot
+            // — no worse than dropping the baseline now, and strictly better
+            // when only the ACK was lost.
+            state.consecutivePatchTimeouts += 1
+            this.counters.patchBaselineRetentions += 1
+            state.acknowledged = timedOut.compactBaseline
+            adoptDeliveredRecord(state, timedOut)
+            const ackedRevision =
+              timedOut.producer?.state.persistenceRevision ?? timedOut.chat.persistenceRevision
+            state.baselineRevision =
+              Number.isSafeInteger(ackedRevision) && (ackedRevision ?? -1) >= 0
+                ? ackedRevision
+                : undefined
+            state.baselineUpdatedAt = timedOut.hashedUpdatedAt
+            state.baselineTitle = timedOut.hashedTitle
+            state.baselineThreadTitle = timedOut.hashedThreadTitle
+            if (!state.pending) {
+              state.pending = {
+                revision: state.nextRevision + 1,
+                chat: next.chat,
+                producer: next.producer,
+                retainedBytes: next.retainedBytes,
+                priority: next.priority
+              }
+              state.nextRevision += 1
             }
-            state.nextRevision += 1
+          } else {
+            // Bounded fallback: repeated patch timeouts mean the renderer is
+            // not keeping up. Drop the baseline so the next delivery repairs
+            // with a full snapshot, exactly as before.
+            if (state.acknowledged || state.baselineChat) this.counters.baselineDrops += 1
+            state.acknowledged = undefined
+            state.baselineChat = undefined
+            state.baselineRevision = undefined
+            state.baselineUpdatedAt = undefined
+            state.baselineTitle = undefined
+            state.baselineThreadTitle = undefined
+            state.lastAccepted = undefined
+            state.consecutiveRejects += 1
+            state.consecutivePatchTimeouts = 0
+            if (state.consecutiveRejects === 1 && !state.pending) {
+              state.pending = {
+                revision: state.nextRevision + 1,
+                chat: next.chat,
+                producer: next.producer,
+                retainedBytes: next.retainedBytes,
+                priority: next.priority
+              }
+              state.nextRevision += 1
+            }
           }
           state.lastTouchedAt = this.now()
           this.maybeSend(state)
