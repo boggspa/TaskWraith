@@ -154,8 +154,8 @@ function startedView(
 }
 
 describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
-  it('publishes the closed start-effect families (run + thread) and classifies every observation key', () => {
-    expect(QUEUED_START_EFFECT_FAMILIES).toEqual(['run', 'thread'])
+  it('publishes the closed start-effect families (run + thread + ensemble round) and classifies every observation key', () => {
+    expect(QUEUED_START_EFFECT_FAMILIES).toEqual(['run', 'thread', 'round'])
     expect(Object.keys(QUEUED_START_EXCLUDED_OBSERVATION_KEYS).sort()).toEqual(
       [
         'approvals',
@@ -166,7 +166,6 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
         'participants',
         'providers',
         'questions',
-        'rounds',
         'routing',
         'schedules',
         'usage',
@@ -184,6 +183,7 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
       ])
     )
     expect(effects).toHaveLength(2)
+    expect(effects.some((effect) => effect.family === 'round')).toBe(false)
     expect(provesQueuedStartEffects(effects, startIdentity())).toBe(true)
     expect(provesQueuedStartEffects(effects, startIdentity('other'))).toBe(false)
     expect(provesQueuedStartEffects(effects, startIdentity('cmd-1', 'other-thread'))).toBe(false)
@@ -194,6 +194,7 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
     const after = startedAfter('cmd-1', {
       runs: [runRow('cmd-1'), runRow('other-run')],
       missions: [{ missionId: 'mission-1', threadId: 'thread-1' } as never],
+      rounds: [{ roundId: 'round-1', threadId: 'thread-1' } as never],
       questions: [{ questionId: 'q-1', threadId: 'thread-1' } as never],
       approvals: [{ approvalId: 'a-1', threadId: 'thread-1' } as never],
       channels: [{ channelId: 'ch-1', threadId: 'thread-1' } as never],
@@ -216,6 +217,7 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
     )
     expect(effects.some((effect) => effect.entityId === 'other-run')).toBe(false)
     expect(effects.some((effect) => effect.family === 'mission')).toBe(false)
+    expect(effects.some((effect) => effect.family === 'round')).toBe(false)
     expect(effects.some((effect) => effect.family === 'question')).toBe(false)
     expect(effects.some((effect) => effect.family === 'approval')).toBe(false)
     expect(effects.some((effect) => effect.family === 'channel')).toBe(false)
@@ -248,6 +250,75 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
       kind: 'incoherent',
       reason: 'duplicate_entity_id'
     })
+  })
+
+  it('emits the ensemble round row only when the identity carries a roundId', () => {
+    const round = { roundId: 'round-1', threadId: 'thread-1' } as never
+    const before = emptyFamilies()
+    const after = startedAfter('cmd-1', { rounds: [round] })
+    // Solo identity: round rows are ignored even when they change.
+    const solo = startEffects(before, after, startIdentity())
+    expect(solo).toHaveLength(2)
+    expect(solo.some((effect) => effect.family === 'round')).toBe(false)
+    expect(provesQueuedStartEffects(solo, startIdentity())).toBe(true)
+    // Ensemble identity: the round upsert joins run + thread.
+    const ensembleIdentity = { ...startIdentity(), roundId: 'round-1' }
+    const ensemble = startEffects(before, after, ensembleIdentity)
+    expect(ensemble).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'upsert', family: 'run', entityId: 'cmd-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'thread', entityId: 'thread-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'round', entityId: 'round-1' })
+      ])
+    )
+    expect(ensemble).toHaveLength(3)
+    expect(provesQueuedStartEffects(ensemble, ensembleIdentity)).toBe(true)
+  })
+
+  it('requires the round upsert for ensemble identities and ignores it for solo ones', () => {
+    const runUpsert: HostDomainEffectDto = {
+      kind: 'upsert',
+      family: 'run',
+      entityId: 'cmd-1',
+      payload: {}
+    }
+    const threadUpsert: HostDomainEffectDto = {
+      kind: 'upsert',
+      family: 'thread',
+      entityId: 'thread-1',
+      payload: {}
+    }
+    const roundUpsert: HostDomainEffectDto = {
+      kind: 'upsert',
+      family: 'round',
+      entityId: 'round-1',
+      payload: {}
+    }
+    const pair = [runUpsert, threadUpsert]
+    // Solo: the pair proves; a stray round upsert neither proves nor breaks.
+    expect(provesQueuedStartEffects(pair, startIdentity())).toBe(true)
+    expect(provesQueuedStartEffects([...pair, roundUpsert], startIdentity())).toBe(true)
+    // Ensemble: the pair alone is incomplete; the triple proves; a wrong round fails.
+    const ensembleIdentity = { ...startIdentity(), roundId: 'round-1' }
+    expect(provesQueuedStartEffects(pair, ensembleIdentity)).toBe(false)
+    expect(provesQueuedStartEffects([...pair, roundUpsert], ensembleIdentity)).toBe(true)
+    expect(
+      provesQueuedStartEffects(
+        [...pair, { ...roundUpsert, entityId: 'round-2' }],
+        ensembleIdentity
+      )
+    ).toBe(false)
+  })
+
+  it('fails closed when AFTER contains duplicate ensemble round rows', () => {
+    const round = { roundId: 'round-1', threadId: 'thread-1' } as never
+    const roundDuplicate = { roundId: 'round-1', threadId: 'thread-1' } as never
+    const after = startedAfter('cmd-1', { rounds: [round, roundDuplicate] })
+    expect(
+      diffScopedStartEffects(emptyFamilies(), after, { ...startIdentity(), roundId: 'round-1' })
+    ).toEqual({ kind: 'incoherent', reason: 'duplicate_entity_id' })
+    // The same duplicate rows are invisible to solo identities.
+    expect(diffScopedStartEffects(emptyFamilies(), after, startIdentity()).kind).toBe('effects')
   })
 })
 

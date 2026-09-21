@@ -11,11 +11,13 @@
  * provider appends the user prompt; the legacy persist poll required BOTH a
  * running row and that user message. The coordinator therefore completes
  * only after DomainPorts reports a settled dispatch that already waited for
- * that persist boundary, then publishes exactly two correlated upserts:
+ * that persist boundary, then publishes the correlated start upserts:
  * the run whose entityId is this commandId, and the thread whose entityId
- * is command.target.threadId. Success requires BOTH (Domain's persist
- * proof is the run row plus the user message, which the thread projection
- * carries as messageCount/updatedAt). Other same-thread runs are not
+ * is command.target.threadId — plus the round whose entityId is the
+ * register input's roundId for ensemble starts. Success requires every
+ * admitted upsert (Domain's persist proof is the run row plus the user
+ * message, which the thread projection carries as messageCount/updatedAt).
+ * Other same-thread runs are not
  * admitted. Command-local scope is still used to READ the donor, but
  * BEFORE is captured before ACK/capacity/persist waits, so a full scoped
  * diff would misattribute concurrent same-thread mutations.
@@ -29,8 +31,9 @@
  * opens the file-backed execution-claim journal behind the default-OFF gate
  * and injects it through HostNodeDomainPorts; lifecycle `claim` awaits its
  * fsynced record before provider side effects. The journal still declares no
- * durable absence coverage. Lifecycle recovery, retention/compaction, and
- * HostMainComposition wiring remain separate work. Flag default remains OFF.
+ * durable absence coverage. Lifecycle recovery, retention/compaction, and the
+ * queued-start producer remain separate work; HostMainComposition exposes the
+ * port (default OFF) but no producer calls it yet. Flag default remains OFF.
  */
 
 import type {
@@ -73,6 +76,8 @@ export interface HostQueuedStartPublicationRegisterInput {
   readonly commandId: string
   readonly actor: HostCommandReceiptActor
   readonly fingerprint: string
+  /** Ensemble round id. Absent for solo starts. No producer passes it yet. */
+  readonly roundId?: string
   readonly command: HostCommand
   readonly beforeScoped: HostMutationObservationFamilies
   readonly scope: HostMutationObservationScope
@@ -119,12 +124,15 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'denied', 'cancelled',
 
 /**
  * composer.send start persists a run row and the user prompt on the thread
- * record. The publisher emits only those two rows: run entityId ===
- * commandId and thread entityId === command.target.threadId. Success
- * requires both upserts; a run-only batch is incomplete.
+ * record. The publisher emits only those rows: run entityId === commandId
+ * and thread entityId === command.target.threadId. Success requires both
+ * upserts; a run-only batch is incomplete. Ensemble starts additionally
+ * persist their round row: when the register input carries a roundId, the
+ * publisher emits that third row (round entityId === roundId) and success
+ * requires all three upserts.
  *
  * Not start effects (concurrent same-thread writes during the off-queue wait
- * must not be attributed here): missions, rounds, participants, providers,
+ * must not be attributed here): missions, participants, providers,
  * questions, approvals, schedules, artifacts, workspaces.
  * Singletons health/routing/usage/warnings are likewise excluded.
  * `channel` is excluded twice: it is not a start write, AND emitting it
@@ -133,17 +141,19 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'denied', 'cancelled',
  */
 export const QUEUED_START_EFFECT_FAMILIES = [
   'run',
-  'thread'
+  'thread',
+  'round'
 ] as const satisfies readonly HostDeltaFamily[]
 
 type ObservationKey = keyof HostMutationObservationFamilies
-type StartEffectDonorKey = 'runs' | 'threads'
+// 'rounds' donates only for ensemble identities (register input roundId);
+// solo diffs skip the round spec, so no solo batch changes shape.
+type StartEffectDonorKey = 'runs' | 'threads' | 'rounds'
 
 export const QUEUED_START_EXCLUDED_OBSERVATION_KEYS = {
   health: true,
   workspaces: true,
   missions: true,
-  rounds: true,
   participants: true,
   providers: true,
   routing: true,
@@ -173,7 +183,8 @@ function idOf(row: object, key: string): string | null {
 
 const START_EFFECT_FAMILY_SPECS: readonly FamilySpec[] = [
   { family: 'run', rows: (families) => families.runs, id: (row) => idOf(row, 'runId') },
-  { family: 'thread', rows: (families) => families.threads, id: (row) => idOf(row, 'id') }
+  { family: 'thread', rows: (families) => families.threads, id: (row) => idOf(row, 'id') },
+  { family: 'round', rows: (families) => families.rounds, id: (row) => idOf(row, 'roundId') }
 ]
 
 function upsert(
@@ -191,6 +202,8 @@ function tombstone(family: HostDomainEffectDto['family'], entityId: string): Hos
 export interface HostQueuedStartEffectIdentity {
   readonly commandId: string
   readonly threadId: string
+  /** Ensemble starts only. Absent for solo starts, which admit no round row. */
+  readonly roundId?: string
 }
 
 function uniqueRowWithId(
@@ -212,8 +225,9 @@ export type HostQueuedStartDiffResult =
   | { readonly kind: 'incoherent'; readonly reason: 'duplicate_entity_id' }
 
 /**
- * Diff only the command-correlated start rows: this command's run and the
- * target thread. Other same-thread runs are ignored even when they change
+ * Diff only the command-correlated start rows: this command's run, the
+ * target thread, and — only when the identity carries a roundId — the
+ * ensemble round. Other same-thread runs are ignored even when they change
  * during the off-queue wait. Duplicate exact-id AFTER (or BEFORE) rows fail
  * closed — success requires one unambiguous donor row per admitted identity.
  * Payloads come from the scoped donor, never from command intent.
@@ -225,7 +239,15 @@ export function diffScopedStartEffects(
 ): HostQueuedStartDiffResult {
   const effects: HostDomainEffectDto[] = []
   for (const spec of START_EFFECT_FAMILY_SPECS) {
-    const entityId = spec.family === 'run' ? identity.commandId : identity.threadId
+    const entityId =
+      spec.family === 'run'
+        ? identity.commandId
+        : spec.family === 'thread'
+          ? identity.threadId
+          : identity.roundId
+    // Solo identities admit no round row: the round spec is skipped, so solo
+    // batches keep their exact two-effect shape.
+    if (entityId === undefined) continue
     const left = uniqueRowWithId(spec.rows(before), spec.id, entityId)
     const right = uniqueRowWithId(spec.rows(after), spec.id, entityId)
     if (left.kind === 'duplicate' || right.kind === 'duplicate') {
@@ -242,7 +264,11 @@ export function diffScopedStartEffects(
   return { kind: 'effects', effects }
 }
 
-/** Start proof: run upsert for commandId AND thread upsert for target.threadId. */
+/**
+ * Start proof: run upsert for commandId AND thread upsert for
+ * target.threadId, plus — only for ensemble identities — the round upsert
+ * for roundId.
+ */
 export function provesQueuedStartEffects(
   effects: readonly HostDomainEffectDto[],
   identity: HostQueuedStartEffectIdentity
@@ -257,7 +283,14 @@ export function provesQueuedStartEffects(
       effect.kind === 'upsert' &&
       effect.entityId === identity.threadId
   )
-  return runUpsert && threadUpsert
+  const roundId = identity.roundId
+  const roundUpsert =
+    roundId === undefined ||
+    effects.some(
+      (effect) =>
+        effect.family === 'round' && effect.kind === 'upsert' && effect.entityId === roundId
+    )
+  return runUpsert && threadUpsert && roundUpsert
 }
 
 export function createHostQueuedStartStartedSlot(): {
@@ -420,7 +453,11 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
         promote(input.commandId, 'observation_diff_incoherent')
         return
       }
-      const identity = { commandId: input.commandId, threadId }
+      const identity: HostQueuedStartEffectIdentity = {
+        commandId: input.commandId,
+        threadId,
+        ...(input.roundId !== undefined ? { roundId: input.roundId } : {})
+      }
       const diffed = diffScopedStartEffects(input.beforeScoped, afterScoped, identity)
       if (diffed.kind !== 'effects' || !provesQueuedStartEffects(diffed.effects, identity)) {
         promote(input.commandId, 'observation_diff_incoherent')
