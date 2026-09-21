@@ -107,6 +107,7 @@ import {
 import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
+import { createHostMaterializationBarrier } from './hostMaterializationBarrier'
 import {
   DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
   DeferredHostMaterialization
@@ -705,17 +706,24 @@ const hostPersistUnconfirmedChatIds = new Set<string>()
  */
 const hostPersistShadowChatIds = new Set<string>()
 
-const barrierChatRecordPersist = (chatId: string): Promise<void> => {
-  // Materialize synchronously so a barrier requested at a trust/dispatch edge
-  // cannot observe an empty Host lane while the latest record is still staged.
-  materializeHostChatCompatibility(chatId)
-  const compatibility = hostChatCompatibility()
-  return compatibility.barrier(chatId).then(() => {
-    if (!compatibility.hasUnconfirmed(chatId)) {
-      hostPersistUnconfirmedChatIds.delete(chatId)
-    }
-  })
-}
+/**
+ * Durability barrier for a trust/dispatch edge. The policy lives in
+ * hostMaterializationBarrier.ts: the journal delta for the current revision
+ * is fsynced before the barrier resolves, the staged checkpoint is only
+ * enqueued when a fresh artifact does not already cover it (never a
+ * duplicate full-record re-serialization), and everything in flight drains
+ * through the compatibility coordinator's barrier.
+ */
+const barrierChatRecordPersist = createHostMaterializationBarrier({
+  awaitJournalDurability: (chatId) => incrementalChatPersistence.awaitDeferredDurability(chatId),
+  compatibility: {
+    hasUnconfirmed: (chatId) => hostChatCompatibility().hasUnconfirmed(chatId),
+    hasSubmitted: (chatId) => hostChatCompatibility().hasSubmitted(chatId),
+    barrier: (chatId) => hostChatCompatibility().barrier(chatId)
+  },
+  materialize: (chatId) => materializeHostChatCompatibility(chatId),
+  clearUnconfirmed: (chatId) => hostPersistUnconfirmedChatIds.delete(chatId)
+})
 
 /**
  * Explicit upper bound for the shutdown Host-queue drain. Quit is one of the
@@ -1169,6 +1177,15 @@ installPerfStatsHandle(() => ({
  *     and `readChatRecordCached` returns a dirty entry without stat-ing;
  *   - the decision itself is already durable in `approval-ledger.json`.
  * What remains is the transition, which is the thing a reader must not miss.
+ *
+ * Since the streaming epic, the `approval` reason no longer force-materializes
+ * the whole Host artifact on the transition save: it defers exactly like
+ * `terminal` behind the trailing compatibility timer (barriers and the
+ * shutdown drain still drain synchronously). Nothing above changes — the
+ * renderer push, the APNs fanout, the in-process cache and the approval
+ * ledger carry the transition — so the Host artifact's rendering of the
+ * approval row may trail the journal by one short deferral window, which is
+ * the same freshness contract the terminal checkpoint already accepts.
  */
 const openApprovalSignatureByChatId = new Map<string, string>()
 
@@ -8248,18 +8265,24 @@ export class AppStore {
       preparation.externalizationFailed ||
       flushReason !== 'normal'
     if (materializeNow) {
-      // A terminal save of a LARGE record used to serialize the whole record
-      // synchronously here (~seconds on main for a tens-of-MB thread) and
-      // wedge the Host right after — all while the journal already made the
-      // mutation durable. Defer that checkpoint behind a short trailing
-      // timer; barriers and the shutdown drain still materialize
-      // synchronously, and small records keep their immediate checkpoint.
-      const deferrableTerminal =
+      // A terminal or approval save of a LARGE record used to serialize the
+      // whole record synchronously here (~seconds on main for a tens-of-MB
+      // thread) and wedge the Host right after — all while the journal
+      // already made the mutation durable (approval appends fsync at save
+      // time; approval decisions render from the in-process projection).
+      // Defer that checkpoint behind the short trailing timer; barriers and
+      // the shutdown drain still materialize synchronously, small records
+      // keep their immediate checkpoint, and a burst coalesces into one
+      // trailing checkpoint. Shutdown and history-deletion flushes stay
+      // immediate:
+      // the first has no event loop left to fire the timer on, the second
+      // must never resurrect a record the deletion is erasing.
+      const deferrableHostMaterialization =
         previousChatForFeedback !== null &&
         incrementalResult !== null &&
         !preparation.externalizationFailed &&
-        flushReason === 'terminal'
-      const deferred = deferrableTerminal
+        (flushReason === 'terminal' || flushReason === 'approval')
+      const deferred = deferrableHostMaterialization
         ? deferredHostMaterialize().schedule(normalizedChat.appChatId, {
             existingBytes: existingRecordBytes,
             flushReason,

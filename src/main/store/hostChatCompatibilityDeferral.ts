@@ -31,10 +31,19 @@
  *     durability.
  *
  * WHAT NEVER DEFERS: creation, a journal failure (the checkpoint is then the
- * only durability), a detail-externalization failure, `approval`/`shutdown`/
- * `history-deletion` flushes, records under the size floor (their checkpoint
- * is cheap and external readers expect it immediately), and deleted chats
- * (the timer re-checks the tombstone before materializing).
+ * only durability), a detail-externalization failure, `shutdown`/
+ * `history-deletion` flushes (the first has no event loop left to fire the
+ * timer on, the second must never resurrect a record the deletion transaction
+ * is erasing), records under the size floor (their checkpoint is cheap and
+ * external readers expect it immediately), and deleted chats (the timer
+ * re-checks the tombstone before materializing).
+ *
+ * `approval` flushes defer exactly like `terminal` ones: the approval state is
+ * fsynced by the journal at save time (the `approval` append boundary is
+ * immediate durability), approval decisions render from the in-process
+ * projection rather than the Host artifact, and the pre-dispatch barrier still
+ * drains whatever is in flight — so deferring the compatibility projection
+ * never delays the decision or weakens crash recovery.
  */
 
 /** Records at or above this size defer their compatibility checkpoint. */
@@ -51,6 +60,15 @@ export const DEFERRED_HOST_MATERIALIZE_DELAY_MS = 5_000
  * so the on-disk compatibility copy cannot lag the journal by the whole hold.
  */
 export const DEFERRED_HOST_MATERIALIZE_MAX_RETRIES = 120
+/**
+ * Upper bound on below-threshold reschedules per pending checkpoint. A metered
+ * lane whose deltas never cross the threshold (for example a caller wiring
+ * `mutationBytes` with a steady trickle of tiny saves) must still materialize
+ * eventually: after this many re-arms the gate is overridden and the full
+ * checkpoint is published once, bounding artifact staleness to roughly
+ * `maxReschedules × delayMs`.
+ */
+export const DEFERRED_HOST_MATERIALIZE_MAX_RESCHEDULES = 12
 /**
  * Full materialization is deferred until accumulated pending mutation volume
  * reaches this threshold. Below threshold the trailing timer reschedules so tiny
@@ -77,6 +95,8 @@ export interface DeferredHostMaterializationOptions {
   readonly delayMs?: number
   /** Bound on re-arms per scheduled checkpoint; see DEFERRED_HOST_MATERIALIZE_MAX_RETRIES. */
   readonly maxRetries?: number
+  /** Bound on below-threshold re-arms; see DEFERRED_HOST_MATERIALIZE_MAX_RESCHEDULES. */
+  readonly maxReschedules?: number
   /** Minimum accumulated mutation bytes required before full materialization is permitted. */
   readonly minMutationBytes?: number
   /** Optional callback to query pending mutation bytes or proxy directly from the journal. */
@@ -101,6 +121,7 @@ export class DeferredHostMaterialization {
   private readonly minBytes: number
   private readonly delayMs: number
   private readonly maxRetries: number
+  private readonly maxReschedules: number
   private readonly minMutationBytes: number
   private readonly getPendingMutationBytes: ((chatId: string) => number) | null
   private readonly setTimer: (
@@ -115,6 +136,7 @@ export class DeferredHostMaterialization {
       attempts: number
       accumulatedBytes: number
       unmetered: boolean
+      reschedules: number
     }
   >()
 
@@ -143,6 +165,10 @@ export class DeferredHostMaterialization {
       Number.isSafeInteger(options.maxRetries) && (options.maxRetries ?? -1) >= 0
         ? options.maxRetries!
         : DEFERRED_HOST_MATERIALIZE_MAX_RETRIES
+    this.maxReschedules =
+      Number.isSafeInteger(options.maxReschedules) && (options.maxReschedules ?? -1) >= 0
+        ? options.maxReschedules!
+        : DEFERRED_HOST_MATERIALIZE_MAX_RESCHEDULES
     this.minMutationBytes =
       Number.isFinite(options.minMutationBytes) && (options.minMutationBytes ?? 0) >= 0
         ? Math.floor(options.minMutationBytes!)
@@ -172,7 +198,11 @@ export class DeferredHostMaterialization {
    */
   schedule(chatId: string, decision: DeferredHostMaterializationDecision): boolean {
     if (typeof chatId !== 'string' || chatId.length === 0) return false
-    if (decision.flushReason !== 'terminal' || decision.durabilityFallback) return false
+    if (
+      (decision.flushReason !== 'terminal' && decision.flushReason !== 'approval') ||
+      decision.durabilityFallback
+    )
+      return false
     if (!Number.isFinite(decision.existingBytes) || decision.existingBytes < this.minBytes) {
       return false
     }
@@ -203,7 +233,8 @@ export class DeferredHostMaterialization {
     const arm = (
       attempts: number,
       currentAccumulatedBytes: number,
-      currentUnmetered: boolean
+      currentUnmetered: boolean,
+      reschedules: number
     ): void => {
       const timer = this.setTimer(() => {
         // A delete during the window owns the lane: materializing would
@@ -223,8 +254,12 @@ export class DeferredHostMaterialization {
           : currentAccumulatedBytes
 
         if (!currentUnmetered && pendingVolume < this.minMutationBytes) {
-          arm(attempts, currentAccumulatedBytes, currentUnmetered)
-          return
+          if (reschedules < this.maxReschedules) {
+            arm(attempts, currentAccumulatedBytes, currentUnmetered, reschedules + 1)
+            return
+          }
+          // Bounded staleness floor: the cap is hit, so materialize once even
+          // though the metered volume never crossed the threshold.
         }
 
         this.pending.delete(chatId)
@@ -240,7 +275,7 @@ export class DeferredHostMaterialization {
         // used to DROP the checkpoint here, leaving the on-disk compatibility
         // copy stale for the whole hold. Re-arm within a bound instead.
         if (!materialized && this.retryWhen?.(chatId) && attempts < this.maxRetries) {
-          arm(attempts + 1, currentAccumulatedBytes, currentUnmetered)
+          arm(attempts + 1, currentAccumulatedBytes, currentUnmetered, reschedules)
         }
       }, this.delayMs)
       ;(timer as { unref?: () => void }).unref?.()
@@ -248,10 +283,11 @@ export class DeferredHostMaterialization {
         timer,
         attempts,
         accumulatedBytes: currentAccumulatedBytes,
-        unmetered: currentUnmetered
+        unmetered: currentUnmetered,
+        reschedules
       })
     }
-    arm(0, accumulatedBytes, unmetered)
+    arm(0, accumulatedBytes, unmetered, previous?.reschedules ?? 0)
     return true
   }
 

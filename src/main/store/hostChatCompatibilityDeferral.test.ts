@@ -27,6 +27,7 @@ function harness(
     minBytes?: number
     delayMs?: number
     minMutationBytes?: number
+    maxReschedules?: number
     getPendingMutationBytes?: (chatId: string) => number
     isDeleted?: (chatId: string) => boolean
   } = {}
@@ -44,6 +45,7 @@ function harness(
     ...(options.minMutationBytes !== undefined
       ? { minMutationBytes: options.minMutationBytes }
       : {}),
+    ...(options.maxReschedules !== undefined ? { maxReschedules: options.maxReschedules } : {}),
     ...(options.getPendingMutationBytes !== undefined
       ? { getPendingMutationBytes: options.getPendingMutationBytes }
       : {}),
@@ -78,6 +80,56 @@ describe('DeferredHostMaterialization', () => {
     expect(deferral.pendingChatIds).toEqual([])
   })
 
+  it('defers a large approval checkpoint like a terminal one', () => {
+    const { deferral, timers, materialized } = harness()
+    const scheduled = deferral.schedule('chat-a', {
+      existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+      flushReason: 'approval',
+      durabilityFallback: false
+    })
+    expect(scheduled).toBe(true)
+    expect(deferral.pendingChatIds).toEqual(['chat-a'])
+    expect(timers).toHaveLength(1)
+    expect(timers[0].delayMs).toBe(DEFERRED_HOST_MATERIALIZE_DELAY_MS)
+    expect(materialized).toEqual([])
+
+    timers[0].callback()
+    expect(materialized).toEqual(['chat-a'])
+    expect(deferral.pendingChatIds).toEqual([])
+  })
+
+  it('reschedules a below-threshold approval delta instead of re-publishing the record', () => {
+    const { deferral, timers, materialized } = harness({ minMutationBytes: 1000 })
+    expect(
+      deferral.schedule('chat-a', {
+        existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+        flushReason: 'approval',
+        durabilityFallback: false,
+        mutationBytes: 300
+      })
+    ).toBe(true)
+    expect(deferral.accumulatedMutationBytes('chat-a')).toBe(300)
+
+    timers[0].callback()
+    expect(materialized).toEqual([])
+    expect(timers).toHaveLength(2)
+    expect(deferral.pendingChatIds).toEqual(['chat-a'])
+    expect(deferral.accumulatedMutationBytes('chat-a')).toBe(300)
+
+    // Accumulation across approval windows: crossing the threshold publishes
+    // exactly one full checkpoint for the whole metered window.
+    deferral.schedule('chat-a', {
+      existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+      flushReason: 'approval',
+      durabilityFallback: false,
+      mutationBytes: 800
+    })
+    expect(deferral.accumulatedMutationBytes('chat-a')).toBe(1100)
+    timers[2].callback()
+    expect(materialized).toEqual(['chat-a'])
+    expect(deferral.pendingChatIds).toEqual([])
+  })
+
   it('coalesces a burst of saves into one checkpoint', () => {
     const { deferral, timers, materialized } = harness()
     for (let index = 0; index < 5; index += 1) {
@@ -107,10 +159,18 @@ describe('DeferredHostMaterialization', () => {
       }
     ],
     [
-      'a non-terminal flush',
+      'a shutdown flush',
       {
         existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES + 1,
-        flushReason: 'approval',
+        flushReason: 'shutdown',
+        durabilityFallback: false
+      }
+    ],
+    [
+      'a history-deletion flush',
+      {
+        existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES + 1,
+        flushReason: 'history-deletion',
         durabilityFallback: false
       }
     ],
@@ -385,6 +445,53 @@ describe('DeferredHostMaterialization', () => {
 
     pendingBytes = 1200
     timers[1].callback() // 1200 >= 1000 -> materializes
+    expect(materialized).toEqual(['chat-a'])
+    expect(deferral.pendingChatIds).toEqual([])
+  })
+
+  it('forces materialization once below-threshold reschedules hit the cap', () => {
+    const { deferral, timers, materialized } = harness({
+      minMutationBytes: 1000,
+      maxReschedules: 3
+    })
+    deferral.schedule('chat-a', {
+      existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+      flushReason: 'terminal',
+      durabilityFallback: false,
+      mutationBytes: 100
+    })
+    // 100 < 1000: three below-threshold re-arms, then the cap forces a publish.
+    timers[0].callback()
+    timers[1].callback()
+    timers[2].callback()
+    expect(materialized).toEqual([])
+    expect(timers).toHaveLength(4)
+    timers[3].callback()
+    expect(materialized).toEqual(['chat-a'])
+    expect(deferral.pendingChatIds).toEqual([])
+  })
+
+  it('carries the reschedule budget across coalesced saves so a trickle cannot starve', () => {
+    const { deferral, timers, materialized } = harness({
+      minMutationBytes: 1000,
+      maxReschedules: 2
+    })
+    deferral.schedule('chat-a', {
+      existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+      flushReason: 'terminal',
+      durabilityFallback: false,
+      mutationBytes: 100
+    })
+    timers[0].callback() // reschedule #1
+    deferral.schedule('chat-a', {
+      existingBytes: DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
+      flushReason: 'terminal',
+      durabilityFallback: false,
+      mutationBytes: 100
+    })
+    timers[2].callback() // budget carried: reschedule #2
+    expect(materialized).toEqual([])
+    timers[3].callback() // cap hit -> forced publish despite 200 < 1000
     expect(materialized).toEqual(['chat-a'])
     expect(deferral.pendingChatIds).toEqual([])
   })
