@@ -629,7 +629,7 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
           status: 'running',
           prompt: 'Stream',
           startedAt: '2026-09-21T09:00:00.000Z',
-          endedAt: null,
+          endedAt: undefined,
           participants: []
         }
       }
