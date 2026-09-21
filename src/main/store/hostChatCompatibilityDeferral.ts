@@ -25,6 +25,10 @@
  *   - a fired checkpoint that cannot materialize yet because the
  *     thread-catalogue write gate is held is re-armed (bounded), never dropped
  *     — the copy cannot lag the journal by a whole recovery hold.
+ *   - full materialization is gated on accumulated mutation volume: tiny deltas
+ *     below threshold reschedule the trailing timer so the full record is not
+ *     repeatedly serialized for trivial changes, while the journal guarantees
+ *     durability.
  *
  * WHAT NEVER DEFERS: creation, a journal failure (the checkpoint is then the
  * only durability), a detail-externalization failure, `approval`/`shutdown`/
@@ -47,6 +51,15 @@ export const DEFERRED_HOST_MATERIALIZE_DELAY_MS = 5_000
  * so the on-disk compatibility copy cannot lag the journal by the whole hold.
  */
 export const DEFERRED_HOST_MATERIALIZE_MAX_RETRIES = 120
+/**
+ * Full materialization is deferred until accumulated pending mutation volume
+ * reaches this threshold. Below threshold the trailing timer reschedules so tiny
+ * deltas do not re-serialize the entire record; the incremental journal remains
+ * the durability authority.
+ */
+export const DEFERRED_HOST_MATERIALIZE_MUTATION_THRESHOLD_BYTES = 512 * 1024
+export const DEFERRED_HOST_MATERIALIZE_MIN_MUTATION_BYTES =
+  DEFERRED_HOST_MATERIALIZE_MUTATION_THRESHOLD_BYTES
 
 export interface DeferredHostMaterializationOptions {
   /** Flush one staged checkpoint now. Return value is advisory only. */
@@ -64,8 +77,21 @@ export interface DeferredHostMaterializationOptions {
   readonly delayMs?: number
   /** Bound on re-arms per scheduled checkpoint; see DEFERRED_HOST_MATERIALIZE_MAX_RETRIES. */
   readonly maxRetries?: number
+  /** Minimum accumulated mutation bytes required before full materialization is permitted. */
+  readonly minMutationBytes?: number
+  /** Optional callback to query pending mutation bytes or proxy directly from the journal. */
+  readonly getPendingMutationBytes?: (chatId: string) => number
   readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
+
+export interface DeferredHostMaterializationDecision {
+  readonly existingBytes: number
+  readonly flushReason: string
+  /** Journal failed or externalization failed: the checkpoint is the durability fallback. */
+  readonly durabilityFallback: boolean
+  /** Delta mutation bytes for this persist. */
+  readonly mutationBytes?: number
 }
 
 export class DeferredHostMaterialization {
@@ -75,6 +101,8 @@ export class DeferredHostMaterialization {
   private readonly minBytes: number
   private readonly delayMs: number
   private readonly maxRetries: number
+  private readonly minMutationBytes: number
+  private readonly getPendingMutationBytes: ((chatId: string) => number) | null
   private readonly setTimer: (
     callback: () => void,
     delayMs: number
@@ -82,7 +110,12 @@ export class DeferredHostMaterialization {
   private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
   private readonly pending = new Map<
     string,
-    { timer: ReturnType<typeof setTimeout>; attempts: number }
+    {
+      timer: ReturnType<typeof setTimeout>
+      attempts: number
+      accumulatedBytes: number
+      unmetered: boolean
+    }
   >()
 
   constructor(options: DeferredHostMaterializationOptions) {
@@ -110,6 +143,12 @@ export class DeferredHostMaterialization {
       Number.isSafeInteger(options.maxRetries) && (options.maxRetries ?? -1) >= 0
         ? options.maxRetries!
         : DEFERRED_HOST_MATERIALIZE_MAX_RETRIES
+    this.minMutationBytes =
+      Number.isFinite(options.minMutationBytes) && (options.minMutationBytes ?? 0) >= 0
+        ? Math.floor(options.minMutationBytes!)
+        : DEFERRED_HOST_MATERIALIZE_MUTATION_THRESHOLD_BYTES
+    this.getPendingMutationBytes =
+      typeof options.getPendingMutationBytes === 'function' ? options.getPendingMutationBytes : null
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
     this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer))
   }
@@ -118,20 +157,20 @@ export class DeferredHostMaterialization {
     return [...this.pending.keys()].sort()
   }
 
+  get mutationThresholdBytes(): number {
+    return this.minMutationBytes
+  }
+
+  accumulatedMutationBytes(chatId: string): number {
+    return this.pending.get(chatId)?.accumulatedBytes ?? 0
+  }
+
   /**
    * Decide whether this save's checkpoint may defer and, when it may, start
    * (or restart) the trailing timer. Returns true ONLY when the caller must
    * NOT materialize synchronously.
    */
-  schedule(
-    chatId: string,
-    decision: {
-      existingBytes: number
-      flushReason: string
-      /** Journal failed or externalization failed: the checkpoint is the durability fallback. */
-      durabilityFallback: boolean
-    }
-  ): boolean {
+  schedule(chatId: string, decision: DeferredHostMaterializationDecision): boolean {
     if (typeof chatId !== 'string' || chatId.length === 0) return false
     if (decision.flushReason !== 'terminal' || decision.durabilityFallback) return false
     if (!Number.isFinite(decision.existingBytes) || decision.existingBytes < this.minBytes) {
@@ -139,14 +178,56 @@ export class DeferredHostMaterialization {
     }
     const previous = this.pending.get(chatId)
     if (previous) this.clearTimer(previous.timer)
-    const arm = (attempts: number): void => {
+
+    const rawDelta = decision.mutationBytes ?? (decision as { deltaBytes?: number }).deltaBytes
+    const hasDelta = typeof rawDelta === 'number' && Number.isFinite(rawDelta)
+    const deltaBytes = hasDelta ? Math.max(0, Math.floor(rawDelta)) : 0
+
+    let unmetered: boolean
+    let accumulatedBytes: number
+
+    if (hasDelta) {
+      unmetered = false
+      accumulatedBytes = (previous?.accumulatedBytes ?? 0) + deltaBytes
+    } else if (this.getPendingMutationBytes !== null) {
+      unmetered = false
+      accumulatedBytes = 0
+    } else if (previous !== undefined && !previous.unmetered) {
+      unmetered = false
+      accumulatedBytes = previous.accumulatedBytes
+    } else {
+      unmetered = true
+      accumulatedBytes = 0
+    }
+
+    const arm = (
+      attempts: number,
+      currentAccumulatedBytes: number,
+      currentUnmetered: boolean
+    ): void => {
       const timer = this.setTimer(() => {
-        this.pending.delete(chatId)
         // A delete during the window owns the lane: materializing would
         // resurrect the record the user just erased. The compatibility layer's
         // prepareDelete also discards the staged record; this is the backstop
         // for the timer living outside that layer.
-        if (this.isDeleted(chatId)) return
+        if (this.isDeleted(chatId)) {
+          this.pending.delete(chatId)
+          return
+        }
+
+        // Gate full materialization on accumulated mutation volume. When
+        // metered and below threshold, reschedule trailing timer so tiny
+        // deltas never repeatedly serialize multi-megabyte chats.
+        const pendingVolume = this.getPendingMutationBytes
+          ? this.getPendingMutationBytes(chatId)
+          : currentAccumulatedBytes
+
+        if (!currentUnmetered && pendingVolume < this.minMutationBytes) {
+          arm(attempts, currentAccumulatedBytes, currentUnmetered)
+          return
+        }
+
+        this.pending.delete(chatId)
         let materialized = false
         try {
           materialized = this.materialize(chatId)
@@ -159,13 +240,18 @@ export class DeferredHostMaterialization {
         // used to DROP the checkpoint here, leaving the on-disk compatibility
         // copy stale for the whole hold. Re-arm within a bound instead.
         if (!materialized && this.retryWhen?.(chatId) && attempts < this.maxRetries) {
-          arm(attempts + 1)
+          arm(attempts + 1, currentAccumulatedBytes, currentUnmetered)
         }
       }, this.delayMs)
       ;(timer as { unref?: () => void }).unref?.()
-      this.pending.set(chatId, { timer, attempts })
+      this.pending.set(chatId, {
+        timer,
+        attempts,
+        accumulatedBytes: currentAccumulatedBytes,
+        unmetered: currentUnmetered
+      })
     }
-    arm(0)
+    arm(0, accumulatedBytes, unmetered)
     return true
   }
 
