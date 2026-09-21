@@ -5105,6 +5105,23 @@ export const TranscriptPanel = memo(function TranscriptPanel({
     const scroller = scrollRef.current
     if (!scroller) return
     const previousWindowStart = previousWindowStartRef.current
+    if (loadedWindowStart === previousWindowStart) {
+      // Streaming appends tick `storeTranscript.updatedAt` on every frame, and
+      // reading scrollHeight here would force a synchronous layout per update
+      // for a head-extension correction that cannot apply. Track the settled
+      // height after paint instead, so a later head extension still measures
+      // its delta against the right base.
+      if (typeof window.requestAnimationFrame === 'function') {
+        const frame = window.requestAnimationFrame(() => {
+          if (scrollRef.current === scroller) {
+            previousScrollHeightRef.current = scroller.scrollHeight
+          }
+        })
+        return () => window.cancelAnimationFrame(frame)
+      }
+      previousScrollHeightRef.current = scroller.scrollHeight
+      return undefined
+    }
     const previousScrollHeight = previousScrollHeightRef.current
     previousWindowStartRef.current = loadedWindowStart
     previousScrollHeightRef.current = scroller.scrollHeight
@@ -5122,6 +5139,7 @@ export const TranscriptPanel = memo(function TranscriptPanel({
     if (nextScrollTop === null) return
     scroller.scrollTop = nextScrollTop
     syncVirtualizerScrollPosition(nextScrollTop)
+    return undefined
   }, [
     loadedWindowStart,
     storeTranscript.windowEnd,
