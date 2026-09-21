@@ -598,4 +598,149 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
       applyChatTranscriptOps(beforeSingleFlush, savedTranscriptMutation?.transcriptOps || [])
     ).toEqual(chat.messages)
   })
+
+  it('broadcasts streamed rows on the 40ms tail timer before the 250ms save flush', () => {
+    vi.useFakeTimers()
+    const seat = participant('p1', 'codex', 'Writer', 1)
+    const broadcastTranscriptTail = vi.fn()
+    let chat: ChatRecord = {
+      appChatId: 'fast-tail-chat',
+      provider: 'codex',
+      title: 'Fast tail lane',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'fast-tail-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: {
+        enabled: true,
+        maxParticipants: 1,
+        participants: [seat],
+        activeRound: {
+          roundId: 'round-1',
+          status: 'running',
+          prompt: 'Stream',
+          startedAt: '2026-09-21T09:00:00.000Z',
+          endedAt: null,
+          participants: []
+        }
+      }
+    }
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => 'fast-tail-run',
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z',
+      broadcastTranscriptTail
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      scheduleFlush: (run: any) => void
+    }
+    const run = {
+      runId: 'fast-tail-run',
+      chatId: chat.appChatId,
+      roundId: 'round-1',
+      participant: seat,
+      timeline: [{ kind: 'content', text: 'hello stream' }],
+      content: 'hello stream',
+      status: 'running',
+      toolActivities: []
+    }
+    internal.runsByRunId.set('fast-tail-run', run)
+
+    internal.scheduleFlush(run)
+    vi.advanceTimersByTime(39)
+    expect(broadcastTranscriptTail).not.toHaveBeenCalled()
+
+    vi.advanceTimersByTime(1)
+    expect(broadcastTranscriptTail).toHaveBeenCalledTimes(1)
+    const projected = broadcastTranscriptTail.mock.calls[0][0] as ChatRecord
+    expect(projected.messages.map((message) => message.content)).toContain('hello stream')
+
+    // The 250ms save flush persists exactly once; the fast lane does not
+    // broadcast again through the injected port (the save dep is the fake).
+    vi.advanceTimersByTime(210)
+    expect(broadcastTranscriptTail).toHaveBeenCalledTimes(1)
+    expect(chat.messages.map((message) => message.content)).toContain('hello stream')
+  })
+
+  it('keeps the fast tail lane silent while the round is not running', () => {
+    vi.useFakeTimers()
+    const seat = participant('p1', 'codex', 'Writer', 1)
+    const broadcastTranscriptTail = vi.fn()
+    let chat: ChatRecord = {
+      appChatId: 'idle-tail-chat',
+      provider: 'codex',
+      title: 'Idle round',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId: 'idle-tail-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
+    }
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => 'idle-tail-run',
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z',
+      broadcastTranscriptTail
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      scheduleFlush: (run: any) => void
+    }
+    const run = {
+      runId: 'idle-tail-run',
+      chatId: chat.appChatId,
+      roundId: 'round-1',
+      participant: seat,
+      timeline: [{ kind: 'content', text: 'quiet' }],
+      content: 'quiet',
+      status: 'running',
+      toolActivities: []
+    }
+    internal.runsByRunId.set('idle-tail-run', run)
+
+    internal.scheduleFlush(run)
+    vi.advanceTimersByTime(40)
+    expect(broadcastTranscriptTail).not.toHaveBeenCalled()
+    vi.advanceTimersByTime(210)
+    expect(chat.messages.map((message) => message.content)).toContain('quiet')
+  })
 })

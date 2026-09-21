@@ -62070,6 +62070,7 @@ if (isGeminiMcpBridgeProcess) {
     ensembleOrchestratorRef = new EnsembleOrchestrator({
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
+      broadcastTranscriptTail: (chat) => broadcastTranscriptTail(chat),
       persistChatBarrier: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
       getSettings: () => AppStore.getSettings(),
       hostAdmissionRuntime: ensembleHostAdmissionRuntime,

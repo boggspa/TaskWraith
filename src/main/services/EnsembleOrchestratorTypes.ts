@@ -217,6 +217,13 @@ export interface EnsembleOrchestratorDeps {
     chat: ChatRecord,
     options?: { authoredTranscript?: AuthoredChatTranscriptMutation }
   ) => void
+  /**
+   * Fire-and-forget transcript tail projection. Emits a frame for streamed
+   * rows WITHOUT persisting: the canonical save flush and the chat-updated
+   * lane reconcile whatever this lane misses. Optional so unit harnesses
+   * without a broadcaster are unaffected.
+   */
+  broadcastTranscriptTail?: (chat: ChatRecord) => void
   getSettings: () => AppSettings
   /**
    * Process-wide Ensemble admission. Production constructs one scheduler for

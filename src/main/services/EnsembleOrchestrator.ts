@@ -334,6 +334,7 @@ import {
 } from './EnsembleStatusRequestSettlement'
 import { resolveEnsembleUserFanoutTargets } from './EnsembleUserFanout'
 import { EnsembleChatFlushScheduler } from './ensembleChatFlushScheduler'
+import { EnsembleTailBroadcastScheduler } from './ensembleTailBroadcastScheduler'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import {
   mergeClaudeWorkflowTelemetry,
@@ -1019,6 +1020,153 @@ function appendProviderContent(
   return true
 }
 
+/**
+ * Timeline-driven materialisation shared by the save flush and the fast tail
+ * lane. Each entry in `run.timeline` becomes a message in the transcript,
+ * preserving the speak -> do -> speak -> do chronology. Message ids are
+ * deterministic on (runId, ordinal, kind) so subsequent flushes replace in
+ * place. Extracted from flushRun byte-for-byte; any change here changes both
+ * lanes identically.
+ */
+function buildRunTimelineDesiredMessages(input: {
+  run: ActiveParticipantRun
+  chat: ChatRecord
+  timestamp: string
+  visibleStatus: EnsembleParticipantStatus
+  laneSeatAuthority: unknown
+  preservingOwnedFanoutBoundary: boolean
+  existingMessageById: Map<string, ChatMessage>
+}): {
+  desiredIds: Set<string>
+  desiredMessages: ChatMessage[]
+  timeline: ParticipantTimelineEntry[]
+} {
+  const {
+    run,
+    chat,
+    timestamp,
+    visibleStatus,
+    laneSeatAuthority,
+    preservingOwnedFanoutBoundary,
+    existingMessageById
+  } = input
+    const fullTimeline = run.timeline || []
+    const timeline = preservingOwnedFanoutBoundary
+      ? fullTimeline.slice(0, run.ownedFanoutTranscriptBoundary)
+      : fullTimeline
+    const desiredIds = new Set<string>()
+    const desiredMessages: ChatMessage[] = []
+    for (let i = 0; i < timeline.length; i += 1) {
+      const entry = timeline[i]
+      if (entry.kind === 'content') {
+        const id = timelineMessageId(run.runId, i, 'content')
+        desiredIds.add(id)
+        const rawContent = stripPseudoSystemYieldLines(entry.text)
+        if (!rawContent.trim()) continue
+        const previous = existingMessageById.get(id)
+        const parsedPlan = parseExplicitProposedPlan(rawContent)
+        const shouldStampPlan = Boolean(
+          parsedPlan && shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
+        )
+        const previousPlan = shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
+          ? previous?.metadata?.proposedPlan
+          : undefined
+        const proposedPlan =
+          parsedPlan && shouldStampPlan
+            ? {
+                title: parsedPlan.title,
+                body: parsedPlan.body,
+                status: previousPlan?.status || 'pending'
+              }
+            : previousPlan
+        const providerContent = shouldStampPlan
+          ? stripExplicitProposedPlanBlock(rawContent)
+          : rawContent
+        const content =
+          run.participant.provider === 'antigravity'
+            ? qualifyUnsupportedAntigravityPermissionClaim(providerContent, run.toolActivities)
+            : providerContent
+        desiredMessages.push({
+          id,
+          role: 'assistant',
+          content,
+          timestamp: previous?.timestamp || timestamp,
+          runId: run.runId,
+          metadata: {
+            kind: 'ensembleParticipant',
+            ensembleRoundId: run.roundId,
+            ensembleParticipantId: run.participant.id,
+            ...laneTranscriptMetadata(run),
+            ensembleProvider: run.participant.provider,
+            ensembleRole: run.participant.role,
+            ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
+            ensembleOrder: run.participant.order,
+            // The seat AS CONFIGURED for this run, so a fan-out lane card can
+            // render the same seat element the close-out and peer-message cards
+            // use. Carries the permission preset, which role/model/reasoning
+            // alone do not — without it a lane's chip would claim the default
+            // tier rather than the one it actually ran under.
+            ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
+            ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
+            // Content rows describe transcript events, not the run's latest
+            // lifecycle state. Preserve the status stamped when each row was
+            // first materialised so terminal closeout can stay append-only.
+            ensembleStatus:
+              typeof previous?.metadata?.ensembleStatus === 'string'
+                ? previous.metadata.ensembleStatus
+                : visibleStatus,
+            ensembleTimelineIndex: i,
+            ...pooledAgentTranscriptMetadata(run.participant),
+            // Model preview: pass the participant's configured model so
+            // the renderer can show e.g. "Codex / GPT 5.5" next to the
+            // bubble. Crucial preview for 1.0.4's same-provider
+            // ensembles where the role+provider alone won't tell the
+            // user which Claude/Codex is speaking.
+            ensembleModel: run.participant.model,
+            // Reasoning suffix companion to `ensembleModel`. The
+            // renderer's `formatAssistantMessageLabel` appends this via
+            // `reasoningDisplayLabel` so the header reads "5.5 Extra
+            // High" / "Opus 4.7 · Max" / "K2.7 Coding Thinking" — matching
+            // the composer chip the user picked. Only the field that
+            // applies to this participant's provider is set; the others
+            // stay undefined.
+            ...ensembleReasoningMetadata(run.participant),
+            ...(proposedPlan ? { proposedPlan } : {})
+          }
+        })
+      } else {
+        const id = timelineMessageId(run.runId, i, 'tool')
+        desiredIds.add(id)
+        const activity = run.toolActivities?.find((a) => a.id === entry.toolId)
+        if (!activity) continue
+        const previous = existingMessageById.get(id)
+        desiredMessages.push({
+          id,
+          role: 'tool',
+          content: '',
+          timestamp: previous?.timestamp || timestamp,
+          runId: run.runId,
+          toolActivities: [activity],
+          metadata: {
+            kind: 'ensembleParticipantTools',
+            ensembleRoundId: run.roundId,
+            ensembleParticipantId: run.participant.id,
+            ...laneTranscriptMetadata(run),
+            ensembleProvider: run.participant.provider,
+            ensembleRole: run.participant.role,
+            ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
+            ensembleOrder: run.participant.order,
+            ensembleTimelineIndex: i,
+            ensembleModel: run.participant.model,
+            ...pooledAgentTranscriptMetadata(run.participant),
+            ...ensembleReasoningMetadata(run.participant)
+          }
+        })
+      }
+    }
+  return { desiredIds, desiredMessages, timeline }
+}
+
 const PSEUDO_SYSTEM_YIELD_LINE_RE = /^\s*\[System\]\s+Yield(?:ing|ed)\b.*$/i
 
 function stripPseudoSystemYieldLines(text: string): string {
@@ -1627,6 +1775,15 @@ export class EnsembleOrchestrator {
   private readonly chatFlushScheduler = new EnsembleChatFlushScheduler({
     delayMs: 250,
     onFlush: (chatId, runIds) => this.flushScheduledRuns(chatId, runIds)
+  })
+  /**
+   * Fast tail lane: broadcast-only projections at 25 Hz so streamed rows paint
+   * between persistence flushes. The canonical save flush remains the source
+   * of truth and reconciles whatever this lane emits or misses.
+   */
+  private readonly tailBroadcastScheduler = new EnsembleTailBroadcastScheduler({
+    delayMs: 40,
+    onBroadcast: (chatId, runIds) => this.broadcastStreamedTail(chatId, runIds)
   })
   /**
    * While flushScheduledRuns is applying several lanes, getChat/saveChat are
@@ -19821,9 +19978,71 @@ export class EnsembleOrchestrator {
     this.flushRun(run)
   }
 
+  /**
+   * Presentation inputs derived identically for the save flush and the fast
+   * tail projection, so a row streamed by the tail lane is byte-identical to
+   * the row the save flush later materialises (same timestamp, status,
+   * authority and boundary policy — the tail broadcaster then sees no
+   * content churn between the two lanes).
+   */
+  private flushPresentation(
+    run: ActiveParticipantRun,
+    chat: ChatRecord,
+    final: boolean
+  ): {
+    laneSeatAuthority: unknown
+    timestamp: string
+    preservingOwnedFanoutBoundary: boolean
+    effectiveFinal: boolean
+    visibleStatus: EnsembleParticipantStatus
+    silentMaintenanceRecovery: boolean
+  } {
+    // Chat-level authority, resolved HERE because it does not live on the
+    // participant: a lane card cannot derive Boss/Captain from the seat alone.
+    // Written onto the row so it stays historically true — a seat that was the
+    // Boss when the lane ran keeps its crown after the roster moves on.
+    const laneSeatAuthority = resolveSeatAuthority({
+      participantId: run.participant.id,
+      stageRole: run.participant.stageRole,
+      bossmanParticipantId: chat.ensemble?.bossmanParticipantId,
+      captainParticipantIds: chat.ensemble?.captainParticipantIds
+    })
+    const timestamp = this.deps.nowIso()
+    const holdingOwnedFanoutTranscript =
+      run.ownedFanoutTranscriptBoundary !== undefined && this.hasOwnedFanoutWork(run)
+    const suppressingOwnedFanoutTranscript =
+      run.ownedFanoutTranscriptBoundary !== undefined &&
+      run.suppressOwnedFanoutTranscriptRelease === true
+    const preservingOwnedFanoutBoundary =
+      holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript
+    const effectiveFinal =
+      final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
+    const silentMaintenanceRecovery = Boolean(
+      run.cursorContextPressureRecovery ||
+        run.cursorStartupRecovery ||
+        run.antigravityFalseRefusalRecovery
+    )
+    const visibleStatus: EnsembleParticipantStatus = silentMaintenanceRecovery
+      ? 'running'
+      : suppressingOwnedFanoutTranscript
+        ? run.status
+        : holdingOwnedFanoutTranscript
+          ? 'running'
+          : run.status
+    return {
+      laneSeatAuthority,
+      timestamp,
+      preservingOwnedFanoutBoundary,
+      effectiveFinal,
+      visibleStatus,
+      silentMaintenanceRecovery
+    }
+  }
+
   private flushRun(run: ActiveParticipantRun, final = false, reason?: string): void {
     // Immediate / terminal flushes must not also fire from the chat debounce.
     this.chatFlushScheduler.cancelRun(run.chatId, run.runId)
+    this.tailBroadcastScheduler.cancelRun(run.chatId, run.runId)
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
@@ -19865,38 +20084,14 @@ export class EnsembleOrchestrator {
         if (flushOverlay) flushOverlay.transcriptAuthor = null
       }
     }
-    // Chat-level authority, resolved HERE because it does not live on the
-    // participant: a lane card cannot derive Boss/Captain from the seat alone.
-    // Written onto the row so it stays historically true — a seat that was the
-    // Boss when the lane ran keeps its crown after the roster moves on.
-    const laneSeatAuthority = resolveSeatAuthority({
-      participantId: run.participant.id,
-      stageRole: run.participant.stageRole,
-      bossmanParticipantId: chat.ensemble.bossmanParticipantId,
-      captainParticipantIds: chat.ensemble.captainParticipantIds
-    })
-    const timestamp = this.deps.nowIso()
-    const holdingOwnedFanoutTranscript =
-      run.ownedFanoutTranscriptBoundary !== undefined && this.hasOwnedFanoutWork(run)
-    const suppressingOwnedFanoutTranscript =
-      run.ownedFanoutTranscriptBoundary !== undefined &&
-      run.suppressOwnedFanoutTranscriptRelease === true
-    const preservingOwnedFanoutBoundary =
-      holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript
-    const effectiveFinal =
-      final && (!holdingOwnedFanoutTranscript || suppressingOwnedFanoutTranscript)
-    const silentMaintenanceRecovery = Boolean(
-      run.cursorContextPressureRecovery ||
-        run.cursorStartupRecovery ||
-        run.antigravityFalseRefusalRecovery
-    )
-    const visibleStatus: EnsembleParticipantStatus = silentMaintenanceRecovery
-      ? 'running'
-      : suppressingOwnedFanoutTranscript
-        ? run.status
-        : holdingOwnedFanoutTranscript
-          ? 'running'
-          : run.status
+    const {
+      laneSeatAuthority,
+      timestamp,
+      preservingOwnedFanoutBoundary,
+      effectiveFinal,
+      visibleStatus,
+      silentMaintenanceRecovery
+    } = this.flushPresentation(run, chat, final)
     let messages = chat.messages
     const existingMessageById = new Map(messages.map((message) => [message.id, message]))
 
@@ -19913,120 +20108,15 @@ export class EnsembleOrchestrator {
     // the orchestrator decides to collapse adjacent entries on a
     // later flush — currently we always preserve order, but the
     // cleanup makes the rebuild idempotent regardless).
-    const fullTimeline = run.timeline || []
-    const timeline = preservingOwnedFanoutBoundary
-      ? fullTimeline.slice(0, run.ownedFanoutTranscriptBoundary)
-      : fullTimeline
-    const desiredIds = new Set<string>()
-    const desiredMessages: ChatMessage[] = []
-    for (let i = 0; i < timeline.length; i += 1) {
-      const entry = timeline[i]
-      if (entry.kind === 'content') {
-        const id = timelineMessageId(run.runId, i, 'content')
-        desiredIds.add(id)
-        const rawContent = stripPseudoSystemYieldLines(entry.text)
-        if (!rawContent.trim()) continue
-        const previous = existingMessageById.get(id)
-        const parsedPlan = parseExplicitProposedPlan(rawContent)
-        const shouldStampPlan = Boolean(
-          parsedPlan && shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
-        )
-        const previousPlan = shouldStampEnsembleProposedPlan(chat, run.roundId, run.participant.id)
-          ? previous?.metadata?.proposedPlan
-          : undefined
-        const proposedPlan =
-          parsedPlan && shouldStampPlan
-            ? {
-                title: parsedPlan.title,
-                body: parsedPlan.body,
-                status: previousPlan?.status || 'pending'
-              }
-            : previousPlan
-        const providerContent = shouldStampPlan
-          ? stripExplicitProposedPlanBlock(rawContent)
-          : rawContent
-        const content =
-          run.participant.provider === 'antigravity'
-            ? qualifyUnsupportedAntigravityPermissionClaim(providerContent, run.toolActivities)
-            : providerContent
-        desiredMessages.push({
-          id,
-          role: 'assistant',
-          content,
-          timestamp: previous?.timestamp || timestamp,
-          runId: run.runId,
-          metadata: {
-            kind: 'ensembleParticipant',
-            ensembleRoundId: run.roundId,
-            ensembleParticipantId: run.participant.id,
-            ...laneTranscriptMetadata(run),
-            ensembleProvider: run.participant.provider,
-            ensembleRole: run.participant.role,
-            ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
-            ensembleOrder: run.participant.order,
-            // The seat AS CONFIGURED for this run, so a fan-out lane card can
-            // render the same seat element the close-out and peer-message cards
-            // use. Carries the permission preset, which role/model/reasoning
-            // alone do not — without it a lane's chip would claim the default
-            // tier rather than the one it actually ran under.
-            ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
-            ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
-            // Content rows describe transcript events, not the run's latest
-            // lifecycle state. Preserve the status stamped when each row was
-            // first materialised so terminal closeout can stay append-only.
-            ensembleStatus:
-              typeof previous?.metadata?.ensembleStatus === 'string'
-                ? previous.metadata.ensembleStatus
-                : visibleStatus,
-            ensembleTimelineIndex: i,
-            ...pooledAgentTranscriptMetadata(run.participant),
-            // Model preview: pass the participant's configured model so
-            // the renderer can show e.g. "Codex / GPT 5.5" next to the
-            // bubble. Crucial preview for 1.0.4's same-provider
-            // ensembles where the role+provider alone won't tell the
-            // user which Claude/Codex is speaking.
-            ensembleModel: run.participant.model,
-            // Reasoning suffix companion to `ensembleModel`. The
-            // renderer's `formatAssistantMessageLabel` appends this via
-            // `reasoningDisplayLabel` so the header reads "5.5 Extra
-            // High" / "Opus 4.7 · Max" / "K2.7 Coding Thinking" — matching
-            // the composer chip the user picked. Only the field that
-            // applies to this participant's provider is set; the others
-            // stay undefined.
-            ...ensembleReasoningMetadata(run.participant),
-            ...(proposedPlan ? { proposedPlan } : {})
-          }
-        })
-      } else {
-        const id = timelineMessageId(run.runId, i, 'tool')
-        desiredIds.add(id)
-        const activity = run.toolActivities?.find((a) => a.id === entry.toolId)
-        if (!activity) continue
-        const previous = existingMessageById.get(id)
-        desiredMessages.push({
-          id,
-          role: 'tool',
-          content: '',
-          timestamp: previous?.timestamp || timestamp,
-          runId: run.runId,
-          toolActivities: [activity],
-          metadata: {
-            kind: 'ensembleParticipantTools',
-            ensembleRoundId: run.roundId,
-            ensembleParticipantId: run.participant.id,
-            ...laneTranscriptMetadata(run),
-            ensembleProvider: run.participant.provider,
-            ensembleRole: run.participant.role,
-            ...(run.participant.stageRole ? { ensembleStageRole: run.participant.stageRole } : {}),
-            ensembleOrder: run.participant.order,
-            ensembleTimelineIndex: i,
-            ensembleModel: run.participant.model,
-            ...pooledAgentTranscriptMetadata(run.participant),
-            ...ensembleReasoningMetadata(run.participant)
-          }
-        })
-      }
-    }
+    const { desiredIds, desiredMessages, timeline } = buildRunTimelineDesiredMessages({
+      run,
+      chat,
+      timestamp,
+      visibleStatus,
+      laneSeatAuthority,
+      preservingOwnedFanoutBoundary,
+      existingMessageById
+    })
 
     // Stamp accumulated agent-produced media (image tool results) onto this
     // run's LAST content message so the transcript media strip renders it.
@@ -20409,6 +20499,7 @@ export class EnsembleOrchestrator {
    */
   private scheduleFlush(run: ActiveParticipantRun): void {
     this.chatFlushScheduler.schedule(run.chatId, run.runId)
+    this.tailBroadcastScheduler.schedule(run.chatId, run.runId)
   }
 
   /**
@@ -20445,6 +20536,49 @@ export class EnsembleOrchestrator {
     } finally {
       this.flushChatOverlay = priorOverlay
     }
+  }
+
+  /**
+   * Fast tail lane: project the streamed rows for the dirty runs WITHOUT
+   * saving and hand the projection to the fire-and-forget broadcaster. The
+   * rows come from the same materializer the save flush uses, so the flush
+   * that follows produces byte-identical rows and the tail broadcaster sees
+   * no content churn between the two lanes. Guards mirror flushRun: ensemble
+   * chat only, running round only, held fan-out transcripts stay at flush.
+   */
+  private broadcastStreamedTail(chatId: string, runIds: string[]): void {
+    if (!this.deps.broadcastTranscriptTail) return
+    const chat = this.deps.getChat(chatId)
+    if (!chat?.ensemble) return
+    if (chat.ensemble.activeRound?.status !== 'running') return
+    let messages = chat.messages
+    let changed = false
+    for (const runId of runIds) {
+      const run = this.runsByRunId.get(runId)
+      if (!run || run.chatId !== chatId) continue
+      if (!run.timeline || run.timeline.length === 0) continue
+      const presentation = this.flushPresentation(run, chat, false)
+      if (presentation.preservingOwnedFanoutBoundary) continue
+      const existingMessageById = new Map(messages.map((message) => [message.id, message]))
+      const { desiredMessages } = buildRunTimelineDesiredMessages({
+        run,
+        chat,
+        timestamp: presentation.timestamp,
+        visibleStatus: presentation.visibleStatus,
+        laneSeatAuthority: presentation.laneSeatAuthority,
+        preservingOwnedFanoutBoundary: false,
+        existingMessageById
+      })
+      const desiredById = new Map(desiredMessages.map((row) => [row.id, row]))
+      const reconciled = messages.map((row) => desiredById.get(row.id) ?? row)
+      for (const row of desiredMessages) {
+        if (!existingMessageById.has(row.id)) reconciled.push(row)
+      }
+      messages = reconciled
+      changed = true
+    }
+    if (!changed) return
+    this.deps.broadcastTranscriptTail({ ...chat, messages })
   }
 
   private updateParticipantState(
