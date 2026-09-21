@@ -311,6 +311,34 @@ describe('IncrementalChatJournal', () => {
     expect(journal.replay('chat-1').record).toEqual(after)
   })
 
+  it('replays a long streaming tail across duplicate revisions without changing disk or later reads', () => {
+    const before = chat('chat-1', 1, 'start')
+    const batches = [] as ReturnType<typeof deriveChatRecordMutation>[]
+    let expected = before
+    for (let i = 0; i < 160; i += 1) {
+      const next = advance(expected, `${expected.messages[0].content}.${i}`)
+      batches.push(deriveChatRecordMutation(expected, next))
+      expected = next
+    }
+    journal.initialize('chat-1', before)
+    const tail = batches.flatMap((batch, index) => (index === 50 ? [batch, batch] : [batch]))
+    fs.writeFileSync(
+      path.join(baseDir, 'chat-1.mutations.jsonl'),
+      tail.map((batch) => JSON.stringify(batch) + '\n').join('')
+    )
+    const diskBefore = snapshotTree(baseDir)
+    const readOnly = createIncrementalChatJournal(baseDir, {
+      canWrite: () => false,
+      canRepairOnRead: () => false
+    })
+
+    const replayed = readOnly.replay('chat-1')
+    expect(replayed).toMatchObject({ record: expected, appliedBatches: 160, skippedBatches: 1 })
+    replayed.record!.messages[0].content = 'consumer edit'
+    expect(readOnly.replay('chat-1').record).toEqual(expected)
+    expect(snapshotTree(baseDir)).toEqual(diskBefore)
+  })
+
   it('replays once across a crash after checkpoint rename but before tail removal', () => {
     const before = chat()
     const after = advance(before, 'survives checkpoint crash window')

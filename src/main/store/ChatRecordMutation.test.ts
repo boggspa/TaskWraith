@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage, ChatRecord, ChatRun, ToolActivity } from './types'
 import {
   applyChatRecordMutation,
+  applyChatRecordMutations,
   deriveChatRecordMutation,
   deriveChatRecordMutationWithProjection,
   estimateChatRecordMutationBytes,
@@ -67,6 +68,70 @@ function advance(source: ChatRecord, mutate: (next: ChatRecord) => void): ChatRe
 }
 
 describe('ChatRecordMutation', () => {
+  it('replays a streamed chain into an isolated final record including inserted rows and tools', () => {
+    const before = chat([message('existing', 'old')], [run('run-1')])
+    const first = advance(before, (next) => {
+      next.messages.push(message('stream', 'Hello', [activity('tool-1', 'started')]))
+    })
+    const second = advance(first, (next) => {
+      next.messages[1].content += ' world'
+      next.messages[1].toolActivities![0].resultSummary = 'finished'
+      next.runs[0].status = 'success'
+    })
+    const batches = [
+      deriveChatRecordMutation(before, first),
+      deriveChatRecordMutation(first, second)
+    ]
+    const original = structuredClone(before)
+    const originalBatches = structuredClone(batches)
+
+    const result = applyChatRecordMutations(before, batches)
+
+    expect(result).toEqual(second)
+    result.messages[0].content = 'caller edit'
+    result.messages[1].toolActivities![0].resultSummary = 'caller tool edit'
+    result.runs[0].status = 'running'
+    expect(before).toEqual(original)
+    expect(batches).toEqual(originalBatches)
+  })
+
+  it('rejects a broken later revision or operation without exposing partial mutations', () => {
+    const before = chat([message('stream', 'Hello')])
+    const first = advance(before, (next) => {
+      next.messages[0].content += ' world'
+    })
+    const second = advance(first, (next) => {
+      next.title = 'Updated'
+    })
+    const batches = [
+      deriveChatRecordMutation(before, first),
+      deriveChatRecordMutation(first, second)
+    ]
+    const original = structuredClone(before)
+    expect(() =>
+      applyChatRecordMutations(before, [batches[0], { ...batches[1], baseRevision: 99 }])
+    ).toThrow(/revision mismatch/)
+    expect(() =>
+      applyChatRecordMutations(before, [
+        batches[0],
+        {
+          ...batches[1],
+          operations: [{ type: 'message_content_append', messageId: 'missing', content: 'invalid' }]
+        }
+      ])
+    ).toThrow(/missing/)
+    expect(before).toEqual(original)
+    expect(applyChatRecordMutations(before, batches)).toEqual(second)
+  })
+
+  it('returns a private record for an empty journal', () => {
+    const before = chat([message('stream', 'Hello')])
+    const result = applyChatRecordMutations(before, [])
+    expect(result).toEqual(before)
+    result.messages[0].content = 'changed'
+    expect(before.messages[0].content).toBe('Hello')
+  })
+
   it('encodes streamed text as an append and replays to exact chat state', () => {
     const before = chat([message('assistant-1', 'Hello')])
     const after = advance(before, (next) => {

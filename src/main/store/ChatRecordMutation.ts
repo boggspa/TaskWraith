@@ -773,6 +773,29 @@ export function applyChatRecordMutation(
   source: ChatRecord,
   batch: ChatRecordMutationBatch
 ): ChatRecord {
+  assertMutationSource(source, batch)
+  return applyChatRecordMutations(source, [batch])
+}
+
+/**
+ * Replay a revision chain on one private copy. Cloning the complete transcript
+ * for every streamed append makes a journal read grow with history × updates.
+ * Only the final record escapes; a rejected operation cannot mutate the caller
+ * or expose a partly applied chain. Operation payloads are still copied below.
+ */
+export function applyChatRecordMutations(
+  source: ChatRecord,
+  batches: readonly ChatRecordMutationBatch[]
+): ChatRecord {
+  const record = jsonClone(source)
+  for (const batch of batches) {
+    assertMutationSource(record, batch)
+    applyChatRecordMutationInPlace(record, batch)
+  }
+  return record
+}
+
+function assertMutationSource(source: ChatRecord, batch: ChatRecordMutationBatch): void {
   if (
     batch.format !== CHAT_RECORD_MUTATION_FORMAT ||
     batch.version !== CHAT_RECORD_MUTATION_VERSION
@@ -789,8 +812,10 @@ export function applyChatRecordMutation(
         `record ${sourceRevision}, batch ${batch.baseRevision} -> ${batch.revision}`
     )
   }
+}
 
-  const record = jsonClone(source)
+/** The record is owned exclusively by applyChatRecordMutations. */
+function applyChatRecordMutationInPlace(record: ChatRecord, batch: ChatRecordMutationBatch): void {
   for (const operation of batch.operations) {
     switch (operation.type) {
       case 'record_patch': {
@@ -927,7 +952,6 @@ export function applyChatRecordMutation(
   }
 
   record.persistenceRevision = batch.revision
-  return record
 }
 
 export function estimateChatRecordMutationBytes(batch: ChatRecordMutationBatch): number {

@@ -1,7 +1,7 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import {
-  applyChatRecordMutation,
+  applyChatRecordMutations,
   CHAT_RECORD_MUTATION_FORMAT,
   CHAT_RECORD_MUTATION_OPERATION_TYPES,
   CHAT_RECORD_MUTATION_VERSION,
@@ -682,18 +682,19 @@ export function createIncrementalChatJournal(
     const parsed = parseJournal(chatId)
     const repairedTornTail = parsed.torn && canRepair()
     if (repairedTornTail) recoverTornTail(chatId, parsed)
-    let record = cloneRecord(checkpoint.record)
-    let appliedBatches = 0
+    const applicableBatches: ChatRecordMutationBatch[] = []
+    let revision = recordRevision(checkpoint.record)
     let skippedBatches = 0
     for (const batch of parsed.batches) {
-      const revision = recordRevision(record)
       if (batch.revision <= revision) {
         skippedBatches += 1
         continue
       }
-      record = applyChatRecordMutation(record, batch)
-      appliedBatches += 1
+      applicableBatches.push(batch)
+      revision = batch.revision
     }
+    const record = applyChatRecordMutations(checkpoint.record, applicableBatches)
+    const appliedBatches = applicableBatches.length
     replayedBatches += appliedBatches
     skippedDuplicateBatches += skippedBatches
     state.headRevision = recordRevision(record)
