@@ -107,31 +107,82 @@ export function createHostProductionHistoryAdapter(
     if (!chat || chat.appChatId !== threadId) throw new Error('Host history chat is unavailable')
     return chat
   }
+  // Incremental cursor memo, keyed per chat and revalidated against the
+  // messages array reference and its length. Appends only pay for the new
+  // suffix; a rebuild or a retention shrink pays one full recount.
+  const projectedTotals = new WeakMap<
+    HostProductionHistoryChat,
+    { array: readonly HostProductionHistoryMessage[] | undefined; length: number; total: number }
+  >()
+  const projectedTotal = (
+    chat: HostProductionHistoryChat,
+    messages: readonly HostProductionHistoryMessage[] | undefined
+  ): number => {
+    const current = projectedTotals.get(chat)
+    const array = messages ?? []
+    if (current && current.array === messages && current.length === array.length) {
+      return current.total
+    }
+    let total: number
+    if (current && current.array === messages && current.length < array.length) {
+      total = current.total
+      for (let index = current.length; index < array.length; index += 1) {
+        if (entry(array[index]) !== null) total += 1
+      }
+    } else {
+      total = 0
+      for (const message of array) {
+        if (entry(message) !== null) total += 1
+      }
+    }
+    projectedTotals.set(chat, { array: messages, length: array.length, total })
+    return total
+  }
 
   return {
     threadHistory(request) {
       const chat = requireChat(request.threadId)
       const currentPosition = position(options)
-      const projected = (chat.messages ?? [])
-        .map(entry)
-        .filter((candidate): candidate is HostTranscriptHistoryEntry => candidate !== null)
-      const end = request.before === undefined ? projected.length : request.before.cursor
+      const messages = chat.messages
+      const total = projectedTotal(chat, messages)
+      const end = request.before === undefined ? total : request.before.cursor
       if (
         (request.before !== undefined &&
           request.before.generation !== currentPosition.generation) ||
         end < 0 ||
-        end > projected.length
+        end > total
       ) {
         throw new Error('Host history cursor is unavailable')
       }
-      const start = Math.max(0, end - request.limit)
+      // Bounded backward scan: walk the raw tail, skip the valid rows that
+      // belong to pages after `end`, project each remaining row and stop once
+      // `limit` valid entries are collected. Tail reads (`end === total`) pay
+      // O(limit), independent of total history size; the memo keeps `total`
+      // exact without a per-call full projection.
+      let skip = total - end
+      const collected: HostTranscriptHistoryEntry[] = []
+      for (
+        let index = (messages ?? []).length - 1;
+        index >= 0 && collected.length < request.limit;
+        index -= 1
+      ) {
+        const candidate = entry((messages ?? [])[index])
+        if (candidate === null) continue
+        if (skip > 0) {
+          skip -= 1
+          continue
+        }
+        collected.push(candidate)
+      }
+      const entries = collected.reverse()
+      const start = end - entries.length
       return {
         threadId: request.threadId,
         generation: currentPosition.generation,
         // History paging is intentionally independent from the Host domain
         // delta cursor; it is the count of the redacted projected sequence.
-        cursor: projected.length,
-        entries: projected.slice(start, end),
+        cursor: total,
+        entries,
         ...(start > 0
           ? { nextBefore: { generation: currentPosition.generation, cursor: start } }
           : {})
@@ -140,10 +191,7 @@ export function createHostProductionHistoryAdapter(
     historySince(request) {
       const chat = requireChat(request.threadId)
       const current = position(options)
-      const cursor = (chat.messages ?? []).reduce(
-        (count, message) => (entry(message) === null ? count : count + 1),
-        0
-      )
+      const cursor = projectedTotal(chat, chat.messages)
       return {
         kind: 'full_resnapshot_required',
         threadId: request.threadId,

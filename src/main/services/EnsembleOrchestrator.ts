@@ -19971,7 +19971,13 @@ export class EnsembleOrchestrator {
             // tier rather than the one it actually ran under.
             ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
             ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
-            ensembleStatus: visibleStatus,
+            // Content rows describe transcript events, not the run's latest
+            // lifecycle state. Preserve the status stamped when each row was
+            // first materialised so terminal closeout can stay append-only.
+            ensembleStatus:
+              typeof previous?.metadata?.ensembleStatus === 'string'
+                ? previous.metadata.ensembleStatus
+                : visibleStatus,
             ensembleTimelineIndex: i,
             ...pooledAgentTranscriptMetadata(run.participant),
             // Model preview: pass the participant's configured model so
@@ -20075,7 +20081,12 @@ export class EnsembleOrchestrator {
             ensembleOrder: run.participant.order,
             ensembleSeatSnapshot: ensembleSeatSnapshot(run.participant),
             ...(laneSeatAuthority ? { ensembleSeatAuthority: laneSeatAuthority } : {}),
-            ensembleStatus: visibleStatus,
+            // Keep the carrier row stable across terminal re-flushes; the
+            // participant status coda below owns the lifecycle transition.
+            ensembleStatus:
+              typeof previous?.metadata?.ensembleStatus === 'string'
+                ? previous.metadata.ensembleStatus
+                : visibleStatus,
             ensembleTimelineIndex: timeline.length,
             ensembleModel: run.participant.model,
             ...pooledAgentTranscriptMetadata(run.participant),
@@ -20225,8 +20236,8 @@ export class EnsembleOrchestrator {
       if (existingStatusIdx >= 0) {
         if (!previousStatus || !plainDataEqual(previousStatus, statusMsg)) {
           recordTranscriptMutation((author) => author.update(statusMsg))
+          messages[existingStatusIdx] = statusMsg
         }
-        messages[existingStatusIdx] = statusMsg
       } else {
         recordTranscriptMutation((author) => author.append([statusMsg]))
         messages = [...messages, statusMsg]

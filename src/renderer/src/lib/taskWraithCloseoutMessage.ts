@@ -1310,6 +1310,13 @@ function resolveCloseoutParticipants(
 }
 
 function participantStatusFromRun(chat: ChatRecord, run: ChatRun): EnsembleParticipantStatus {
+  const authoritativeStatus = run.ensembleParticipantStatus
+  if (
+    authoritativeStatus &&
+    ENSEMBLE_PARTICIPANT_STATUS_SET.has(authoritativeStatus as EnsembleParticipantStatus)
+  ) {
+    return authoritativeStatus as EnsembleParticipantStatus
+  }
   for (let index = chat.messages.length - 1; index >= 0; index -= 1) {
     const message = chat.messages[index]
     if (message.runId !== run.runId) continue

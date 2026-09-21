@@ -1136,15 +1136,38 @@ export class ChatUpdateDeliveryCoordinator {
       'ensembleRevision' in epochDelivery ? epochDelivery.ensembleRevision : undefined
     const deliveryRunsRevision =
       'runsRevision' in epochDelivery ? epochDelivery.runsRevision : undefined
-    // ACK fingerprint is the SENT chat's content hash, never the producer
-    // rolling op-hash on the wire. Echoing that roll made every ACK match.
     const revisionInputBytes: ChatUpdateRevisionInputBytes | undefined = this.serializedBytes
       ? { ensemble: 0, runs: 0, nonMessageRecord: 0 }
       : undefined
     // The renderer's applied hash is taken over the record it reconstructs, so
     // main must hash the record it actually sent — never the canonical one.
     const hashSource = epochDelivery.kind === 'snapshot' ? epochDelivery.chat : deliveredChat
-    const contentSub = computeChatSubRevisions(hashSource, revisionInputBytes)
+    // ACK fingerprint is the SENT chat's content hash, never the producer
+    // rolling op-hash on the wire. Echoing that roll made every ACK match.
+    //
+    // `buildChatUpdateDelivery` ALREADY content-hashed that exact record on two
+    // lanes: every v2 snapshot (`snapshotSub` over `bounded.chat`) and every
+    // windowed delivery (`sub` over the projected shell — its caller passes no
+    // producer envelope on that lane, so the walk cannot be an op-hash).
+    // Echoing those values avoids re-hashing a record the transport hashed one
+    // statement ago. The producer-delta lane is deliberately excluded: its
+    // carried `recordHash` is the rolling op-hash, so plain v2 patches still
+    // fall through to the full compute below.
+    const deliveryCarriesContentHash = epochDelivery.kind === 'snapshot' || transcriptWindowed
+    const echoCarriedFingerprint =
+      !revisionInputBytes &&
+      deliveryCarriesContentHash &&
+      typeof deliveryEnsembleRevision === 'number' &&
+      typeof deliveryRunsRevision === 'number' &&
+      'recordHash' in epochDelivery &&
+      typeof epochDelivery.recordHash === 'string'
+    const contentSub = echoCarriedFingerprint
+      ? {
+          ensembleRevision: deliveryEnsembleRevision as number,
+          runsRevision: deliveryRunsRevision as number,
+          recordHash: epochDelivery.recordHash as string
+        }
+      : computeChatSubRevisions(hashSource, revisionInputBytes)
     if (this.serializedBytes && revisionInputBytes) {
       const envelope = utf8ByteLength(JSON.stringify(epochDelivery) ?? '')
       this.serializedBytes.envelope += envelope

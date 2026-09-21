@@ -111,6 +111,75 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     }
   }
 
+  function terminalFlushHarness(options: {
+    id: string
+    timeline: Array<Record<string, unknown>>
+    toolActivities?: Array<Record<string, unknown>>
+    mediaRefs?: Array<Record<string, unknown>>
+  }) {
+    const seat = participant(`participant-${options.id}`, 'codex', 'Writer', 1)
+    const runId = `run-${options.id}`
+    let chat: ChatRecord = {
+      appChatId: `chat-${options.id}`,
+      provider: 'codex',
+      title: 'Terminal transcript flush',
+      scope: 'workspace',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [
+        {
+          runId,
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
+      ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
+    }
+    const broadcaster = new TranscriptTailBroadcaster()
+    const orchestrator = new EnsembleOrchestrator({
+      getChat: () => chat,
+      saveChat: (next) => {
+        chat = next
+      },
+      getSettings: () => ({ storeLocalChatHistory: true }) as AppSettings,
+      dispatch: vi.fn(async (payload: AgentRunPayload) => ({
+        dispatched: true,
+        appRunId: payload.appRunId || ''
+      })),
+      cancelRun: vi.fn(async () => true),
+      createRunId: () => runId,
+      now: () => Date.now(),
+      nowIso: () => '2026-09-21T09:01:00.000Z'
+    })
+    const internal = orchestrator as unknown as {
+      runsByRunId: Map<string, any>
+      flushRun: (run: any, final?: boolean, reason?: string) => void
+    }
+    const run = {
+      runId,
+      chatId: chat.appChatId,
+      roundId: `round-${options.id}`,
+      participant: seat,
+      timeline: options.timeline,
+      content: '',
+      status: 'running',
+      toolActivities: options.toolActivities || [],
+      mediaRefs: options.mediaRefs
+    }
+    internal.runsByRunId.set(runId, run)
+    return {
+      broadcaster,
+      internal,
+      run,
+      get chat() {
+        return chat
+      }
+    }
+  }
+
   it('streams one growing row from a long turn without falling back to history pages', () => {
     vi.useFakeTimers()
     const seat = participant('p1', 'codex', 'Writer', 1)
@@ -128,7 +197,14 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
         content: `Earlier message ${index}`,
         timestamp: '2026-09-20T12:00:00.000Z'
       })),
-      runs: [],
+      runs: [
+        {
+          runId: 'streaming-run',
+          provider: 'codex',
+          status: 'running',
+          startedAt: '2026-09-21T09:00:00.000Z'
+        }
+      ],
       ensemble: { enabled: true, maxParticipants: 1, participants: [seat] }
     }
     const broadcaster = new TranscriptTailBroadcaster()
@@ -151,14 +227,14 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     const internal = orchestrator as unknown as {
       runsByRunId: Map<string, any>
       scheduleFlush: (run: any) => void
-      flushRun: (run: any) => void
+      flushRun: (run: any, final?: boolean, reason?: string) => void
     }
     const run = {
       runId: 'streaming-run',
       chatId: chat.appChatId,
       roundId: 'round-1',
       participant: seat,
-      timeline: Array.from({ length: 20 }, (_, index) => ({
+      timeline: Array.from({ length: 19 }, (_, index) => ({
         kind: 'content',
         text: `Speech ${index}`
       })),
@@ -207,11 +283,164 @@ describe('EnsembleOrchestrator per-chat scheduleFlush', () => {
     expect(applyTranscriptTailFrame(appended, store).status).toBe('applied')
     expect(store.get(chat.appChatId)?.messages[0]).toBe(visibleBeforeAppend.messages[0])
     expect(store.get(chat.appChatId)?.messages.at(-1)?.content).toBe('Next speech')
+
+    const contentRowsBeforeFinalization = chat.messages.slice(9_000)
+    expect(contentRowsBeforeFinalization).toHaveLength(20)
+    run.status = 'yielded'
+    internal.flushRun(run, true, 'Ready for the next participant.')
+    const finalized = broadcaster.observe(chat)
+    expect(finalized?.kind).toBe('tail-append')
+    if (!finalized || finalized.kind !== 'tail-append') {
+      throw new Error('Finalization left the append-only fast path')
+    }
+    expect(finalized.messages).toHaveLength(1)
+    expect(finalized.messages[0].metadata?.kind).toBe('ensembleParticipantStatus')
+    expect(finalized.messages[0].metadata?.ensembleStatus).toBe('yielded')
+    expect(applyTranscriptTailFrame(finalized, store).status).toBe('applied')
+    for (let index = 0; index < contentRowsBeforeFinalization.length; index += 1) {
+      expect(chat.messages[9_000 + index]).toBe(contentRowsBeforeFinalization[index])
+      expect(chat.messages[9_000 + index].metadata?.ensembleStatus).toBe('running')
+    }
+    expect(chat.runs[0].ensembleParticipantStatus).toBe('yielded')
+    expect(store.get(chat.appChatId)?.messages.at(-1)?.metadata?.ensembleStatus).toBe('yielded')
     expect(broadcaster.counterSnapshot()).toMatchObject({
       updates: 20,
+      appends: 2,
+      appendedRows: 2,
       resyncs: 0,
       updatesDeclined: 0
     })
+  })
+
+  it('finalizes an answered run with more than eight content rows as a transcript no-op', () => {
+    const harness = terminalFlushHarness({
+      id: 'answered',
+      timeline: Array.from({ length: 12 }, (_, index) => ({
+        kind: 'content',
+        text: `Speech ${index}`
+      }))
+    })
+    harness.internal.flushRun(harness.run)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    const contentRows = harness.chat.messages
+
+    harness.run.status = 'answered'
+    harness.internal.flushRun(harness.run, true)
+
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(harness.chat.messages).toHaveLength(12)
+    for (let index = 0; index < contentRows.length; index += 1) {
+      expect(harness.chat.messages[index]).toBe(contentRows[index])
+      expect(harness.chat.messages[index].metadata?.ensembleStatus).toBe('running')
+    }
+    expect(harness.chat.runs[0].ensembleParticipantStatus).toBe('answered')
+
+    harness.internal.flushRun(harness.run, true)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(harness.broadcaster.counterSnapshot()).toMatchObject({
+      appends: 0,
+      updates: 0,
+      resyncs: 0,
+      updatesDeclined: 0
+    })
+  })
+
+  it.each(['yielded', 'failed', 'sleeping', 'skipped'] as const)(
+    'appends one %s coda and keeps repeated finalization transcript-idempotent',
+    (terminalStatus) => {
+      const harness = terminalFlushHarness({
+        id: terminalStatus,
+        timeline: Array.from({ length: 12 }, (_, index) => ({
+          kind: 'content',
+          text: `Speech ${index}`
+        }))
+      })
+      harness.internal.flushRun(harness.run)
+      expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+      const contentRows = harness.chat.messages
+
+      harness.run.status = terminalStatus
+      harness.internal.flushRun(harness.run, true, `${terminalStatus} reason`)
+      const finalized = harness.broadcaster.observe(harness.chat)
+
+      expect(finalized?.kind).toBe('tail-append')
+      if (!finalized || finalized.kind !== 'tail-append') {
+        throw new Error(`${terminalStatus} finalization left the append-only fast path`)
+      }
+      expect(finalized.messages).toHaveLength(1)
+      expect(finalized.messages[0].metadata).toMatchObject({
+        kind: 'ensembleParticipantStatus',
+        ensembleStatus: terminalStatus
+      })
+      for (let index = 0; index < contentRows.length; index += 1) {
+        expect(harness.chat.messages[index]).toBe(contentRows[index])
+        expect(harness.chat.messages[index].metadata?.ensembleStatus).toBe('running')
+      }
+      expect(harness.chat.runs[0].ensembleParticipantStatus).toBe(terminalStatus)
+
+      harness.internal.flushRun(harness.run, true, `${terminalStatus} reason`)
+      expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+      expect(
+        harness.chat.messages.filter(
+          (message) => message.metadata?.kind === 'ensembleParticipantStatus'
+        )
+      ).toHaveLength(1)
+      expect(harness.broadcaster.counterSnapshot()).toMatchObject({
+        appends: 1,
+        appendedRows: 1,
+        resyncs: 0,
+        updatesDeclined: 0
+      })
+    }
+  )
+
+  it('preserves a tool-only media carrier status when terminal closeout appends its coda', () => {
+    const harness = terminalFlushHarness({
+      id: 'tool-only-carrier',
+      timeline: [{ kind: 'tool', toolId: 'tool-1' }],
+      toolActivities: [{ id: 'tool-1', toolName: 'transcode_video', status: 'completed' }],
+      mediaRefs: [
+        {
+          id: 'run-tool-only-carrier:produced-video:abc123',
+          kind: 'video',
+          format: 'container',
+          source: 'generated',
+          name: 'produced.mp4',
+          mimeType: 'video/mp4',
+          sha256: 'abc123',
+          status: 'available'
+        }
+      ]
+    })
+    harness.internal.flushRun(harness.run)
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    const carrier = harness.chat.messages.find(
+      (message) => message.role === 'assistant' && message.metadata?.kind === 'ensembleParticipant'
+    )
+    expect(carrier?.content).toBe('')
+    expect(carrier?.metadata?.ensembleStatus).toBe('running')
+
+    harness.run.status = 'yielded'
+    harness.internal.flushRun(harness.run, true, 'Producer work complete')
+    const finalized = harness.broadcaster.observe(harness.chat)
+
+    expect(finalized?.kind).toBe('tail-append')
+    expect(
+      harness.chat.messages.find(
+        (message) =>
+          message.role === 'assistant' && message.metadata?.kind === 'ensembleParticipant'
+      )
+    ).toBe(carrier)
+    expect(carrier?.metadata?.ensembleStatus).toBe('running')
+    expect(finalized?.kind === 'tail-append' ? finalized.messages : []).toHaveLength(1)
+
+    harness.internal.flushRun(harness.run, true, 'Producer work complete')
+    expect(harness.broadcaster.observe(harness.chat)).toBeNull()
+    expect(
+      harness.chat.messages.filter(
+        (message) => message.metadata?.kind === 'ensembleParticipantStatus'
+      )
+    ).toHaveLength(1)
   })
 
   it('batches N lane scheduleFlush calls into one saveChat after 250ms', () => {

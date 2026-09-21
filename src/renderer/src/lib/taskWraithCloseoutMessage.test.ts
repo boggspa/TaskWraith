@@ -1594,6 +1594,54 @@ Next action:
     expect(closeout.content).not.toMatch(/^\s*-\s/m)
   })
 
+  it('uses the run lifecycle authority when streamed content retains its running status', () => {
+    const round: EnsembleRoundState = {
+      roundId: 'round-streamed-status',
+      status: 'completed',
+      prompt: 'Stream a long response',
+      startedAt: '2026-09-21T09:00:00.000Z',
+      endedAt: '2026-09-21T09:01:00.000Z',
+      participants: []
+    }
+    const run: ChatRun = {
+      runId: 'run-streamed-status',
+      provider: 'codex',
+      status: 'success',
+      startedAt: round.startedAt,
+      endedAt: round.endedAt,
+      ensembleRoundId: round.roundId,
+      ensembleParticipantId: 'participant-streamed-status',
+      ensembleRole: 'Reviewer',
+      ensembleOrder: 1,
+      ensembleParticipantStatus: 'yielded'
+    }
+    const closeout = buildTaskWraithRoundCloseoutMessage({
+      chat: chat({
+        chatKind: 'ensemble',
+        runs: [run],
+        messages: [
+          {
+            ...message('streamed-content', 'assistant', 'A streamed answer.'),
+            runId: run.runId,
+            metadata: {
+              kind: 'ensembleParticipant',
+              ensembleStatus: 'running'
+            }
+          }
+        ]
+      }),
+      round,
+      completedAt: round.endedAt!
+    })
+
+    expect(closeout.metadata?.closeoutParticipantTable?.rows).toMatchObject([
+      {
+        participantId: 'participant-streamed-status',
+        status: 'yielded'
+      }
+    ])
+  })
+
   it('renders participant details with individual @-tagged members, turns, and tokens', () => {
     const round: EnsembleRoundState = {
       roundId: 'round-2',

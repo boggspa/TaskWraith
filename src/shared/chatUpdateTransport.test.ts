@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatMessage, ChatRecord } from '../main/store/types'
+import type { ChatMessage, ChatRecord, ChatRun } from '../main/store/types'
+import { projectThreadRunWallMs } from './threadRunWallTime'
 import {
   CHAT_UPDATE_PROTOCOL_V1,
   CHAT_UPDATE_PROTOCOL_V2,
@@ -19,7 +20,7 @@ import {
   utf8ByteLength,
   type ChatUpdateProducerDelta
 } from './chatUpdateTransport'
-import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES } from './transcriptPage'
+import { DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES, estimateJsonishBytes } from './transcriptPage'
 
 function message(id: string, content: string): ChatMessage {
   return { id, role: 'assistant', content, timestamp: '2026-07-18T00:00:00.000Z' }
@@ -1057,6 +1058,88 @@ describe('projectChatUpdateWindow', () => {
     expect(markers(projection.chat).messageCount).toBe(grown.length)
     expect(projection.page?.totalMessageCount).toBe(grown.length)
     expect(projection.chat.messages.length).toBeLessThan(grown.length)
+  })
+
+  it('keeps metering byte-exact across steady-state re-projections and re-meters only replaced rows', () => {
+    // Steady state on a large thread: the tail streams, every OTHER row keeps
+    // its object identity. Re-metering the whole anchored window each tick was
+    // an O(window) deep walk for zero changed bytes; the memo must reproduce
+    // the previous estimate exactly, then price a replaced row precisely.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const first = projectChatUpdateWindow(chat(1, base))
+    const anchor = first.anchorMessageId
+    expect(anchor).toBeTruthy()
+
+    const steady = projectChatUpdateWindow(chat(2, [...base]), anchor)
+    expect(steady.reanchored).toBe(false)
+    expect(steady.page?.estimatedBytes).toBe(first.page?.estimatedBytes)
+    // Untouched rows are the same OBJECTS in both projections — the meter memo
+    // keys on exactly the identity that already decides splice prefix equality.
+    expect(
+      steady.chat.messages
+        .slice(0, first.chat.messages.length)
+        .every((row, index) => row === first.chat.messages[index])
+    ).toBe(true)
+
+    // Replace one mid-window row with a new object (identity change is how a
+    // content change presents; an in-place edit would already be invisible to
+    // the splice machinery). The memo must not serve the removed row's number
+    // for its replacement.
+    const rowIndex = Math.floor(first.chat.messages.length / 2)
+    const removedRow = first.chat.messages[rowIndex]
+    const replacementRow = {
+      ...removedRow,
+      content: `${removedRow.content} [edited with a much longer body of text]`
+    }
+    const edited = base.map((row) => (row === removedRow ? replacementRow : row))
+    const second = projectChatUpdateWindow(chat(3, edited), anchor)
+    expect(second.reanchored).toBe(false)
+    expect(second.page?.estimatedBytes).toBe(
+      (first.page?.estimatedBytes ?? 0) -
+        estimateJsonishBytes(removedRow) +
+        estimateJsonishBytes(replacementRow)
+    )
+  })
+
+  it('carries the exact thread wall-time projection and re-projects when its run inputs move', () => {
+    // The shell ships `runWallMs` computed over the COMPLETE run history before
+    // the page drops it. Computing it used to parse every startedAt/endedAt and
+    // sort the intervals on every cadence tick; the memo must be an exact view
+    // of the direct projection, including after the inputs genuinely change.
+    const base = rows(DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 500)
+    const runs = [
+      {
+        runId: 'r-1',
+        startedAt: '2026-09-01T10:00:00.000Z',
+        endedAt: '2026-09-01T10:05:00.000Z'
+      },
+      {
+        runId: 'r-2',
+        startedAt: '2026-09-01T10:10:00.000Z',
+        endedAt: '2026-09-01T10:20:00.000Z'
+      }
+    ] as ChatRun[]
+    const first = projectChatUpdateWindow(chat(1, base, { runs }))
+    expect(first.windowed).toBe(true)
+    expect(markers(first.chat).runWallMs).toBe(projectThreadRunWallMs(runs))
+
+    // Same run array back-to-back: identical inputs, identical scalar.
+    const steady = projectChatUpdateWindow(chat(2, [...base], { runs }), first.anchorMessageId)
+    expect(steady.reanchored).toBe(false)
+    expect(markers(steady.chat).runWallMs).toBe(projectThreadRunWallMs(runs))
+
+    // A completed run window moving under the same ids must evict by identity —
+    // a stale shell wall time would hash differently into the same record lane.
+    const longerRuns = runs.map((run) =>
+      run.runId === 'r-2' ? { ...run, endedAt: '2026-09-01T10:25:00.000Z' } : run
+    )
+    const moved = projectChatUpdateWindow(
+      chat(3, [...base], { runs: longerRuns }),
+      first.anchorMessageId
+    )
+    expect(moved.reanchored).toBe(false)
+    expect(markers(moved.chat).runWallMs).toBe(projectThreadRunWallMs(longerRuns))
+    expect(markers(moved.chat).runWallMs).not.toBe(markers(steady.chat).runWallMs)
   })
 })
 

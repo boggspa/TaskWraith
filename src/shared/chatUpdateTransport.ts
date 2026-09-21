@@ -9,7 +9,7 @@ import {
   shouldPageTranscriptOnOpen,
   type TranscriptPage
 } from './transcriptPage'
-import { projectThreadRunWallMs } from './threadRunWallTime'
+import { projectThreadRunWallMs, type ThreadEnsembleWallTimeSource } from './threadRunWallTime'
 
 export const CHAT_UPDATE_CHANNEL = 'chat-updated'
 export const CHAT_UPDATE_ACK_CHANNEL = 'chat-updated:ack'
@@ -930,6 +930,138 @@ function transcriptContentExceedsPageBytes(messages: readonly ChatMessage[]): bo
 }
 
 /**
+ * Per-message byte-meter memo for window projection.
+ *
+ * An anchored window is re-projected on every delivery cadence tick, and the
+ * naive path re-walked every held row with `estimateJsonishBytes` each time —
+ * O(window) deep object walks per tick, when a stream tick changes only the
+ * tail row. Row identity is already load-bearing here:
+ * `buildChatUpdateMessageSplice` treats `a === b` as unchanged, so a message
+ * edited in place would never reach the wire as a row change at all. Keying
+ * the meter by that same identity adds no new assumption: a row whose content
+ * changed arrives as a new object and re-meters exactly once, and untouched
+ * rows reuse the previous projection's number word-for-word.
+ */
+const meteredWindowMessageBytes = new WeakMap<ChatMessage, number>()
+
+function estimateWindowedMessageBytes(message: ChatMessage): number {
+  const metered = meteredWindowMessageBytes.get(message)
+  if (metered !== undefined) return metered
+  const measured = estimateJsonishBytes(message)
+  meteredWindowMessageBytes.set(message, measured)
+  return measured
+}
+
+/**
+ * Reference-level fingerprint of the exact inputs {@link projectThreadRunWallMs}
+ * reads. Every one of those inputs is an immutable string/number field or an
+ * object's own entries, so reference equality plus entry pair equality proves
+ * the output unchanged — and any mutation (a run gaining `endedAt` as it
+ * completes, a round-ledger entry landing, a run array replaced on save)
+ * installs a new reference and evicts.
+ */
+interface WindowRunWallSource {
+  readonly runStarts: readonly (string | null | undefined)[]
+  readonly runEnds: readonly (string | null | undefined)[]
+  readonly runRoundIds: readonly (string | null | undefined)[]
+  readonly activeRoundStatus: string | null | undefined
+  readonly activeRoundId: string | null | undefined
+  readonly activeRoundStart: string | null | undefined
+  readonly activeRoundEnd: string | null | undefined
+  readonly roundWallKeys: readonly string[]
+  readonly roundWallValues: readonly unknown[]
+}
+
+interface WindowRunWallEntry {
+  readonly ensemble: unknown
+  readonly source: WindowRunWallSource
+  readonly wallMs: number
+}
+
+/**
+ * One cached wall-time projection per run array. The array's own lifetime
+ * bounds the entry, so a settled thread carries one row of reference arrays,
+ * not an ever-growing ledger of past generations.
+ */
+const windowRunWallMsCache = new WeakMap<ChatRun[], WindowRunWallEntry>()
+
+function windowRunWallSourceFor(
+  runs: readonly ChatRun[] | null | undefined,
+  ensemble: ThreadEnsembleWallTimeSource | null | undefined
+): WindowRunWallSource {
+  const activeRound = ensemble?.activeRound ?? null
+  const ledger = ensemble?.roundWallMsById
+  const ledgerEntries =
+    ledger && typeof ledger === 'object' && !Array.isArray(ledger)
+      ? Object.entries(ledger as Record<string, unknown>)
+      : []
+  return {
+    runStarts: (runs ?? []).map((run) => run?.startedAt),
+    runEnds: (runs ?? []).map((run) => run?.endedAt),
+    runRoundIds: (runs ?? []).map((run) => run?.ensembleRoundId),
+    activeRoundStatus: activeRound?.status,
+    activeRoundId: activeRound?.roundId,
+    activeRoundStart: activeRound?.startedAt,
+    activeRoundEnd: activeRound?.endedAt,
+    roundWallKeys: ledgerEntries.map(([key]) => key),
+    roundWallValues: ledgerEntries.map(([, value]) => value)
+  }
+}
+
+function windowRunWallSourcesEqual(a: WindowRunWallSource, b: WindowRunWallSource): boolean {
+  if (
+    a.runStarts.length !== b.runStarts.length ||
+    a.activeRoundStatus !== b.activeRoundStatus ||
+    a.activeRoundId !== b.activeRoundId ||
+    a.activeRoundStart !== b.activeRoundStart ||
+    a.activeRoundEnd !== b.activeRoundEnd ||
+    a.roundWallKeys.length !== b.roundWallKeys.length
+  ) {
+    return false
+  }
+  for (let index = 0; index < a.runStarts.length; index += 1) {
+    if (
+      a.runStarts[index] !== b.runStarts[index] ||
+      a.runEnds[index] !== b.runEnds[index] ||
+      a.runRoundIds[index] !== b.runRoundIds[index]
+    ) {
+      return false
+    }
+  }
+  for (let index = 0; index < a.roundWallKeys.length; index += 1) {
+    if (a.roundWallKeys[index] !== b.roundWallKeys[index]) return false
+    if (a.roundWallValues[index] !== b.roundWallValues[index]) return false
+  }
+  return true
+}
+
+/**
+ * `runWallMs` for the paged shell, without re-running the O(runs) date-parse
+ * and sort on every delivery tick when the run/ensemble inputs did not move.
+ *
+ * The cache is keyed by run-array identity and validated field by reference
+ * (see {@link WindowRunWallSource}); a miss computes the full projection once
+ * and a hit costs one O(runs) pointer walk instead of `Date.parse` runs plus
+ * an interval sort. The shell still ships the exact current projection —
+ * never a stale aggregate — because the first changed reference discards the
+ * entry.
+ */
+function windowRunWallMs(
+  runs: ChatRun[] | null | undefined,
+  ensemble: ThreadEnsembleWallTimeSource | null | undefined
+): number {
+  if (!Array.isArray(runs)) return projectThreadRunWallMs(runs, ensemble)
+  const source = windowRunWallSourceFor(runs, ensemble)
+  const cached = windowRunWallMsCache.get(runs)
+  if (cached && cached.ensemble === ensemble && windowRunWallSourcesEqual(cached.source, source)) {
+    return cached.wallMs
+  }
+  const wallMs = projectThreadRunWallMs(runs, ensemble)
+  windowRunWallMsCache.set(runs, { ensemble, source, wallMs })
+  return wallMs
+}
+
+/**
  * Baseline-drop snapshots must not put the canonical transcript on the wire.
  * Oversized chats become a marked shell whose `messages` are one tail page.
  */
@@ -959,7 +1091,11 @@ function windowedChatRecord(
     messageCount: totalMessageCount,
     runCount: Array.isArray(chat.runs) ? chat.runs.length : 0,
     // Measure the complete record before dropping the run/round history.
-    runWallMs: projectThreadRunWallMs(chat.runs, chat.ensemble)
+    // Memoized by exact input identity: the anchored window holds still across
+    // many cadence ticks while a transcript streams, and the run set usually
+    // does not move, so the O(runs) date-parse + sort would otherwise repeat
+    // unchanged on every tick.
+    runWallMs: windowRunWallMs(chat.runs, chat.ensemble)
   } as ChatRecord
 }
 
@@ -1092,7 +1228,7 @@ function buildAnchoredTranscriptPage(
 ): TranscriptPage {
   const windowMessages = messages.slice(anchorIndex)
   let estimatedBytes = 0
-  for (const message of windowMessages) estimatedBytes += estimateJsonishBytes(message)
+  for (const message of windowMessages) estimatedBytes += estimateWindowedMessageBytes(message)
   return {
     chatId: chat.appChatId,
     messages: windowMessages,
@@ -1181,7 +1317,11 @@ export function buildChatUpdateDelivery(input: {
     const bounded = transcriptWindowed
       ? { chat, page: input.transcriptPage }
       : boundChatUpdateSnapshot(chat)
-    const snapshotSub = computeChatSubRevisions(bounded.chat)
+    // v1 snapshots never carry sub-revisions, and the coordinator hashes the
+    // delivered record regardless; computing them here too burned a full
+    // record hash on every v1 snapshot for bytes nobody reads.
+    const snapshotSub =
+      protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? computeChatSubRevisions(bounded.chat) : null
     return {
       protocolVersion,
       kind: 'snapshot',
@@ -1194,7 +1334,7 @@ export function buildChatUpdateDelivery(input: {
       transcriptHash: computeChatTranscriptHash(bounded.chat.messages),
       transcriptIdsUnique: hasUniqueChatMessageIds(bounded.chat.messages),
       ...(bounded.page ? { page: bounded.page } : {}),
-      ...(protocolVersion === CHAT_UPDATE_PROTOCOL_V2 ? snapshotSub : {})
+      ...(snapshotSub ?? {})
     }
   }
 

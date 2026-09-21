@@ -766,6 +766,118 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(sink.deliveries).toHaveLength(3)
     vi.useRealTimers()
   })
+
+  it('keeps live rows enqueued during a failed snapshot in front of the retry — one coalesced snapshot', () => {
+    // Rows that arrived while a snapshot was still awaiting its ACK are already
+    // latest-wins-merged into `pending`. When that snapshot then times out, the
+    // timed-out generation must NOT be re-retained ahead of them: the single
+    // backoff-bound retry has to carry the newest content, not the corpse.
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-09-04T00:00:00.000Z'))
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    coordinator.enqueue(sink, chat(2, ['one', 'two (live rows)']))
+    expect(sink.deliveries).toHaveLength(1)
+    const first = sink.deliveries[0]
+    expect(first.kind).toBe('snapshot')
+
+    const firstAckTimeout = resolveChatUpdateAckTimeoutMs({
+      kind: first.kind,
+      configuredTimeoutMs: 250,
+      snapshotBytes: estimateChatUpdateSnapshotBytes(first)
+    })
+    vi.advanceTimersByTime(firstAckTimeout)
+    // The baseline is dropped, but the live rows remain the pending generation —
+    // nothing is sent early into the cooling renderer.
+    expect(sink.deliveries).toHaveLength(1)
+    expect(coordinator.statsForTarget(sink.id)).toMatchObject({ inFlight: 0, pending: 1 })
+
+    const retryDelay = resolveSnapshotRetryDelayMs({
+      consecutiveTimeouts: 1,
+      ackTimeoutMs: firstAckTimeout
+    })
+    vi.advanceTimersByTime(retryDelay - 1)
+    expect(sink.deliveries).toHaveLength(1)
+    vi.advanceTimersByTime(1)
+    // Exactly ONE retry, and it is the live generation — the timed-out
+    // snapshot's content is never re-sent ahead of it.
+    expect(sink.deliveries).toHaveLength(2)
+    const retry = sink.deliveries[1]
+    expect(retry.kind).toBe('snapshot')
+    if (retry.kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(retry.chat.updatedAt).toBe(2)
+    expect(retry.chat.messages.map((row) => row.content)).toEqual(['one', 'two (live rows)'])
+    vi.useRealTimers()
+  })
+
+  it('keeps a large thread patching across repeated anchored ticks without re-anchoring or dropping the baseline', () => {
+    // Row objects persist across ticks (only the tail is appended) — the exact
+    // shape a streaming thread presents. Every tick must stay a pure-suffix
+    // window patch whose ACK hashes the record the target actually holds,
+    // never degrading to another page snapshot as the window grows.
+    const rows: ChatMessage[] = Array.from(
+      { length: DEFAULT_TRANSCRIPT_PAGE_MAX_MESSAGES + 200 },
+      (_, index) => message(`m-${index}`, `row ${index}`)
+    )
+    const record = (updatedAt: number): ChatRecord =>
+      ({ ...chat(updatedAt, []), messages: rows.slice() }) as ChatRecord
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      emitProtocolVersion: 2
+    })
+    coordinator.enqueue(sink, record(1))
+    expect(sink.deliveries).toHaveLength(1)
+    expect(sink.deliveries[0].kind).toBe('snapshot')
+    let baseline = ackAsRenderer(coordinator, sink, sink.deliveries[0]).baseline
+    const windowLength = baseline.chat.messages.length
+    const anchorRowId = baseline.chat.messages[0]?.id
+
+    for (let tick = 0; tick < 6; tick += 1) {
+      rows.push(message(`m-${rows.length}`, `tick ${tick}`))
+      coordinator.enqueue(sink, record(2 + tick))
+      expect(sink.deliveries).toHaveLength(2 + tick)
+      const delivery = sink.deliveries[sink.deliveries.length - 1]
+      expect(delivery.kind).toBe('patch')
+      if (delivery.kind !== 'patch' || delivery.protocolVersion !== 2) {
+        throw new Error('Expected a v2 patch')
+      }
+      // Pure suffix inside the held window: one appended row, nothing replaced.
+      expect(delivery.messages?.start).toBe(windowLength + tick)
+      expect(delivery.messages?.deleteCount).toBe(0)
+      expect(delivery.messages?.items).toHaveLength(1)
+
+      const applied = applyChatUpdateDelivery(structuredClone(delivery), baseline)
+      expect(applied.ok).toBe(true)
+      if (!applied.ok) throw new Error(applied.reason)
+      expect(applied.baseline.chat.messages[0]?.id).toBe(anchorRowId)
+      expect(
+        coordinator.acknowledge(sink.id, {
+          deliveryId: delivery.deliveryId,
+          applied: true,
+          revision: delivery.revision,
+          recordHash: applied.baseline.recordHash,
+          ...(applied.baseline.transcriptHash
+            ? { transcriptHash: applied.baseline.transcriptHash }
+            : {})
+        })
+      ).toBe(true)
+      baseline = applied.baseline
+    }
+    expect(coordinator.protocolCounters()).toMatchObject({
+      snapshots: 1,
+      patches: 6,
+      baselineDrops: 0,
+      windowedDeliveries: 7,
+      windowReanchors: 0
+    })
+    expect(baseline.chat.messages[0]?.id).toBe(anchorRowId)
+    expect(baseline.chat.messages).toHaveLength(windowLength + 6)
+  })
 })
 
 describe('paged chat live-update wiring', () => {
