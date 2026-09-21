@@ -353,25 +353,29 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
     // No grok-composer-2.5-fast: retired from the lineup 2026-09-18. Cursor's
     // own composer pair below is a DIFFERENT provider and is unaffected.
-    expect(grok).toEqual(['grok-4.6', 'grok-4.5'])
+    expect(grok).toEqual(['grok-4.7', 'grok-4.7-fast', 'grok-4.6', 'grok-4.5'])
     // No grok-4.5: Cursor's catalogue retired the family, and offering an id
     // cursor-agent rejects costs the whole run (exit 1, "Cannot use this model").
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.6'])
   })
 
-  it('publishes Grok 4.6 as the 500K Extra High-capable default', () => {
+  it('publishes Grok 4.7 as the 500K Extra High-capable default, with a Fast pair', () => {
     const grok = getStaticProviderModels('grok') as StaticModelShape[]
-    expect(grok.find((model) => model.id === 'grok-4.6')).toMatchObject({
-      label: 'Grok 4.6 Fast',
+    expect(grok.find((model) => model.id === 'grok-4.7')).toMatchObject({
+      label: 'Grok 4.7',
       description: '500K context - low/medium/high/extra-high reasoning',
       isDefault: true,
       defaultReasoningEffort: 'high'
     })
     expect(
       grok
-        .find((model) => model.id === 'grok-4.6')
+        .find((model) => model.id === 'grok-4.7')
         ?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)
     ).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(grok.find((model) => model.id === 'grok-4.7-fast')).toMatchObject({
+      label: 'Grok 4.7 Fast'
+    })
+    expect(grok.find((model) => model.id === 'grok-4.6')?.isDefault).not.toBe(true)
     expect(grok.find((model) => model.id === 'grok-4.5')?.isDefault).not.toBe(true)
   })
 
@@ -395,7 +399,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
   })
 
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
-    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.7')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
     expect(normalizeCliProviderModel('gemini', 'flash')).toBe('flash')
     expect(normalizeCliProviderModel('gemini', 'cli-default')).toBe('flash-lite')
@@ -430,17 +434,19 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
   })
 
-  it('uses Grok 4.6 as the default while retaining Grok 4.5', () => {
-    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.6')
+  it('uses Grok 4.7 as the default while retaining the 4.7 Fast, 4.6 and 4.5 rows', () => {
+    expect(normalizeCliProviderModel('grok', undefined)).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'cli-default')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-4.7')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-4.7-fast')).toBe('grok-4.7-fast')
     expect(normalizeCliProviderModel('grok', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('grok', 'grok-4.5')).toBe('grok-4.5')
     // Retired 2026-09-18. The id still starts with `grok`, so without an
     // explicit migration the passthrough would hand it straight back and the
     // seat would launch a model that is no longer in the catalogue.
-    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.6')
-    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.6')
+    expect(normalizeCliProviderModel('grok', 'grok-composer-2.5-fast')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'composer-2.5-fast')).toBe('grok-4.7')
+    expect(normalizeCliProviderModel('grok', 'grok-build')).toBe('grok-4.7')
     expect(normalizeCliProviderModel('cursor', 'grok-4.6')).toBe('grok-4.6')
     expect(normalizeCliProviderModel('cursor', 'cursor-grok-4.6-xhigh-fast')).toBe('grok-4.6')
   })

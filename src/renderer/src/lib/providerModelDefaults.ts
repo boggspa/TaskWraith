@@ -8,7 +8,11 @@ import {
   GROK_45_REASONING_EFFORTS,
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
-  GROK_46_REASONING_EFFORTS
+  GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS
 } from '../../../shared/grok45Models'
 import {
   KIMI_K27_HIGHSPEED_MODEL_ID,
@@ -346,17 +350,31 @@ const GEMINI_DEFAULT_MODEL_ROWS = [
 ] satisfies CodexModelOption[]
 const GEMINI_DEFAULT_MODELS = withCuratedUltraTaskSupport(GEMINI_DEFAULT_MODEL_ROWS)
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-// Grok - the live Grok Build CLI now defaults to Grok 4.6. Grok 4.5 and
-// Composer 2.5 Fast remain selectable for historical/specialized runs.
-const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
+// Grok - the live Grok Build CLI now defaults to Grok 4.7 (standard/Fast pair).
+// Grok 4.6 and 4.5 remain selectable for historical/specialized runs.
+const GROK_DEFAULT_MODEL = GROK_47_MODEL_ID
 const GROK_DEFAULT_MODEL_ROWS = [
   {
     id: GROK_DEFAULT_MODEL,
+    label: 'Grok 4.7',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_46_MODEL_ID,
     // Direct Grok CLI models run permanently in Fast mode, so the label
     // distinguishes them from Cursor's separately toggled resale rows.
     label: 'Grok 4.6 Fast',
     description: '500K context - low/medium/high/extra-high reasoning',
-    isDefault: true,
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
   },
@@ -393,10 +411,17 @@ const MISTRAL_DEFAULT_MODEL_ROWS = [
     description: '1M context - coding model'
   },
   {
-    // API-key lane, unlike the `glm-5-2` row above. Mirrors main's
-    // MISTRAL_STATIC_MODELS; the `zai-` prefix keeps it off Devin's `glm-5-3`.
-    id: 'zai-glm-5-3',
+    // Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring `glm-5-2`.
+    id: 'glm-5-3',
     label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - coding model'
+  },
+  {
+    // API-key lane, unlike the `glm-5-3` subscription row above. Mirrors
+    // main's MISTRAL_STATIC_MODELS; renamed `via Mistral` 2026-09-21 to match
+    // the 5.2 pair. The `zai-` prefix keeps it off Devin's `glm-5-3`.
+    id: 'zai-glm-5-3',
+    label: 'GLM-5.3 (via Mistral)',
     description: '1M context - $1.40/$4.40 per Mtok'
   },
   {

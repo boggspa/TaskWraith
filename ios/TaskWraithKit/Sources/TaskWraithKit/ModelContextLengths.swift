@@ -126,6 +126,9 @@ public enum ModelContextLengths {
             return [
                 // Grok's CLI models are permanently Fast-mode. Cursor's
                 // provider-scoped Grok rows keep a separate Fast toggle.
+                // 4.7 ships as a standard/Fast pair; standard is the default.
+                (id: "grok-4.7",                label: "Grok 4.7"),
+                (id: "grok-4.7-fast",           label: "Grok 4.7 Fast"),
                 (id: "grok-4.6",                label: "Grok 4.6 Fast"),
                 (id: "grok-4.5",                label: "Grok 4.5 Fast"),
             ]
@@ -156,7 +159,8 @@ public enum ModelContextLengths {
             return [
                 (id: "mistral-medium-3.5",  label: "Mistral Medium 3.5"),
                 (id: "glm-5-2",             label: "GLM-5.2 (Mistral Hosted)"),
-                (id: "zai-glm-5-3",         label: "GLM-5.3 (Mistral Hosted)"),
+                (id: "glm-5-3",             label: "GLM-5.3 (Mistral Hosted)"),
+                (id: "zai-glm-5-3",         label: "GLM-5.3 (via Mistral)"),
             ]
         case "ollama":
             return [

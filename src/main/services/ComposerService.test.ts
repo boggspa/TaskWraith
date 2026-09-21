@@ -1344,7 +1344,7 @@ describe('ComposerService', () => {
     ])
   })
 
-  it('uses Grok 4.6 as the Grok fallback instead of Gemini defaults', async () => {
+  it('uses Grok 4.7 as the Grok fallback instead of Gemini defaults', async () => {
     const payload = await compose(
       {
         provider: 'grok',
@@ -1359,7 +1359,7 @@ describe('ComposerService', () => {
     )
 
     expect(payload.provider).toBe('grok')
-    expect(payload.model).toBe('grok-4.6')
+    expect(payload.model).toBe('grok-4.7')
   })
 
   it('carries Grok 4.6 Extra High reasoning through direct and Cursor runs', async () => {

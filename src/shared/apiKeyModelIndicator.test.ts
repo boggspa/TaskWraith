@@ -42,6 +42,10 @@ describe('modelRequiresApiKey', () => {
     // GLM-5.2 hosted on the Vibe subscription (alias `glm-5-2`) is NOT key-marked,
     // unlike the API/BYOK `zai-glm-5-2` above.
     expect(modelRequiresApiKey('mistral', 'glm-5-2')).toBe(false)
+    // GLM-5.3 mirrors the 5.2 pair: the bare `glm-5-3` is the Vibe subscription
+    // (unmarked), while `zai-glm-5-3` stays API-key marked.
+    expect(modelRequiresApiKey('mistral', 'glm-5-3')).toBe(false)
+    expect(modelRequiresApiKey('mistral', 'zai-glm-5-3')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'codestral-2508')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'ministral-8b-2512')).toBe(true)
     expect(modelRequiresApiKey('mistral', 'devstral-small')).toBe(false)

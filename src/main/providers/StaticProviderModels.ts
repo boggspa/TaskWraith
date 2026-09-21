@@ -16,6 +16,10 @@ import {
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS,
   cursorGrokBaseModelId,
   isCursorGrokModelId,
   migrateRetiredCursorGrokModelId
@@ -1052,15 +1056,33 @@ const GEMINI_STATIC_MODELS = [
   { id: 'flash-lite', label: 'Flash Lite', isDefault: true, ultraTaskSupported: true }
 ]
 const GEMINI_DEFAULT_MODEL = 'flash-lite'
-const GROK_DEFAULT_MODEL = GROK_46_MODEL_ID
+const GROK_DEFAULT_MODEL = GROK_47_MODEL_ID
 const GROK_STATIC_MODELS = [
   {
     id: GROK_DEFAULT_MODEL,
+    // Grok 4.7 ships as a standard/Fast PAIR (two wire ids), unlike 4.6's
+    // single permanently-Fast row. The standard row is the seat default.
+    label: 'Grok 4.7',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    isDefault: true,
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    description: '500K context - low/medium/high/extra-high reasoning',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT,
+    ultraTaskSupported: true
+  },
+  {
+    id: GROK_46_MODEL_ID,
     // Direct Grok CLI models run permanently in Fast mode, so the label
     // distinguishes them from Cursor's separately toggled resale rows.
     label: 'Grok 4.6 Fast',
     description: '500K context - low/medium/high/extra-high reasoning',
-    isDefault: true,
     supportedReasoningEfforts: [...GROK_46_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT,
     ultraTaskSupported: true
@@ -1076,7 +1098,7 @@ const GROK_STATIC_MODELS = [
   // Grok Composer 2.5 Fast was RETIRED from the lineup by the user on
   // 2026-09-18. This was xAI's resale row and says nothing about Cursor's own
   // `composer-2.5` / `composer-2.5-fast` pair, which is untouched. Persisted
-  // grok seats migrate to Grok 4.6 in normalizeCliProviderModel below; the
+  // grok seats migrate to Grok 4.7 in normalizeCliProviderModel below; the
   // context-window and display-name rows stay so saved chats keep their label.
 ]
 // Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
@@ -1113,21 +1135,29 @@ const MISTRAL_STATIC_MODELS = [
     ultraTaskSupported: true
   },
   {
-    // Added 2026-09-18. Unlike its `glm-5-2` sibling directly above, this one
-    // is API-KEY ONLY — it is deliberately absent from
-    // MISTRAL_SUBSCRIPTION_MODELS in shared/apiKeyModelIndicator, so the row
-    // carries the key glyph. Do not "fix" that asymmetry: 5.2 is the Vibe
-    // subscription extra, 5.3 is not. The id takes the `zai-` API-lane prefix
-    // its BYOK sibling `zai-glm-5-2` uses, NOT a bare `glm-5-3` — that exact
-    // bare id is Devin's own GLM-5.3 row, and contextWindows is keyed by bare
-    // id across all providers.
+    // Added 2026-09-21: the Vibe-subscription GLM-5.3, mirroring the `glm-5-2`
+    // subscription extra. Listed in MISTRAL_SUBSCRIPTION_MODELS, so no key
+    // glyph. Price/window carried forward from 5.2; default `high` like 5.2.
+    id: 'glm-5-3',
+    label: 'GLM-5.3 (Mistral Hosted)',
+    description: '1M context - $1.40/$4.40 per Mtok',
+    supportedReasoningEfforts: [...MISTRAL_REASONING_EFFORTS],
+    defaultReasoningEffort: 'high',
+    ultraTaskSupported: true
+  },
+  {
+    // Added 2026-09-18 as the API-KEY ONLY GLM-5.3; renamed 2026-09-21 to
+    // `via Mistral` when the Vibe-subscription `glm-5-3` row above landed, so
+    // the two lanes mirror the 5.2 pair. Still absent from
+    // MISTRAL_SUBSCRIPTION_MODELS, so the row carries the key glyph. The
+    // `zai-` prefix keeps it off Devin's `glm-5-3` and the new Vibe row.
     //
     // Price and window are both CARRIED FORWARD from the 5.2 deployment and
     // are not independently verified — Mistral has published no GLM-5.3 page
     // yet. The rate row exists because providerApiRatesTable requires every
     // offered model to have one; see its note in ProviderRateService.
     id: 'zai-glm-5-3',
-    label: 'GLM-5.3 (Mistral Hosted)',
+    label: 'GLM-5.3 (via Mistral)',
     description: '1M context - $1.40/$4.40 per Mtok',
     ultraTaskSupported: true
   },

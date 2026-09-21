@@ -126,6 +126,8 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('grok', 'grok-composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       // Grok's CLI models are permanently Fast-mode, so both retained rows
       // carry Fast on the direct Grok seat.
+      expect(humaniseModelId('grok', 'grok-4.7')).toBe('Grok 4.7')
+      expect(humaniseModelId('grok', 'grok-4.7-fast')).toBe('Grok 4.7 Fast')
       expect(humaniseModelId('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')
       expect(canonicalModelIdForProvider('grok', 'Grok 4.6 Fast')).toBe('grok-4.6')
       expect(humaniseModelId('grok', 'grok-4.5')).toBe('Grok 4.5 Fast')
@@ -370,14 +372,14 @@ describe('humaniseModelId', () => {
     })
 
     it('uses provider context to repair stale Gemini placeholder ids for Grok and Cursor', () => {
-      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-4.6')
+      expect(canonicalModelIdForProvider('grok', 'flash-lite')).toBe('grok-4.7')
       expect(canonicalModelIdForProvider('grok', 'composer-2.5-fast')).toBe(
         'grok-composer-2.5-fast'
       )
       expect(canonicalModelIdForProvider('cursor', 'flash-lite')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5 Fast')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('cursor', 'Composer 2.5')).toBe('composer-2.5')
-      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok 4.6 Fast')
+      expect(humaniseModelId('grok', 'flash-lite')).toBe('Grok 4.7')
       expect(humaniseModelId('grok', 'composer-2.5-fast')).toBe('Grok Composer 2.5 Fast')
       expect(humaniseModelId('cursor', 'gemini-3.1-flash-lite')).toBe('Composer 2.5 Fast')
       expect(humaniseModelId('gemini', 'flash-lite')).toBe('Gemini Flash Lite')
@@ -388,7 +390,7 @@ describe('humaniseModelId', () => {
       expect(canonicalModelIdForProvider('claude', 'default')).toBe('claude-sonnet-5')
       expect(canonicalModelIdForProvider('gemini', 'cli-default')).toBe('flash-lite')
       expect(canonicalModelIdForProvider('kimi', 'cli-default')).toBe('kimi-k2.8-preview')
-      expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.6')
+      expect(canonicalModelIdForProvider('grok', 'cli-default')).toBe('grok-4.7')
       expect(canonicalModelIdForProvider('cursor', 'cli-default')).toBe('composer-2.5-fast')
       expect(canonicalModelIdForProvider('ollama', 'cli-default')).toBe('qwen3:4b-instruct')
     })

@@ -346,7 +346,11 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Grok',
       shortCode: 'GROK',
       models: [
-        model('grok-4.6', 'Grok 4.6 Fast', STANDARD_REASONING, true),
+        // Grok 4.7 ships as a standard/Fast pair (two wire ids); standard is
+        // the seat default. Window/ladder carried forward from 4.6.
+        model('grok-4.7', 'Grok 4.7', STANDARD_REASONING, true),
+        model('grok-4.7-fast', 'Grok 4.7 Fast', STANDARD_REASONING),
+        model('grok-4.6', 'Grok 4.6 Fast', STANDARD_REASONING),
         // Grok Composer 2.5 Fast retired from the lineup 2026-09-18. Cursor's
         // own composer-2.5 pair above is a different provider and unaffected.
         model('grok-4.5', 'Grok 4.5 Fast', STANDARD_REASONING)
@@ -412,9 +416,11 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       models: [
         model('mistral-medium-3.5', 'Mistral Medium 3.5', mistralNativeReasoning(), true),
         model('glm-5-2', 'GLM-5.2 (Mistral Hosted)', mistralNativeReasoning()),
+        // Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring `glm-5-2`.
+        model('glm-5-3', 'GLM-5.3 (Mistral Hosted)', mistralNativeReasoning()),
         // API-key lane, so STANDARD_REASONING like zai-glm-5-2 rather than the
         // Vibe thinking ladder its 5.2 namesake gets.
-        model('zai-glm-5-3', 'GLM-5.3 (Mistral Hosted)', STANDARD_REASONING),
+        model('zai-glm-5-3', 'GLM-5.3 (via Mistral)', STANDARD_REASONING),
         model('mistral-large-2512', 'Mistral Large 3', STANDARD_REASONING),
         model('zai-glm-5-2', 'GLM-5.2 (via Mistral)', STANDARD_REASONING),
         model('codestral-2508', 'Codestral (Aug 2025)', STANDARD_REASONING),

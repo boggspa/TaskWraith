@@ -3,6 +3,8 @@ export const GROK_45_MODEL_ID = 'grok-4.5'
 export const GROK_45_LATEST_MODEL_ID = 'grok-4.5-latest'
 export const GROK_BUILD_LATEST_MODEL_ID = 'grok-build-latest'
 export const GROK_46_MODEL_ID = 'grok-4.6'
+export const GROK_47_MODEL_ID = 'grok-4.7'
+export const GROK_47_FAST_MODEL_ID = 'grok-4.7-fast'
 
 export const GROK_45_REASONING_EFFORTS = [
   { reasoningEffort: 'low' },
@@ -20,6 +22,17 @@ export const GROK_46_REASONING_EFFORTS = [
 ] as const
 
 export const GROK_46_DEFAULT_REASONING_EFFORT = 'high'
+
+// Grok 4.7 / 4.7 Fast (added 2026-09-21): ladder carried forward from 4.6
+// (low/medium/high/xhigh, default high) until xAI publishes 4.7 docs.
+export const GROK_47_REASONING_EFFORTS = [
+  { reasoningEffort: 'low' },
+  { reasoningEffort: 'medium' },
+  { reasoningEffort: 'high' },
+  { reasoningEffort: 'xhigh' }
+] as const
+
+export const GROK_47_DEFAULT_REASONING_EFFORT = 'high'
 export const CURSOR_GROK_46_BASE_MODEL_ID = GROK_46_MODEL_ID
 
 /**
@@ -121,7 +134,18 @@ export function isGrok45ReasoningModelId(modelId: string | null | undefined): bo
 /** Standalone Grok reasoning-capable base/compatibility ids. */
 export function isGrokReasoningModelId(modelId: string | null | undefined): boolean {
   const id = String(modelId || '').trim().toLowerCase()
-  return isGrok45ReasoningModelId(id) || id === GROK_46_MODEL_ID
+  return (
+    isGrok45ReasoningModelId(id) ||
+    id === GROK_46_MODEL_ID ||
+    id === GROK_47_MODEL_ID ||
+    id === GROK_47_FAST_MODEL_ID
+  )
+}
+
+/** True for the Grok 4.7 pair (standard + Fast), which share the 4.6 ladder. */
+export function isGrok47ReasoningModelId(modelId: string | null | undefined): boolean {
+  const id = String(modelId || '').trim().toLowerCase()
+  return id === GROK_47_MODEL_ID || id === GROK_47_FAST_MODEL_ID
 }
 
 export function isCursorGrokConcreteModelId(modelId: string | null | undefined): boolean {

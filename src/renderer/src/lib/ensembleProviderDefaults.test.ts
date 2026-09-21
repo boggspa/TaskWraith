@@ -107,9 +107,9 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns grok defaults: Grok 4.6 model, default approval, high reasoning', () => {
+  it('returns grok defaults: Grok 4.7 model, default approval, high reasoning', () => {
     expect(getDefaultEnsembleParticipantConfig('grok')).toEqual({
-      model: 'grok-4.6',
+      model: 'grok-4.7',
       permissionPresetId: 'default',
       reasoningEffort: 'high'
     })
@@ -247,7 +247,21 @@ describe('normalizeProviderModelSelection', () => {
     })
   })
 
-  it('keeps Grok 4.6 and 4.5 reasoning but treats permanent Fast as provider encoded', () => {
+  it('keeps Grok 4.7/4.6/4.5 reasoning but treats permanent Fast as provider encoded', () => {
+    expect(normalizeProviderModelSelection('grok', 'grok-4.7')).toEqual({
+      model: 'grok-4.7',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
+    expect(normalizeProviderModelSelection('grok', 'grok-4.7-fast')).toEqual({
+      model: 'grok-4.7-fast',
+      reasoningEffort: 'high',
+      fastModeEnabled: undefined,
+      thinkingEnabled: undefined,
+      serviceTier: undefined
+    })
     expect(normalizeProviderModelSelection('grok', 'grok-4.6')).toEqual({
       model: 'grok-4.6',
       reasoningEffort: 'high',
@@ -1076,15 +1090,32 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(haiku.every((o) => o.disabled)).toBe(true)
   })
 
-  it('defaults Grok to 4.6 while retaining 4.5 with its narrower effort ladder', () => {
+  it('defaults Grok to 4.7 while retaining 4.5 with its narrower effort ladder', () => {
     const grok = getEnsembleModelDefaults('grok')
-    expect(grok.defaultModelId).toBe('grok-4.6')
+    expect(grok.defaultModelId).toBe('grok-4.7')
     // grok-composer-2.5-fast retired 2026-09-18. Unlike the Pi list, the Grok
     // rows are NOT wrapped in a lifecycle filter, so the row is deleted
-    // outright rather than dated.
-    expect(grok.modelOptions.map((o) => o.id)).toEqual(['grok-4.6', 'grok-4.5'])
+    // outright rather than dated. 4.7 ships as a standard/Fast pair.
+    expect(grok.modelOptions.map((o) => o.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-fast',
+      'grok-4.6',
+      'grok-4.5'
+    ])
     expect(grok.defaultReasoning).toBe('high')
     expect(grok.reasoningOptions.map((o) => o.value)).toEqual(['low', 'medium', 'high', 'xhigh'])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.7').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
+    expect(getEnsembleReasoningOptions('grok', 'grok-4.7-fast').map((o) => o.value)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh'
+    ])
     expect(getEnsembleReasoningOptions('grok', 'grok-4.6').map((o) => o.value)).toEqual([
       'low',
       'medium',
@@ -1104,6 +1135,8 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       ])
     }
     expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
+    expect(grok.fastModeCapableModelIds.has('grok-4.7')).toBe(true)
+    expect(grok.fastModeCapableModelIds.has('grok-4.7-fast')).toBe(true)
     expect(grok.fastModeCapableModelIds.has('grok-4.6')).toBe(true)
     expect(grok.fastModeCapableModelIds.has('grok-4.5')).toBe(true)
   })

@@ -220,8 +220,8 @@ describe('notification registry', () => {
     expect(antigravity?.models[0]?.blurb).not.toMatch(/API key|separately billed/i)
 
     const grok = groups.find((g) => g.provider === 'grok')
-    expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.6 Fast'])
-    expect(grok?.models[0]?.blurb).toMatch(/500K.*Extra High.*Grok Build/i)
+    expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.7', 'Grok 4.7 Fast'])
+    expect(grok?.models[0]?.blurb).toMatch(/500K.*Extra High/i)
 
     const cursor = groups.find((g) => g.provider === 'cursor')
     expect(cursor?.models.map((m) => m.name)).toEqual(['Grok 4.6'])
@@ -249,6 +249,7 @@ describe('notification registry', () => {
       'Leanstral 1.5 (Labs)',
       'GLM-5.2 (via Mistral)',
       'GLM-5.2 (Mistral Hosted)',
+      'GLM-5.3 (via Mistral)',
       'GLM-5.3 (Mistral Hosted)',
       'Codestral (Aug 2025)',
       'Ministral 3 (14B)',
@@ -259,10 +260,13 @@ describe('notification registry', () => {
     expect(mistral?.models.find((m) => m.name === 'GLM-5.2 (Mistral Hosted)')?.blurb).toMatch(
       /Vibe subscription.*no API key/i
     )
-    // The 5.3 row sits directly beside 5.2 under a near-identical name, so the
-    // card has to say which lane it is on or the two read as the same offer.
-    expect(mistral?.models.find((m) => m.name === 'GLM-5.3 (Mistral Hosted)')?.blurb).toMatch(
+    // The 5.3 pair sits directly beside 5.2 under near-identical names, so the
+    // card has to say which lane each is on or the two read as the same offer.
+    expect(mistral?.models.find((m) => m.name === 'GLM-5.3 (via Mistral)')?.blurb).toMatch(
       /your own API key/i
+    )
+    expect(mistral?.models.find((m) => m.name === 'GLM-5.3 (Mistral Hosted)')?.blurb).toMatch(
+      /Vibe subscription/i
     )
 
     const ollama = groups.find((g) => g.provider === 'ollama')

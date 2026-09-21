@@ -112,9 +112,29 @@ enum ProviderModelPickerPreviewData {
             provider: "grok",
             models: [
                 .init(
+                    id: "grok-4.7",
+                    label: "Grok 4.7",
+                    isDefault: true,
+                    supportedReasoningEfforts: [
+                        .init(reasoningEffort: "low"),
+                        .init(reasoningEffort: "medium"),
+                        .init(reasoningEffort: "high"),
+                        .init(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                .init(
+                    id: "grok-4.7-fast",
+                    label: "Grok 4.7 Fast",
+                    supportedReasoningEfforts: [
+                        .init(reasoningEffort: "low"),
+                        .init(reasoningEffort: "medium"),
+                        .init(reasoningEffort: "high"),
+                        .init(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                .init(
                     id: "grok-4.6",
                     label: "Grok 4.6 Fast",
-                    isDefault: true,
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),

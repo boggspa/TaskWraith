@@ -194,6 +194,8 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   if (provider === 'grok') {
     // Grok's CLI models are permanently Fast-mode, so "Fast" is part of the name.
     if (id === 'grok-composer-2.5-fast') return 'Grok Composer 2.5 Fast'
+    if (id === 'grok-4.7-fast') return 'Grok 4.7 Fast'
+    if (id === 'grok-4.7') return 'Grok 4.7'
     if (isGrokReasoningModelId(id)) {
       return id === 'grok-4.6' ? 'Grok 4.6 Fast' : 'Grok 4.5 Fast'
     }

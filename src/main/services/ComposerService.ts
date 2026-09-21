@@ -79,7 +79,7 @@ import {
 } from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import {
-  GROK_46_MODEL_ID,
+  GROK_47_MODEL_ID,
   isCursorGrokModelId,
   isGrokReasoningModelId
 } from '../../shared/grok45Models'
@@ -1711,7 +1711,7 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
     case 'kimi':
       return KIMI_K28_MODEL_ID
     case 'grok':
-      return GROK_46_MODEL_ID
+      return GROK_47_MODEL_ID
     case 'cursor':
       return 'composer-2.5-fast'
     case 'ollama':

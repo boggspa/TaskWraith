@@ -157,8 +157,38 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
     pricingUrl: 'https://docs.x.ai/developers/pricing',
     models: [
       {
-        modelId: 'grok-4.6',
+        // Grok 4.7 (added 2026-09-21): standard + Fast pair, rate carried
+        // forward from 4.6 until xAI publishes a 4.7 page.
+        modelId: 'grok-4.7',
         isFallback: true,
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 12.0,
+        longContextCachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'xAI API pricing for Grok 4.7 (500K ctx), carried forward from 4.6. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
+      {
+        modelId: 'grok-4.7-fast',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 6.0,
+        cachedInputUsdPerMillion: 0.5,
+        longContextThresholdTokens: 200_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 12.0,
+        longContextCachedInputUsdPerMillion: 1.0,
+        sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'xAI API pricing for Grok 4.7 Fast (500K ctx), carried forward from 4.6. PROJECTED API-equivalent; CLI auth bills via subscription credits.'
+      },
+      {
+        modelId: 'grok-4.6',
         inputUsdPerMillion: 2.0,
         outputUsdPerMillion: 6.0,
         cachedInputUsdPerMillion: 0.5,
@@ -1844,6 +1874,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           "GLM-5.2 hosted on the Vibe subscription (alias glm-5-2, same zai-glm-5-2 deployment as the API row above). Cached-input 0.26 read from the Vibe CLI's own bundled catalogue (vibe_cli_extra_models), authoritative over the marketing page; the API row above quotes the docs' 0.14. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
+        modelId: 'glm-5-3',
+        inputUsdPerMillion: 1.4,
+        outputUsdPerMillion: 4.4,
+        cachedInputUsdPerMillion: 0.26,
+        sourceUrl: 'https://docs.mistral.ai/models/zai-glm-5-2',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "GLM-5.3 hosted on the Vibe subscription (alias glm-5-3, added 2026-09-21). Rate CARRIED FORWARD from the 5.2 deployment (same 1.4/4.4, 0.26 cache read) and not independently verified. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
       },
       {
         modelId: 'codestral-2508',

@@ -51,6 +51,10 @@ import {
   GROK_46_DEFAULT_REASONING_EFFORT,
   GROK_46_MODEL_ID,
   GROK_46_REASONING_EFFORTS,
+  GROK_47_DEFAULT_REASONING_EFFORT,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
+  GROK_47_REASONING_EFFORTS,
   cursorGrokBaseModelId,
   migrateRetiredCursorGrokModelId,
   isCursorGrokModelId,
@@ -175,9 +179,11 @@ const grokReasoningOptions = (
   }))
 
 // Grok 4.5 stops at High; Grok 4.6 adds the verified Extra High (`xhigh`)
-// tier. GrokCliArgs remains the dispatch-side guard for the wire token.
+// tier. 4.7 carries the 4.6 ladder forward. GrokCliArgs remains the
+// dispatch-side guard for the wire token.
 const GROK_45_REASONING = grokReasoningOptions(GROK_45_REASONING_EFFORTS)
 const GROK_46_REASONING = grokReasoningOptions(GROK_46_REASONING_EFFORTS)
+const GROK_47_REASONING = grokReasoningOptions(GROK_47_REASONING_EFFORTS)
 
 // Mistral Medium 3.5 and hosted GLM-5.2 support configurable Thinking levels
 // (off, low, medium, high, max). These match the Vibe CLI's ThinkingLevel enum.
@@ -384,8 +390,21 @@ const KIMI_MODELS = withCuratedUltraTaskSupport(KIMI_MODEL_ROWS)
 const KIMI_FAST_CAPABLE = new Set<string>()
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
-// from the Cursor catalog below.
+// from the Cursor catalog below. 4.7 ships as a standard/Fast pair; 4.7
+// standard is the seat default.
 const GROK_MODEL_ROWS: CombinedModelPickerModelOption[] = [
+  {
+    id: GROK_47_MODEL_ID,
+    label: 'Grok 4.7',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
+  {
+    id: GROK_47_FAST_MODEL_ID,
+    label: 'Grok 4.7 Fast',
+    supportedReasoningEfforts: [...GROK_47_REASONING_EFFORTS],
+    defaultReasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
+  },
   {
     id: GROK_46_MODEL_ID,
     label: 'Grok 4.6 Fast',
@@ -410,7 +429,8 @@ const GROK_MODELS = withCuratedUltraTaskSupport(GROK_MODEL_ROWS)
 const MISTRAL_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'glm-5-2', label: 'GLM-5.2 (Mistral Hosted)' },
-  { id: 'zai-glm-5-3', label: 'GLM-5.3 (Mistral Hosted)' },
+  { id: 'glm-5-3', label: 'GLM-5.3 (Mistral Hosted)' },
+  { id: 'zai-glm-5-3', label: 'GLM-5.3 (via Mistral)' },
   { id: 'mistral-large-2512', label: 'Mistral Large 3' },
   { id: 'zai-glm-5-2', label: 'GLM-5.2 (via Mistral)' },
   { id: 'codestral-2508', label: 'Codestral (Aug 2025)' },
@@ -608,7 +628,7 @@ const CURSOR_FAST_CAPABLE = new Set<string>([
 // All Grok CLI models run permanently in Fast mode. This set only drives the
 // picker's Fast ⚡ glyph — Grok passes no onToggleFastMode, so no toggle row
 // renders and no fast-clearing runs on model switch.
-const GROK_FAST_CAPABLE = new Set<string>([GROK_46_MODEL_ID, GROK_45_MODEL_ID])
+const GROK_FAST_CAPABLE = new Set<string>([GROK_47_MODEL_ID, GROK_47_FAST_MODEL_ID, GROK_46_MODEL_ID, GROK_45_MODEL_ID])
 
 function isDirectGrok46ModelId(modelId?: string | null): boolean {
   const id = String(modelId || '')
@@ -617,12 +637,20 @@ function isDirectGrok46ModelId(modelId?: string | null): boolean {
   return id === GROK_46_MODEL_ID
 }
 
+function isDirectGrok47ModelId(modelId?: string | null): boolean {
+  const id = String(modelId || '')
+    .trim()
+    .toLowerCase()
+  return id === GROK_47_MODEL_ID || id === GROK_47_FAST_MODEL_ID
+}
+
 function grokReasoningDefaultForModel(
   provider: ProviderId,
   modelId?: string | null
 ): string | undefined {
   if (provider === 'grok') {
     if (!isGrokReasoningModelId(modelId)) return undefined
+    if (isDirectGrok47ModelId(modelId)) return GROK_47_DEFAULT_REASONING_EFFORT
     return isDirectGrok46ModelId(modelId)
       ? GROK_46_DEFAULT_REASONING_EFFORT
       : GROK_45_DEFAULT_REASONING_EFFORT
@@ -698,6 +726,7 @@ export function getEnsembleReasoningOptions(
         : KIMI_ALWAYS_ON_REASONING
     case 'grok':
       if (!isGrokReasoningModelId(modelId)) return []
+      if (isDirectGrok47ModelId(modelId)) return GROK_47_REASONING
       return isDirectGrok46ModelId(modelId) ? GROK_46_REASONING : GROK_45_REASONING
     case 'cursor': {
       // Cursor's only Grok family is 4.6 now; 4.5 is retired upstream.
@@ -807,9 +836,9 @@ export function getDefaultEnsembleParticipantConfig(
       // still toolless at dispatch, so the preset only matters if the user
       // later swaps the row to a tool-capable provider config.
       return {
-        model: GROK_46_MODEL_ID,
+        model: GROK_47_MODEL_ID,
         permissionPresetId: 'default',
-        reasoningEffort: GROK_46_DEFAULT_REASONING_EFFORT
+        reasoningEffort: GROK_47_DEFAULT_REASONING_EFFORT
       }
     case 'cursor':
       return {
@@ -1572,10 +1601,10 @@ export function getEnsembleModelDefaults(
     case 'grok':
       return {
         modelOptions: GROK_MODELS,
-        reasoningOptions: GROK_46_REASONING,
-        defaultReasoning: GROK_46_DEFAULT_REASONING_EFFORT,
+        reasoningOptions: GROK_47_REASONING,
+        defaultReasoning: GROK_47_DEFAULT_REASONING_EFFORT,
         fastModeCapableModelIds: GROK_FAST_CAPABLE,
-        defaultModelId: GROK_46_MODEL_ID
+        defaultModelId: GROK_47_MODEL_ID
       }
     case 'cursor':
       return {

@@ -193,6 +193,9 @@ export const MISTRAL_SUNSET_HOSTED_DEVSTRAL_IDS = [
 export const MISTRAL_SEAT_MODELS = [
   MISTRAL_MODEL_MEDIUM,
   'glm-5-2',
+  // Hosted GLM-5.3 on the Vibe subscription (added 2026-09-21), mirroring the
+  // `glm-5-2` subscription extra. Distinct from the API-key `zai-glm-5-3`.
+  'glm-5-3',
   'mistral-large-2512',
   'zai-glm-5-3',
   'zai-glm-5-2',

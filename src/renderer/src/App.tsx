@@ -615,8 +615,11 @@ import {
   GROK_45_DEFAULT_REASONING_EFFORT,
   GROK_45_MODEL_ID,
   GROK_46_MODEL_ID,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
   cursorGrokBaseModelId,
   isCursorGrokModelId,
+  isGrok47ReasoningModelId,
   isGrokReasoningModelId
 } from '../../shared/grok45Models'
 
@@ -23176,7 +23179,8 @@ function App(): React.JSX.Element {
       { value: 'low', label: grokReasoningDisplayLabel('low') },
       { value: 'medium', label: grokReasoningDisplayLabel('medium') },
       { value: 'high', label: grokReasoningDisplayLabel('high') },
-      ...(sideComposerSelectedModel === GROK_46_MODEL_ID
+      ...(sideComposerSelectedModel === GROK_46_MODEL_ID ||
+      isGrok47ReasoningModelId(sideComposerSelectedModel)
         ? [{ value: 'xhigh', label: grokReasoningDisplayLabel('xhigh') }]
         : [])
     ]
@@ -23230,7 +23234,7 @@ function App(): React.JSX.Element {
     if (sideComposerProvider === 'grok') {
       // All Grok CLI models are permanently Fast-mode → Fast ⚡ glyph on every
       // row. No onToggleFastMode is passed for grok, so no toggle renders.
-      return new Set([GROK_46_MODEL_ID, GROK_45_MODEL_ID])
+      return new Set([GROK_47_MODEL_ID, GROK_47_FAST_MODEL_ID, GROK_46_MODEL_ID, GROK_45_MODEL_ID])
     }
     return new Set<string>()
   })()

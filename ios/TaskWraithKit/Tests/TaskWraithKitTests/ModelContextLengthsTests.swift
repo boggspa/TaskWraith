@@ -337,11 +337,11 @@ struct ModelContextLengthsTests {
     func mistralGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let models = groups.first { $0.provider == "mistral" }?.models ?? []
-        // `zai-glm-5-3` joined 2026-09-18. It is NOT a Vibe subscription id
-        // like the two before it — it runs on the user's own API key — but it
-        // is still a bare seat id, which is what this guard is about. The
-        // `zai-` prefix also keeps it off Devin's identically-named glm-5-3.
-        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2", "zai-glm-5-3"])
+        // `glm-5-3` (Vibe subscription) joined 2026-09-21 beside the earlier
+        // API-key `zai-glm-5-3` (2026-09-18). Both are bare seat ids, which is
+        // what this guard is about. The `zai-` prefix keeps the API row off
+        // Devin's identically-named glm-5-3.
+        #expect(models.map(\.modelId) == ["mistral-medium-3.5", "glm-5-2", "glm-5-3", "zai-glm-5-3"])
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
     }
 

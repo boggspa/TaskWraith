@@ -337,10 +337,10 @@ describe('Ollama provider model defaults', () => {
 })
 
 describe('Grok provider model defaults', () => {
-  it('uses Grok 4.6 as the default while retaining Grok 4.5', () => {
+  it('uses Grok 4.7 as the default with a Fast pair, retaining 4.6 and 4.5', () => {
     expect(GROK_DEFAULT_MODELS[0]).toMatchObject({
-      id: 'grok-4.6',
-      label: 'Grok 4.6 Fast',
+      id: 'grok-4.7',
+      label: 'Grok 4.7',
       description: '500K context - low/medium/high/extra-high reasoning',
       isDefault: true
     })
@@ -350,16 +350,21 @@ describe('Grok provider model defaults', () => {
     // grok-composer-2.5-fast retired 2026-09-18. This renderer list is what
     // the composer picker renders, so it must match main's exactly —
     // providerFallthroughGuards compares the two.
-    expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual(['grok-4.6', 'grok-4.5'])
+    expect(GROK_DEFAULT_MODELS.map((model) => model.id)).toEqual([
+      'grok-4.7',
+      'grok-4.7-fast',
+      'grok-4.6',
+      'grok-4.5'
+    ])
     expect(GROK_DEFAULT_MODELS[1]).toMatchObject({
+      id: 'grok-4.7-fast',
+      label: 'Grok 4.7 Fast'
+    })
+    expect(GROK_DEFAULT_MODELS[3]).toMatchObject({
       id: 'grok-4.5',
       label: 'Grok 4.5 Fast'
     })
-    // Index 2 was the Composer row, retired 2026-09-18 — the list is now
-    // exactly two long. Asserted rather than dropped so a re-added third row
-    // has to come back through this test.
-    expect(GROK_DEFAULT_MODELS).toHaveLength(2)
-    expect(GROK_DEFAULT_MODELS[1].supportedReasoningEfforts?.length).toBeGreaterThan(0)
+    expect(GROK_DEFAULT_MODELS[3].supportedReasoningEfforts?.length).toBeGreaterThan(0)
   })
 })
 

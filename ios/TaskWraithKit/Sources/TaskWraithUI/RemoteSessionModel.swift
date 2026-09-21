@@ -2768,9 +2768,29 @@ public final class RemoteSessionModel: ObservableObject {
             ]
             pm["grok"] = [
                 ModelOption(
+                    id: "grok-4.7",
+                    label: "Grok 4.7",
+                    isDefault: true,
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                ModelOption(
+                    id: "grok-4.7-fast",
+                    label: "Grok 4.7 Fast",
+                    supportedReasoningEfforts: [
+                        ReasoningEffortOption(reasoningEffort: "low"),
+                        ReasoningEffortOption(reasoningEffort: "medium"),
+                        ReasoningEffortOption(reasoningEffort: "high"),
+                        ReasoningEffortOption(reasoningEffort: "xhigh"),
+                    ],
+                    defaultReasoningEffort: "high"),
+                ModelOption(
                     id: "grok-4.6",
                     label: "Grok 4.6 Fast",
-                    isDefault: true,
                     supportedReasoningEfforts: [
                         ReasoningEffortOption(reasoningEffort: "low"),
                         ReasoningEffortOption(reasoningEffort: "medium"),
@@ -2787,7 +2807,6 @@ public final class RemoteSessionModel: ObservableObject {
                         ReasoningEffortOption(reasoningEffort: "high"),
                     ],
                     defaultReasoningEffort: "high"),
-                ModelOption(id: "grok-composer-2.5-fast", label: "Grok Composer 2.5 Fast"),
             ]
             providerModels = pm
         }
@@ -2853,7 +2872,7 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-09-19","kind":"addition","title":"New Additions","body":"Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 hosted by Mistral, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.6 in Grok and Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-09-21","kind":"addition","title":"New Additions","body":"Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"kimi","label":"Kimi","models":[
               {"name":"K2.8 Preview","blurb":"Moonshot's newest coding model, on the same model id - 1M context, Low, High, or Max thinking."},
               {"name":"K2.7 Code Highspeed","blurb":"The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking."}
@@ -2874,7 +2893,8 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Gemini 3.8 Flash","blurb":"The newest Flash family, with Low, Medium, and High reasoning in the official agy CLI."}
             ]},
             {"provider":"grok","label":"Grok","models":[
-              {"name":"Grok 4.6 Fast","blurb":"The new 500K default with Low through Extra High reasoning in Grok Build."}
+              {"name":"Grok 4.7","blurb":"The new 500K default with Low through Extra High reasoning."},
+              {"name":"Grok 4.7 Fast","blurb":"The Fast route of the 4.7 pair, same 500K window and effort ladder."}
             ]},
             {"provider":"cursor","label":"Cursor","models":[
               {"name":"Grok 4.6","blurb":"A 256K Cursor model with Low through Extra High reasoning and Standard/Fast modes."}
@@ -2893,7 +2913,8 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Leanstral 1.5 (Labs)","blurb":"Leanstral 1.5 (Labs) is a research-focused experimental reasoning update."},
               {"name":"GLM-5.2 (via Mistral)","blurb":"GLM-5.2 (via Mistral) introduces a 1M context lane for heavier prompts."},
               {"name":"GLM-5.2 (Mistral Hosted)","blurb":"GLM-5.2 on the Vibe subscription — 1M context, no API key, metered on your plan."},
-              {"name":"GLM-5.3 (Mistral Hosted)","blurb":"The 5.3 generation hosted by Mistral — 1M context, on your own API key."},
+              {"name":"GLM-5.3 (via Mistral)","blurb":"The 5.3 generation hosted by Mistral — 1M context, on your own API key."},
+              {"name":"GLM-5.3 (Mistral Hosted)","blurb":"GLM-5.3 on the Vibe subscription — 1M context, no API key, metered on your plan."},
               {"name":"Codestral (Aug 2025)","blurb":"Codestral (Aug 2025) is a Mistral codespace model with updated quality and tuning."},
               {"name":"Ministral 3 (14B)","blurb":"Ministral 3 (14B) balances throughput and coding depth on the same family stack."},
               {"name":"Ministral 3 (8B)","blurb":"Ministral 3 (8B) keeps the same family strengths in a smaller profile."},

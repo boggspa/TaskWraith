@@ -192,11 +192,24 @@ describe('BAKED_IN_RATES', () => {
     expect(cursorComposer).toBeDefined()
   })
 
-  it('records exact Grok 4.6 direct and Cursor API-equivalent tiers', () => {
+  it('records exact Grok 4.7 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
     expect(RATE_TABLE_VERSION).toBe('2026-09-02')
     expect(BAKED_IN_RATES.grok.models.filter((model) => model.isFallback)).toHaveLength(1)
-    expect(BAKED_IN_RATES.grok.models.find((model) => model.isFallback)?.modelId).toBe('grok-4.6')
+    expect(BAKED_IN_RATES.grok.models.find((model) => model.isFallback)?.modelId).toBe('grok-4.7')
+    expect(
+      BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.7')
+    ).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.5,
+      outputUsdPerMillion: 6,
+      longContextThresholdTokens: 200_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 1,
+      longContextOutputUsdPerMillion: 12,
+      sourceUrl: 'https://docs.x.ai/developers/models/grok-4.6',
+      lastVerified: RATE_TABLE_VERSION
+    })
     expect(direct).toMatchObject({
       inputUsdPerMillion: 2,
       cachedInputUsdPerMillion: 0.5,

@@ -15,10 +15,11 @@ describe('resolveContextWindow', () => {
 
   it("keeps the Mistral GLM-5.3 row off Devin's identically-named model", () => {
     // CONTEXT_WINDOWS_BY_MODEL is keyed by BARE model id and consulted for
-    // every provider, so the Mistral seat's GLM-5.3 takes the `zai-` API-lane
-    // prefix. A plain `glm-5-3` row would also capture Devin's own GLM-5.3
-    // (devinModelCatalog.ts uses exactly that id) and silently widen it from
-    // Devin's 262K provider fallback to 1M.
+    // every provider, so Mistral's Vibe-subscription GLM-5.3 takes the bare
+    // `glm-5-3` id (1M) while its API-key sibling keeps the `zai-` prefix.
+    // Devin owns the same bare id, so PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES
+    // pins Devin's row to its 262K fallback rather than widening it to 1M.
+    expect(resolveContextWindow('mistral', 'glm-5-3')).toBe(1_000_000)
     expect(resolveContextWindow('mistral', 'zai-glm-5-3')).toBe(1_000_000)
     expect(resolveContextWindow('devin', 'glm-5-3')).toBe(262_144)
     expect(resolveContextWindow('devin', 'glm-5-3-flash')).toBe(262_144)

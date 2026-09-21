@@ -7,6 +7,8 @@ import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravi
 import {
   CURSOR_GROK_46_BASE_MODEL_ID,
   GROK_46_MODEL_ID,
+  GROK_47_FAST_MODEL_ID,
+  GROK_47_MODEL_ID,
   cursorGrokBaseModelId
 } from '../../../shared/grok45Models'
 import { ollamaCloudModelDisplayName } from '../../../shared/ollamaModelAvailability'
@@ -137,6 +139,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   // are SHARED with Cursor's base Grok rows (Fast is a toggle there);
   // `humaniseModelId` adds it only when the provider is Grok.
   'grok-composer-2.5-fast': 'Grok Composer 2.5 Fast',
+  'grok-4.7': 'Grok 4.7',
+  'grok-4.7-fast': 'Grok 4.7 Fast',
   'grok-4.6': 'Grok 4.6',
   'grok-4.5': 'Grok 4.5',
   'grok-4.5-latest': 'Grok 4.5 Fast',
@@ -172,6 +176,8 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'mistral-large-2512': 'Mistral Large 3',
   'zai-glm-5-2': 'GLM-5.2 (via Mistral)',
   'glm-5-2': 'GLM-5.2 (Mistral Hosted)',
+  'glm-5-3': 'GLM-5.3 (Mistral Hosted)',
+  'zai-glm-5-3': 'GLM-5.3 (via Mistral)',
   'codestral-2508': 'Codestral (Aug 2025)',
   'mistral-small-2603': 'Mistral Small 4',
   'devstral-2512': 'Devstral 2',
@@ -280,7 +286,7 @@ export function canonicalModelIdForProvider(
     if (provider === 'claude') return 'claude-sonnet-5'
     if (provider === 'gemini') return 'flash-lite'
     if (provider === 'kimi') return 'kimi-k2.8-preview'
-    if (provider === 'grok') return GROK_46_MODEL_ID
+    if (provider === 'grok') return GROK_47_MODEL_ID
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'
     // The three newest seats had no branch here, so a run recorded with the
@@ -322,9 +328,9 @@ export function canonicalModelIdForProvider(
     }
   }
   if (provider === 'grok') {
-    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return GROK_46_MODEL_ID
+    if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return GROK_47_MODEL_ID
     if (!key || key === 'grok') {
-      return GROK_46_MODEL_ID
+      return GROK_47_MODEL_ID
     }
     if (
       key === 'grok composer 2.5 fast' ||
@@ -333,6 +339,12 @@ export function canonicalModelIdForProvider(
       key === 'composer-2.5-fast'
     ) {
       return 'grok-composer-2.5-fast'
+    }
+    if (key === 'grok 4.7' || key === GROK_47_MODEL_ID) {
+      return GROK_47_MODEL_ID
+    }
+    if (key === 'grok 4.7 fast' || key === GROK_47_FAST_MODEL_ID) {
+      return GROK_47_FAST_MODEL_ID
     }
     if (key === 'grok 4.6' || key === 'grok 4.6 fast' || key === GROK_46_MODEL_ID) {
       return GROK_46_MODEL_ID

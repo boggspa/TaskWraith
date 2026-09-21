@@ -106,13 +106,15 @@ keep their labels.
 
 | Model                                               | Reasoning           | Fast     | Notes                                                |
 | --------------------------------------------------- | ------------------- | -------- | ---------------------------------------------------- |
-| **Grok 4.6 Fast** `grok-4.6` **(Default)**          | Low · Medium · High · Extra-high | Included | 500K-context coding model; Fast is provider-encoded. |
+| **Grok 4.7** `grok-4.7` **(Default)**               | Low · Medium · High · Extra-high | Pair | 500K-context coding model; Fast is a separate row.   |
+| **Grok 4.7 Fast** `grok-4.7-fast`                   | Low · Medium · High · Extra-high | Included | The Fast route of the 4.7 pair.                      |
+| **Grok 4.6 Fast** `grok-4.6`                        | Low · Medium · High · Extra-high | Included | 500K-context coding model; Fast is provider-encoded. |
 | **Grok 4.5 Fast** `grok-4.5`                        | Low · Medium · High | Included | Previous default; retained as a selectable row.      |
 
 Grok Composer 2.5 Fast (`grok-composer-2.5-fast`) was **retired on 2026-09-18**.
 It was xAI's resale row; Cursor's own `composer-2.5` / `composer-2.5-fast` pair
 is a different provider and is unaffected. Persisted Grok seats pinned to it
-migrate to Grok 4.6.
+migrate to Grok 4.7.
 
 <table>
   <tr>
@@ -212,7 +214,8 @@ them onto the shared ladder vocabulary.
 | ---------------------------------------------------- | ------------- | ---- | -------------------------------------------------------------- |
 | **Mistral Medium 3.5** `mistral-medium-3.5` **(Default)** | off…max   | —    | 256K context · flagship · $1.50/$7.50 per Mtok. Vibe 2.25 default. |
 | **GLM-5.2 (Mistral Hosted)** `glm-5-2`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok.   |
-| **GLM-5.3 (Mistral Hosted)** `zai-glm-5-3`           | —             | —    | 1M context · $1.40/$4.40 per Mtok · **API key only** — hosted by Mistral but billed to your own key, unlike the 5.2 row above. Added 2026-09-18. Price and window are both **carried forward from GLM-5.2** and not independently verified: Mistral has published no 5.3 page yet, and Z.ai prices its own GLM-5.3 identically. The `zai-` prefix avoids colliding with Devin's own `glm-5-3`. |
+| **GLM-5.3 (Mistral Hosted)** `glm-5-3`               | off…max       | —    | 1M context · Vibe subscription extra · $1.40/$4.40 per Mtok. Added 2026-09-21. Price and window **carried forward from GLM-5.2**. |
+| **GLM-5.3 (via Mistral)** `zai-glm-5-3`             | —             | —    | 1M context · $1.40/$4.40 per Mtok · **API key only** — hosted by Mistral but billed to your own key, unlike the `glm-5-3` subscription row above. Added 2026-09-18, renamed `via Mistral` 2026-09-21 when the subscription row landed. Price and window are both **carried forward from GLM-5.2** and not independently verified: Mistral has published no 5.3 page yet, and Z.ai prices its own GLM-5.3 identically. The `zai-` prefix avoids colliding with Devin's own `glm-5-3`. |
 | **Mistral Large 3** `mistral-large-2512`             | —             | —    | 262K context · flagship · $0.50/$1.50 per Mtok.                |
 | **GLM-5.2 (via Mistral)** `zai-glm-5-2`              | —             | —    | 1M context · $1.40/$4.40 per Mtok.                             |
 | **Codestral (Aug 2025)** `codestral-2508`            | —             | —    | 131K context · coding-tuned · $0.30/$0.90 per Mtok.            |

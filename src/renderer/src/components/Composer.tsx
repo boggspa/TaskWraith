@@ -231,6 +231,7 @@ import {
   GROK_46_MODEL_ID,
   cursorGrokBaseModelId,
   isCursorGrokModelId,
+  isGrok47ReasoningModelId,
   isGrokReasoningModelId
 } from '../../../shared/grok45Models'
 
@@ -4075,7 +4076,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           { value: 'low', label: grokReasoningDisplayLabel('low') },
                           { value: 'medium', label: grokReasoningDisplayLabel('medium') },
                           { value: 'high', label: grokReasoningDisplayLabel('high') },
-                          ...(effectiveSelectedModel === GROK_46_MODEL_ID
+                          ...(effectiveSelectedModel === GROK_46_MODEL_ID ||
+                          isGrok47ReasoningModelId(effectiveSelectedModel)
                             ? [
                                 {
                                   value: 'xhigh',

@@ -115,6 +115,7 @@ public enum ContextWindows {
         // across providers, and a plain `glm-5-3` would also capture Devin's
         // own GLM-5.3. Mirrors shared/contextWindows.ts.
         "zai-glm-5-3": 1_000_000,
+        "glm-5-3": 1_000_000,
         "codestral-2508": 131_072,
         "mistral-small-2603": 256_000,
         "devstral-2512": 262_144,
@@ -161,6 +162,8 @@ public enum ContextWindows {
         "kimi-k2.6": 262_144,
         // Grok
         "grok-composer-2.5-fast": 200_000,
+        "grok-4.7": 500_000,
+        "grok-4.7-fast": 500_000,
         "grok-4.6": 500_000,
         "grok-4.5": 500_000,
         "grok-4.5-latest": 500_000,
@@ -263,9 +266,14 @@ public enum ContextWindows {
     static let providerModelOverrides: [String: [String: Int]] = [
         "grok": [
             "grok-4.6": 500_000,
+            "grok-4.7": 500_000,
+            "grok-4.7-fast": 500_000,
         ],
         "cursor": [
             "grok-4.6": 256_000,
+        ],
+        "devin": [
+            "glm-5-3": 262_144,
         ],
     ]
 

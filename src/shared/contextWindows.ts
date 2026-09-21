@@ -89,6 +89,11 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // capture Devin's own GLM-5.3 (devinModelCatalog uses that exact id) and
   // silently widen it from the 262K devin fallback to 1M.
   'zai-glm-5-3': 1_000_000,
+  // Bare `glm-5-3` is the Vibe-subscription GLM-5.3 (added 2026-09-21), mirroring
+  // the `glm-5-2` subscription extra. Window carried forward from 5.2. NOTE:
+  // Devin owns the same bare id — PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES keeps
+  // Devin's row at its 262K fallback so this entry cannot widen it.
+  'glm-5-3': 1_000_000,
   'codestral-2508': 131_072,
   'mistral-small-2603': 256_000,
   'devstral-2512': 262_144,
@@ -176,6 +181,9 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'grok-4.5': 500_000,
   'grok-4.5-latest': 500_000,
   'grok-4.6': 500_000,
+  // Grok 4.7 / 4.7 Fast (added 2026-09-21): window carried forward from 4.6, re-verify against xAI docs.
+  'grok-4.7': 500_000,
+  'grok-4.7-fast': 500_000,
   'grok-build-latest': 500_000,
   'grok-build': 500_000,
   'grok-build-0.1': 500_000,
@@ -280,7 +288,14 @@ const PROVIDER_MODEL_CONTEXT_WINDOW_OVERRIDES: Readonly<
   Partial<Record<ContextWindowProviderId, Readonly<Record<string, number>>>>
 > = {
   grok: {
-    'grok-4.6': 500_000
+    'grok-4.6': 500_000,
+    'grok-4.7': 500_000,
+    'grok-4.7-fast': 500_000
+  },
+  devin: {
+    // Bare `glm-5-3` is shared with Mistral's Vibe-subscription row (global 1M
+    // above); Devin publishes no per-model window, so keep its fallback.
+    'glm-5-3': 262_144
   },
   cursor: {
     'grok-4.6': 256_000,

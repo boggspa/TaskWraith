@@ -53,6 +53,10 @@ const MISTRAL_SUBSCRIPTION_MODELS: ReadonlySet<string> = new Set([
   // strip the key glyph from a BYOK row and tell the user their subscription
   // covers it.
   'glm-5-2',
+  // GLM-5.3 hosted on the Vibe subscription (alias `glm-5-3`, added 2026-09-21),
+  // mirroring the 5.2 subscription extra. Unlike its `zai-` sibling above, this
+  // one IS listed: it runs on the plan, not a key.
+  'glm-5-3',
   // Sunset hosted Devstral — remapped to Medium 3.5 at launch; keep unmarked
   // so a stored id does not suddenly look BYOK.
   'devstral-small',
