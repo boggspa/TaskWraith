@@ -228,11 +228,13 @@ describe('normalizeCliProviderModel (claude)', () => {
     // Opus 5 ships 1M by default with no -1m picker row, but a stray suffixed
     // id (forged/persisted) still strips to the runnable base id.
     expect(normalizeCliProviderModel('claude', 'claude-opus-5-1m')).toBe('claude-opus-5')
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5-5-1m')).toBe('claude-opus-5-5')
   })
 
   it('passes through base claude ids and bare family aliases unchanged', () => {
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-8')).toBe('claude-opus-4-8')
     expect(normalizeCliProviderModel('claude', 'claude-opus-5')).toBe('claude-opus-5')
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5-5')).toBe('claude-opus-5-5')
     for (const alias of ['sonnet', 'opus', 'haiku']) {
       expect(normalizeCliProviderModel('claude', alias)).toBe(alias)
     }
@@ -276,6 +278,7 @@ describe('normalizeCliProviderModel (claude)', () => {
 
 describe('claudeModelSupportsFastMode', () => {
   it('allows supported Opus variants but rejects Fable 5', () => {
+    expect(claudeModelSupportsFastMode('claude-opus-5-5')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-5')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-8-1m')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-7')).toBe(true)
@@ -1059,6 +1062,7 @@ describe('getStaticProviderModels (claude)', () => {
     // Opus 5 is 1M by default — the base id is the picker row.
     expect(ids).toContain('claude-opus-5')
     expect(ids).not.toContain('claude-opus-5-1m')
+    expect(ids).toContain('claude-opus-5-5')
     // Sonnet 5 and Fable 5 are selectable rows; Mythos 5 stays runnable as a
     // historical/tombstoned model but is no longer offered in pickers.
     expect(ids).toContain('claude-sonnet-5')
@@ -1100,6 +1104,7 @@ describe('getStaticProviderModels (claude)', () => {
     })
     // Current models first, then the Legacy cluster — Fable 5 leads it.
     expect(models.map((m) => m.id)).toEqual([
+      'claude-opus-5-5',
       'claude-opus-5',
       'claude-fable-5-1',
       'claude-sonnet-5',
@@ -1113,11 +1118,27 @@ describe('getStaticProviderModels (claude)', () => {
   })
 
   it('keeps the paid Fast tier on supported Opus rows but not Fable 5', () => {
+    expect(byId.get('claude-opus-5-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')
     expect(byId.get('claude-fable-5-1')?.additionalSpeedTiers ?? []).not.toContain('fast')
+  })
+
+  it('offers Opus 5.5 as the leading Claude row on the full Opus ladder with a Medium default', () => {
+    expect(models[0]?.id).toBe('claude-opus-5-5')
+    expect(byId.get('claude-opus-5-5')).toMatchObject({
+      label: 'Opus 5.5',
+      description: '1M context window — adaptive thinking',
+      defaultReasoningEffort: 'medium'
+    })
+    expect(byId.get('claude-opus-5-5')?.isDefault).toBeFalsy()
+    expect(
+      (byId.get('claude-opus-5-5')?.supportedReasoningEfforts ?? [])
+        .filter((option) => !option.disabled)
+        .map((option) => option.reasoningEffort)
+    ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
   })
 
   it('offers family-specific Claude reasoning efforts', () => {

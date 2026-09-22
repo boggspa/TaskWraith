@@ -176,6 +176,27 @@ describe('HostProviderCatalog', () => {
     )
   })
 
+  it('offers Opus 5.5 as the leading Claude row on the full Claude ladder without moving the default', () => {
+    const claude = hostProviderCatalogEntry('claude')
+    expect(claude?.models.map((model) => model.modelId).slice(0, 3)).toEqual([
+      'claude-opus-5-5',
+      'claude-opus-5',
+      'claude-fable-5-1'
+    ])
+    const opus55 = claude?.models.find((model) => model.modelId === 'claude-opus-5-5')
+    expect(opus55).toMatchObject({ label: 'Opus 5.5', available: true })
+    expect(opus55?.default).toBeUndefined()
+    expect(opus55?.reasoning.map((entry) => entry.reasoningId)).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max',
+      'ultracode'
+    ])
+    expect(opus55?.reasoning.every((entry) => entry.available)).toBe(true)
+  })
+
   it('offers Full Access only for transports with an exact verified mapping', () => {
     for (const providerId of hostProviderCatalogIds()) {
       const withoutAuthority = hostProviderCatalogEntry(providerId)?.postures.find(

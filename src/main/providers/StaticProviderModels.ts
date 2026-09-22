@@ -599,6 +599,7 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_FAST_MODE_MODEL_IDS: ReadonlySet<string> = new Set([
   'opus',
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
@@ -627,6 +628,15 @@ export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
 // name, so a prefixed label rendered as "Claude Claude Opus 5". Current
 // models lead; the Legacy cluster (… Legacy) sits below them.
 const CLAUDE_STATIC_MODELS = [
+  {
+    id: 'claude-opus-5-5',
+    label: 'Opus 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
   {
     id: 'claude-opus-5',
     label: 'Opus 5',

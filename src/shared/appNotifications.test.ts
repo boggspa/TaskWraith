@@ -149,10 +149,10 @@ describe('notification registry', () => {
     )
     const groups = newAdditions?.groups ?? []
     expect(groups.map((g) => g.provider)).toEqual([
-      // Kimi leads: K2.8 Preview is the headline launch of this lineup.
+      // Claude leads: Opus 5.5 (2026-09-22) is the headline launch of this lineup.
+      'claude',
       'kimi',
       'codex',
-      'claude',
       'devin',
       'antigravity',
       'grok',
@@ -163,9 +163,9 @@ describe('notification registry', () => {
       'pi'
     ])
     expect(groups.map((g) => g.label)).toEqual([
+      'Claude',
       'Kimi',
       'Codex',
-      'Claude',
       'Devin',
       'AntiGravity',
       'Grok',
@@ -190,11 +190,13 @@ describe('notification registry', () => {
       expect(model.accentProvider).toBeUndefined()
     }
 
-    // Claude is BACK near the top for Fable 5.1 (2026-09-01); Devin is a whole
-    // new seat led by Cognition's own SWE models — never a 'CLI default'.
+    // Claude leads for Opus 5.5 (2026-09-22), with Fable 5.1 (2026-09-01) still
+    // listed beneath it; Devin is a whole new seat led by Cognition's own SWE
+    // models — never a 'CLI default'.
     const claude = groups.find((g) => g.provider === 'claude')
-    expect(claude?.models.map((m) => m.name)).toEqual(['Fable 5.1'])
-    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
+    expect(claude?.models.map((m) => m.name)).toEqual(['Opus 5.5', 'Fable 5.1'])
+    expect(claude?.models[0]?.blurb).toMatch(/1M context.*adaptive thinking.*\$4\/\$20/i)
+    expect(claude?.models[1]?.blurb).toMatch(/1M context.*adaptive thinking.*Legacy/i)
     const devin = groups.find((g) => g.provider === 'devin')
     expect(devin?.models.map((m) => m.name)).toEqual([
       'SWE-2',

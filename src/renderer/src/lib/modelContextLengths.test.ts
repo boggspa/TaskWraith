@@ -46,6 +46,13 @@ describe('buildModelContextLengthGroups', () => {
       contextWindow: 1_000_000,
       formatted: '1.0M'
     })
+    // Opus 5.5 (2026-09-22) is 1M on its base id too, and leads the group.
+    expect(claudeGroup!.models[0]?.modelId).toBe('claude-opus-5-5')
+    expect(claudeGroup!.models.find((m) => m.modelId === 'claude-opus-5-5')).toMatchObject({
+      label: 'Opus 5.5',
+      contextWindow: 1_000_000,
+      formatted: '1.0M'
+    })
   })
 
   it('codex gpt-5.5 resolves to 1.1M (1_050_000)', () => {

@@ -327,6 +327,7 @@ const CODEX_MODELS = withCuratedUltraTaskSupport(CODEX_MODEL_ROWS)
 const CLAUDE_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // Labels omit the "Claude " prefix (provider header/chip already carries
   // it); Legacy cluster below the current models — mirrors the main catalog.
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-opus-5', label: 'Opus 5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
@@ -622,6 +623,7 @@ const CODEX_FAST_CAPABLE = new Set<string>([
 // deliberately keep their full reasoning ladder but do not expose the paid
 // Fast toggle.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8-1m',
   'claude-opus-4-7-1m'

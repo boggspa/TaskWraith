@@ -192,6 +192,21 @@ describe('BAKED_IN_RATES', () => {
     expect(cursorComposer).toBeDefined()
   })
 
+  it('records Claude Opus 5.5 at its launch-day $4/$20 rate with $0.20 cache reads', () => {
+    const claudeRows = BAKED_IN_RATES.claude.models
+    expect(claudeRows.find((model) => model.modelId === 'claude-opus-5-5')).toMatchObject({
+      inputUsdPerMillion: 4,
+      outputUsdPerMillion: 20,
+      cachedInputUsdPerMillion: 0.2,
+      sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing'
+    })
+    // Opus 5 keeps its own $5/$25 row: the two ids must never share a rate by prefix.
+    expect(claudeRows.find((model) => model.modelId === 'claude-opus-5')).toMatchObject({
+      inputUsdPerMillion: 5,
+      outputUsdPerMillion: 25
+    })
+  })
+
   it('records exact Grok 4.7 direct and Cursor API-equivalent tiers', () => {
     const direct = BAKED_IN_RATES.grok.models.find((model) => model.modelId === 'grok-4.6')
     expect(RATE_TABLE_VERSION).toBe('2026-09-02')

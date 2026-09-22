@@ -73,6 +73,39 @@ describe('devinModelCatalog', () => {
     expect(DEVIN_MODEL_LABELS['claude-opus-5-high']).toBe('Claude Opus 5 High')
   })
 
+  it('carries the Claude Opus 5.5 family beside Opus 5 without a prefix collision', () => {
+    // Devin CLI 3000.11.1 enumerates the family (2026-09-22) with the same five
+    // effort variants as Opus 5 and no alias: `opus` still resolves to Opus 5.
+    expect(findDevinCatalogRow('claude-opus-5-5')).toMatchObject({
+      label: 'Claude Opus 5.5',
+      familySlug: 'claude-opus-5.5',
+      aliases: [],
+      vendor: 'Anthropic',
+      defaultEffort: 'medium',
+      pricing: { input: 5, cachedInput: 0.5, output: 25 },
+      isNew: true
+    })
+    expect(findDevinCatalogRow('claude-opus-5')?.aliases).toEqual(['opus'])
+    expect(devinReasoningEfforts('claude-opus-5-5')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
+    expect(devinDefaultReasoningEffort('claude-opus-5-5')).toBe('medium')
+    expect(DEVIN_MODEL_LABELS['claude-opus-5-5']).toBe('Claude Opus 5.5')
+    expect(DEVIN_MODEL_LABELS['claude-opus-5-5-max']).toBe('Claude Opus 5.5 Max')
+    // `claude-opus-5-5-high` starts with `claude-opus-5`: every fold must stay exact.
+    expect(resolveDevinVariantId('claude-opus-5-5', 'high')).toBe('claude-opus-5-5-high')
+    expect(resolveDevinVariantId('claude-opus-5-5', null)).toBe('claude-opus-5-5-medium')
+    expect(resolveDevinVariantId('claude-opus-5', 'high')).toBe('claude-opus-5-high')
+    expect(normalizeDevinModelId('claude-opus-5-5-xhigh')).toBe('claude-opus-5-5')
+    expect(normalizeDevinModelId('claude-opus-5-xhigh')).toBe('claude-opus-5')
+    expect(findDevinVariant('claude-opus-5-5-low')?.family.id).toBe('claude-opus-5-5')
+    expect(isDevinCatalogModelId('claude-opus-5-5')).toBe(true)
+  })
+
   it('omits speed-tier duplicates and opaque legacy uids', () => {
     const uids = DEVIN_MODEL_CATALOG.flatMap((family) => family.variants.map((v) => v.uid))
     for (const uid of uids) {

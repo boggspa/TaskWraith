@@ -68,6 +68,7 @@ keep their labels.
 
 | Model                                               | Reasoning                                       | Fast   | Notes                                                  |
 | --------------------------------------------------- | ----------------------------------------------- | ------ | ------------------------------------------------------ |
+| **Opus 5.5** `claude-opus-5-5`                      | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, always-on adaptive thinking.    |
 | **Opus 5** `claude-opus-5`                          | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, adaptive thinking.              |
 | **Fable 5.1** `claude-fable-5-1`                    | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking.                         |
 | **Sonnet 5** `claude-sonnet-5` **(Default)**        | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, extended thinking.                         |
@@ -76,6 +77,10 @@ keep their labels.
 | **Opus 4.8 1M Legacy** `claude-opus-4-8-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus, extended thinking.             |
 | **Opus 4.7 1M Legacy** `claude-opus-4-7-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus.                                |
 | **Haiku 4.5** `claude-haiku-4-5`                    | —                                               | —      | Fast and efficient; no configurable reasoning control. |
+
+Opus 5.5 (released 2026-09-22; $4 / $20 per 1M tokens, cache reads $0.20) dispatches
+only through Claude Code 2.1.280 or newer: 2.1.276 rejects the id with
+`claude_code_version_too_old`. Opus 5 keeps its row and label.
 
 <table>
   <tr>
@@ -262,6 +267,7 @@ llama-server.
 | **SWE-1.7 Lightning** `swe-1-7-lightning` | Cognition | Medium · **Max** | $2.5 / $12.5 | Held the `swe` alias until 3000.6.14 moved it to SWE-2; the CLI now lists this family with no aliases |
 | **Adaptive** `adaptive` | Cognition | — | $0.5 / $2 | Cognition's model router; enterprise admins must enable it |
 | **Claude Fable 5.1** `claude-fable-5-1` | Anthropic | Low · **Medium** · High · Extra High · Max | $10 / $50 | new |
+| **Claude Opus 5.5** `claude-opus-5-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | new; Devin's own list price (Anthropic bills $4 / $20 first-party). `opus` still resolves to Opus 5 |
 | **Claude Opus 5** `claude-opus-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $5 / $25 | `opus` alias resolves here |
 | **Claude Sonnet 5** `claude-sonnet-5` | Anthropic | Low · **Medium** · High · Extra High · Max | $2 / $10 | `claude` / `sonnet` alias resolves here |
 | **GPT-5.6 Sol** `gpt-5-6-sol` | OpenAI | None · Low · **Medium** · High · Extra High · Max | $4 / $20 | — |
@@ -282,7 +288,8 @@ llama-server.
 | **Nemotron 3 Ultra** `nemotron-3-ultra` | NVIDIA | **None** · Medium · High | $0.6 / $2.4 | — |
 
 Devin's rows are the model families the Devin CLI itself enumerates
-(`devin models list --format json`, CLI 3000.6.7, retrieved 2026-09-01), one
+(`devin models list --format json`, CLI 3000.6.7, retrieved 2026-09-01; Claude Opus
+5.5 from CLI 3000.11.1 on 2026-09-22), one
 picker row per family with the CLI's own label and the list price it showed for
 a self-serve seat; enterprise seats are metered in ACUs instead. A family's
 reasoning column is its variant ladder: the ordinary effort slider picks the

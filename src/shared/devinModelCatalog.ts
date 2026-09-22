@@ -4,7 +4,8 @@
  *
  * Provenance: `devin models list --format json` from Devin CLI 3000.6.14
  * (18033302), retrieved 2026-09-11 on a signed-in self-serve seat; first
- * generated from 3000.6.7 (260a97c8) on 2026-09-01. Every variant `uid` below
+ * generated from 3000.6.7 (260a97c8) on 2026-09-01; the Claude Opus 5.5 family
+ * was added from 3000.11.1 (cc4e349ca55e) on 2026-09-22. Every variant `uid` below
  * is a `model_uid` from that output — the exact value `devin acp --model <uid>`
  * receives — and every label is the CLI's own.
  *
@@ -24,6 +25,9 @@
  *     Haiku 4.5, Fable 5, GPT-4.1 / 5.1 / 5.2 / 5.4 / 5.4 Mini / 5.5, Gemini 3
  *     / 3.1 Pro / 3.5 / 3.6, Kimi K2.6 / K2.7) are omitted — several of them
  *     carry opaque `MODEL_PRIVATE_*` uids rather than humanised slugs.
+ *     Claude Opus 5 stays listed beside Opus 5.5 for now: Devin's own `opus`
+ *     alias still resolves to Opus 5 (3000.11.1, 2026-09-22), and dropping a
+ *     picker row is a product decision rather than part of a refresh.
  *   - `-fast` / `-priority` speed-tier variants are omitted: same model,
  *     double the list price. (SWE-1.6 Fast / Slow are distinct families, so
  *     they stay.)
@@ -333,6 +337,56 @@ export const DEVIN_MODEL_CATALOG: readonly DevinModelFamily[] = [
     ],
     defaultEffort: 'medium',
     pricing: { input: 10, cachedInput: 0.25, output: 50 },
+    isNew: true
+  },
+  {
+    // Released 2026-09-22. Devin lists it at its own $5 / $0.5 / $25 rate card
+    // (Anthropic's first-party rate is $4 / $20); the CLI's price is what a
+    // self-serve Devin seat pays, so it is recorded as shown, not corrected.
+    id: 'claude-opus-5-5',
+    label: 'Claude Opus 5.5',
+    familySlug: 'claude-opus-5.5',
+    aliases: [],
+    vendor: 'Anthropic',
+    variants: [
+      {
+        uid: 'claude-opus-5-5-medium',
+        label: 'Claude Opus 5.5 Medium',
+        effort: 'medium',
+        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        isNew: true
+      },
+      {
+        uid: 'claude-opus-5-5-low',
+        label: 'Claude Opus 5.5 Low',
+        effort: 'low',
+        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        isNew: true
+      },
+      {
+        uid: 'claude-opus-5-5-high',
+        label: 'Claude Opus 5.5 High',
+        effort: 'high',
+        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        isNew: true
+      },
+      {
+        uid: 'claude-opus-5-5-xhigh',
+        label: 'Claude Opus 5.5 XHigh',
+        effort: 'xhigh',
+        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        isNew: true
+      },
+      {
+        uid: 'claude-opus-5-5-max',
+        label: 'Claude Opus 5.5 Max',
+        effort: 'max',
+        pricing: { input: 5, cachedInput: 0.5, output: 25 },
+        isNew: true
+      }
+    ],
+    defaultEffort: 'medium',
+    pricing: { input: 5, cachedInput: 0.5, output: 25 },
     isNew: true
   },
   {

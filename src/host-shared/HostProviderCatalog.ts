@@ -302,6 +302,9 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Claude',
       shortCode: 'CL',
       models: [
+        // Opus 5.5 (released 2026-09-22) leads the Claude offers; Opus 5 keeps
+        // the requested default flag until that default is moved on purpose.
+        model('claude-opus-5-5', 'Opus 5.5', CLAUDE_REASONING),
         model('claude-opus-5', 'Opus 5', CLAUDE_REASONING, true),
         model('claude-fable-5-1', 'Fable 5.1', CLAUDE_REASONING),
         model('claude-sonnet-5', 'Sonnet 5', CLAUDE_REASONING),

@@ -408,10 +408,10 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      // Kimi leads the lineup from the K2.8 Preview rollout (2026-09-11).
+      // Claude leads the lineup from the Opus 5.5 release (2026-09-22).
+      'claude',
       'kimi',
       'codex',
-      'claude',
       'devin',
       'antigravity',
       'grok',
@@ -426,7 +426,7 @@ describe('buildRemoteFirstLaunchState', () => {
     ).toEqual(['K2.8 Preview', 'K2.7 Code Highspeed'])
     expect(
       newAdditions?.groups?.find((group) => group.provider === 'claude')?.models[0]?.name
-    ).toBe('Fable 5.1')
+    ).toBe('Opus 5.5')
     expect(newAdditions?.groups?.find((group) => group.provider === 'devin')?.models[0]?.name).toBe(
       'SWE-2'
     )

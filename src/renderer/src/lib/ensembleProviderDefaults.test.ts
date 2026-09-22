@@ -1018,8 +1018,12 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.label).toBe(
       'Fable 5 Legacy'
     )
+    expect(claude.modelOptions.find((option) => option.id === 'claude-opus-5-5')?.label).toBe(
+      'Opus 5.5'
+    )
     // Current models first, the Legacy cluster (Fable 5 and 4.8 1M among them) below.
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
+      'claude-opus-5-5',
       'claude-opus-5',
       'claude-fable-5-1',
       'claude-sonnet-5',
@@ -1030,6 +1034,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-haiku-4-5'
     ])
     expect(claude.defaultModelId).toBe('claude-sonnet-5')
+    expect(claude.fastModeCapableModelIds.has('claude-opus-5-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-8-1m')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-7-1m')).toBe(true)

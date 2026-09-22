@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveContextWindow } from './contextWindows'
+import { knownModelContextWindow, resolveContextWindow } from './contextWindows'
 
 interface ParsedEntry {
   key: string
@@ -139,5 +139,14 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
 
   it('keeps live Ollama limits ahead of the global model table', () => {
     expect(resolveContextWindow('ollama', 'grok-4.5', undefined, 192_000)).toBe(192_000)
+  })
+
+  it('carries the 1M default window for Claude Opus 5.5 on its base id', () => {
+    // Pinned on the table itself as well as `resolve`: the Claude provider
+    // fallback is 200_000, so a dropped row would resolve to a plausible 200K
+    // window instead of failing loudly.
+    expect(knownModelContextWindow('claude-opus-5-5')).toBe(1_000_000)
+    expect(resolveContextWindow('claude', 'claude-opus-5-5')).toBe(1_000_000)
+    expect(knownModelContextWindow('claude-opus-5-5-1m')).toBeUndefined()
   })
 })

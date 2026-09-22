@@ -95,9 +95,9 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'claude':
       return {
         providerLabel: 'Claude',
-        // Opus 5 (launched 2026-07-24) leads the Claude picker; keep the
+        // Opus 5.5 (released 2026-09-22) leads the Claude picker; keep the
         // preview in step with the live composer chip.
-        modelLabel: 'Opus 5',
+        modelLabel: 'Opus 5.5',
         permissionLabel: 'Plan',
         placeholder: 'Describe a task or ask a question'
       }
@@ -195,7 +195,7 @@ function previewModelIdForStyle(style: ComposerStyle): string {
     case 'chatgpt':
       return 'gpt-5.5'
     case 'claude':
-      return 'claude-opus-5'
+      return 'claude-opus-5-5'
     case 'cursor':
       return 'composer-2.5'
     case 'grok':

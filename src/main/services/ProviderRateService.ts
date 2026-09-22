@@ -454,6 +454,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
           'Project Glasswing limited-availability 1M-context model with adaptive thinking. Published rate $10/$50.'
       },
       {
+        modelId: 'claude-opus-5-5',
+        inputUsdPerMillion: 4.0,
+        outputUsdPerMillion: 20.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://platform.claude.com/docs/en/about-claude/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Current-gen Opus, released 2026-09-22 at $4/$20 (platform pricing page, read the same day). Cache reads are $0.20/MTok (0.05x input). 1M context is the default — no -1m variant. Fast mode bills 2x ($8/$40) upstream; table keeps the standard tier.'
+      },
+      {
         modelId: 'claude-opus-5',
         inputUsdPerMillion: 5.0,
         outputUsdPerMillion: 25.0,
@@ -461,7 +471,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://www.anthropic.com/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current-gen Opus, launched 2026-07-24 at Opus 4.8 pricing ($5/$25). 1M context is the default — no -1m variant. Fast mode bills 2x ($10/$50) upstream; table keeps the standard tier.'
+          'Previous-gen Opus as of Opus 5.5 (2026-09-22); launched 2026-07-24 at Opus 4.8 pricing ($5/$25). 1M context is the default — no -1m variant. Fast mode bills 2x ($10/$50) upstream; table keeps the standard tier.'
       },
       {
         modelId: 'claude-opus-4-8',

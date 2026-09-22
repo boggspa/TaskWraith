@@ -230,6 +230,14 @@ const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 // see StaticProviderModels.ts); Legacy cluster sits below the current models.
 const CLAUDE_DEFAULT_MODEL_ROWS = [
   {
+    id: 'claude-opus-5-5',
+    label: 'Opus 5.5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     id: 'claude-opus-5',
     label: 'Opus 5',
     description: '1M context window — adaptive thinking',
@@ -901,6 +909,7 @@ const CLAUDE_MODEL_IDS = new Set([
   'fable',
   'mythos',
   'custom',
+  'claude-opus-5-5',
   'claude-opus-5',
   'claude-opus-4-8-1m',
   'claude-fable-5-1',
