@@ -118,10 +118,20 @@ export class ExecutionGraphRecoveryController {
     }
     if (executionIds.length === 0) return paused
     const retried = coordinator.recoverExecutions(executionIds)
-    const next = Object.freeze([
-      ...paused.filter((diagnostic) => !executionIds.includes(diagnostic.executionId)),
-      ...retried
-    ])
+    // Merge in place: a stack that is still paused keeps its position, so the
+    // renderer's notice order (and the card the user is looking at) holds
+    // still across a retry; a resolved stack simply drops out.
+    const retriedById = new Map(retried.map((diagnostic) => [diagnostic.executionId, diagnostic]))
+    const merged = new Set<string>()
+    const next = Object.freeze(
+      paused.flatMap((diagnostic) => {
+        if (!executionIds.includes(diagnostic.executionId)) return [diagnostic]
+        if (merged.has(diagnostic.executionId)) return []
+        merged.add(diagnostic.executionId)
+        const fresh = retriedById.get(diagnostic.executionId)
+        return fresh ? [fresh] : []
+      })
+    )
     this.deps.writeDiagnostics(next)
     for (const diagnostic of retried) {
       this.log(

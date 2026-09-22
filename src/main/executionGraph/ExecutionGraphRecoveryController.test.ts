@@ -90,7 +90,7 @@ describe('ExecutionGraphRecoveryController', () => {
     expect(h.read()).toEqual([diagnostic('a')])
   })
 
-  it('retries one paused execution and keeps the others as reported', () => {
+  it('retries one paused execution and keeps every diagnostic in place', () => {
     const h = harness({
       startup: [diagnostic('a'), diagnostic('b')],
       retried: [diagnostic('a', 'still refused')]
@@ -100,7 +100,8 @@ describe('ExecutionGraphRecoveryController', () => {
     const next = h.controller.retry({ executionId: 'a' })
 
     expect(h.coordinator.recoverExecutions).toHaveBeenCalledWith(['a'])
-    expect(next).toEqual([diagnostic('b'), diagnostic('a', 'still refused')])
+    // Still paused: same position, fresh message — the visible card must not swap.
+    expect(next).toEqual([diagnostic('a', 'still refused'), diagnostic('b')])
     expect(h.read()).toEqual(next)
     expect(h.log).toHaveBeenCalledWith(
       '[ExecutionGraph] recovery retry still paused for executionId=a: still refused'
