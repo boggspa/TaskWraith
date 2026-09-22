@@ -228,6 +228,51 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
     expect(provesQueuedStartEffects(effects, startIdentity())).toBe(true)
   })
 
+  it('binds a foreign run entity as evidence and refuses one sitting on another thread', () => {
+    const bound = { ...startIdentity(), runEntityId: 'app-run-9' }
+    const before = emptyFamilies()
+
+    // Positive control: the bound row on the TARGET thread proves the start,
+    // and the batch is published under the run's own id — never re-keyed to
+    // the commandId, which is the identity paired devices navigate by.
+    const onTarget = startEffects(
+      before,
+      { ...emptyFamilies(), runs: [runRow('app-run-9')], threads: [startedThread()] },
+      bound
+    )
+    expect(onTarget).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'upsert', family: 'run', entityId: 'app-run-9' }),
+        expect.objectContaining({ kind: 'upsert', family: 'thread', entityId: 'thread-1' })
+      ])
+    )
+    expect(onTarget.some((effect) => effect.entityId === 'cmd-1')).toBe(false)
+    expect(provesQueuedStartEffects(onTarget, bound)).toBe(true)
+
+    // Negative control: SAME id, another thread. Scoping normally strips such
+    // a row before the diff sees it, so this is pinned here — at the function
+    // that must fail closed even when handed one.
+    const foreignThreadRow = {
+      ...runRow('app-run-9'),
+      threadId: 'thread-other'
+    } as HostMutationObservationFamilies['runs'][number]
+    const offTarget = startEffects(
+      before,
+      { ...emptyFamilies(), runs: [foreignThreadRow], threads: [startedThread()] },
+      bound
+    )
+    expect(offTarget.some((effect) => effect.family === 'run')).toBe(false)
+    // Nor is a stranger's row retracted under our authority.
+    expect(offTarget.some((effect) => effect.kind === 'tombstone')).toBe(false)
+    expect(provesQueuedStartEffects(offTarget, bound)).toBe(false)
+
+    // An unbound identity is untouched: still looked up by commandId, and a
+    // bound identity cannot claim that batch.
+    const unbound = startEffects(before, startedAfter(), startIdentity())
+    expect(provesQueuedStartEffects(unbound, startIdentity())).toBe(true)
+    expect(provesQueuedStartEffects(unbound, bound)).toBe(false)
+  })
+
   it('does not treat a run-only or thread-only diff as complete start proof', () => {
     const before = emptyFamilies()
     const runOnly = startEffects(before, { ...emptyFamilies(), runs: [runRow('cmd-1')] })
@@ -738,10 +783,18 @@ describe('residuals', () => {
     const publication = readFileSync(join(__dirname, 'HostQueuedStartPublication.ts'), 'utf8')
     expect(store).toContain('updatePhase(')
     expect(projection).toContain('candidate.phase = record.phase')
-    const onStarted = publication.slice(
-      publication.indexOf('onStarted(view)'),
-      publication.indexOf('completeStart(commandId)')
-    )
+    // Anchor integrity first. This slice used to end at the literal
+    // `completeStart(commandId)`; adding a second parameter made that indexOf
+    // return -1, so the slice silently ran to end-of-file and swallowed
+    // completeStart's body — inverting the guard instead of reddening it.
+    // Both offsets are now asserted, and the closing anchor is searched from
+    // the opening one so the factory's type declaration cannot match first.
+    const onStartedAt = publication.indexOf('onStarted(view)')
+    expect(onStartedAt).toBeGreaterThan(-1)
+    const completeStartAt = publication.indexOf('completeStart(commandId', onStartedAt)
+    expect(completeStartAt).toBeGreaterThan(onStartedAt)
+    const onStarted = publication.slice(onStartedAt, completeStartAt)
+    expect(onStarted).toContain('Witness only')
     expect(onStarted).not.toContain("advancePhase(input, 'started')")
     expect(publication).toContain("const phase = advancePhase(input, 'started')")
   })

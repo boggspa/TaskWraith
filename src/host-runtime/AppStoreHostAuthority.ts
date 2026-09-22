@@ -118,6 +118,7 @@ import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import { projectHostSnapshot, type HostSnapshotProjectorInput } from './HostSnapshotProjector'
 import {
   createHostQueuedStartPublication,
+  type HostQueuedStartEntities,
   type HostQueuedStartPublicationRegisterInput,
   type HostQueuedStartStartedView
 } from './HostQueuedStartPublication'
@@ -1092,8 +1093,16 @@ export class AppStoreHostAuthority implements HostAuthority {
    * start effects on the projection queue; any other outcome terminalizes the
    * original pending receipt. Never mints a second receipt.
    */
-  handleQueuedStartDispatchSettled(commandId: string, result: HostCommandExecutionResult): void {
-    if (result.status === 'succeeded') this.queuedStartPublication?.completeStart(commandId)
+  handleQueuedStartDispatchSettled(
+    commandId: string,
+    result: HostCommandExecutionResult,
+    startEntities?: HostQueuedStartEntities
+  ): void {
+    // Start evidence travels ONLY with a persist-proven success. Failed and
+    // cancelled dispatches terminalize exactly as before: binding a run row to
+    // a non-start would let a route claim proof it never earned.
+    if (result.status === 'succeeded')
+      this.queuedStartPublication?.completeStart(commandId, startEntities)
     else this.queuedStartPublication?.fail(commandId, result)
   }
 

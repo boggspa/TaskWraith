@@ -2138,6 +2138,189 @@ describe('AppStoreHostAuthority', () => {
     })
   })
 
+  // A-prime: the in-main Bridge route persists its run under its own appRunId,
+  // never under the commandId. The settled dispatch binds that row as
+  // evidence; without the binding the start is unproven and must fail closed.
+  describe('bound run entity (in-main route)', () => {
+    const BRIDGE_RUN_ID = 'app-run-bridge'
+
+    function openWithForeignRunRow(
+      send: HostCommand,
+      options: { readonly runThreadId: string }
+    ): { authority: ReturnType<typeof open>; start: () => Promise<void> } {
+      let contaminate = false
+      let ackEntered = false
+      let releaseAck!: () => void
+      const hungAck = new Promise<{ status: 'succeeded'; resultSummary: string }>((resolve) => {
+        releaseAck = () => resolve({ status: 'succeeded', resultSummary: 'run_queued' })
+      })
+      const authority = open({
+        ports: {
+          queuedComposerSend: () => {
+            ackEntered = true
+            return hungAck
+          },
+          snapshotDonor: () =>
+            donorFamilies({
+              threads: [
+                {
+                  id: 'thread-1',
+                  ...(contaminate ? { messageCount: 1, updatedAt: 2 } : {})
+                } as AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+              ],
+              runs: contaminate
+                ? [
+                    {
+                      runId: BRIDGE_RUN_ID,
+                      threadId: options.runThreadId,
+                      providerId: 'codex',
+                      providerOutcome: 'running'
+                    } as AppStoreHostAuthoritySnapshotDonorFamilies['runs'][number]
+                  ]
+                : []
+            })
+        }
+      })
+      return {
+        authority,
+        start: async () => {
+          const commandPromise = authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+          await vi.waitFor(() => expect(ackEntered).toBe(true))
+          contaminate = true
+          releaseAck()
+          await expect(commandPromise).resolves.toMatchObject({
+            ok: true,
+            value: { status: 'pending' }
+          })
+        }
+      }
+    }
+
+    const receiptOf = (commandId: string) =>
+      runtime.receiptStore.getByCommandId(commandId, {
+        actorId: ACTOR_A.actorId,
+        clientId: ACTOR_A.clientId,
+        clientClass: ACTOR_A.clientClass
+      })
+
+    it('stays incoherent when the settlement binds no run entity', async () => {
+      const send = makeCommand({
+        commandId: 'a1a1a1a1-a1a1-4a1a-8a1a-a1a1a1a1a1a1',
+        idempotencyKey: 'queued-unbound-run-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      const { authority, start } = openWithForeignRunRow(send, { runThreadId: 'thread-1' })
+      await start()
+
+      authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+      await authority.drainQueuedStartPublication()
+
+      // The only run row carries a foreign id, so the commandId lookup finds
+      // nothing and the start is not proven.
+      expect(receiptOf(send.commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'indeterminate', errorCode: 'observation_diff_incoherent' }
+      })
+    })
+
+    it('succeeds and publishes the foreign run row when the settlement binds it', async () => {
+      const send = makeCommand({
+        commandId: 'b2b2b2b2-b2b2-4b2b-8b2b-b2b2b2b2b2b2',
+        idempotencyKey: 'queued-bound-run-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      const { authority, start } = openWithForeignRunRow(send, { runThreadId: 'thread-1' })
+      await start()
+
+      const positionBefore = runtime.getPosition()
+      authority.handleQueuedStartDispatchSettled(
+        send.commandId,
+        { status: 'succeeded' },
+        { runEntityId: BRIDGE_RUN_ID }
+      )
+      await authority.drainQueuedStartPublication()
+
+      expect(receiptOf(send.commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'succeeded' }
+      })
+      const deltaResult = runtime.deltaStore.since(positionBefore)
+      expect(deltaResult).toMatchObject({
+        kind: 'deltas',
+        deltas: expect.arrayContaining([
+          expect.objectContaining({ family: 'run', entityId: BRIDGE_RUN_ID, kind: 'upsert' }),
+          expect.objectContaining({ family: 'thread', entityId: 'thread-1', kind: 'upsert' })
+        ])
+      })
+      // Evidence, not identity: no row is published under the commandId.
+      expect(
+        deltaResult.kind === 'deltas' &&
+          deltaResult.deltas.some((delta) => delta.entityId === send.commandId)
+      ).toBe(false)
+    })
+
+    // End-to-end this is carried by the command scope, which strips the
+    // foreign-thread run before the diff runs. The coordinator's own
+    // fail-closed branch is pinned directly in HostQueuedStartPublication.test.
+    it('cannot borrow another thread’s run row for a bound entity', async () => {
+      const send = makeCommand({
+        commandId: 'c3c3c3c3-c3c3-4c3c-8c3c-c3c3c3c3c3c3',
+        idempotencyKey: 'queued-bound-foreign-thread-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      const { authority, start } = openWithForeignRunRow(send, { runThreadId: 'thread-other' })
+      await start()
+
+      authority.handleQueuedStartDispatchSettled(
+        send.commandId,
+        { status: 'succeeded' },
+        { runEntityId: BRIDGE_RUN_ID }
+      )
+      await authority.drainQueuedStartPublication()
+
+      // Matching the id alone would let another thread's run stand as this
+      // start's proof.
+      expect(receiptOf(send.commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'indeterminate', errorCode: 'observation_diff_incoherent' }
+      })
+    })
+
+    it('ignores bound evidence on a failed settlement and terminalizes as before', async () => {
+      const send = makeCommand({
+        commandId: 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4',
+        idempotencyKey: 'queued-bound-failed-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      const { authority, start } = openWithForeignRunRow(send, { runThreadId: 'thread-1' })
+      await start()
+
+      authority.handleQueuedStartDispatchSettled(
+        send.commandId,
+        { status: 'failed', errorCode: 'provider_rejected' },
+        { runEntityId: BRIDGE_RUN_ID }
+      )
+      await authority.drainQueuedStartPublication()
+
+      expect(receiptOf(send.commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'failed', errorCode: 'provider_rejected' }
+      })
+    })
+  })
+
   it('without queuedComposerSend, composer.send still uses the observed executor (flag-off equivalent)', async () => {
     const authority = open()
     const send = makeCommand({

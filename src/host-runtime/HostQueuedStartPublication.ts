@@ -12,9 +12,12 @@
  * running row and that user message. The coordinator therefore completes
  * only after DomainPorts reports a settled dispatch that already waited for
  * that persist boundary, then publishes the correlated start upserts:
- * the run whose entityId is this commandId, and the thread whose entityId
- * is command.target.threadId — plus the round whose entityId is the
- * register input's roundId for ensemble starts. Success requires every
+ * the run whose entityId is this commandId — or, when the settled dispatch
+ * BINDS one, the run row it actually persisted — and the thread whose
+ * entityId is command.target.threadId, plus the round whose entityId is the
+ * register input's roundId for ensemble starts. A bound run entity is
+ * evidence only (see HostQueuedStartEffectIdentity.runEntityId) and must
+ * still sit on the target thread. Success requires every
  * admitted upsert (Domain's persist proof is the run row plus the user
  * message, which the thread projection carries as messageCount/updatedAt).
  * Other same-thread runs are not
@@ -125,7 +128,9 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'denied', 'cancelled',
 /**
  * composer.send start persists a run row and the user prompt on the thread
  * record. The publisher emits only those rows: run entityId === commandId
- * and thread entityId === command.target.threadId. Success requires both
+ * (or the run entity the settled dispatch bound, which must still belong to
+ * the target thread) and thread entityId === command.target.threadId.
+ * Success requires both
  * upserts; a run-only batch is incomplete. Ensemble starts additionally
  * persist their round row: when the register input carries a roundId, the
  * publisher emits that third row (round entityId === roundId) and success
@@ -204,6 +209,39 @@ export interface HostQueuedStartEffectIdentity {
   readonly threadId: string
   /** Ensemble starts only. Absent for solo starts, which admit no round row. */
   readonly roundId?: string
+  /**
+   * The run row this start is proven by, when it is NOT the commandId.
+   *
+   * EVIDENCE, NEVER IDENTITY. The standalone route runs the provider under
+   * `runId === commandId`, so it binds nothing and keeps today's lookup. The
+   * in-main Bridge route allocates its own `appRunId` before a Host command
+   * exists, and that id is the wire identity every paired device navigates by,
+   * so it cannot be re-keyed to the commandId. Instead the settled dispatch
+   * BINDS the row it actually persisted.
+   *
+   * Because it is evidence it never reaches `fingerprintHostCommand`, the
+   * receipt, the register input or any phase view, and it is honoured only
+   * while the original receipt is still pending here. It can therefore never
+   * mint, re-key or resurrect authority.
+   */
+  readonly runEntityId?: string
+}
+
+/**
+ * The one resolution the diff and the proof must agree on. Keeping it in a
+ * single function is what stops the two sides drifting into a state where the
+ * batch is emitted for one run row and proven against another.
+ */
+function resolveRunEntityId(identity: HostQueuedStartEffectIdentity): string {
+  return identity.runEntityId ?? identity.commandId
+}
+
+/**
+ * Start evidence a settled dispatch may bind for THIS commandId. Optional and
+ * additive: omitting it reproduces the standalone lookup exactly.
+ */
+export interface HostQueuedStartEntities {
+  readonly runEntityId?: string
 }
 
 function uniqueRowWithId(
@@ -241,7 +279,7 @@ export function diffScopedStartEffects(
   for (const spec of START_EFFECT_FAMILY_SPECS) {
     const entityId =
       spec.family === 'run'
-        ? identity.commandId
+        ? resolveRunEntityId(identity)
         : spec.family === 'thread'
           ? identity.threadId
           : identity.roundId
@@ -255,6 +293,20 @@ export function diffScopedStartEffects(
     }
     const leftRow = left.kind === 'one' ? left.row : undefined
     const rightRow = right.kind === 'one' ? right.row : undefined
+    // A BOUND run entity is a foreign id: it was minted outside this command,
+    // so matching the id alone would admit another thread's run as this
+    // start's proof. Require the row to sit on the target thread, and emit
+    // nothing when it does not — no upsert (so the proof fails closed) and no
+    // tombstone (so a stranger's row is never retracted under our authority).
+    // The standalone route binds nothing and is untouched by this branch.
+    if (
+      spec.family === 'run' &&
+      identity.runEntityId !== undefined &&
+      rightRow !== undefined &&
+      idOf(rightRow, 'threadId') !== identity.threadId
+    ) {
+      continue
+    }
     if (!leftRow && rightRow) effects.push(upsert(spec.family, entityId, rightRow))
     else if (leftRow && !rightRow) effects.push(tombstone(spec.family, entityId))
     else if (leftRow && rightRow && JSON.stringify(leftRow) !== JSON.stringify(rightRow)) {
@@ -273,9 +325,10 @@ export function provesQueuedStartEffects(
   effects: readonly HostDomainEffectDto[],
   identity: HostQueuedStartEffectIdentity
 ): boolean {
+  const runEntityId = resolveRunEntityId(identity)
   const runUpsert = effects.some(
     (effect) =>
-      effect.family === 'run' && effect.kind === 'upsert' && effect.entityId === identity.commandId
+      effect.family === 'run' && effect.kind === 'upsert' && effect.entityId === runEntityId
   )
   const threadUpsert = effects.some(
     (effect) =>
@@ -331,7 +384,7 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
   markQueued(commandId: string): HostQueuedStartPublicationOutcome
   onStarting(view: HostQueuedStartStartedView): HostQueuedStartPublicationOutcome
   onStarted(view: HostQueuedStartStartedView): void
-  completeStart(commandId: string): void
+  completeStart(commandId: string, startEntities?: HostQueuedStartEntities): void
   abort(commandId: string): void
   fail(commandId: string, result: HostCommandExecutionResult): void
   drain(): Promise<void>
@@ -437,7 +490,10 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
     )
   }
 
-  async function publishComplete(input: HostQueuedStartPublicationRegisterInput): Promise<void> {
+  async function publishComplete(
+    input: HostQueuedStartPublicationRegisterInput,
+    startEntities?: HostQueuedStartEntities
+  ): Promise<void> {
     if (!stillPending(input.commandId, input.actor, input.fingerprint)) return
     await runQueue(async () => {
       if (!stillPending(input.commandId, input.actor, input.fingerprint)) return
@@ -456,7 +512,10 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
       const identity: HostQueuedStartEffectIdentity = {
         commandId: input.commandId,
         threadId,
-        ...(input.roundId !== undefined ? { roundId: input.roundId } : {})
+        ...(input.roundId !== undefined ? { roundId: input.roundId } : {}),
+        ...(startEntities?.runEntityId !== undefined
+          ? { runEntityId: startEntities.runEntityId }
+          : {})
       }
       const diffed = diffScopedStartEffects(input.beforeScoped, afterScoped, identity)
       if (diffed.kind !== 'effects' || !provesQueuedStartEffects(diffed.effects, identity)) {
@@ -526,12 +585,16 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
         promote(input.commandId, 'deferred_execution_may_have_begun')
       }
     },
-    completeStart(commandId) {
+    completeStart(commandId, startEntities) {
+      // Pending-only. A late or unknown commandId — a remote-queue re-flush
+      // after a Host restart, for instance — finds no entry and returns
+      // silently: no receipt is touched, so a restart-promoted receipt stays
+      // indeterminate rather than being resurrected by foreign evidence.
       const input = pending.get(commandId)
       if (!input || inFlight.has(commandId)) return
       const phase = advancePhase(input, 'started')
       if (phase.kind !== 'started') return
-      track(commandId, publishComplete(input))
+      track(commandId, publishComplete(input, startEntities))
     },
     abort(commandId) {
       if (!pending.has(commandId)) return
