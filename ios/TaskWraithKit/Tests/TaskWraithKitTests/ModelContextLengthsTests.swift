@@ -345,6 +345,27 @@ struct ModelContextLengthsTests {
         #expect(!models.contains { $0.modelId.hasPrefix("mistral/") })
     }
 
+    // MARK: - Pi group
+
+    @Test("pi group carries exactly one Xiaomi row: the V2.6 Pro (SGP) flagship at 1_048_576 / 1.0M")
+    func piXiaomiFlagshipRow() {
+        // One flagship row per BYOK upstream by design (`options(for: "pi")`).
+        // Xiaomi's current flagship is V2.6 Pro (released 2026-09-22); V2.5 Pro
+        // is legacy until its 2026-10-21 sunset, so the row must not slide back
+        // to it — and a dropped row must not read as "no Xiaomi rows to check",
+        // which is why the whole filtered list is pinned, not a first-match.
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let xiaomiRows = piRows.filter { $0.modelId.hasPrefix("xiaomi-token-plan-") }
+        #expect(xiaomiRows.map(\.modelId) == ["xiaomi-token-plan-sgp/mimo-v2.6-pro"])
+        let row = xiaomiRows.first
+        #expect(row?.label == "MiMo V2.6 Pro (SGP)")
+        #expect(row?.contextWindow == 1_048_576)
+        #expect(row?.formatted == "1.0M")
+    }
+
     // MARK: - Provider order
 
     @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/antigravity/pi/mistral, no ollama")

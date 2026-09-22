@@ -159,6 +159,41 @@ struct ContextWindowsTests {
         }
     }
 
+    @Test("Xiaomi token-plan rows keep the exact 1_048_576 window on every region")
+    func xiaomiTokenPlanWindowsPerRegion() {
+        // Pinned against the table itself as well as `resolve`: the pi provider
+        // fallback is 1_000_000, so a dropped row still resolves to a plausible
+        // 1M window — only the byModel lookup tells a present row from an
+        // absent one. Hand-listed because there is no codegen across the
+        // platform boundary; mirrors CONTEXT_WINDOWS_BY_MODEL in
+        // src/shared/contextWindows.ts. V2.5 and V2.5 Pro stay until Xiaomi's
+        // 2026-10-21 sunset; the V2.6 pair is the current catalogue.
+        let expected = [
+            "xiaomi-token-plan-cn/mimo-v2.5",
+            "xiaomi-token-plan-cn/mimo-v2.5-pro",
+            "xiaomi-token-plan-cn/mimo-v2.6-pro",
+            "xiaomi-token-plan-cn/mimo-v2.6-flash",
+            "xiaomi-token-plan-sgp/mimo-v2.5",
+            "xiaomi-token-plan-sgp/mimo-v2.5-pro",
+            "xiaomi-token-plan-sgp/mimo-v2.6-pro",
+            "xiaomi-token-plan-sgp/mimo-v2.6-flash",
+            "xiaomi-token-plan-ams/mimo-v2.5",
+            "xiaomi-token-plan-ams/mimo-v2.5-pro",
+            "xiaomi-token-plan-ams/mimo-v2.6-pro",
+            "xiaomi-token-plan-ams/mimo-v2.6-flash",
+        ]
+        #expect(expected.count == 12)
+        // If the pi fallback ever moves to 1_048_576 the `resolve` half below
+        // goes vacuous; say so instead of passing quietly.
+        #expect(ContextWindows.providerFallback["pi"] != 1_048_576)
+        for wireId in expected {
+            #expect(
+                ContextWindows.byModel[wireId] == 1_048_576,
+                "missing or drifted window row for \(wireId)")
+            #expect(ContextWindows.resolve(provider: "pi", model: wireId) == 1_048_576)
+        }
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)
