@@ -303,10 +303,7 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
     expect(provesQueuedStartEffects(pair, ensembleIdentity)).toBe(false)
     expect(provesQueuedStartEffects([...pair, roundUpsert], ensembleIdentity)).toBe(true)
     expect(
-      provesQueuedStartEffects(
-        [...pair, { ...roundUpsert, entityId: 'round-2' }],
-        ensembleIdentity
-      )
+      provesQueuedStartEffects([...pair, { ...roundUpsert, entityId: 'round-2' }], ensembleIdentity)
     ).toBe(false)
   })
 
@@ -329,6 +326,8 @@ describe('createHostQueuedStartPublication', () => {
     publish?: HostDomainDeltaPublishResult
     holdQueue?: boolean
     rejectQueue?: boolean
+    /** Ensemble registration: forwarded into the register input as roundId. */
+    roundId?: string
   }) {
     const completes: string[] = []
     const indeterminates: string[] = []
@@ -444,6 +443,7 @@ describe('createHostQueuedStartPublication', () => {
       commandId: 'cmd-1',
       actor,
       fingerprint: 'fp-1',
+      ...(options?.roundId !== undefined ? { roundId: options.roundId } : {}),
       command: command('cmd-1'),
       beforeScoped: emptyFamilies(),
       scope
@@ -674,6 +674,60 @@ describe('createHostQueuedStartPublication', () => {
     expect(published).toEqual([])
     expect(indeterminates).toContain('observation_diff_incoherent')
     expect(publication.pendingCount()).toBe(0)
+  })
+
+  it('publishes the ensemble round upsert beside run + thread and completes the ORIGINAL receipt when registered with a roundId', async () => {
+    const round = { roundId: 'round-1', threadId: 'thread-1' } as never
+    const { publication, completes, indeterminates, published, ports } = setup({
+      roundId: 'round-1',
+      after: startedAfter('cmd-1', { rounds: [round] })
+    })
+    publication.completeStart('cmd-1')
+    await publication.drain()
+    expect(completes).toEqual(['cmd-1'])
+    expect(indeterminates).toEqual([])
+    expect(published).toHaveLength(1)
+    expect(published[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'upsert', family: 'run', entityId: 'cmd-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'thread', entityId: 'thread-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'round', entityId: 'round-1' })
+      ])
+    )
+    expect(published[0]).toHaveLength(3)
+    expect(ports.completeReceipt.mock.calls[0][0]).toMatchObject({
+      commandId: 'cmd-1',
+      status: 'succeeded'
+    })
+    expect(publication.pendingCount()).toBe(0)
+  })
+
+  it('marks an ensemble start incoherent when its round row is absent or another round appears', async () => {
+    for (const rounds of [[], [{ roundId: 'round-2', threadId: 'thread-1' } as never]]) {
+      const { publication, completes, indeterminates, published, ports } = setup({
+        roundId: 'round-1',
+        after: startedAfter('cmd-1', { rounds })
+      })
+      publication.completeStart('cmd-1')
+      await publication.drain()
+      expect(completes).toEqual([])
+      expect(published).toEqual([])
+      expect(ports.publishEffects).not.toHaveBeenCalled()
+      expect(indeterminates).toEqual(['observation_diff_incoherent'])
+      expect(publication.pendingCount()).toBe(0)
+    }
+  })
+
+  it('keeps a solo registration at exactly run + thread when a round row appears in AFTER', async () => {
+    const round = { roundId: 'round-1', threadId: 'thread-1' } as never
+    const { publication, completes, published } = setup({
+      after: startedAfter('cmd-1', { rounds: [round] })
+    })
+    publication.completeStart('cmd-1')
+    await publication.drain()
+    expect(completes).toEqual(['cmd-1'])
+    expect(published[0]).toHaveLength(2)
+    expect(published[0]!.some((effect) => effect.family === 'round')).toBe(false)
   })
 })
 
