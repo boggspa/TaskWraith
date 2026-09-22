@@ -707,6 +707,20 @@ const hostPersistUnconfirmedChatIds = new Set<string>()
 const hostPersistShadowChatIds = new Set<string>()
 
 /**
+ * Last on-disk state a shadow reconcile read and REJECTED, per chat. The
+ * reconcile below reads and normalizes the whole record file, and every
+ * getChat during a Host flight runs it — on a 20MB+ thread that was a
+ * full-file parse per read, 15+ times on a round start alone, pinning main.
+ * The outcome is a pure function of the file and the shadow's revision and
+ * transcript, so while all four are unchanged the answer is still "not
+ * caught up" and the read is skipped. Any Host landing changes the stat.
+ */
+const hostShadowReconcileMissByChatId = new Map<
+  string,
+  { mtimeMs: number; size: number; revision: number; messageCount: number }
+>()
+
+/**
  * Durability barrier for a trust/dispatch edge. The policy lives in
  * hostMaterializationBarrier.ts: the journal delta for the current revision
  * is fsynced before the barrier resolves, the staged checkpoint is only
@@ -6102,7 +6116,26 @@ export class AppStore {
         // freezing the transcript or looping revision conflicts.
         try {
           const stat = fs.statSync(chatPath)
-          const onDiskRaw = readJson<ChatRecord | null>(chatPath, null)
+          const shadowRevision = chatPersistenceRevision(cached.record)
+          const shadowMessageCount = cached.record.messages?.length ?? 0
+          const miss = hostShadowReconcileMissByChatId.get(chatId)
+          const unchangedSinceMiss =
+            miss !== undefined &&
+            miss.mtimeMs === stat.mtimeMs &&
+            miss.size === stat.size &&
+            miss.revision === shadowRevision &&
+            miss.messageCount === shadowMessageCount
+          const onDiskRaw = unchangedSinceMiss
+            ? null
+            : readJson<ChatRecord | null>(chatPath, null)
+          if (!unchangedSinceMiss) {
+            hostShadowReconcileMissByChatId.set(chatId, {
+              mtimeMs: stat.mtimeMs,
+              size: stat.size,
+              revision: shadowRevision,
+              messageCount: shadowMessageCount
+            })
+          }
           if (onDiskRaw) {
             const onDisk = this.normalizeChatRecord(onDiskRaw)
             if (chatPersistenceRevision(onDisk) >= chatPersistenceRevision(cached.record)) {
@@ -6128,6 +6161,7 @@ export class AppStore {
                   record
                 })
                 hostPersistShadowChatIds.delete(chatId)
+                hostShadowReconcileMissByChatId.delete(chatId)
                 return record
               }
             }
@@ -8936,6 +8970,7 @@ export class AppStore {
     hostPersistRebaseByChatId.clear()
     hostPersistUnconfirmedChatIds.clear()
     hostPersistShadowChatIds.clear()
+    hostShadowReconcileMissByChatId.clear()
     hostPersistConflictRecoveryListener = null
   }
 

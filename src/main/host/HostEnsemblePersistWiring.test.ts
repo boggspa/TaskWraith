@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -427,5 +427,39 @@ describe('HostEnsemblePersistWiring', () => {
     const last = enqueued[enqueued.length - 1]
     expect(last.expectedRevision).toBe(3)
     expect((last.record as unknown as { persistenceRevision?: number }).persistenceRevision).toBe(4)
+  })
+  it('does not re-read an unchanged record file while the shadow is ahead of it', async () => {
+    const { AppStore, profilePath } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-shadow-reread'
+    const chatsDir = join(profilePath, 'chats')
+    const chatPath = join(chatsDir, `${chatId}.json`)
+    mkdirSync(chatsDir, { recursive: true, mode: 0o700 })
+    const base = { ...ensembleChatRecord(chatId), chatKind: 'single', ensemble: undefined }
+    // A stale landed file behind the shadow the next save produces.
+    writeFileSync(chatPath, JSON.stringify({ ...base, persistenceRevision: 0 }))
+    chmodSync(chatPath, 0o600)
+    // A whole-second mtime survives the utimes round trip below exactly.
+    const pinned = new Date(Math.floor(Date.now() / 1000) * 1000 - 60_000)
+    utimesSync(chatPath, pinned, pinned)
+    AppStore.saveChat({ ...base, title: 'Shadow' } as never)
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+    // Swap in a caught-up record of IDENTICAL size and mtime. A reconcile that
+    // re-read the file on every getChat would heal to it; the memoized miss
+    // proves the unchanged file is not parsed again.
+    const { size } = statSync(chatPath)
+    const caughtUp = (title: string): string =>
+      JSON.stringify({ ...base, title, persistenceRevision: 99, updatedAt: 3000 })
+    let padded = caughtUp('Landed')
+    padded = caughtUp('Landed' + ' '.repeat(Math.max(0, size - padded.length)))
+    expect(Buffer.byteLength(padded)).toBe(size)
+    writeFileSync(chatPath, padded)
+    utimesSync(chatPath, pinned, pinned)
+    expect(AppStore.getChat(chatId)?.title).toBe('Shadow')
+
+    // Any real landing moves the stat, and the shadow heals on the next read.
+    const later = new Date(pinned.getTime() + 5000)
+    utimesSync(chatPath, later, later)
+    expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
   })
 })
