@@ -21,6 +21,13 @@ export interface OllamaCliSignInRecord {
   readonly updatedAt: string
 }
 
+/**
+ * How one bounded daemon request ended. `timed-out` is OUR deadline firing —
+ * a stalled event loop or a slow daemon, never proof that the daemon is absent
+ * — whereas `refused` is the transport rejecting the connection outright.
+ */
+export type OllamaProbeOutcome = 'answered' | 'refused' | 'timed-out' | 'aborted'
+
 /** The subset of a cloud-discovery snapshot this memory reads and repairs. */
 export interface OllamaCliSignInObservation {
   readonly supported: boolean
@@ -28,6 +35,12 @@ export interface OllamaCliSignInObservation {
   readonly plan?: string
   /** True when a stored API key, not the CLI sign-in, produced `authenticated`. */
   readonly apiKeyConfigured?: boolean
+  /** How the daemon account probe (`POST /api/me`) ended, when it ran. */
+  readonly accountProbe?: OllamaProbeOutcome
+  /** The local daemon served `/api/tags` during this same probe. */
+  readonly localReachable?: boolean
+  /** OUR deadline cut the probe off before the daemon could answer. */
+  readonly timedOut?: boolean
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -79,30 +92,42 @@ export function nextOllamaCliSignInRecord(
 /**
  * True when the memory should stand in for an unknown live answer.
  *
- * `supported` is the guard that keeps this honest. A daemon that answered
- * `/api/status` or the recommendations endpoint but could not complete
- * `/api/me` is transiently unsure about an account that really is signed in; a
- * daemon that is simply not running (or whose transport is paused) reports
- * `supported: false`, and there the card must keep saying so rather than
- * claiming a Cloud connection nothing can serve.
+ * What keeps this honest is evidence that a daemon is PRESENT while only its
+ * account answer is missing:
+ *
+ * - `supported`: another daemon cloud endpoint answered this probe.
+ * - `localReachable`: the daemon served `/api/tags` in this same probe and the
+ *   account probe went unanswered. A daemon that did answer `/api/me` with
+ *   something other than a sign-in state (an older build's 404) is left alone.
+ * - `timedOut` / a `timed-out` account probe: OUR deadline fired. That is a
+ *   stalled main loop or a slow daemon — the relaunch window this memory exists
+ *   for — not a transport refusal.
+ *
+ * A daemon that is simply not running refuses every request, matches none of
+ * these, and the card keeps saying so rather than claiming a Cloud connection
+ * nothing can serve.
  */
 export function shouldApplyRememberedOllamaCliSignIn(
   observation: OllamaCliSignInObservation,
   remembered: OllamaCliSignInRecord | null
 ): boolean {
-  return (
-    remembered?.signedIn === true &&
-    observation.supported === true &&
-    observation.authenticated === null
-  )
+  if (remembered?.signedIn !== true || observation.authenticated !== null) return false
+  if (observation.supported === true) return true
+  if (observation.timedOut === true || observation.accountProbe === 'timed-out') return true
+  return observation.localReachable === true && observation.accountProbe !== 'answered'
 }
 
-/** Repair an unknown-but-supported cloud snapshot from the remembered account. */
+/**
+ * Repair an unknown cloud snapshot from the remembered account. `context`
+ * carries what the snapshot itself cannot see — the local model list's outcome
+ * — and never leaks into the returned snapshot.
+ */
 export function applyRememberedOllamaCliSignIn<T extends OllamaCliSignInObservation>(
   cloud: T,
-  remembered: OllamaCliSignInRecord | null
+  remembered: OllamaCliSignInRecord | null,
+  context: Pick<OllamaCliSignInObservation, 'localReachable' | 'timedOut'> = {}
 ): T & { authenticatedFromMemory?: true } {
-  if (!shouldApplyRememberedOllamaCliSignIn(cloud, remembered)) return cloud
+  if (!shouldApplyRememberedOllamaCliSignIn({ ...cloud, ...context }, remembered)) return cloud
   return {
     ...cloud,
     authenticated: true,

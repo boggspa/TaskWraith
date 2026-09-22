@@ -63,6 +63,7 @@ describe('discoverOllamaCloud', () => {
       supported: true,
       enabled: true,
       authenticated: true,
+      accountProbe: 'answered',
       plan: 'pro',
       source: 'none',
       models: [
@@ -196,7 +197,54 @@ describe('discoverOllamaCloud', () => {
       supported: false,
       enabled: true,
       authenticated: null,
+      accountProbe: 'answered',
       models: []
     })
+  })
+
+  // The gate that lets the remembered CLI sign-in stand in has to tell "no
+  // daemon is there" from "our own deadline fired first": the second is what a
+  // relaunch looks like while main is busy parsing a large chat.
+  it('tells its own deadline apart from a refused connection', async () => {
+    const hangUntilAborted = vi.fn(
+      (_input: string | URL | Request, init?: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          const abort = (): void =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (init?.signal?.aborted) abort()
+          else init?.signal?.addEventListener('abort', abort, { once: true })
+        })
+    ) as unknown as typeof fetch
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', { fetchImpl: hangUntilAborted, timeoutMs: 10 })
+    ).resolves.toEqual({
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'timed-out',
+      models: []
+    })
+
+    const refused = vi.fn(async () => {
+      throw new TypeError('fetch failed')
+    }) as unknown as typeof fetch
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', { fetchImpl: refused })
+    ).resolves.toEqual({
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'refused',
+      models: []
+    })
+
+    const controller = new AbortController()
+    controller.abort()
+    await expect(
+      discoverOllamaCloud('http://127.0.0.1:11434', {
+        fetchImpl: hangUntilAborted,
+        signal: controller.signal
+      })
+    ).resolves.toMatchObject({ authenticated: null, accountProbe: 'aborted' })
   })
 })

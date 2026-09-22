@@ -4180,6 +4180,104 @@ describe('normalizeOllamaModels', () => {
     expect(status.cloud).toMatchObject({ supported: false, authenticated: null })
   })
 
+  // The relaunch window: main is parsing a large chat, so every cloud request
+  // armed on this event loop is refused or cut off mid-stall while `/api/tags`
+  // already proved the daemon is up. That used to score as "no daemon" and
+  // disabled every Cloud row until the next probe.
+  it('repairs the account from memory when the daemon lists models but every cloud endpoint is silent', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags'))
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      throw new TypeError('fetch failed')
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const status = await getOllamaStatusSnapshot({
+      ollamaBaseUrl: 'http://127.0.0.1:11434',
+      ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+    })
+
+    expect(status.available).toBe(true)
+    expect(status.localAvailable).toBe(true)
+    expect(status.cloud).toMatchObject({
+      supported: false,
+      authenticated: true,
+      plan: 'pro',
+      authenticatedFromMemory: true,
+      accountProbe: 'refused'
+    })
+  })
+
+  it('repairs the account from memory when its own /api/tags deadline fires, without claiming the daemon', async () => {
+    vi.useFakeTimers()
+    try {
+      const fetchMock = vi.fn(
+        (_url: string, init?: RequestInit) =>
+          new Promise<never>((_resolve, reject) => {
+            init?.signal?.addEventListener('abort', () =>
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            )
+          })
+      )
+      vi.stubGlobal('fetch', fetchMock)
+
+      const pending = getOllamaStatusSnapshot({
+        ollamaBaseUrl: 'http://127.0.0.1:11434',
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      await vi.advanceTimersByTimeAsync(3_000)
+      const status = await pending
+
+      expect(status.available).toBe(false)
+      expect(status.localAvailable).toBe(false)
+      expect(status.error).toContain('timed out')
+      expect(status.cloud).toMatchObject({
+        supported: false,
+        authenticated: true,
+        plan: 'pro',
+        authenticatedFromMemory: true
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one daemon round trip between concurrent catalog readers and hands each its own rows', async () => {
+    const paths: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      paths.push(new URL(String(url)).pathname)
+      if (String(url).endsWith('/api/tags'))
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      if (String(url).endsWith('/api/status')) return jsonResponse({ cloud: { disabled: false } })
+      if (String(url).endsWith('/api/me')) return jsonResponse({ plan: 'pro' })
+      if (String(url).endsWith('/api/experimental/model-recommendations')) {
+        return jsonResponse({ recommendations: [{ model: 'glm-5.3:cloud' }] })
+      }
+      if (String(url).endsWith('/api/show')) return jsonResponse({})
+      throw new Error(`Unexpected fetch ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const settings = { ollamaBaseUrl: 'http://127.0.0.1:11434' }
+
+    const [first, second] = await Promise.all([
+      fetchOllamaModelCatalog(settings),
+      fetchOllamaModelCatalog(settings)
+    ])
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(1)
+    expect(paths.filter((path) => path === '/api/me')).toHaveLength(1)
+    expect(second).toEqual(first)
+    expect(second.models).not.toBe(first.models)
+    expect(second.models[0]).not.toBe(first.models[0])
+    expect(second.cloud.models[0]).not.toBe(first.cloud.models[0])
+
+    // Status readers ride the same flight, and a later read is a fresh probe.
+    await Promise.all([getOllamaStatusSnapshot(settings), getOllamaStatusSnapshot(settings)])
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(2)
+    expect(paths.filter((path) => path === '/api/me')).toHaveLength(2)
+    await getOllamaStatusSnapshot(settings)
+    expect(paths.filter((path) => path === '/api/tags')).toHaveLength(3)
+  })
+
   it('lets a live signed-out answer beat the remembered sign-in', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).endsWith('/api/tags')) return jsonResponse({ models: [] })

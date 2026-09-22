@@ -129,10 +129,82 @@ describe('applyRememberedOllamaCliSignIn', () => {
     })
   })
 
-  // An unreachable daemon must not read as a live Cloud connection.
-  it('leaves an unsupported snapshot alone', () => {
-    const cloud = { supported: false, enabled: true, authenticated: null, models: [] }
+  // An absent daemon refuses every request: none of the arms below may fire,
+  // and the card keeps saying so rather than claiming a Cloud connection.
+  it('leaves an unsupported snapshot alone when the daemon refused the probe', () => {
+    const cloud = {
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'refused' as const,
+      models: []
+    }
     expect(applyRememberedOllamaCliSignIn(cloud, signedIn('pro'))).toBe(cloud)
+    expect(
+      applyRememberedOllamaCliSignIn(cloud, signedIn('pro'), {
+        localReachable: false,
+        timedOut: false
+      })
+    ).toBe(cloud)
+  })
+
+  // The relaunch window: `/api/tags` answered, so the daemon is provably up,
+  // and the account probe was cut off or refused mid-stall rather than answered.
+  it('answers from memory when the daemon served its model list but no cloud endpoint', () => {
+    const cloud = {
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'refused' as const,
+      models: []
+    }
+    expect(
+      applyRememberedOllamaCliSignIn(cloud, signedIn('pro'), { localReachable: true })
+    ).toEqual({ ...cloud, authenticated: true, plan: 'pro', authenticatedFromMemory: true })
+  })
+
+  it('answers from memory when its own deadline cut the probe off', () => {
+    const timedOutAccount = {
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'timed-out' as const,
+      models: []
+    }
+    expect(applyRememberedOllamaCliSignIn(timedOutAccount, signedIn('pro'))).toMatchObject({
+      authenticated: true,
+      authenticatedFromMemory: true
+    })
+    const timedOutList = { supported: false, enabled: true, authenticated: null, models: [] }
+    expect(
+      applyRememberedOllamaCliSignIn(timedOutList, signedIn('pro'), { timedOut: true })
+    ).toMatchObject({ authenticated: true, authenticatedFromMemory: true })
+  })
+
+  // An older daemon answers 404 on /api/me: present and reachable, but it has
+  // no account state to stand in for — that stays honestly unsupported.
+  it('does not read a daemon that answered without a sign-in state as signed in', () => {
+    const answered = {
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      accountProbe: 'answered' as const,
+      models: []
+    }
+    expect(
+      applyRememberedOllamaCliSignIn(answered, signedIn('pro'), { localReachable: true })
+    ).toBe(answered)
+  })
+
+  it('never leaks the probe context into the repaired snapshot', () => {
+    const repaired = applyRememberedOllamaCliSignIn(
+      { supported: false, enabled: true, authenticated: null, models: [] },
+      signedIn('pro'),
+      { localReachable: true, timedOut: true }
+    )
+    expect(repaired.authenticated).toBe(true)
+    expect(repaired).not.toHaveProperty('localReachable')
+    expect(repaired).not.toHaveProperty('timedOut')
   })
 
   it('never overrides a definitive live answer', () => {

@@ -64,7 +64,11 @@ import {
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
-import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
+import {
+  discoverOllamaCloud,
+  OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
+  type OllamaCloudDiscoverySnapshot
+} from './OllamaCloudCatalog'
 import { applyRememberedOllamaCliSignIn, normalizeOllamaCliSignIn } from './OllamaCliSignInMemory'
 import { OLLAMA_CLOUD_API_BASE_URL, ollamaCloudApiHeaders } from './OllamaCloudApi'
 import { resolveOllamaTurnNumPredict, type OllamaThinkingSetting } from './OllamaRunProfiles'
@@ -1348,13 +1352,30 @@ function createOllamaMemoryMonitor(intervalMs = OLLAMA_MEMORY_POLL_INTERVAL_MS) 
   }
 }
 
+/**
+ * The local model list hit OUR deadline. Kept distinct from a transport
+ * refusal on purpose: a daemon that is present but slow — or a main loop too
+ * stalled to read the socket — must not be scored as an absent daemon by the
+ * callers deciding whether the remembered Cloud sign-in may stand in.
+ */
+export class OllamaProbeTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`Ollama model list timed out after ${timeoutMs} ms.`)
+    this.name = 'OllamaProbeTimeoutError'
+  }
+}
+
 export async function fetchOllamaLocalModels(
   settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel'>,
   options: { signal?: AbortSignal; timeoutMs?: number } = {}
 ): Promise<OllamaModelInfo[]> {
   const timeoutMs = options.timeoutMs ?? 3_000
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  let deadlineFired = false
+  const timer = setTimeout(() => {
+    deadlineFired = true
+    controller.abort()
+  }, timeoutMs)
   const signal = options.signal || controller.signal
   try {
     const response = await fetch(endpoint(settings.ollamaBaseUrl, '/api/tags'), { signal })
@@ -1363,6 +1384,10 @@ export async function fetchOllamaLocalModels(
     }
     const json = (await response.json()) as OllamaTagsResponse
     return normalizeOllamaModels(json, settings.ollamaDefaultModel)
+  } catch (error) {
+    // The deadline governs the request only when no caller signal replaced it.
+    if (deadlineFired && !options.signal) throw new OllamaProbeTimeoutError(timeoutMs)
+    throw error
   } finally {
     clearTimeout(timer)
   }
@@ -1433,14 +1458,79 @@ export function mergeOllamaLocalAndCloudModels(
   }
 }
 
+interface OllamaModelCatalogOptions {
+  signal?: AbortSignal
+  timeoutMs?: number
+  launchAuthorized?: OllamaTransportLaunchAuthority
+  cloudApiKey?: string | null
+}
+
+type OllamaModelCatalogSettings = Pick<
+  AppSettings,
+  'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'
+>
+
+const ollamaCatalogFlights = new Map<string, Promise<OllamaModelCatalogSnapshot>>()
+
+/**
+ * Only a plain read may share a flight. A caller with its own signal, launch
+ * authority or deadline keeps its own round trip, so a cancelled run can never
+ * abort a status card's request, nor the reverse.
+ */
+function ollamaCatalogFlightKey(
+  settings: OllamaModelCatalogSettings,
+  options: OllamaModelCatalogOptions
+): string | null {
+  if (options.signal || options.launchAuthorized || options.timeoutMs !== undefined) return null
+  return JSON.stringify([
+    normalizeOllamaBaseUrl(settings.ollamaBaseUrl),
+    String(settings.ollamaDefaultModel || ''),
+    normalizeOllamaCliSignIn(settings.ollamaCliSignIn),
+    Boolean(options.cloudApiKey)
+  ])
+}
+
+/** Each reader of a shared flight owns its rows, so decorating them cannot leak into another. */
+function cloneOllamaModelCatalogSnapshot(
+  snapshot: OllamaModelCatalogSnapshot
+): OllamaModelCatalogSnapshot {
+  const rows = (models: readonly OllamaModelInfo[]): OllamaModelInfo[] =>
+    models.map((model) => ({ ...model }))
+  return {
+    ...snapshot,
+    models: rows(snapshot.models),
+    localModels: rows(snapshot.localModels),
+    cloudModels: rows(snapshot.cloudModels),
+    cloud: { ...snapshot.cloud, models: snapshot.cloud.models.map((model) => ({ ...model })) }
+  }
+}
+
+/**
+ * Concurrent catalog readers share one daemon round trip. The renderer's
+ * status, capability and model refreshes for Ollama land in the same tick, and
+ * the daemon log recorded those bursts as three `/api/tags` and eight `/api/me`
+ * requests inside seven seconds, every one racing the same stalled event loop.
+ */
 export async function fetchOllamaModelCatalog(
-  settings: Pick<AppSettings, 'ollamaBaseUrl' | 'ollamaDefaultModel' | 'ollamaCliSignIn'>,
-  options: {
-    signal?: AbortSignal
-    timeoutMs?: number
-    launchAuthorized?: OllamaTransportLaunchAuthority
-    cloudApiKey?: string | null
-  } = {}
+  settings: OllamaModelCatalogSettings,
+  options: OllamaModelCatalogOptions = {}
+): Promise<OllamaModelCatalogSnapshot> {
+  const key = ollamaCatalogFlightKey(settings, options)
+  if (key === null) return fetchOllamaModelCatalogOnce(settings, options)
+  const shared = ollamaCatalogFlights.get(key)
+  if (shared) return shared.then(cloneOllamaModelCatalogSnapshot)
+  const flight = fetchOllamaModelCatalogOnce(settings, options)
+  ollamaCatalogFlights.set(key, flight)
+  const release = (): void => {
+    if (ollamaCatalogFlights.get(key) === flight) ollamaCatalogFlights.delete(key)
+  }
+  flight.then(release, release)
+  return flight.then(cloneOllamaModelCatalogSnapshot)
+}
+
+async function fetchOllamaModelCatalogOnce(
+  settings: OllamaModelCatalogSettings,
+  options: OllamaModelCatalogOptions
 ): Promise<OllamaModelCatalogSnapshot> {
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   let localModels: OllamaModelInfo[] = []
@@ -1463,15 +1553,21 @@ export async function fetchOllamaModelCatalog(
         }
       : await discoverOllamaCloud(baseUrl, {
           signal: options.signal,
-          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500),
+          timeoutMs: Math.min(
+            options.timeoutMs ?? OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
+            OLLAMA_CLOUD_PROBE_TIMEOUT_MS
+          ),
           apiKey: options.cloudApiKey
         })
   // Repair BEFORE the merge: the merge is what disables every Cloud row when
   // `authenticated !== true`, so a remembered sign-in applied afterwards would
-  // fix the card and still leave the models unrunnable.
+  // fix the card and still leave the models unrunnable. `localReachable` tells
+  // the memory the daemon served `/api/tags` moments ago, so an account probe
+  // that then went unanswered is transient rather than "no daemon".
   const rememberedCloud = applyRememberedOllamaCliSignIn(
     cloud,
-    normalizeOllamaCliSignIn(settings.ollamaCliSignIn)
+    normalizeOllamaCliSignIn(settings.ollamaCliSignIn),
+    { localReachable }
   )
   return mergeOllamaLocalAndCloudModels(localModels, rememberedCloud, settings.ollamaDefaultModel, {
     reachable: localReachable,
@@ -1604,6 +1700,19 @@ export async function getOllamaStatusSnapshot(
         : {})
     }
   } catch (error) {
+    // The daemon did not list its models, so availability stays honestly dark.
+    // The account half is still answered from the remembered sign-in when the
+    // failure was OUR deadline rather than a refused connection: that is the
+    // relaunch window in which main's event loop is too busy to read the
+    // socket, and a fabricated `authenticated: null` here is what disabled
+    // every Cloud row on every launch.
+    const timedOut = error instanceof OllamaProbeTimeoutError
+    const fallbackCloud: OllamaCloudDiscoverySnapshot = {
+      supported: false,
+      enabled: true,
+      authenticated: null,
+      models: []
+    }
     return {
       available: false,
       localAvailable: false,
@@ -1612,12 +1721,11 @@ export async function getOllamaStatusSnapshot(
       modelCount: 0,
       localModelCount: 0,
       cloudModelCount: 0,
-      cloud: {
-        supported: false,
-        enabled: true,
-        authenticated: null,
-        models: []
-      },
+      cloud: applyRememberedOllamaCliSignIn(
+        fallbackCloud,
+        normalizeOllamaCliSignIn(settings.ollamaCliSignIn),
+        { timedOut }
+      ),
       error: error instanceof Error ? error.message : String(error)
     }
   }
