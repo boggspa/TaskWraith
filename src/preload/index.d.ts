@@ -344,7 +344,9 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphArchiveResult,
   ExecutionGraphDiagnosticsSnapshot,
+  ExecutionGraphRecoveryRetryCommand,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -2915,6 +2917,13 @@ declare global {
         reason?: string
       ) => Promise<ExecutionRunProjection | null>
       resumeExecutionRun: (executionId: string, reason?: string) => Promise<ExecutionRunProjection>
+      archiveExecutionRun: (
+        executionId: string,
+        reason?: string
+      ) => Promise<ExecutionGraphArchiveResult>
+      retryExecutionGraphRecovery: (
+        command?: ExecutionGraphRecoveryRetryCommand
+      ) => Promise<ExecutionGraphDiagnosticsSnapshot>
       cancelExecutionRunStep: (
         command: ExecutionRunCancelStepCommand
       ) => Promise<ExecutionRunProjection>

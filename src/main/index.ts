@@ -946,9 +946,12 @@ import {
   seedExecutionGraphAttemptTranscript,
   verifyExecutionGraphAttemptReceiptOnChat
 } from './executionGraph/ExecutionGraphAttemptTranscript'
+import { ExecutionGraphRecoveryController } from './executionGraph/ExecutionGraphRecoveryController'
 import {
   registerExecutionGraphDiagnosticsHandler,
   registerExecutionGraphHandlers,
+  registerExecutionGraphRecoveryHandlers,
+  type ExecutionGraphDiagnosticsSnapshot,
   type ExecutionGraphServiceDiagnostic
 } from './ipc/executionGraphHandlers'
 import {
@@ -9280,6 +9283,15 @@ let startUltraTaskGraphRef: ((input: StartUltraTaskGraphInput) => StartedUltraTa
 let listUltraTaskModelsRef: ((provider: ProviderId) => Promise<unknown[]>) | null = null
 let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
+// Retry and archive for stacks whose startup recovery was refused; the paused
+// diagnostics stay in the `let` above so the IPC snapshot keeps one source.
+const executionGraphRecoveryController = new ExecutionGraphRecoveryController({
+  coordinator: () => executionGraphCoordinatorRef,
+  readDiagnostics: () => executionGraphRecoveryDiagnostics,
+  writeDiagnostics: (next) => {
+    executionGraphRecoveryDiagnostics = next
+  }
+})
 
 function executionGraphDiagnosticMessage(error: unknown): string {
   return String(error instanceof Error ? error.message : error).slice(0, 2_048)
@@ -47652,14 +47664,24 @@ if (isGeminiMcpBridgeProcess) {
     executionGraphAdapterAdmissions.clear()
     executionGraphRecoveryDiagnostics = []
     executionGraphServiceDiagnostics = []
+    const getExecutionGraphDiagnosticsSnapshot = (): ExecutionGraphDiagnosticsSnapshot => ({
+      schemaVersion: 1,
+      repositoryDiagnostics: executionGraphRepositoryRef?.listRepositoryDiagnostics() ?? [],
+      recoveryDiagnostics: executionGraphRecoveryDiagnostics,
+      serviceDiagnostics: executionGraphServiceDiagnostics
+    })
     registerExecutionGraphDiagnosticsHandler({
       assertMainRendererSender,
-      getSnapshot: () => ({
-        schemaVersion: 1,
-        repositoryDiagnostics: executionGraphRepositoryRef?.listRepositoryDiagnostics() ?? [],
-        recoveryDiagnostics: executionGraphRecoveryDiagnostics,
-        serviceDiagnostics: executionGraphServiceDiagnostics
-      })
+      getSnapshot: getExecutionGraphDiagnosticsSnapshot
+    })
+    registerExecutionGraphRecoveryHandlers({
+      assertMainRendererSender,
+      getSnapshot: getExecutionGraphDiagnosticsSnapshot,
+      retryRecovery: (input) => {
+        executionGraphRecoveryController.retry(input)
+      },
+      archiveExecution: (executionId, reason) =>
+        executionGraphRecoveryController.archive(executionId, reason)
     })
     const pendingExecutionGraphDispatchRunIds = new Set<string>()
     let executionGraphAttemptDispatcher: ((runId: string) => Promise<void>) | null = null
@@ -56793,11 +56815,7 @@ if (isGeminiMcpBridgeProcess) {
                 executionGraphCoordinatorRef?.listExecutions({ includeTerminal: false }) ?? []
               ).flatMap((execution) => (execution.owner ? [execution.owner.threadId] : [])),
             recover: () => {
-              executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
-              for (const diagnostic of executionGraphRecoveryDiagnostics)
-                console.error(
-                  `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
-                )
+              executionGraphRecoveryController.runStartupRecovery()
             },
             onError: (error) =>
               console.error('[ExecutionGraph] owner metadata recovery deferred', error)

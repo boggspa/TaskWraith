@@ -1275,10 +1275,97 @@ export class ExecutionGraphCoordinator {
     return this.requireExecution(executionId)
   }
 
+  /**
+   * Close a stack the user has given up on, so startup recovery stops
+   * reconciling it at every launch.
+   *
+   * Cancellation runs first because it owns exact transport cleanup. It
+   * refuses silently when it cannot PROVE containment, and for a stack whose
+   * queue rows were pruned long ago that proof is unobtainable — which is
+   * precisely the unowned legacy graph that re-raises at every launch. Archival
+   * then closes the ledger with the ordinary cancelled events, but only when
+   * nothing can still be in flight: every open activation must carry no
+   * attempt or a terminal one, and no owned queue row may still be leaseable.
+   * Anything else is refused with the reason, never closed over.
+   */
+  async archiveExecution(
+    executionId: string,
+    reason = 'Archived by user.'
+  ): Promise<ExecutionRunProjection> {
+    let projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) return projection
+    await this.cancelExecution(executionId, reason)
+    projection = this.requireExecution(executionId)
+    if (isExecutionRunTerminal(projection.state)) return projection
+
+    const events: ExecutionRunEventInput[] = []
+    for (const activation of Object.values(projection.activations)) {
+      if (isStepActivationTerminal(activation.state)) continue
+      const attempt = latestAttemptForActivation(projection, activation)
+      if (attempt && !isStepAttemptTerminal(attempt.state)) {
+        throw new Error(
+          `Archive refused: step "${activation.stepId}" still has an unsettled attempt. Cancel the Stack first.`
+        )
+      }
+      const runId = attempt?.providerRunRef
+      const job = runId ? this.deps.getQueueJob(runId) : null
+      if (
+        attempt &&
+        job &&
+        !TERMINAL_QUEUE_STATUSES.has(job.status) &&
+        this.queueJobOwnsAttempt(projection, attempt, job)
+      ) {
+        throw new Error(
+          `Archive refused: step "${activation.stepId}" still holds a live queue row. Cancel the Stack first.`
+        )
+      }
+      events.push({
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'cancelled',
+        reason,
+        timestamp: this.now()
+      })
+    }
+    events.push({
+      executionId,
+      kind: 'execution_state_changed',
+      state: 'cancelled',
+      reason,
+      timestamp: this.now()
+    })
+    this.append(projection, events)
+    projection = this.requireExecution(executionId)
+    this.changed(projection, 'execution-terminal')
+    return projection
+  }
+
   recover(): readonly ExecutionGraphRecoveryDiagnostic[] {
-    const allExecutions = this.listExecutions({ includeTerminal: true })
+    return this.recoverProjections(this.listExecutions({ includeTerminal: true }))
+  }
+
+  /**
+   * Re-run startup recovery for exactly these executions, through the same
+   * verify-then-append ledger path `recover()` takes. A refused recovery write
+   * used to be reported once at launch and never retried inside the session,
+   * so the stack sat paused until the next restart. An id that no longer
+   * resolves (deleted, or quarantined by the repository) yields no diagnostic
+   * here; quarantine is reported on the repository's own channel.
+   */
+  recoverExecutions(executionIds: readonly string[]): readonly ExecutionGraphRecoveryDiagnostic[] {
+    const projections = [...new Set(executionIds)].flatMap((executionId) => {
+      const projection = this.repository.getExecution(executionId)
+      return projection ? [projection] : []
+    })
+    return this.recoverProjections(projections)
+  }
+
+  private recoverProjections(
+    projections: readonly ExecutionRunProjection[]
+  ): readonly ExecutionGraphRecoveryDiagnostic[] {
     const diagnostics: ExecutionGraphRecoveryDiagnostic[] = []
-    for (const projection of allExecutions) {
+    for (const projection of projections) {
       try {
         this.reconcileTerminalAttemptQueueRows(projection)
         // The graph ledger is authoritative. If it is already terminal, no

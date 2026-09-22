@@ -223,6 +223,28 @@ describe('RendererIpcPolicy', () => {
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
   })
 
+  it.each(['execution-runs:archive', 'execution-graphs:retry-recovery'])(
+    'keeps the Stack recovery control %s main-renderer-only',
+    (channel) => {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+      expect(IPC_ARGUMENT_SCHEMAS).toHaveProperty(channel)
+    }
+  )
+
+  it('exposes Stack recovery retry and archive on the preload bridge with matching types', () => {
+    const preload = readFileSync(join(process.cwd(), 'src/preload/index.ts'), 'utf8')
+    const preloadTypes = readFileSync(join(process.cwd(), 'src/preload/index.d.ts'), 'utf8')
+
+    expect(preload).toMatch(/ipcRenderer\.invoke\(\s*'execution-runs:archive'/)
+    expect(preload).toMatch(/ipcRenderer\.invoke\(\s*'execution-graphs:retry-recovery'/)
+    expect(preloadTypes).toContain('archiveExecutionRun: (')
+    expect(preloadTypes).toContain('Promise<ExecutionGraphArchiveResult>')
+    expect(preloadTypes).toContain('retryExecutionGraphRecovery: (')
+    expect(preloadTypes).toContain('command?: ExecutionGraphRecoveryRetryCommand')
+  })
+
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
     const unclassified = registeredChannels.filter(

@@ -2103,3 +2103,116 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('waiting')
   })
 })
+
+describe('ExecutionGraphCoordinator recovery retry and archive', () => {
+  /** A stack paused at restart whose exact queue row has since been pruned. */
+  function pausedOrphan(h: Harness): { executionId: string; runId: string } {
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.coordinator.recover()
+    const paused = h.coordinator.getExecution(started.executionId)!
+    expect(paused.state).toBe('requires_action')
+    expect(Object.values(paused.attempts)[0].state).toBe('interrupted')
+    h.jobs.delete(runId)
+    return { executionId: started.executionId, runId }
+  }
+
+  it('recoverExecutions re-runs recovery for the named executions only', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    expect(started.state).toBe('running')
+    h.ownerStatuses.set('chat-one', 'missing')
+
+    // A foreign id resolves to nothing: no diagnostic, and the live stack is
+    // not re-evaluated as if the process had just restarted.
+    expect(h.coordinator.recoverExecutions(['never-created'])).toEqual([])
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
+
+    expect(h.coordinator.recoverExecutions([started.executionId, started.executionId])).toEqual([])
+    const paused = h.coordinator.getExecution(started.executionId)!
+    expect(paused.state).toBe('requires_action')
+    expect(paused.lastSequence).toBe(started.lastSequence + 1)
+  })
+
+  it('recoverExecutions reports only the named execution that still refuses', () => {
+    const h = harness()
+    const broken = h.coordinator.appendStackStep(h.input())
+    const healthy = h.coordinator.appendStackStep(
+      h.input({ rootChatId: 'chat-two', title: 'Second Stack' })
+    )
+    const internals = h.coordinator as unknown as {
+      reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
+    }
+    vi.spyOn(internals, 'reconcileTerminalAttemptQueueRows').mockImplementation((projection) => {
+      if (projection.executionId === broken.executionId) {
+        throw new Error('Execution ledger changed before append for "broken".')
+      }
+    })
+
+    expect(h.coordinator.recoverExecutions([broken.executionId, healthy.executionId])).toEqual([
+      {
+        executionId: broken.executionId,
+        message: 'Execution ledger changed before append for "broken".'
+      }
+    ])
+  })
+
+  it('archiveExecution closes a paused stack whose queue row is gone, where cancel refuses', async () => {
+    const h = harness()
+    const { executionId } = pausedOrphan(h)
+    const notices: string[] = []
+    ;(h.coordinator as unknown as { deps: ExecutionGraphCoordinatorDeps }).deps.onChanged = (
+      notice
+    ) => notices.push(notice.kind)
+
+    await h.coordinator.cancelExecution(executionId, 'Cancelled by user.')
+    expect(h.coordinator.getExecution(executionId)?.state).toBe('requires_action')
+
+    const archived = await h.coordinator.archiveExecution(executionId, 'Archived from notices.')
+
+    expect(archived.state).toBe('cancelled')
+    expect(Object.values(archived.activations).map((activation) => activation.state)).toEqual([
+      'cancelled'
+    ])
+    expect(Object.values(archived.activations)[0].reason).toBe('Archived from notices.')
+    expect(notices).toContain('execution-terminal')
+    const sequence = archived.lastSequence
+    expect(h.coordinator.recover()).toEqual([])
+    expect(h.coordinator.getExecution(executionId)?.lastSequence).toBe(sequence)
+  })
+
+  it('archiveExecution refuses while an owned queue row is still leaseable', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.coordinator.recover()
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
+
+    await expect(
+      h.coordinator.archiveExecution(started.executionId, 'Archived by user.')
+    ).rejects.toThrow(/still holds a live queue row/)
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
+  })
+
+  it('archiveExecution lets cancellation contain a queued stack before it is closed', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    const archived = await h.coordinator.archiveExecution(started.executionId, 'Archived by user.')
+
+    expect(archived.state).toBe('cancelled')
+    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+  })
+
+  it('archiveExecution returns a terminal execution untouched', async () => {
+    const h = harness()
+    const { executionId } = pausedOrphan(h)
+    const archived = await h.coordinator.archiveExecution(executionId)
+    const again = await h.coordinator.archiveExecution(executionId)
+    expect(again.lastSequence).toBe(archived.lastSequence)
+    expect(Object.values(again.activations)[0].reason).toBe('Archived by user.')
+  })
+})

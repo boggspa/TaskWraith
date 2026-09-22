@@ -308,6 +308,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'execution-runs:append-stack-step': ['object'],
   'execution-runs:cancel': ['nonEmptyString', 'optionalString'],
   'execution-runs:resume': ['nonEmptyString', 'optionalString'],
+  'execution-runs:archive': ['nonEmptyString', 'optionalString'],
+  'execution-graphs:retry-recovery': ['optionalObject'],
   'execution-runs:cancel-step': ['object'],
   'execution-runs:formalize': ['object'],
   'get-evidence-packs': ['optionalString'],

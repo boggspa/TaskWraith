@@ -116,7 +116,9 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphArchiveResult,
   ExecutionGraphDiagnosticsSnapshot,
+  ExecutionGraphRecoveryRetryCommand,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -2766,6 +2768,17 @@ const api = {
       executionId,
       reason
     ) as Promise<ExecutionRunProjection>,
+  archiveExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:archive',
+      executionId,
+      reason
+    ) as Promise<ExecutionGraphArchiveResult>,
+  retryExecutionGraphRecovery: (command: ExecutionGraphRecoveryRetryCommand = {}) =>
+    ipcRenderer.invoke(
+      'execution-graphs:retry-recovery',
+      command
+    ) as Promise<ExecutionGraphDiagnosticsSnapshot>,
   cancelExecutionRunStep: (command: ExecutionRunCancelStepCommand) =>
     ipcRenderer.invoke('execution-runs:cancel-step', command) as Promise<ExecutionRunProjection>,
   formalizeExecutionRun: (command: ExecutionRunFormalizeCommand) =>

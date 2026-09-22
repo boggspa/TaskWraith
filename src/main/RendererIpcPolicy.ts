@@ -579,6 +579,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'execution-runs:append-stack-step',
   'execution-runs:cancel',
   'execution-runs:resume',
+  'execution-runs:archive',
+  'execution-graphs:retry-recovery',
   'execution-runs:cancel-step',
   'execution-runs:formalize',
 

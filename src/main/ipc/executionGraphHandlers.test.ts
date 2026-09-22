@@ -16,7 +16,8 @@ import type {
 } from './executionGraphHandlers'
 import {
   registerExecutionGraphDiagnosticsHandler,
-  registerExecutionGraphHandlers
+  registerExecutionGraphHandlers,
+  registerExecutionGraphRecoveryHandlers
 } from './executionGraphHandlers'
 
 vi.mock('electron', () => ({
@@ -940,5 +941,117 @@ describe('registerExecutionGraphDiagnosticsHandler', () => {
 
     expect(() => handlerFor('execution-graphs:diagnostics')({})).toThrow('main renderer only')
     expect(getSnapshot).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerExecutionGraphRecoveryHandlers', () => {
+  const snapshot: ExecutionGraphDiagnosticsSnapshot = {
+    schemaVersion: 1,
+    repositoryDiagnostics: [],
+    recoveryDiagnostics: [{ executionId: 'stack-paused', message: 'Ledger changed.' }],
+    serviceDiagnostics: []
+  }
+
+  function recoveryDeps() {
+    return {
+      assertMainRendererSender: vi.fn(),
+      getSnapshot: vi.fn(() => snapshot),
+      retryRecovery: vi.fn(),
+      archiveExecution: vi.fn(async () =>
+        projection({ executionId: 'stack-paused', state: 'cancelled' })
+      )
+    }
+  }
+
+  it('registers the retry and archive channels beside the diagnostics query', () => {
+    registerExecutionGraphRecoveryHandlers(recoveryDeps())
+    expect(mockedHandle.mock.calls.map(([channel]) => channel)).toEqual([
+      'execution-graphs:retry-recovery',
+      'execution-runs:archive'
+    ])
+  })
+
+  it('re-runs recovery for one paused stack and answers with the refreshed snapshot', () => {
+    const deps = recoveryDeps()
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    const result = handlerFor('execution-graphs:retry-recovery')(
+      { sender: 'main' },
+      { executionId: ' stack-paused ' }
+    )
+
+    expect(deps.assertMainRendererSender).toHaveBeenCalledWith({ sender: 'main' })
+    expect(deps.retryRecovery).toHaveBeenCalledWith({ executionId: 'stack-paused' })
+    expect(result).toBe(snapshot)
+  })
+
+  it('re-runs recovery for every paused stack when no id is named', () => {
+    const deps = recoveryDeps()
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    handlerFor('execution-graphs:retry-recovery')({ sender: 'main' })
+    handlerFor('execution-graphs:retry-recovery')({ sender: 'main' }, {})
+
+    expect(deps.retryRecovery).toHaveBeenNthCalledWith(1, {})
+    expect(deps.retryRecovery).toHaveBeenNthCalledWith(2, {})
+  })
+
+  it('rejects a non-canonical retry target before touching recovery', () => {
+    const deps = recoveryDeps()
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-graphs:retry-recovery')({ sender: 'main' }, { executionId: '../x' })
+    ).toThrow('Execution id is not canonical.')
+    expect(() => handlerFor('execution-graphs:retry-recovery')({ sender: 'main' }, 'x')).toThrow(
+      'Recovery retry command is invalid.'
+    )
+    expect(deps.retryRecovery).not.toHaveBeenCalled()
+  })
+
+  it('archives a stack with a default reason and returns the projection with fresh diagnostics', async () => {
+    const deps = recoveryDeps()
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    const result = await handlerFor('execution-runs:archive')({ sender: 'main' }, 'stack-paused')
+
+    expect(deps.archiveExecution).toHaveBeenCalledWith('stack-paused', 'Archived by user.')
+    expect(result).toEqual({
+      projection: expect.objectContaining({ executionId: 'stack-paused', state: 'cancelled' }),
+      diagnostics: snapshot
+    })
+  })
+
+  it('passes a bounded archive reason through and rejects a bad id', async () => {
+    const deps = recoveryDeps()
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    await handlerFor('execution-runs:archive')(
+      { sender: 'main' },
+      'stack-paused',
+      ' Archived from the Stack notice. '
+    )
+    expect(deps.archiveExecution).toHaveBeenCalledWith(
+      'stack-paused',
+      'Archived from the Stack notice.'
+    )
+    await expect(
+      handlerFor('execution-runs:archive')({ sender: 'main' }, 'bad id')
+    ).rejects.toThrow('Execution id is not canonical.')
+  })
+
+  it('checks renderer authority before retrying or archiving', async () => {
+    const deps = recoveryDeps()
+    deps.assertMainRendererSender = vi.fn(() => {
+      throw new Error('main renderer only')
+    })
+    registerExecutionGraphRecoveryHandlers(deps)
+
+    expect(() => handlerFor('execution-graphs:retry-recovery')({})).toThrow('main renderer only')
+    await expect(handlerFor('execution-runs:archive')({}, 'stack-paused')).rejects.toThrow(
+      'main renderer only'
+    )
+    expect(deps.retryRecovery).not.toHaveBeenCalled()
+    expect(deps.archiveExecution).not.toHaveBeenCalled()
   })
 })
