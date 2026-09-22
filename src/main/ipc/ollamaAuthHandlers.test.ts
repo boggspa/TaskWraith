@@ -182,6 +182,33 @@ describe('registerOllamaAuthHandlers', () => {
       expect(status).not.toHaveProperty('cliPlan')
     })
 
+    it('announces a changed record after persisting it, and stays quiet otherwise', async () => {
+      const { deps, probeCloudAccount } = createDeps()
+      const onCliSignInChanged = vi.fn()
+      probeCloudAccount.mockResolvedValue({ supported: true, authenticated: true, plan: 'pro' })
+      registerOllamaAuthHandlers({ ...deps, onCliSignInChanged })
+
+      await handlerFor('get-ollama-auth-status')({})
+      expect(onCliSignInChanged).toHaveBeenCalledTimes(1)
+      expect(onCliSignInChanged).toHaveBeenCalledWith({
+        signedIn: true,
+        plan: 'pro',
+        updatedAt: NOW
+      })
+      expect(deps.updateSettings.mock.invocationCallOrder[0]).toBeLessThan(
+        onCliSignInChanged.mock.invocationCallOrder[0]
+      )
+
+      // The same answer again is not a change.
+      await handlerFor('get-ollama-auth-status')({})
+      expect(onCliSignInChanged).toHaveBeenCalledTimes(1)
+
+      // Nor is an unknown answer.
+      probeCloudAccount.mockResolvedValue({ supported: false, authenticated: null })
+      await handlerFor('get-ollama-auth-status')({})
+      expect(onCliSignInChanged).toHaveBeenCalledTimes(1)
+    })
+
     // A stored key must not be projected into a probe: it would report an
     // authenticated Cloud whether or not the CLI was ever signed in.
     it('probes the daemon account without the stored API key', async () => {

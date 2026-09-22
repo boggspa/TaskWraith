@@ -60704,7 +60704,15 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender,
       webSessionStore: () => ollamaWebSessionStore(),
       // A fresh session must not sit behind the previous session's TTL.
-      onWebSessionImported: () => fetchOllamaWebUsageSnapshot.invalidate()
+      onWebSessionImported: () => fetchOllamaWebUsageSnapshot.invalidate(),
+      // The sign-in flag is part of the configured-provider discovery key, so
+      // a changed record starts the new generation instead of leaving the
+      // roster frozen on the pre-sign-in answer until an unrelated settings
+      // change happens to restart it.
+      onCliSignInChanged: () => {
+        managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        requestRemoteProviderModelsRefresh()
+      }
     })
 
     registerKimiWebSessionHandlers({

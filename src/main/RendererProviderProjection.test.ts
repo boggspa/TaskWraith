@@ -33,6 +33,43 @@ describe('RendererProviderProjection', () => {
     expect(JSON.stringify(result)).not.toContain('rateLimits')
   })
 
+  it('projects the Ollama account state as booleans and nothing else', () => {
+    const result = rendererSafeProviderStatus({
+      provider: 'ollama',
+      available: true,
+      cloud: {
+        supported: true,
+        enabled: true,
+        authenticated: true,
+        plan: 'pro',
+        source: 'account',
+        accountProbe: 'answered',
+        authenticatedFromMemory: true,
+        apiKeyConfigured: false,
+        models: [{ model: 'minimax-m3:cloud', description: 'private-description' }]
+      }
+    })
+
+    expect(result.cloud).toEqual({
+      supported: true,
+      enabled: true,
+      apiKeyConfigured: false,
+      authenticatedFromMemory: true,
+      authenticated: true
+    })
+    expect(JSON.stringify(result)).not.toContain('private-description')
+    expect(JSON.stringify(result)).not.toContain('account')
+    // Unknown stays unknown, and a status without an account half gains none.
+    expect(
+      rendererSafeProviderStatus({
+        cloud: { supported: false, enabled: true, authenticated: null, models: [] }
+      }).cloud
+    ).toEqual({ supported: false, enabled: true, authenticated: null })
+    expect(rendererSafeProviderStatus({ provider: 'codex', available: true })).not.toHaveProperty(
+      'cloud'
+    )
+  })
+
   it('reduces raw MCP server inventories to non-sensitive counts', () => {
     const result = rendererSafeProviderMcpStatus({
       provider: 'codex',

@@ -353,6 +353,11 @@ function configuredProviderCacheKey(
     kimiBinaryPath: settings.kimiBinaryPath || '',
     ollamaBaseUrl: settings.ollamaBaseUrl || '',
     ollamaDefaultModel: settings.ollamaDefaultModel || '',
+    // The remembered `ollama signin` decides whether Cloud rows count as
+    // configured, so a sign-in or sign-out starts a new discovery generation
+    // instead of leaving the snapshot frozen on the answer from before it.
+    // Flag only: a re-stamped plan or timestamp is not a new generation.
+    ollamaCliSignedIn: settings.ollamaCliSignIn?.signedIn === true,
     antigravityEnabled: settings.antigravityEnabled === true,
     antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt || null,
     antigravityGeminiApiDisclosureAcceptedAt:

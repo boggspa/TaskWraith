@@ -47,6 +47,26 @@ function safeOllamaModels(value: unknown): unknown[] | undefined {
   })
 }
 
+/**
+ * The account half of an Ollama status, narrowed to booleans. A pop-out never
+ * received `cloud` at all, so it rendered "not signed in" for a signed-in
+ * account and no later probe could repair it. The plan name, catalog source,
+ * probe outcome and model rows stay main-only; this only says whether Cloud
+ * rows are runnable and where that answer came from.
+ */
+function safeOllamaCloud(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const source = value as Record<string, unknown>
+  const output: Record<string, unknown> = {}
+  for (const key of ['supported', 'enabled', 'apiKeyConfigured', 'authenticatedFromMemory']) {
+    optionalBoolean(output, source, key)
+  }
+  if (source.authenticated === null || typeof source.authenticated === 'boolean') {
+    output.authenticated = source.authenticated
+  }
+  return output
+}
+
 /** Minimal status required by secondary composers; account, quota, path, and error payloads stay main-only. */
 export function rendererSafeProviderStatus(status: unknown): Record<string, unknown> {
   const source = record(status)
@@ -74,6 +94,8 @@ export function rendererSafeProviderStatus(status: unknown): Record<string, unkn
   }
   const models = safeOllamaModels(source.models)
   if (models) output.models = models
+  const cloud = safeOllamaCloud(source.cloud)
+  if (cloud) output.cloud = cloud
   return output
 }
 

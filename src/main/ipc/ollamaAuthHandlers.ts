@@ -50,6 +50,13 @@ export interface OllamaAuthHandlersDeps {
   /** Fired after a session is captured AND persisted — the moment a quota
    *  refresh can use it. Receives the already-validated settings read. */
   onWebSessionImported?: (summary: OllamaWebSubscriptionResult) => void
+  /**
+   * Fired after the remembered record CHANGED and was persisted — a first
+   * answer, a sign-in or a sign-out. Configured-provider discovery keys its
+   * generation on the sign-in flag, so the caller starts the new generation
+   * here; nothing else observes a main-side settings write.
+   */
+  onCliSignInChanged?: (record: OllamaCliSignInRecord | null) => void
 }
 
 /**
@@ -92,7 +99,10 @@ async function refreshOllamaCliSignIn(
     observation,
     (deps.now?.() ?? new Date()).toISOString()
   )
-  if (next !== previous) deps.updateSettings({ ollamaCliSignIn: next ?? undefined })
+  if (next !== previous) {
+    deps.updateSettings({ ollamaCliSignIn: next ?? undefined })
+    deps.onCliSignInChanged?.(next)
+  }
   return next
 }
 

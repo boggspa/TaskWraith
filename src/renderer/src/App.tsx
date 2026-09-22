@@ -28,6 +28,11 @@ import {
   scheduleProviderMetadataWarmup,
   type ProviderMetadataWarmupController
 } from './lib/providerMetadataWarmup'
+import {
+  providerMetadataBootRefreshes,
+  providerMetadataWarmupQueue,
+  providersTabMetadataRefreshes
+} from './lib/providerMetadataDelivery'
 import { PI_PROVIDER_MODEL_CATALOG_MUTATION_EVENT } from './lib/providerModelCatalogEvents'
 import { projectRunItemAssistantDelta, projectRunItemToolEvents } from './lib/runItemProjection'
 import {
@@ -126,8 +131,7 @@ import {
   DEFAULT_PROVIDER,
   isEnsembleSeatProvider,
   isLiveSelectableProvider,
-  isRetiredProvider,
-  LIVE_SELECTABLE_PROVIDER_IDS
+  isRetiredProvider
 } from '../../shared/retiredProviders'
 import {
   DEFAULT_APPROVAL_TIMEOUTS_MS,
@@ -7229,19 +7233,22 @@ function App(): React.JSX.Element {
 
   const loadInitialDataRef = useRef<(() => Promise<void>) | null>(null)
   const providerMetadataWarmupRef = useRef<ProviderMetadataWarmupController | null>(null)
+  // Latest-instance ref so the Providers-tab effect can call the non-memoised
+  // refresh without re-firing on every render.
+  const refreshProviderMetadataRef = useRef(refreshProviderMetadata)
+  useEffect(() => {
+    refreshProviderMetadataRef.current = refreshProviderMetadata
+  })
 
   const armProviderMetadataWarmup = (activeProvider: ProviderId): void => {
     providerMetadataWarmupRef.current?.dispose()
     providerMetadataWarmupRef.current = null
     if (isChatPopoutWindow) return
     providerMetadataWarmupRef.current = scheduleProviderMetadataWarmup({
-      providers: (LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]).filter(
-        // Pi's key-filtered catalogue is an in-memory read in main, so it is
-        // warmed once immediately below. Keeping it out of the heavyweight
-        // idle metadata queue prevents a second request and avoids waiting
-        // behind repeated 20-second quiet windows before its models appear.
-        (provider) => provider !== activeProvider && provider !== 'pi'
-      ),
+      // Pi and Ollama are local reads (see lib/providerMetadataDelivery) and
+      // are refreshed directly once the initial route settles, never behind
+      // the repeated 20-second quiet windows this queue requires.
+      providers: providerMetadataWarmupQueue(activeProvider),
       refresh: (provider) => refreshProviderMetadata(provider),
       eventTarget: window
     })
@@ -7652,6 +7659,11 @@ function App(): React.JSX.Element {
       }
     }
     armProviderMetadataWarmup(initialProvider)
+    // Ollama's status carries the remembered Cloud sign-in; ask for it now
+    // rather than sixth in the idle queue (see lib/providerMetadataDelivery).
+    for (const provider of providerMetadataBootRefreshes(initialProvider)) {
+      void refreshProviderMetadata(provider)
+    }
     markInitialRouteSettled()
   }
   loadInitialDataRef.current = loadInitialData
@@ -20137,6 +20149,15 @@ function App(): React.JSX.Element {
     if (!showSettings || settingsActiveTab !== 'pinned-messages') return
     void refreshSettingsPinnedMessages()
   }, [showSettings, settingsActiveTab, refreshSettingsPinnedMessages])
+
+  // The Providers card must not be the one card whose provider nobody asked:
+  // opening Settings is itself the activity that resets the idle warmup queue,
+  // so the tab probes Ollama on open (see lib/providerMetadataDelivery).
+  useEffect(() => {
+    for (const provider of providersTabMetadataRefreshes({ showSettings, settingsActiveTab })) {
+      void refreshProviderMetadataRef.current(provider)
+    }
+  }, [showSettings, settingsActiveTab])
 
   const togglePinMessageInChat = useCallback(
     (chat: ChatRecord | null | undefined, messageId: string) => {

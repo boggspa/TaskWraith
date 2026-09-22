@@ -513,3 +513,51 @@ describe('configured AntiGravity discovery', () => {
     }
   })
 })
+
+describe('configured Ollama discovery', () => {
+  // The record is written main-side after a daemon answer, not through the
+  // renderer settings lane; without this key the roster stayed frozen on the
+  // pre-sign-in answer until an unrelated settings change restarted discovery.
+  it('starts a new discovery generation only when the remembered sign-in flag flips', async () => {
+    vi.useFakeTimers()
+    try {
+      const getOllamaStatus = vi.fn(async () => ({ available: true, modelCount: 1 }))
+      const detector = createConfiguredProviderDetector(
+        { getOllamaStatus, resolveProviderBinary: async () => ({ binaryPath: null }) },
+        { staggerMs: 0 }
+      )
+      const unknown = {} as AppSettings
+      detector.start(unknown)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+      detector.start(unknown)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+
+      const signedIn = {
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(signedIn)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(2)
+      await expect(detector.snapshot(signedIn)).resolves.toContain('ollama')
+
+      const restamped = {
+        ollamaCliSignIn: { signedIn: true, plan: 'max', updatedAt: '2026-09-01T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(restamped)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(2)
+      await expect(detector.snapshot(restamped)).resolves.toContain('ollama')
+
+      const signedOut = {
+        ollamaCliSignIn: { signedIn: false, updatedAt: '2026-09-02T00:00:00.000Z' }
+      } as AppSettings
+      detector.start(signedOut)
+      await vi.runAllTimersAsync()
+      expect(getOllamaStatus).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
