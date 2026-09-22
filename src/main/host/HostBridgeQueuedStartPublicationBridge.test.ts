@@ -82,6 +82,7 @@ function spyAuthority(): {
   port: HostBridgeQueuedStartAuthorityPort
   starting: ReturnType<typeof vi.fn>
   dispatchSettled: ReturnType<typeof vi.fn>
+  abort: ReturnType<typeof vi.fn>
 } {
   const starting = vi.fn<(view: HostQueuedStartStartedView) => void>()
   const dispatchSettled =
@@ -92,13 +93,16 @@ function spyAuthority(): {
         startEntities?: HostQueuedStartEntities
       ) => void
     >()
+  const abort = vi.fn<(commandId: string) => void>()
   return {
     port: {
       handleQueuedStartStarting: starting,
-      handleQueuedStartDispatchSettled: dispatchSettled
+      handleQueuedStartDispatchSettled: dispatchSettled,
+      abortQueuedStart: abort
     },
     starting,
-    dispatchSettled
+    dispatchSettled,
+    abort
   }
 }
 
@@ -107,6 +111,20 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(() =>
       createHostBridgeQueuedStartPublicationBridge({
         authority: {} as unknown as HostBridgeQueuedStartAuthorityPort
+      })
+    ).toThrow(/requires an injected authority port/)
+  })
+
+  it('refuses construction when the port cannot abandon proof', () => {
+    // `abortQueuedStart` is required, not optional: without it the absorb race
+    // would silently fall back to leaving the receipt pending forever.
+    const { starting, dispatchSettled } = spyAuthority()
+    expect(() =>
+      createHostBridgeQueuedStartPublicationBridge({
+        authority: {
+          handleQueuedStartStarting: starting,
+          handleQueuedStartDispatchSettled: dispatchSettled
+        } as unknown as HostBridgeQueuedStartAuthorityPort
       })
     ).toThrow(/requires an injected authority port/)
   })
@@ -126,7 +144,7 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
   })
 
   it('drives a solo prepared view to starting and then a settlement binding the run entity', () => {
-    const { port, starting, dispatchSettled } = spyAuthority()
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
 
     const order: string[] = []
@@ -167,10 +185,12 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     // The run id is bound as EVIDENCE, never substituted for the commandId.
     expect(dispatchSettled.mock.calls[0]![0]).toBe(COMMAND_ID)
     expect(RUN_ID).not.toBe(COMMAND_ID)
+    // A proven start never abandons proof.
+    expect(abort).not.toHaveBeenCalled()
   })
 
   it('drives an ensemble prepared view to starting and then a settlement binding the ROUND entity', () => {
-    const { port, starting, dispatchSettled } = spyAuthority()
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
 
     const order: string[] = []
@@ -209,6 +229,8 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(Object.keys(bound)).toEqual(['roundEntityId'])
     // The round id is evidence: the receipt is still addressed by commandId.
     expect(dispatchSettled.mock.calls[0]![0]).toBe(COMMAND_ID)
+    // A proven start never abandons proof.
+    expect(abort).not.toHaveBeenCalled()
   })
 
   it('refuses an ensemble prepared view carrying no usable round id and calls the Authority not at all', () => {
@@ -234,22 +256,58 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(bridge.onPrepared(preparedSolo()).kind).toBe('started')
   })
 
-  it('refuses a started settlement it never drove a prepared for rather than succeeding it', () => {
+  it('terminalizes a started settlement it never drove a prepared for as INDETERMINATE', () => {
     // The absorb race: the send registered with no live round, then the
     // orchestrator absorbed it into a round that started meanwhile, so no
     // `prepared` ever arrived. We hold no proof of the start.
-    const { port, starting, dispatchSettled } = spyAuthority()
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
 
     expect(bridge.onSettled(settled('started'))).toEqual({
-      kind: 'refused',
-      reason: 'started_without_prepared_evidence'
+      kind: 'terminalized',
+      commandId: COMMAND_ID,
+      status: 'indeterminate'
     })
-    // Never succeeded, and never terminalized as failed either — the prompt
-    // may well have been delivered. The Authority is not called at all.
-    expect(starting).not.toHaveBeenCalled()
+    // Proof is abandoned exactly once, against this command's own id.
+    expect(abort).toHaveBeenCalledTimes(1)
+    expect(abort).toHaveBeenCalledWith(COMMAND_ID)
+
+    // THE SAFETY HALF, unchanged from the refusal this replaced: the receipt
+    // is never succeeded and never settled as failed. An abandonment of proof
+    // is not an execution result, so the settlement port is not touched at all.
     expect(dispatchSettled).not.toHaveBeenCalled()
-    expect(bridge.forwardedCount()).toBe(0)
+    expect(starting).not.toHaveBeenCalled()
+    expect(bridge.forwardedCount()).toBe(1)
+  })
+
+  it('abandons proof only once for a repeated started settlement with no prepared', () => {
+    const { port, dispatchSettled, abort } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+
+    expect(bridge.onSettled(settled('started')).kind).toBe('terminalized')
+    expect(bridge.onSettled(settled('started'))).toEqual({
+      kind: 'refused',
+      reason: 'already_forwarded'
+    })
+    // The terminal fence covers abandonment too: a redelivery re-stamps nothing.
+    expect(abort).toHaveBeenCalledTimes(1)
+    expect(dispatchSettled).not.toHaveBeenCalled()
+  })
+
+  it('ignores a late prepared or started view arriving after proof was abandoned', () => {
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+
+    expect(bridge.onSettled(settled('started')).kind).toBe('terminalized')
+    abort.mockClear()
+
+    // Outcome, not mechanism: whatever arrives late for this command, the
+    // receipt is neither abandoned a second time nor settled.
+    bridge.onPrepared(preparedSolo())
+    bridge.onSettled(settled('started'))
+    expect(abort).not.toHaveBeenCalled()
+    expect(dispatchSettled).not.toHaveBeenCalled()
+    expect(starting).not.toHaveBeenCalled()
   })
 
   it.each([

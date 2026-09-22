@@ -30,19 +30,18 @@
  * - `settled` failed/cancelled -> one terminalizing settlement.
  * - adapter failure -> one terminalizing settlement, `publication_failed`.
  *
- * KNOWN RESIDUAL — a started settlement with no prepared. In the absorb race
- * (resolve finds no live round, we register, a round starts before dispatch,
- * the orchestrator absorbs the send) no `prepared` ever arrives. The correct
- * outcome is an INDETERMINATE receipt: we cannot prove the start, but the
- * prompt was delivered, so `failed` would be a lie. This glue refuses instead:
- * `HostCommandExecutionResult.status` admits only succeeded/failed/cancelled,
- * and the only indeterminate route — `publication.abort` — is not on any
- * public AppStoreHostAuthority method. Terminalizing it needs an Authority
- * abort port (out of this slice's paths). It is also not reachable from the
- * adapter today: HostBridgeQueuedStartAdapter refuses a `started` settlement
- * whose record is not in `prepared` phase, so the stranded receipt surfaces at
- * that refusal — which step 3b's ACK executor owns, not this glue. What is
- * guaranteed here is the safety half: such a settlement NEVER succeeds.
+ * ABSORB RACE — a started settlement with no prepared. When the send resolves
+ * with no live round, registers, and a round starts before dispatch, the
+ * orchestrator absorbs it and no `prepared` ever arrives. The receipt then
+ * ends INDETERMINATE: we cannot prove the start, but the prompt was delivered,
+ * so `failed` would be a lie and `succeeded` would be unearned. That outcome
+ * travels through the Authority's separate `abortQueuedStart`, never through a
+ * fourth HostCommandExecutionResult status.
+ *
+ * This is also the only entrance this glue owns. A dispatch that returns
+ * success carrying neither a run identity nor a queue reservation never
+ * reaches an adapter view at all; classifying that belongs to the in-main ACK
+ * executor, which calls the same abort route.
  *
  * NO DURABLE PRE-SPAWN CLAIM. The in-main route has no execution-claim
  * journal, so the `starting` view carries NO executionClaimCursor. A receipt
@@ -73,6 +72,12 @@ export interface HostBridgeQueuedStartAuthorityPort {
     result: HostCommandExecutionResult,
     startEntities?: HostQueuedStartEntities
   ): void
+  /**
+   * Abandonment of proof, NOT a settlement — see the Authority's own doc. The
+   * glue needs it because it is the only component that knows whether a
+   * `started` settlement was preceded by a `prepared` it drove.
+   */
+  abortQueuedStart(commandId: string): void
 }
 
 export type HostBridgeQueuedStartPublicationRefusal =
@@ -86,8 +91,6 @@ export type HostBridgeQueuedStartPublicationRefusal =
   | 'missing_prepared_evidence'
   /** A `settled` view with no settlement attached. */
   | 'missing_settled_evidence'
-  /** A `started` settlement this glue never drove a `prepared` for. */
-  | 'started_without_prepared_evidence'
   /** A terminal decision was already forwarded for this commandId. */
   | 'already_forwarded'
 
@@ -110,7 +113,13 @@ export type HostBridgeQueuedStartPublicationResult =
   | {
       readonly kind: 'terminalized'
       readonly commandId: string
-      readonly status: 'failed' | 'cancelled'
+      /**
+       * `indeterminate` is an ABANDONMENT of proof, not an execution outcome —
+       * it never reaches HostCommandExecutionResult, whose union stays
+       * succeeded/failed/cancelled. It routes through the Authority's separate
+       * abort method instead.
+       */
+      readonly status: 'failed' | 'cancelled' | 'indeterminate'
     }
   | {
       readonly kind: 'ignored'
@@ -150,7 +159,8 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
   if (
     !authority ||
     typeof authority.handleQueuedStartStarting !== 'function' ||
-    typeof authority.handleQueuedStartDispatchSettled !== 'function'
+    typeof authority.handleQueuedStartDispatchSettled !== 'function' ||
+    typeof authority.abortQueuedStart !== 'function'
   ) {
     throw new Error('HostBridgeQueuedStartPublicationBridge requires an injected authority port')
   }
@@ -246,11 +256,14 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
         // the send resolved with no live round, registered, and the
         // orchestrator then absorbed it into a round that started meanwhile,
         // so no round-start persist and no `prepared` ever arrived. We hold no
-        // proof, so this must never succeed the receipt. It is refused rather
-        // than terminalized here: see the module header — this glue's
-        // Authority port cannot express `indeterminate`, and `failed` would be
-        // a lie about a prompt that was in fact delivered.
-        return { kind: 'refused', reason: 'started_without_prepared_evidence' }
+        // proof. The receipt must not succeed (nothing was proven) and must not
+        // fail (the prompt may well have been delivered), so proof is abandoned
+        // and the receipt goes indeterminate. It joins the same terminal fence,
+        // so a repeat abandons nothing a second time.
+        if (forwarded.has(started)) return { kind: 'refused', reason: 'already_forwarded' }
+        forwarded.add(started)
+        authority.abortQueuedStart(started)
+        return { kind: 'terminalized', commandId: started, status: 'indeterminate' }
       }
       const commandId = commandIdOf(view.hostCommandActionId)
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }

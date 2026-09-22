@@ -32,7 +32,10 @@ import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
 import type { HostProjectionReconcileResult } from './HostProjectionReconciler'
-import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
+import type {
+  HostQueuedStartEntities,
+  HostQueuedStartStartedView
+} from './HostQueuedStartPublication'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import {
   createHostMainComposition,
@@ -735,6 +738,20 @@ describe('HostMainComposition', () => {
   // Independent Threads M2 — optional queued-start composition ports
   // -----------------------------------------------------------------------
 
+  // `HostMainComposition.authority` is typed as the narrowed HostAuthority
+  // facade, but the object behind it is the concrete AppStoreHostAuthority the
+  // composition built, and the queued-start handlers live only there. This is
+  // the exact surface the binds are supposed to reach — naming it keeps the
+  // casts below from widening into `any`.
+  type QueuedStartAuthoritySurface = {
+    handleQueuedStartDispatchSettled: (
+      commandId: string,
+      result: HostCommandExecutionResult,
+      startEntities?: HostQueuedStartEntities
+    ) => void
+    abortQueuedStart: (commandId: string) => void
+  }
+
   describe('queued-start ports', () => {
     const composerSend = (overrides: Partial<HostCommand> = {}): HostCommand =>
       makeCommand({
@@ -829,6 +846,7 @@ describe('HostMainComposition', () => {
       expect(() => open({ queuedStartStartingBind: () => {} })).toThrow(bindError)
       expect(() => open({ queuedStartStartedBind: () => {} })).toThrow(bindError)
       expect(() => open({ queuedStartDispatchSettledBind: () => {} })).toThrow(bindError)
+      expect(() => open({ queuedStartAbortBind: () => {} })).toThrow(bindError)
 
       // The same binds are accepted once the publication executor is supplied,
       // so the refusal is about the missing coordinator, not the binds.
@@ -837,7 +855,8 @@ describe('HostMainComposition', () => {
           queuedComposerSend: queuedAck,
           queuedStartStartingBind: () => {},
           queuedStartStartedBind: () => {},
-          queuedStartDispatchSettledBind: () => {}
+          queuedStartDispatchSettledBind: () => {},
+          queuedStartAbortBind: () => {}
         })
       ).not.toThrow()
     })
@@ -857,6 +876,9 @@ describe('HostMainComposition', () => {
       expect(() =>
         open({ queuedComposerSend: queuedAck, queuedStartDispatchSettledBind: notAFunction })
       ).toThrow('HostMainComposition requires an injected queuedStartDispatchSettledBind')
+      expect(() =>
+        open({ queuedComposerSend: queuedAck, queuedStartAbortBind: notAFunction })
+      ).toThrow('HostMainComposition requires an injected queuedStartAbortBind')
     })
 
     it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {
@@ -880,16 +902,23 @@ describe('HostMainComposition', () => {
           settledHandler = handler
         }
       )
+      let abortHandler: ((commandId: string) => void) | undefined
+      const queuedStartAbortBind = vi.fn((handler: (commandId: string) => void) => {
+        abortHandler = handler
+      })
       composition = open({
         queuedComposerSend: queuedAck,
         queuedStartStartingBind,
         queuedStartStartedBind,
-        queuedStartDispatchSettledBind
+        queuedStartDispatchSettledBind,
+        queuedStartAbortBind
       })
       try {
         expect(queuedStartStartingBind).toHaveBeenCalledOnce()
         expect(queuedStartStartedBind).toHaveBeenCalledOnce()
         expect(queuedStartDispatchSettledBind).toHaveBeenCalledOnce()
+        expect(queuedStartAbortBind).toHaveBeenCalledOnce()
+        expect(() => abortHandler?.('unregistered')).not.toThrow()
 
         // An unregistered commandId must be absorbed by the coordinator rather
         // than thrown back at the Domain lifecycle that raised the phase.
@@ -913,6 +942,64 @@ describe('HostMainComposition', () => {
         ).resolves.toMatchObject({ ok: true, value: { status: 'pending', phase: 'queued' } })
         expect(queuedAck).toHaveBeenCalledOnce()
         expect(executor).not.toHaveBeenCalled()
+      } finally {
+        await composition.shutdown()
+      }
+    })
+
+    it('forwards bound start evidence verbatim through the dispatch-settled bind', async () => {
+      // The in-main route proves a start by the run/round row it persisted,
+      // never by the commandId. A bind that dropped the third argument would
+      // strip that evidence and make every in-main start fail incoherent —
+      // silently, because the two-argument call still typechecks.
+      let settledHandler:
+        | ((
+            commandId: string,
+            result: HostCommandExecutionResult,
+            startEntities?: HostQueuedStartEntities
+          ) => void)
+        | undefined
+      composition = open({
+        queuedComposerSend: queuedAck,
+        queuedStartDispatchSettledBind: (handler) => {
+          settledHandler = handler
+        }
+      })
+      try {
+        // `composition.authority` is narrowed to the wire facade; the queued
+        // handlers live on the concrete AppStoreHostAuthority the composition
+        // actually built. Reach exactly those two members, nothing wider.
+        const settled = vi.spyOn(
+          composition.authority as unknown as QueuedStartAuthoritySurface,
+          'handleQueuedStartDispatchSettled'
+        )
+        const sentinel: HostQueuedStartEntities = { roundEntityId: 'round-sentinel' }
+        settledHandler?.('unregistered', { status: 'succeeded' }, sentinel)
+
+        expect(settled).toHaveBeenCalledTimes(1)
+        // Same object, not a copy and not undefined.
+        expect(settled.mock.calls[0]![2]).toBe(sentinel)
+      } finally {
+        await composition.shutdown()
+      }
+    })
+
+    it('routes the abort bind to the Authority that abandons proof', async () => {
+      let abortHandler: ((commandId: string) => void) | undefined
+      composition = open({
+        queuedComposerSend: queuedAck,
+        queuedStartAbortBind: (handler) => {
+          abortHandler = handler
+        }
+      })
+      try {
+        const aborted = vi.spyOn(
+          composition.authority as unknown as QueuedStartAuthoritySurface,
+          'abortQueuedStart'
+        )
+        abortHandler?.('cmd-abandoned')
+        expect(aborted).toHaveBeenCalledTimes(1)
+        expect(aborted).toHaveBeenCalledWith('cmd-abandoned')
       } finally {
         await composition.shutdown()
       }

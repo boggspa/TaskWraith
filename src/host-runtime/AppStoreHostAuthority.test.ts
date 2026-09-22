@@ -2321,6 +2321,98 @@ describe('AppStoreHostAuthority', () => {
     })
   })
 
+  describe('abandoning proof for a queued start', () => {
+    function receiptOfCommand(commandId: string): unknown {
+      return runtime.receiptStore.getByCommandId(commandId, {
+        actorId: ACTOR_A.actorId,
+        clientId: ACTOR_A.clientId,
+        clientClass: ACTOR_A.clientClass
+      })
+    }
+
+    async function openPendingQueuedSend(commandId: string): Promise<ReturnType<typeof open>> {
+      const authority = open({
+        ports: {
+          queuedComposerSend: () => ({ status: 'succeeded' as const, resultSummary: 'run_queued' }),
+          commandExecutor: () => {
+            throw new Error('legacy observed executor must not run for queued composer.send')
+          }
+        }
+      })
+      const send = makeCommand({
+        commandId,
+        idempotencyKey: `abort-${commandId}`,
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      await authority.command(contextFor(ACTOR_A, CLIENT_A), send)
+      expect(receiptOfCommand(commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'pending' }
+      })
+      return authority
+    }
+
+    it('promotes a pending queued receipt to indeterminate without publishing or completing', async () => {
+      const commandId = '5a5a5a5a-5a5a-4a5a-8a5a-5a5a5a5a5a5a'
+      const authority = await openPendingQueuedSend(commandId)
+      const positionBefore = runtime.getPosition()
+
+      authority.abortQueuedStart(commandId)
+      await authority.drainQueuedStartPublication()
+
+      // Never succeeded (nothing was proven) and never failed (the prompt may
+      // well have been delivered) — the receipt abandons proof instead.
+      expect(receiptOfCommand(commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'indeterminate', errorCode: 'deferred_execution_may_have_begun' }
+      })
+      // Abandoning proof publishes nothing: a start we cannot verify must not
+      // leave a run/round row behind, so the journal must not have advanced.
+      expect(runtime.getPosition()).toEqual(positionBefore)
+      expect(runtime.deltaStore.since(positionBefore)).toMatchObject({ kind: 'deltas', deltas: [] })
+    })
+
+    it('characterisation: writes nothing for an unknown or already-settled commandId', async () => {
+      // NOT new behaviour. The guarantee comes from abort()'s pending gate and
+      // the receipt store's terminal refusal, neither of which this slice
+      // changes; the test exists so a future change to either is caught here.
+      const commandId = '5b5b5b5b-5b5b-4b5b-8b5b-5b5b5b5b5b5b'
+      const authority = await openPendingQueuedSend(commandId)
+
+      authority.abortQueuedStart('6c6c6c6c-6c6c-4c6c-8c6c-6c6c6c6c6c6c')
+      await authority.drainQueuedStartPublication()
+      expect(receiptOfCommand(commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'pending' }
+      })
+      expect(runtime.receiptStore.size).toBe(1)
+
+      // Now terminalize it, then abandon again: the terminal record stands.
+      authority.handleQueuedStartDispatchSettled(commandId, {
+        status: 'failed',
+        errorCode: 'provider_rejected'
+      })
+      await authority.drainQueuedStartPublication()
+      const settled = receiptOfCommand(commandId)
+      authority.abortQueuedStart(commandId)
+      await authority.drainQueuedStartPublication()
+      expect(receiptOfCommand(commandId)).toStrictEqual(settled)
+      expect(receiptOfCommand(commandId)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'failed', errorCode: 'provider_rejected' }
+      })
+    })
+
+    it('is a silent no-op when no publication is composed (flag OFF)', () => {
+      const authority = open()
+      expect(() => authority.abortQueuedStart('7d7d7d7d-7d7d-4d7d-8d7d-7d7d7d7d7d7d')).not.toThrow()
+      expect(runtime.receiptStore.size).toBe(0)
+    })
+  })
+
   it('without queuedComposerSend, composer.send still uses the observed executor (flag-off equivalent)', async () => {
     const authority = open()
     const send = makeCommand({

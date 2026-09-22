@@ -93,7 +93,10 @@ import {
   type HostProjectionReconcileResult
 } from './HostProjectionReconciler'
 import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
-import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
+import type {
+  HostQueuedStartEntities,
+  HostQueuedStartStartedView
+} from './HostQueuedStartPublication'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { hostRuntimeDataDir } from './HostRuntimePaths'
 
@@ -154,9 +157,26 @@ export interface HostMainCompositionInput {
   readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
   readonly queuedStartStartingBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
   readonly queuedStartStartedBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
+  /**
+   * The settled bind MUST forward `startEntities`. The in-main route binds the
+   * run row (solo) or the round row (ensemble) it actually persisted as start
+   * EVIDENCE, because its provider run id is allocated before a Host command
+   * exists and is never the commandId. Dropping the third argument here would
+   * silently strip that evidence and make every in-main start fail incoherent.
+   */
   readonly queuedStartDispatchSettledBind?: (
-    handler: (commandId: string, result: HostCommandExecutionResult) => void
+    handler: (
+      commandId: string,
+      result: HostCommandExecutionResult,
+      startEntities?: HostQueuedStartEntities
+    ) => void
   ) => void
+  /**
+   * Abandonment of proof for a still-pending queued start (the absorb race).
+   * Separate from the settled bind because it carries no execution result —
+   * see AppStoreHostAuthority.abortQueuedStart.
+   */
+  readonly queuedStartAbortBind?: (handler: (commandId: string) => void) => void
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
@@ -352,7 +372,8 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   const queuedStartBinds = [
     ['queuedStartStartingBind', input.queuedStartStartingBind],
     ['queuedStartStartedBind', input.queuedStartStartedBind],
-    ['queuedStartDispatchSettledBind', input.queuedStartDispatchSettledBind]
+    ['queuedStartDispatchSettledBind', input.queuedStartDispatchSettledBind],
+    ['queuedStartAbortBind', input.queuedStartAbortBind]
   ] as const
   for (const [label, bind] of queuedStartBinds) {
     if (bind !== undefined) requireFunction(bind, label)
@@ -579,8 +600,13 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   input.queuedStartStartedBind?.((view) => {
     authority.handleQueuedStartStarted(view)
   })
-  input.queuedStartDispatchSettledBind?.((commandId, result) => {
-    authority.handleQueuedStartDispatchSettled(commandId, result)
+  input.queuedStartDispatchSettledBind?.((commandId, result, startEntities) => {
+    // Forward the bound start evidence verbatim: the in-main route proves a
+    // start by the run/round row it persisted, not by the commandId.
+    authority.handleQueuedStartDispatchSettled(commandId, result, startEntities)
+  })
+  input.queuedStartAbortBind?.((commandId) => {
+    authority.abortQueuedStart(commandId)
   })
 
   const projectionPublisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })

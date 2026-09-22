@@ -1106,6 +1106,27 @@ export class AppStoreHostAuthority implements HostAuthority {
     else this.queuedStartPublication?.fail(commandId, result)
   }
 
+  /**
+   * Abandon proof for a still-pending queued start.
+   *
+   * NOT a settlement: a settlement carries a terminal execution result, while
+   * this says the dispatch reported success we cannot verify — the in-main
+   * absorb race, where a send registers with no live round and the orchestrator
+   * then absorbs it into one that started meanwhile, so no start evidence ever
+   * arrives. The receipt becomes indeterminate: never succeeded, because
+   * nothing was proven, and never failed, because the prompt may well have been
+   * delivered. That is why this is a separate method rather than a fourth
+   * HostCommandExecutionResult status.
+   *
+   * Contained and body-free like markDeferredUnavailable. A missing publication
+   * (flag OFF) or an unknown/already-published commandId is a silent no-op:
+   * `abort` acts only on its own pending map, so it can never resurrect or
+   * re-stamp a receipt that already reached a terminal state.
+   */
+  abortQueuedStart(commandId: string): void {
+    this.queuedStartPublication?.abort(commandId)
+  }
+
   /** Drain in-flight start publications. Composition shutdown calls this before runtime.flush. */
   async drainQueuedStartPublication(): Promise<void> {
     await this.queuedStartPublication?.drain()
