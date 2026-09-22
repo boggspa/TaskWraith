@@ -3,6 +3,7 @@ import {
   pendingPeopleDonorMutation
 } from '../../host-shared/thread-catalogue/PeopleDonorMutationGate'
 import { preserveSettledRunSeals } from '../../shared/threadCatalogueTerminalRuns'
+import { isActiveChatRunStatus } from '../../shared/chatRunStatus'
 import { projectThreadRunWallMs } from '../../shared/threadRunWallTime'
 import { ThreadCatalogueMirror, catalogueChatListItem } from './ThreadCatalogueMirror'
 import { projectThreadCatalogueRecord } from './ThreadCatalogueFromRecord'
@@ -1242,9 +1243,13 @@ function deriveSaveFlushReason(chat: ChatRecord): FlushReason {
   // Deferral is only safe while a run is actively streaming: that is both
   // where the measured 8-14 rewrites per 10 s come from, and the only window
   // in which a superseding save is guaranteed to follow. Once no run is
-  // running the chat sits at a terminal/idle boundary, so the next reader —
-  // bridge broadcast, iOS, crash recovery — must find it on disk.
-  return (chat.runs ?? []).some((run) => run.status === 'running') ? 'normal' : 'terminal'
+  // live the chat sits at a terminal/idle boundary, so the next reader —
+  // bridge broadcast, iOS, crash recovery — must find it on disk. Liveness
+  // is the shared predicate, not the raw 'running' string: a seat parked at
+  // 'starting' or 'queued' (the dispatch lane's seed, Muse for its whole run)
+  // is still streaming, and reading it as idle turned every save on such a
+  // thread into a whole-record checkpoint.
+  return (chat.runs ?? []).some((run) => isActiveChatRunStatus(run.status)) ? 'normal' : 'terminal'
 }
 
 /**
