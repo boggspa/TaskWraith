@@ -32,6 +32,12 @@ import { HOST_MATERIALIZE_MIN_INTERVAL_MS } from './hostChatCompatibilityPolicy'
  * an explicit durability edge never waits on it. The clock is stamped only by a
  * successful enqueue; an attempt that found a submission in flight, threw, or
  * was refused before reaching this coordinator never restarts it.
+ *
+ * A save whose journal append (or detail externalization) failed has the
+ * checkpoint as its ONLY durability. Its caller materializes at once, but with
+ * a submission in flight that attempt can only latch; the intent therefore
+ * travels on the staged entry (`durabilityFallback`), survives replacement by
+ * later saves, and the chained successor carrying it bypasses the interval.
  */
 
 export type HostChatCompatibilityStageResult =
@@ -40,6 +46,25 @@ export type HostChatCompatibilityStageResult =
   | 'duplicate'
   | 'stale'
   | 'blocked'
+
+export interface HostChatCompatibilityStageOptions {
+  /**
+   * The journal append or detail externalization failed for this save, so
+   * the full-record checkpoint is its only durability: a successor carrying
+   * this intent is chained without waiting for the minimum interval.
+   */
+  readonly durabilityFallback?: boolean
+}
+
+/**
+ * Bound on shutdown drain passes. Each pass materializes every pending
+ * checkpoint, drains the port, and marks the submitted ones durable, so a
+ * chat needs at most two (a pending record behind an in-flight submission).
+ * The loop that used to run unbounded would spin forever should a future
+ * change let a pending checkpoint decline to materialize; past this bound it
+ * fails loudly naming the chats instead.
+ */
+export const HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES = 8
 
 export interface HostChatCompatibilityPersistenceSnapshot {
   pendingChatIds: string[]
@@ -71,6 +96,8 @@ export interface HostChatCompatibilityPersistenceOptions extends HostPersistence
 interface CompatibilityEntry {
   input: HostThreadRecordPersistInput
   sequence: number
+  /** See HostChatCompatibilityStageOptions; sticky until the entry is enqueued. */
+  durabilityFallback: boolean
 }
 
 interface ActiveBarrier {
@@ -188,13 +215,17 @@ export class HostChatCompatibilityPersistence {
    * Retain the latest record by reference. Repeated calls do no filesystem,
    * transport, hashing, or serialization work.
    */
-  stage(input: HostThreadRecordPersistInput): HostChatCompatibilityStageResult {
+  stage(
+    input: HostThreadRecordPersistInput,
+    options: HostChatCompatibilityStageOptions = {}
+  ): HostChatCompatibilityStageResult {
     validateInput(input)
     const state = this.stateFor(input.chatId)
     if (this.closing || this.closed || state.deleting || state.deleted) {
       this.observeStage(input, 'blocked')
       return 'blocked'
     }
+    const durabilityFallback = options.durabilityFallback === true
 
     const revision = persistenceRevision(input)
     const latest = state.pending ?? state.submitted
@@ -208,6 +239,9 @@ export class HostChatCompatibilityPersistence {
       revision === latestRevision &&
       (latest || state.durableSequence > 0)
     ) {
+      // The same revision is already pending: that entry publishes this
+      // save's state, so it inherits the fallback intent.
+      if (state.pending && durabilityFallback) state.pending.durabilityFallback = true
       this.observeStage(input, 'duplicate')
       return 'duplicate'
     }
@@ -216,19 +250,21 @@ export class HostChatCompatibilityPersistence {
     if (state.pending) {
       const previousSequence = state.pending.sequence
       // Keep the first Host CAS base while replacing only the full-record
-      // reference. The body is never spread or cloned here.
+      // reference. The body is never spread or cloned here. The replacing
+      // record contains the earlier save's state, so the intent is sticky.
       state.pending = {
         input: copyHostPersistenceInput(input, {
           expectedRevision: state.pending.input.expectedRevision,
           diagnostics: this.diagnostics
         }),
-        sequence
+        sequence,
+        durabilityFallback: state.pending.durabilityFallback || durabilityFallback
       }
       this.observeStage(state.pending.input, 'replaced', sequence, previousSequence)
       return 'replaced'
     }
 
-    state.pending = { input, sequence }
+    state.pending = { input, sequence, durabilityFallback }
     this.observeStage(input, 'staged', sequence)
     return 'staged'
   }
@@ -329,7 +365,11 @@ export class HostChatCompatibilityPersistence {
     }
 
     if (!state.pending) return false
-    state.pending = { input, sequence: state.pending.sequence }
+    state.pending = {
+      input,
+      sequence: state.pending.sequence,
+      durabilityFallback: state.pending.durabilityFallback
+    }
     this.diagnostics?.event('rebase', 'succeeded', {
       chatId: input.chatId,
       context: this.diagnostics.contextFrom(input),
@@ -612,10 +652,22 @@ export class HostChatCompatibilityPersistence {
    * enqueue in between (which re-stamps the clock) is honoured, and a delete,
    * discard, rebase or shutdown in between cancels it. The direct
    * `materialize` callers — barrier, delete, shutdown — never come through here.
+   *
+   * Two successors never wait: one carrying a durability-fallback intent (the
+   * journal failed, so the checkpoint is that save's only durability), and any
+   * successor once shutdown has begun. The latter is the ONE shutdown guard:
+   * the drain loop consumes (and thereby clears the wait of) every pending
+   * checkpoint it can materialize, and once `closing` is set nothing can arm
+   * a new wait, so a checkpoint can never park behind the drain.
    */
   private materializeSuccessor(chatId: string, state: ChatCompatibilityState): void {
     if (!state.pending || state.submitted || state.deleting || state.deleted) return
-    if (this.minIntervalMs > 0 && !this.closing && !this.closed) {
+    if (
+      this.minIntervalMs > 0 &&
+      !state.pending.durabilityFallback &&
+      !this.closing &&
+      !this.closed
+    ) {
       const remainingMs = this.minIntervalMs - (this.nowMs() - state.lastMaterializedAtMs)
       if (remainingMs > 0) {
         this.armIntervalTimer(chatId, state, remainingMs)
@@ -633,9 +685,6 @@ export class HostChatCompatibilityPersistence {
     if (state.intervalTimer !== null) return
     const timer = this.setTimer(() => {
       state.intervalTimer = null
-      // Shutdown materializes and drains every remaining checkpoint itself; a
-      // late timer must not enqueue behind its drain.
-      if (this.closing || this.closed) return
       this.materializeSuccessor(chatId, state)
     }, delayMs)
     ;(timer as { unref?: () => void }).unref?.()
@@ -664,12 +713,12 @@ export class HostChatCompatibilityPersistence {
         expectedRevision: entry.input.expectedRevision,
         diagnostics: this.diagnostics
       }),
-      sequence: state.pending.sequence
+      sequence: state.pending.sequence,
+      durabilityFallback: state.pending.durabilityFallback || entry.durabilityFallback
     }
   }
 
   private async runShutdown(): Promise<void> {
-    for (const state of this.states.values()) this.clearIntervalTimer(state)
     const active = [...this.states.values()].flatMap((state) =>
       [state.activeBarrier?.promise, state.deletePromise].filter(
         (promise): promise is Promise<void> => Boolean(promise)
@@ -677,7 +726,19 @@ export class HostChatCompatibilityPersistence {
     )
     if (active.length > 0) await Promise.all(active)
 
-    for (;;) {
+    for (let pass = 1; ; pass += 1) {
+      if (pass > HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES) {
+        const stuck = [...this.states]
+          .filter(
+            ([, state]) => !state.deleting && !state.deleted && (state.pending || state.submitted)
+          )
+          .map(([chatId]) => chatId)
+          .sort()
+        throw new Error(
+          `Host compatibility shutdown made no progress after ${HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES} ` +
+            `drain passes; unconfirmed chats: ${stuck.join(', ')}`
+        )
+      }
       for (const [chatId, state] of this.states) {
         if (!state.deleting && !state.deleted) this.materialize(chatId)
       }

@@ -1,3 +1,8 @@
+import {
+  DEFERRED_HOST_MATERIALIZE_DELAY_MS,
+  DEFERRED_HOST_MATERIALIZE_MAX_RESCHEDULES
+} from './hostChatCompatibilityDeferral'
+
 /**
  * Policy for full-record Host compatibility checkpoints of a streaming chat.
  *
@@ -14,13 +19,37 @@
  * checkpoints for one chat.
  *
  * WHAT NEVER WAITS: explicit durability barriers (`awaitChatRecordPersisted`),
- * delete preparation, the shutdown drain, creation, the journal-failure and
- * externalization-failure fallbacks, and `history-deletion` flushes. The
- * interval only spaces the coordinator's chained successors.
+ * delete preparation and the shutdown drain materialize directly and never
+ * come through the chain. Creation and `history-deletion` flushes cannot meet
+ * an in-flight submission. The journal-failure and externalization-failure
+ * fallbacks CAN: their immediate materialize latches behind an in-flight
+ * checkpoint, so the save carries a `durabilityFallback` intent on its staged
+ * entry and the chained successor publishing it bypasses the interval — that
+ * save has no other durability. The interval only spaces ordinary chained
+ * successors, whose mutations the journal already holds.
+ *
+ * WORST-CASE PUBLISH LAG: a record at or above the deferral's size floor whose
+ * pending mutation volume stays under its 512 KiB gate rides the deferral's
+ * full reschedule budget before its trailing checkpoint fires, and if that
+ * fire lands behind an in-flight submission the successor then waits the
+ * interval. `HOST_MATERIALIZE_WORST_CASE_PUBLISH_LAG_MS` is that sum; it bounds
+ * how far the compatibility projection can trail the journal, never
+ * durability.
  */
 
 /** Minimum wall time between two chained full-record checkpoints for one chat. */
 export const HOST_MATERIALIZE_MIN_INTERVAL_MS = 30_000
+
+/**
+ * Longest the compatibility record of a large streaming chat can trail the
+ * journal: every deferral fire below the volume gate reschedules until the
+ * budget is spent (the first fire plus the reschedules), then the chained
+ * successor waits the interval. Pinned so neither component can grow it
+ * silently.
+ */
+export const HOST_MATERIALIZE_WORST_CASE_PUBLISH_LAG_MS =
+  (DEFERRED_HOST_MATERIALIZE_MAX_RESCHEDULES + 1) * DEFERRED_HOST_MATERIALIZE_DELAY_MS +
+  HOST_MATERIALIZE_MIN_INTERVAL_MS
 
 /**
  * Upper bound on the interval an environment override may set. A typo in a

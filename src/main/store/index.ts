@@ -8300,11 +8300,19 @@ export class AppStore {
     })
     noteHostPersistIntent(previousChatForFeedback, normalizedChat)
     const compatibility = hostChatCompatibility()
-    const stageResult = compatibility.stage({
-      chatId: normalizedChat.appChatId,
-      record: normalizedChat,
-      expectedRevision
-    })
+    // Journal or detail-externalization failure: the checkpoint is this save's
+    // only durability. The intent rides the staged entry so that, when the
+    // immediate materialize below can only latch behind an in-flight
+    // submission, the chained successor is published without the interval.
+    const durabilityFallback = incrementalResult === null || preparation.externalizationFailed
+    const stageResult = compatibility.stage(
+      {
+        chatId: normalizedChat.appChatId,
+        record: normalizedChat,
+        expectedRevision
+      },
+      { durabilityFallback }
+    )
     if (stageResult === 'staged' || stageResult === 'replaced') {
       hostPersistUnconfirmedChatIds.add(normalizedChat.appChatId)
     }
@@ -8328,14 +8336,13 @@ export class AppStore {
       // must never resurrect a record the deletion is erasing.
       const deferrableHostMaterialization =
         previousChatForFeedback !== null &&
-        incrementalResult !== null &&
-        !preparation.externalizationFailed &&
+        !durabilityFallback &&
         (flushReason === 'terminal' || flushReason === 'approval')
       const deferred = deferrableHostMaterialization
         ? deferredHostMaterialize().schedule(normalizedChat.appChatId, {
             existingBytes: existingRecordBytes,
             flushReason,
-            durabilityFallback: incrementalResult === null || preparation.externalizationFailed
+            durabilityFallback
           })
         : false
       if (!deferred) materializeHostChatCompatibility(normalizedChat.appChatId)

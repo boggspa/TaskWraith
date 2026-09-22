@@ -823,6 +823,43 @@ describe('Stage 2d — chained compatibility checkpoints are spaced by the polic
     expect(enqueued[1].expectedRevision).toBe(4)
   })
 
+  it('a journal-failure fallback staged behind an in-flight checkpoint publishes the instant the predecessor is acknowledged', async () => {
+    const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+    const { projectThreadCatalogueRecord } = await import('./ThreadCatalogueFromRecord')
+    const chatId = 'chat-host-fallback-in-flight'
+    seedDurableChat(profilePath, durableChat(chatId, 3))
+    const first = AppStore.saveChat({ ...durableChat(chatId, 3), title: 'First' })
+    expect(enqueued).toHaveLength(1)
+    expect(AppStore.getIncrementalChatPersistenceStats().failures).toBe(0)
+
+    // The terminal checkpoint above compacted the mutation tail away; a
+    // directory at its path makes the next append fail, so the next save's
+    // only durability is the full Host checkpoint — which can only latch
+    // behind the in-flight first checkpoint.
+    mkdirSync(join(profilePath, 'chat-journal-v2', `${chatId}.mutations.jsonl`), {
+      recursive: true
+    })
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const fallback = AppStore.saveChat({
+        ...first,
+        title: 'Only the Host checkpoint holds this',
+        runs: [{ runId: 'run-1', startedAt: '2026-09-01T00:00:00.000Z', status: 'running' }]
+      })
+      expect(AppStore.getIncrementalChatPersistenceStats().failures).toBe(1)
+      expect(enqueued).toHaveLength(1)
+
+      // The Host acknowledges the first checkpoint: the fallback must publish
+      // right here, not after the 30 s interval an ordinary successor waits.
+      AppStore.acceptCatalogueMutation(projectThreadCatalogueRecord(first))
+      expect(enqueued).toHaveLength(2)
+      expect(enqueued[1].record).toBe(fallback)
+      expect(enqueued[1].expectedRevision).toBe(4)
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
   it('an environment override of 0 restores the immediate chain', async () => {
     process.env.TASKWRAITH_HOST_MATERIALIZE_MIN_INTERVAL_MS = '0'
     try {

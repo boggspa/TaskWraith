@@ -44,6 +44,20 @@ describe('Host compatibility checkpoint wiring in store/index.ts', () => {
     expect(store.comparesEqual(body, 'run.status', "'running'")).toBe(false)
   })
 
+  it('carries the journal and externalization fallback intent onto the staged checkpoint', () => {
+    // With a submission in flight the fallback's immediate materialize can
+    // only latch; the intent on the staged entry is what lets the chained
+    // successor skip the interval. Exactly one stage call passes options.
+    const staged = store
+      .callsTo(store.source, 'stage')
+      .filter((call) => call.arguments.length === 2)
+    expect(staged).toHaveLength(1)
+    expect(store.propText(staged[0], 1, 'durabilityFallback')).toBe('durabilityFallback')
+    expect(store.text(store.binding('durabilityFallback')).replace(/\s+/g, ' ')).toBe(
+      'incrementalResult === null || preparation.externalizationFailed'
+    )
+  })
+
   it('refuses a write-gate-held materialize before it can reach the coordinator clock', () => {
     // The coordinator stamps its interval clock only on a successful enqueue,
     // so a hold must be refused HERE, before the coordinator is entered — a

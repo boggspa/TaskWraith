@@ -10,6 +10,7 @@ import {
 } from '../host/HostThreadRecordPersistCommand'
 import type { HostCommandReceipt } from '../../shared/hostProtocol'
 import {
+  HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES,
   HostChatCompatibilityPersistence,
   type HostChatCompatibilityPersistencePort
 } from './HostChatCompatibilityPersistence'
@@ -594,11 +595,148 @@ describe('minimum interval between chained checkpoints', () => {
     expect(f.enqueued).toHaveLength(2)
     expect(f.enqueued[1].record).toBe(successor.record)
     expect(f.port.drainAll).toHaveBeenCalled()
+    // The drain's own enqueue consumed the pending slot and cleared its wait.
     expect(f.timers[0].cleared).toBe(true)
-    // A wait that raced the shutdown clear enqueues nothing behind the drain.
     f.timers[0].callback()
     expect(f.enqueued).toHaveLength(2)
     expect(f.persistence.snapshot()).toMatchObject({ pendingChatIds: [], closed: true })
+  })
+
+  it('a successor acknowledged during the shutdown drain enqueues at once instead of parking behind the interval', async () => {
+    let releaseDrainAll!: () => void
+    const held = new Promise<void>((resolve) => {
+      releaseDrainAll = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drainAll: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+
+    const shutdown = f.persistence.shutdown()
+    await Promise.resolve()
+    expect(f.port.drainAll).toHaveBeenCalledTimes(1)
+    // The Host lands the predecessor while drainAll is still in flight, well
+    // inside the interval. Once shutdown has begun the chain must publish
+    // immediately: this is the one shutdown guard, and without it the
+    // successor parks behind a wait and the drain needs a second pass.
+    f.advance(5_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.armed()).toHaveLength(0)
+
+    releaseDrainAll()
+    await shutdown
+    expect(f.port.drainAll).toHaveBeenCalledTimes(1)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: [],
+      closed: true
+    })
+  })
+
+  it('shutdown fails loudly instead of spinning when a pending checkpoint can never be materialized', async () => {
+    // The drain yields a macrotask per pass, as a real Host round trip does,
+    // so an unbounded loop shows up as this test timing out rather than as a
+    // starved event loop that never reaches the timeout at all.
+    const f = timed({
+      minIntervalMs: 30_000,
+      drainAll: vi.fn(() => new Promise<void>((resolve) => setTimeout(resolve, 0)))
+    })
+    f.persistence.stage(input('chat-stuck', 4, 3))
+    // A future path that declines to materialize a pending checkpoint must
+    // not turn the drain loop into a hang.
+    vi.spyOn(f.persistence, 'materialize').mockReturnValue(false)
+
+    await expect(f.persistence.shutdown()).rejects.toThrow(
+      `no progress after ${HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES} drain passes; unconfirmed chats: chat-stuck`
+    )
+    expect(f.port.drainAll).toHaveBeenCalledTimes(HOST_COMPATIBILITY_SHUTDOWN_MAX_PASSES)
+    expect(f.enqueued).toHaveLength(0)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-stuck'],
+      closed: false
+    })
+  })
+
+  it('a journal-failure fallback successor enqueues the instant its predecessor is acknowledged', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    // The journal append failed for this save: the checkpoint is its only
+    // durability. Its immediate materialize can only latch behind the
+    // in-flight predecessor.
+    const fallback = input('chat-1', 7, 4)
+    expect(f.persistence.stage(fallback, { durabilityFallback: true })).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(fallback.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.timers).toEqual([])
+  })
+
+  it('an ordinary successor in the same shape still waits out the interval', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const ordinary = input('chat-1', 7, 4)
+    expect(f.persistence.stage(ordinary, { durabilityFallback: false })).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+  })
+
+  it('the fallback intent survives replacement, duplication and a failed enqueue until it is published', () => {
+    const published: HostThreadRecordPersistInput[] = []
+    const enqueue = vi.fn((entry: HostThreadRecordPersistInput) => {
+      published.push(entry)
+    })
+    const f = timed({ minIntervalMs: 30_000, enqueue })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4), { durabilityFallback: true })
+    // Later ordinary saves replace the pending record; a repeated revision is
+    // a duplicate. The replacing record contains the failed save's state, so
+    // the intent stays with the slot.
+    expect(f.persistence.stage(input('chat-1', 9, 7))).toBe('replaced')
+    expect(f.persistence.stage(input('chat-1', 9, 8))).toBe('duplicate')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    // The first publish attempt fails at the port and restores the entry.
+    enqueue.mockImplementationOnce(() => {
+      throw new Error('lane closed')
+    })
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(published).toHaveLength(1)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.snapshot().pendingChatIds).toEqual(['chat-1'])
+
+    // The restored fallback lineage still skips the interval when chained
+    // again: settle a fresh predecessor and acknowledge it inside the window.
+    f.persistence.stage(input('chat-1', 10, 9))
+    f.advance(30_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(false)
+    expect(f.persistence.materialize('chat-1')).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(published[1].record.persistenceRevision).toBe(10)
+    expect(published[1].expectedRevision).toBe(4)
+    // Once published the intent is spent: the next successor waits again.
+    f.persistence.stage(input('chat-1', 12, 10))
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(1_000)
+    expect(f.persistence.acknowledgeRevision('chat-1', 10)).toBe(true)
+    expect(published).toHaveLength(2)
+    expect(f.armed()).toHaveLength(1)
   })
 
   it('delete preparation inside the interval cancels the wait; a late fire enqueues nothing', async () => {
