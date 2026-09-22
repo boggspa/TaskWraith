@@ -2251,7 +2251,8 @@ private struct TWReasoningStop: Identifiable {
 /// capability sets + the requested list). Cursor Composer 2.5 uses a model swap
 /// instead (FastControl.modelSwap); Grok is permanently Fast (locked).
 private let twFastToggleModelIds: Set<String> = [
-    // Codex
+    // Codex (GPT-6 Sol and Luna sit on OpenAI's Fast-mode pricing table)
+    "gpt-6-sol", "gpt-6-luna",
     "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4",
     // Claude (supported Opus base + 1M variants; Fable 5 has no Fast tier)
     "claude-opus-5-5", "claude-opus-5",

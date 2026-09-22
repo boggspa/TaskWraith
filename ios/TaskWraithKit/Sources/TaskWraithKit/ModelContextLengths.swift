@@ -58,6 +58,11 @@ public enum ModelContextLengths {
         case "codex":
             return [
                 (id: "gpt-5.5",              label: "GPT-5.5"),
+                // GPT-6 Sol and Luna (2026-09-22) — mirrors the rows that
+                // ensembleProviderDefaults.ts lists between gpt-6-astra (which
+                // has no iOS row) and the 5.6 trio.
+                (id: "gpt-6-sol",            label: "GPT-6-Sol"),
+                (id: "gpt-6-luna",           label: "GPT-6-Luna"),
                 // GPT-5.6 trio — GA 2026-07-09, official hyphenated display
                 // names; mirrors ensembleProviderDefaults.ts order VERBATIM.
                 (id: "gpt-5.6-sol",          label: "GPT-5.6-Sol"),

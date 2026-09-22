@@ -14,6 +14,14 @@ struct IosParityFixesTests {
         #expect(twModelUsesFastToggle("claude-opus-5-5"))
     }
 
+    @Test func gpt6SolAndLunaExposeTheCodexFastToggle() {
+        // Both sit on OpenAI's Fast-mode pricing table (2026-09-22); the id
+        // set is matched case-insensitively.
+        #expect(twModelUsesFastToggle("gpt-6-sol"))
+        #expect(twModelUsesFastToggle("gpt-6-luna"))
+        #expect(twModelUsesFastToggle("GPT-6-Luna"))
+    }
+
     @MainActor
     @Test func grok46UsesProviderAwareLabelsAndCursorFastMode() {
         #expect(
@@ -76,6 +84,26 @@ struct IosParityFixesTests {
                 == "medium")
         // Opus 5 stays its own row beside it.
         #expect(claude.contains(where: { $0.id == "claude-opus-5" }))
+    }
+
+    @MainActor
+    @Test func offlineDemoCodexCatalogLeadsWithGpt6SolAndLuna() {
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+
+        let codex = model.providerModels["codex"] ?? []
+        #expect(Array(codex.map(\.id).prefix(3)) == ["gpt-6-sol", "gpt-6-luna", "gpt-5.5"])
+        for (id, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+            let row = codex.first(where: { $0.id == id })
+            #expect(row?.label == label)
+            #expect(
+                row?.supportedReasoningEfforts?.map(\.reasoningEffort)
+                    == ["low", "medium", "high", "xhigh", "max"])
+            #expect(row?.defaultReasoningEffort == "medium")
+            #expect(row?.isDefault != true)
+        }
+        // GPT-5.5 keeps the demo default flag.
+        #expect(codex.first(where: { $0.id == "gpt-5.5" })?.isDefault == true)
     }
 
     @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {

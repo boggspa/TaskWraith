@@ -70,6 +70,12 @@ struct ContextWindowsTests {
         // fallback is a plausible 200_000 rather than a loud failure.
         #expect(ContextWindows.byModel["claude-opus-5-5"] == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-5-5") == 1_000_000)
+        // GPT-6 Sol and Luna (2026-09-22): pinned on the table itself, because
+        // the codex fallback is the same 1_050_000 and would mask a dropped row.
+        #expect(ContextWindows.byModel["gpt-6-sol"] == 1_050_000)
+        #expect(ContextWindows.byModel["gpt-6-luna"] == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "codex", model: "gpt-6-sol") == 1_050_000)
+        #expect(ContextWindows.resolve(provider: "codex", model: "gpt-6-luna") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)

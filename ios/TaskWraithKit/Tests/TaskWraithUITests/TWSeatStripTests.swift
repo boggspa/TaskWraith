@@ -58,6 +58,20 @@ struct TWSeatStripTests {
                 == "Seat: #1 Lead, Claude, Opus 5.5, Max reasoning, Accept Edits, 1 grant")
     }
 
+    @Test func rendersTheGpt6SolSeatWithTheIosCatalogueLabel() {
+        // Resolved through ModelContextLengths (the iOS catalogue), so a dropped
+        // "gpt-6-sol" row would fall through to the raw wire id.
+        let side = twSeatStripSide(
+            seat(
+                provider: "codex", model: "gpt-6-sol", role: "Builder", seatNumber: 2,
+                reasoningEffort: "max", permissionPresetId: "default", grantsCount: 1))
+        #expect(side.providerLabel == "Codex")
+        #expect(side.modelLabel == "GPT-6-Sol")
+        #expect(
+            twSeatStripAccessibilityLabel(before: side, after: side)
+                == "Seat: #2 Builder, Codex, GPT-6-Sol, Max reasoning, Accept Edits, 1 grant")
+    }
+
     @Test func aRoleWithoutASeatNumberDropsTheHashPrefix() {
         #expect(twSeatStripSide(seat(provider: "claude", role: "Lead")).roleLabel == "Lead")
         #expect(twSeatStripSide(seat(provider: "claude", seatNumber: 3)).roleLabel == "")

@@ -149,6 +149,23 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.1M")
     }
 
+    @Test("codex gpt-6-sol and gpt-6-luna rows: 1_050_000 / 1.1M, between gpt-5.5 and the 5.6 trio")
+    func codexGpt6SolAndLuna() {
+        let codex = ModelContextLengths.buildGroups().first { $0.provider == "codex" }?.models ?? []
+        for (modelId, label) in [("gpt-6-sol", "GPT-6-Sol"), ("gpt-6-luna", "GPT-6-Luna")] {
+            let row = codex.first { $0.modelId == modelId }
+            #expect(row != nil)
+            #expect(row?.label == label)
+            #expect(row?.contextWindow == 1_050_000)
+            #expect(row?.formatted == "1.1M")
+        }
+        // Mirrors the TS order: gpt-5.5 first, the GPT-6 pair, then the 5.6 trio.
+        let ids = codex.map(\.modelId)
+        #expect(ids.firstIndex(of: "gpt-6-sol") == 1)
+        #expect(ids.firstIndex(of: "gpt-6-luna") == 2)
+        #expect(ids.firstIndex(of: "gpt-5.6-sol") == 3)
+    }
+
     @Test("codex drops the rows retired on 2026-09-18")
     func codexRetiredRowsAbsent() {
         // Was pinned on gpt-5.4-mini (400k) until the user retired the 5.4
