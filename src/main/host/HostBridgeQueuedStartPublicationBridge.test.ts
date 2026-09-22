@@ -169,20 +169,87 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(RUN_ID).not.toBe(COMMAND_ID)
   })
 
-  it('refuses an ensemble prepared view whole and calls the Authority not at all', () => {
+  it('drives an ensemble prepared view to starting and then a settlement binding the ROUND entity', () => {
     const { port, starting, dispatchSettled } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
 
+    const order: string[] = []
+    starting.mockImplementation(() => order.push('starting'))
+    dispatchSettled.mockImplementation(() => order.push('settled'))
+
     expect(bridge.onPrepared(preparedEnsemble())).toEqual({
+      kind: 'started',
+      commandId: COMMAND_ID,
+      roundEntityId: 'round-1'
+    })
+    expect(order).toEqual(['starting', 'settled'])
+
+    const startingView = starting.mock.calls[0]![0] as HostQueuedStartStartedView
+    expect(startingView).toEqual({
+      commandId: COMMAND_ID,
+      threadId: THREAD_ID,
+      fingerprint: FINGERPRINT,
+      phase: 'starting',
+      startedEvidence: false,
+      terminalOutcome: null
+    })
+    expect(startingView).not.toHaveProperty('executionClaimCursor')
+
+    expect(dispatchSettled).toHaveBeenCalledTimes(1)
+    expect(dispatchSettled).toHaveBeenCalledWith(
+      COMMAND_ID,
+      { status: 'succeeded' },
+      { roundEntityId: 'round-1' }
+    )
+    // EXACTLY ONE entity is bound. Binding a participant run beside the round
+    // would be refused incoherent by the coordinator — and there is no
+    // participant runId at the round-start persist boundary to bind anyway.
+    const bound = dispatchSettled.mock.calls[0]![2] as HostQueuedStartEntities
+    expect(bound).not.toHaveProperty('runEntityId')
+    expect(Object.keys(bound)).toEqual(['roundEntityId'])
+    // The round id is evidence: the receipt is still addressed by commandId.
+    expect(dispatchSettled.mock.calls[0]![0]).toBe(COMMAND_ID)
+  })
+
+  it('refuses an ensemble prepared view carrying no usable round id and calls the Authority not at all', () => {
+    const { port, starting, dispatchSettled } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+    const roundless = {
+      ...preparedEnsemble(),
+      prepared: {
+        start: { kind: 'ensemble', roundId: '', participantRunIds: ['run-a'] },
+        effectRefs: [{ family: 'thread', entityId: THREAD_ID }]
+      }
+    } as HostBridgeQueuedStartView
+
+    expect(bridge.onPrepared(roundless)).toEqual({
       kind: 'refused',
-      reason: 'ensemble_start_deferred'
+      reason: 'missing_round_identity'
     })
     expect(starting).not.toHaveBeenCalled()
     expect(dispatchSettled).not.toHaveBeenCalled()
     expect(bridge.forwardedCount()).toBe(0)
 
-    // The fence must not be a one-shot: a later solo start still works.
+    // The refusal must not be a one-shot: a later solo start still works.
     expect(bridge.onPrepared(preparedSolo()).kind).toBe('started')
+  })
+
+  it('refuses a started settlement it never drove a prepared for rather than succeeding it', () => {
+    // The absorb race: the send registered with no live round, then the
+    // orchestrator absorbed it into a round that started meanwhile, so no
+    // `prepared` ever arrived. We hold no proof of the start.
+    const { port, starting, dispatchSettled } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+
+    expect(bridge.onSettled(settled('started'))).toEqual({
+      kind: 'refused',
+      reason: 'started_without_prepared_evidence'
+    })
+    // Never succeeded, and never terminalized as failed either — the prompt
+    // may well have been delivered. The Authority is not called at all.
+    expect(starting).not.toHaveBeenCalled()
+    expect(dispatchSettled).not.toHaveBeenCalled()
+    expect(bridge.forwardedCount()).toBe(0)
   })
 
   it.each([

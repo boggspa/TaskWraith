@@ -21,12 +21,28 @@
  *                 `queued` when it ACKs; a second write here would race it.
  * - `prepared` (solo) -> `starting`, then a persist-proven `succeeded`
  *                 settlement binding `start.runId` as the run entity.
- * - `prepared` (ensemble) -> REFUSED, no Authority call. Ensemble proof needs
- *                 every participant run plus the round row; that is step 2b
- *                 and must not be half-served here.
+ * - `prepared` (ensemble) -> `starting`, then a persist-proven `succeeded`
+ *                 settlement binding `start.roundId` as the ROUND entity. Not
+ *                 a participant run: at the round-start persist boundary every
+ *                 participant is minted `idle` with no runId, so the proof is
+ *                 thread + round. Exactly one entity is ever bound.
  * - `settled` started -> no call; `prepared` already drove success.
  * - `settled` failed/cancelled -> one terminalizing settlement.
  * - adapter failure -> one terminalizing settlement, `publication_failed`.
+ *
+ * KNOWN RESIDUAL — a started settlement with no prepared. In the absorb race
+ * (resolve finds no live round, we register, a round starts before dispatch,
+ * the orchestrator absorbs the send) no `prepared` ever arrives. The correct
+ * outcome is an INDETERMINATE receipt: we cannot prove the start, but the
+ * prompt was delivered, so `failed` would be a lie. This glue refuses instead:
+ * `HostCommandExecutionResult.status` admits only succeeded/failed/cancelled,
+ * and the only indeterminate route — `publication.abort` — is not on any
+ * public AppStoreHostAuthority method. Terminalizing it needs an Authority
+ * abort port (out of this slice's paths). It is also not reachable from the
+ * adapter today: HostBridgeQueuedStartAdapter refuses a `started` settlement
+ * whose record is not in `prepared` phase, so the stranded receipt surfaces at
+ * that refusal — which step 3b's ACK executor owns, not this glue. What is
+ * guaranteed here is the safety half: such a settlement NEVER succeeds.
  *
  * NO DURABLE PRE-SPAWN CLAIM. The in-main route has no execution-claim
  * journal, so the `starting` view carries NO executionClaimCursor. A receipt
@@ -60,22 +76,36 @@ export interface HostBridgeQueuedStartAuthorityPort {
 }
 
 export type HostBridgeQueuedStartPublicationRefusal =
-  /** Ensemble starts are step 2b. Never partially published. */
-  | 'ensemble_start_deferred'
+  /** An ensemble `prepared` carrying no usable round id; nothing to bind. */
+  | 'missing_round_identity'
+  /** A solo `prepared` carrying no usable run id; nothing to bind. */
+  | 'missing_run_identity'
   /** Not a `host:command:<lowercase-uuid>` correlation; no Host authority. */
   | 'invalid_action_id'
   /** A `prepared` view with no prepared evidence attached. */
   | 'missing_prepared_evidence'
   /** A `settled` view with no settlement attached. */
   | 'missing_settled_evidence'
+  /** A `started` settlement this glue never drove a `prepared` for. */
+  | 'started_without_prepared_evidence'
   /** A terminal decision was already forwarded for this commandId. */
   | 'already_forwarded'
 
+/**
+ * A `started` result binds EXACTLY ONE entity: the solo run row or the
+ * ensemble round row. Both discriminate on `kind: 'started'` because the
+ * caller's decision is the same — only the evidence differs.
+ */
 export type HostBridgeQueuedStartPublicationResult =
   | {
       readonly kind: 'started'
       readonly commandId: string
       readonly runEntityId: string
+    }
+  | {
+      readonly kind: 'started'
+      readonly commandId: string
+      readonly roundEntityId: string
     }
   | {
       readonly kind: 'terminalized'
@@ -91,7 +121,7 @@ export type HostBridgeQueuedStartPublicationResult =
 export interface HostBridgeQueuedStartPublicationBridge {
   /** Adapter `queued` view. Never calls the Authority. */
   onQueued(view: HostBridgeQueuedStartView): HostBridgeQueuedStartPublicationResult
-  /** Adapter `prepared` view. Solo only; ensemble is refused untouched. */
+  /** Adapter `prepared` view. Binds the solo run or the ensemble round. */
   onPrepared(view: HostBridgeQueuedStartView): HostBridgeQueuedStartPublicationResult
   /** Adapter `settled` view. failed/cancelled terminalize exactly once. */
   onSettled(view: HostBridgeQueuedStartView): HostBridgeQueuedStartPublicationResult
@@ -128,6 +158,11 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
   // fences again on its own pending map; this keeps the glue from issuing a
   // second settlement that the coordinator would only silently discard.
   const forwarded = new Set<string>()
+  // Command ids whose `prepared` this glue actually drove to a persist-proven
+  // success. Distinct from `forwarded`, which also holds terminalized ids: the
+  // difference is what separates "success already published" from "a started
+  // settlement arrived that we never saw prepared".
+  const publishedStart = new Set<string>()
 
   return {
     onQueued() {
@@ -140,11 +175,17 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
     onPrepared(view) {
       const prepared = view.prepared
       if (!prepared) return { kind: 'refused', reason: 'missing_prepared_evidence' }
-      // Ensemble proof needs the round row and every participant run. Serving
-      // it through the solo single-run binding would publish a start that was
-      // never proven, so it is refused whole.
-      if (prepared.start.kind !== 'solo') {
-        return { kind: 'refused', reason: 'ensemble_start_deferred' }
+      const start = prepared.start
+      // Exactly one entity is bound per start. An id that is not usable is
+      // refused rather than forwarded as an empty binding, which the
+      // coordinator would read as "bind nothing" and fall back to the
+      // commandId lookup the in-main route cannot satisfy.
+      const boundEntityId = start.kind === 'solo' ? start.runId : start.roundId
+      if (typeof boundEntityId !== 'string' || boundEntityId.length === 0) {
+        return {
+          kind: 'refused',
+          reason: start.kind === 'solo' ? 'missing_run_identity' : 'missing_round_identity'
+        }
       }
       const commandId = commandIdOf(view.hostCommandActionId)
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }
@@ -166,23 +207,50 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
       // `durablePromptAndStartPersisted` was the literal `true`, so the
       // prompt and start row are already durable at this point. That is the
       // same persist boundary the standalone route waits for.
-      const runEntityId = prepared.start.runId
+      //
+      // Solo binds the run row. Ensemble binds the ROUND row instead: at the
+      // round-start persist boundary the participants are minted `idle` with
+      // no runId, so there is no participant run to bind and a proof resting
+      // on one would be vacuous exactly when it is needed. Never both — the
+      // coordinator refuses that pair as incoherent.
       forwarded.add(commandId)
+      publishedStart.add(commandId)
+      if (start.kind === 'solo') {
+        authority.handleQueuedStartDispatchSettled(
+          commandId,
+          { status: 'succeeded' },
+          { runEntityId: boundEntityId }
+        )
+        return { kind: 'started', commandId, runEntityId: boundEntityId }
+      }
       authority.handleQueuedStartDispatchSettled(
         commandId,
         { status: 'succeeded' },
-        { runEntityId }
+        { roundEntityId: boundEntityId }
       )
-      return { kind: 'started', commandId, runEntityId }
+      return { kind: 'started', commandId, roundEntityId: boundEntityId }
     },
 
     onSettled(view) {
       const settled = view.settled
       if (!settled) return { kind: 'refused', reason: 'missing_settled_evidence' }
       if (settled.status === 'started') {
-        // `prepared` already published the persist-proven success. Settling
-        // again would be a second terminal decision on one receipt.
-        return { kind: 'ignored', reason: 'started_settlement_already_published' }
+        const started = commandIdOf(view.hostCommandActionId)
+        if (!started) return { kind: 'refused', reason: 'invalid_action_id' }
+        if (publishedStart.has(started)) {
+          // `prepared` already published the persist-proven success. Settling
+          // again would be a second terminal decision on one receipt.
+          return { kind: 'ignored', reason: 'started_settlement_already_published' }
+        }
+        // A started settlement with no prepared we drove: the absorb race —
+        // the send resolved with no live round, registered, and the
+        // orchestrator then absorbed it into a round that started meanwhile,
+        // so no round-start persist and no `prepared` ever arrived. We hold no
+        // proof, so this must never succeed the receipt. It is refused rather
+        // than terminalized here: see the module header — this glue's
+        // Authority port cannot express `indeterminate`, and `failed` would be
+        // a lie about a prompt that was in fact delivered.
+        return { kind: 'refused', reason: 'started_without_prepared_evidence' }
       }
       const commandId = commandIdOf(view.hostCommandActionId)
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }

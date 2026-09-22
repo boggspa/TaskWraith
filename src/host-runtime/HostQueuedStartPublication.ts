@@ -15,9 +15,11 @@
  * the run whose entityId is this commandId — or, when the settled dispatch
  * BINDS one, the run row it actually persisted — and the thread whose
  * entityId is command.target.threadId, plus the round whose entityId is the
- * register input's roundId for ensemble starts. A bound run entity is
- * evidence only (see HostQueuedStartEffectIdentity.runEntityId) and must
- * still sit on the target thread. Success requires every
+ * register input's roundId for ensemble starts — or the round row a settled
+ * in-main ensemble dispatch BINDS, which replaces the run family outright. A
+ * bound entity is evidence only (see HostQueuedStartEffectIdentity.runEntityId
+ * and .roundEntityId), must still sit on the target thread, and binding one of
+ * each is refused incoherent. Success requires every
  * admitted upsert (Domain's persist proof is the run row plus the user
  * message, which the thread projection carries as messageCount/updatedAt).
  * Other same-thread runs are not
@@ -136,6 +138,12 @@ const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'denied', 'cancelled',
  * publisher emits that third row (round entityId === roundId) and success
  * requires all three upserts.
  *
+ * An IN-MAIN ensemble start instead BINDS its round row at the settled
+ * boundary (see HostQueuedStartEffectIdentity.roundEntityId). That binding
+ * replaces the run family — the batch and the proof are exactly thread +
+ * round — because no participant has a runId yet at the round-start persist
+ * boundary. Binding a run entity and a round entity together is incoherent.
+ *
  * Not start effects (concurrent same-thread writes during the off-queue wait
  * must not be attributed here): missions, participants, providers,
  * questions, approvals, schedules, artifacts, workspaces.
@@ -225,6 +233,22 @@ export interface HostQueuedStartEffectIdentity {
    * mint, re-key or resurrect authority.
    */
   readonly runEntityId?: string
+  /**
+   * The ROUND row this start is proven by, for an in-main ensemble start.
+   *
+   * EVIDENCE, NEVER IDENTITY, on exactly the same terms as runEntityId. It is
+   * bound at the settled boundary because the round id is minted inside
+   * beginRound — after the send was resolved — so the register input can never
+   * carry it for a start (a register-input roundId can only ever describe an
+   * absorb into a LIVE round, which is not a queued start at all).
+   *
+   * When it is bound the run family is NOT admitted and the proof is exactly
+   * thread + round. That is not a weakening: at the round-start persist
+   * boundary no participant has a runId yet (participants are minted `idle`),
+   * so a participant-run requirement would be vacuous at precisely the moment
+   * it is needed. Binding BOTH this and runEntityId is refused incoherent.
+   */
+  readonly roundEntityId?: string
 }
 
 /**
@@ -237,11 +261,40 @@ function resolveRunEntityId(identity: HostQueuedStartEffectIdentity): string {
 }
 
 /**
+ * The round counterpart, with the same single-resolution discipline. A bound
+ * round entity overrides the register input's roundId; absent one, the
+ * register-input branch is reached byte-identically.
+ */
+function resolveRoundEntityId(identity: HostQueuedStartEffectIdentity): string | undefined {
+  return identity.roundEntityId ?? identity.roundId
+}
+
+/**
+ * A bound round entity replaces the run family outright — the proof becomes
+ * thread + round. Both sides must agree, or the diff would emit a run row the
+ * proof never demanded (or demand one the diff never emitted).
+ */
+function admitsRunFamily(identity: HostQueuedStartEffectIdentity): boolean {
+  return identity.roundEntityId === undefined
+}
+
+/**
+ * A start is a solo run or an ensemble round, never both. Refusing the pair
+ * outright is what stops the run requirement being dropped silently from a
+ * SOLO start by a stray round binding.
+ */
+function bindsAmbiguousStart(identity: HostQueuedStartEffectIdentity): boolean {
+  return identity.runEntityId !== undefined && identity.roundEntityId !== undefined
+}
+
+/**
  * Start evidence a settled dispatch may bind for THIS commandId. Optional and
- * additive: omitting it reproduces the standalone lookup exactly.
+ * additive: omitting it reproduces the standalone lookup exactly. At most one
+ * of the two may be bound.
  */
 export interface HostQueuedStartEntities {
   readonly runEntityId?: string
+  readonly roundEntityId?: string
 }
 
 function uniqueRowWithId(
@@ -260,7 +313,10 @@ function uniqueRowWithId(
 
 export type HostQueuedStartDiffResult =
   | { readonly kind: 'effects'; readonly effects: readonly HostDomainEffectDto[] }
-  | { readonly kind: 'incoherent'; readonly reason: 'duplicate_entity_id' }
+  | {
+      readonly kind: 'incoherent'
+      readonly reason: 'duplicate_entity_id' | 'ambiguous_start_entity'
+    }
 
 /**
  * Diff only the command-correlated start rows: this command's run, the
@@ -275,14 +331,24 @@ export function diffScopedStartEffects(
   after: HostMutationObservationFamilies,
   identity: HostQueuedStartEffectIdentity
 ): HostQueuedStartDiffResult {
+  // A start is a solo run or an ensemble round. Binding both is incoherent
+  // before any row is read: emitting the union would let a solo start pass
+  // without its run row.
+  if (bindsAmbiguousStart(identity)) {
+    return { kind: 'incoherent', reason: 'ambiguous_start_entity' }
+  }
   const effects: HostDomainEffectDto[] = []
   for (const spec of START_EFFECT_FAMILY_SPECS) {
+    // A bound round entity replaces the run family: an in-main ensemble start
+    // has no participant run at its persist boundary, so no run row is
+    // admitted and the batch is exactly thread + round.
+    if (spec.family === 'run' && !admitsRunFamily(identity)) continue
     const entityId =
       spec.family === 'run'
         ? resolveRunEntityId(identity)
         : spec.family === 'thread'
           ? identity.threadId
-          : identity.roundId
+          : resolveRoundEntityId(identity)
     // Solo identities admit no round row: the round spec is skipped, so solo
     // batches keep their exact two-effect shape.
     if (entityId === undefined) continue
@@ -293,18 +359,17 @@ export function diffScopedStartEffects(
     }
     const leftRow = left.kind === 'one' ? left.row : undefined
     const rightRow = right.kind === 'one' ? right.row : undefined
-    // A BOUND run entity is a foreign id: it was minted outside this command,
-    // so matching the id alone would admit another thread's run as this
-    // start's proof. Require the row to sit on the target thread, and emit
-    // nothing when it does not — no upsert (so the proof fails closed) and no
+    // A BOUND entity is a foreign id: it was minted outside this command, so
+    // matching the id alone would admit another thread's row as this start's
+    // proof. Require the row to sit on the target thread, and emit nothing
+    // when it does not — no upsert (so the proof fails closed) and no
     // tombstone (so a stranger's row is never retracted under our authority).
-    // The standalone route binds nothing and is untouched by this branch.
-    if (
-      spec.family === 'run' &&
-      identity.runEntityId !== undefined &&
-      rightRow !== undefined &&
-      idOf(rightRow, 'threadId') !== identity.threadId
-    ) {
+    // The standalone route binds nothing and is untouched by this branch; the
+    // register-input roundId is not a binding and keeps its own shape.
+    const bound =
+      (spec.family === 'run' && identity.runEntityId !== undefined) ||
+      (spec.family === 'round' && identity.roundEntityId !== undefined)
+    if (bound && rightRow !== undefined && idOf(rightRow, 'threadId') !== identity.threadId) {
       continue
     }
     if (!leftRow && rightRow) effects.push(upsert(spec.family, entityId, rightRow))
@@ -320,28 +385,35 @@ export function diffScopedStartEffects(
  * Start proof: run upsert for commandId AND thread upsert for
  * target.threadId, plus — only for ensemble identities — the round upsert
  * for roundId.
+ *
+ * A BOUND round entity replaces the run requirement rather than adding to it:
+ * the proof becomes exactly thread + round. Binding both entities proves
+ * nothing at all.
  */
 export function provesQueuedStartEffects(
   effects: readonly HostDomainEffectDto[],
   identity: HostQueuedStartEffectIdentity
 ): boolean {
+  if (bindsAmbiguousStart(identity)) return false
   const runEntityId = resolveRunEntityId(identity)
-  const runUpsert = effects.some(
-    (effect) =>
-      effect.family === 'run' && effect.kind === 'upsert' && effect.entityId === runEntityId
-  )
+  const runUpsert =
+    !admitsRunFamily(identity) ||
+    effects.some(
+      (effect) =>
+        effect.family === 'run' && effect.kind === 'upsert' && effect.entityId === runEntityId
+    )
   const threadUpsert = effects.some(
     (effect) =>
       effect.family === 'thread' &&
       effect.kind === 'upsert' &&
       effect.entityId === identity.threadId
   )
-  const roundId = identity.roundId
+  const roundEntityId = resolveRoundEntityId(identity)
   const roundUpsert =
-    roundId === undefined ||
+    roundEntityId === undefined ||
     effects.some(
       (effect) =>
-        effect.family === 'round' && effect.kind === 'upsert' && effect.entityId === roundId
+        effect.family === 'round' && effect.kind === 'upsert' && effect.entityId === roundEntityId
     )
   return runUpsert && threadUpsert && roundUpsert
 }
@@ -515,6 +587,9 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
         ...(input.roundId !== undefined ? { roundId: input.roundId } : {}),
         ...(startEntities?.runEntityId !== undefined
           ? { runEntityId: startEntities.runEntityId }
+          : {}),
+        ...(startEntities?.roundEntityId !== undefined
+          ? { roundEntityId: startEntities.roundEntityId }
           : {})
       }
       const diffed = diffScopedStartEffects(input.beforeScoped, afterScoped, identity)

@@ -273,6 +273,144 @@ describe('diffScopedStartEffects / provesQueuedStartEffects', () => {
     expect(provesQueuedStartEffects(unbound, bound)).toBe(false)
   })
 
+  it('binds an ensemble round as evidence and drops the run family from batch and proof', () => {
+    const bound = { ...startIdentity(), roundEntityId: 'round-7' }
+    const before = emptyFamilies()
+    const roundRow = { roundId: 'round-7', threadId: 'thread-1' } as never
+
+    // Positive control. A stray run row for this commandId IS present in
+    // AFTER and must NOT be published: a bound round replaces the run family
+    // outright, because no participant has a runId at the round-start persist
+    // boundary. Proof is exactly thread + round.
+    const effects = startEffects(
+      before,
+      {
+        ...emptyFamilies(),
+        runs: [runRow('cmd-1')],
+        threads: [startedThread()],
+        rounds: [roundRow]
+      },
+      bound
+    )
+    expect(effects).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'upsert', family: 'thread', entityId: 'thread-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'round', entityId: 'round-7' })
+      ])
+    )
+    expect(effects).toHaveLength(2)
+    expect(effects.some((effect) => effect.family === 'run')).toBe(false)
+    expect(provesQueuedStartEffects(effects, bound)).toBe(true)
+
+    // Negative control: the bound round row never appears. Thread alone is
+    // not a start.
+    const withoutRound = startEffects(
+      before,
+      { ...emptyFamilies(), runs: [runRow('cmd-1')], threads: [startedThread()] },
+      bound
+    )
+    expect(withoutRound.some((effect) => effect.family === 'round')).toBe(false)
+    expect(provesQueuedStartEffects(withoutRound, bound)).toBe(false)
+
+    // Negative control: a DIFFERENT round persisted. The batch carries nothing
+    // for the bound id, so the proof fails rather than borrowing that round.
+    const otherRound = startEffects(
+      before,
+      {
+        ...emptyFamilies(),
+        threads: [startedThread()],
+        rounds: [{ roundId: 'round-other', threadId: 'thread-1' } as never]
+      },
+      bound
+    )
+    expect(otherRound.some((effect) => effect.family === 'round')).toBe(false)
+    expect(provesQueuedStartEffects(otherRound, bound)).toBe(false)
+
+    // The register-input branch is untouched: an unbound ensemble identity
+    // still demands all three upserts, and a bound identity cannot claim it.
+    const registered = { ...startIdentity(), roundId: 'round-7' }
+    const threeUp = startEffects(
+      before,
+      {
+        ...emptyFamilies(),
+        runs: [runRow('cmd-1')],
+        threads: [startedThread()],
+        rounds: [roundRow]
+      },
+      registered
+    )
+    expect(threeUp).toHaveLength(3)
+    expect(provesQueuedStartEffects(threeUp, registered)).toBe(true)
+  })
+
+  it('refuses a bound round row sitting on another thread without retracting it', () => {
+    const bound = { ...startIdentity(), roundEntityId: 'round-7' }
+    // SAME round id, another thread. Scoping normally strips such a row before
+    // the diff sees it, so this is pinned here — at the function that must
+    // fail closed even when handed one.
+    const offTarget = startEffects(
+      emptyFamilies(),
+      {
+        ...emptyFamilies(),
+        threads: [startedThread()],
+        rounds: [{ roundId: 'round-7', threadId: 'thread-other' } as never]
+      },
+      bound
+    )
+    expect(offTarget.some((effect) => effect.family === 'round')).toBe(false)
+    // Nor is a stranger's round retracted under our authority.
+    expect(offTarget.some((effect) => effect.kind === 'tombstone')).toBe(false)
+    expect(provesQueuedStartEffects(offTarget, bound)).toBe(false)
+  })
+
+  it('refuses a start that binds both a run entity and a round entity', () => {
+    // A start is a solo run or an ensemble round, never both. Without this
+    // refusal a stray round binding would silently drop the run requirement
+    // from a SOLO start.
+    const ambiguous = {
+      ...startIdentity(),
+      runEntityId: 'app-run-9',
+      roundEntityId: 'round-7'
+    }
+    const after = {
+      ...emptyFamilies(),
+      runs: [runRow('app-run-9')],
+      threads: [startedThread()],
+      rounds: [{ roundId: 'round-7', threadId: 'thread-1' } as never]
+    }
+    const result = diffScopedStartEffects(emptyFamilies(), after, ambiguous)
+    expect(result).toEqual({ kind: 'incoherent', reason: 'ambiguous_start_entity' })
+    // And the proof refuses independently: a batch that would otherwise
+    // satisfy every family proves nothing for an ambiguous identity. Built
+    // under the register-input identity, whose run row IS this commandId.
+    const registered = { ...startIdentity(), roundId: 'round-7' }
+    const everything = startEffects(
+      emptyFamilies(),
+      startedAfter('cmd-1', { rounds: [{ roundId: 'round-7', threadId: 'thread-1' } as never] }),
+      registered
+    )
+    expect(everything).toHaveLength(3)
+    expect(provesQueuedStartEffects(everything, registered)).toBe(true)
+    expect(provesQueuedStartEffects(everything, ambiguous)).toBe(false)
+  })
+
+  it('fails closed when AFTER carries duplicate rows for a bound round', () => {
+    const bound = { ...startIdentity(), roundEntityId: 'round-7' }
+    const result = diffScopedStartEffects(
+      emptyFamilies(),
+      {
+        ...emptyFamilies(),
+        threads: [startedThread()],
+        rounds: [
+          { roundId: 'round-7', threadId: 'thread-1' } as never,
+          { roundId: 'round-7', threadId: 'thread-1', status: 'active' } as never
+        ]
+      },
+      bound
+    )
+    expect(result).toEqual({ kind: 'incoherent', reason: 'duplicate_entity_id' })
+  })
+
   it('does not treat a run-only or thread-only diff as complete start proof', () => {
     const before = emptyFamilies()
     const runOnly = startEffects(before, { ...emptyFamilies(), runs: [runRow('cmd-1')] })
@@ -715,6 +853,51 @@ describe('createHostQueuedStartPublication', () => {
     })
     publication.completeStart('cmd-1')
     await publication.drain()
+    expect(completes).toEqual([])
+    expect(published).toEqual([])
+    expect(indeterminates).toContain('observation_diff_incoherent')
+    expect(publication.pendingCount()).toBe(0)
+  })
+
+  it('completes the ORIGINAL receipt from a bound ensemble round with exactly thread + round', async () => {
+    // The in-main ensemble route: no roundId at register time (the round is
+    // minted inside beginRound, after the send resolved), so the settled
+    // dispatch binds it. AFTER deliberately carries a run row for this
+    // commandId — it must NOT be published, because a bound round replaces
+    // the run family rather than adding to it.
+    const round = { roundId: 'round-7', threadId: 'thread-1' } as never
+    const { publication, completes, indeterminates, published, ports } = setup({
+      after: startedAfter('cmd-1', { rounds: [round] })
+    })
+    publication.completeStart('cmd-1', { roundEntityId: 'round-7' })
+    await publication.drain()
+    expect(completes).toEqual(['cmd-1'])
+    expect(indeterminates).toEqual([])
+    expect(published).toHaveLength(1)
+    expect(published[0]).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'upsert', family: 'thread', entityId: 'thread-1' }),
+        expect.objectContaining({ kind: 'upsert', family: 'round', entityId: 'round-7' })
+      ])
+    )
+    expect(published[0]).toHaveLength(2)
+    expect(published[0]!.some((effect) => effect.family === 'run')).toBe(false)
+    // The receipt is completed under its OWN commandId; the round id is
+    // evidence and never becomes the receipt's identity.
+    expect(ports.completeReceipt.mock.calls[0][0]).toMatchObject({
+      commandId: 'cmd-1',
+      status: 'succeeded'
+    })
+  })
+
+  it('marks an in-main ensemble start incoherent when the bound round row never appears', async () => {
+    const { publication, completes, published, indeterminates } = setup({
+      after: startedAfter()
+    })
+    publication.completeStart('cmd-1', { roundEntityId: 'round-7' })
+    await publication.drain()
+    // A run + thread batch is a SOLO proof; it must not pass for a start that
+    // claimed to be an ensemble round.
     expect(completes).toEqual([])
     expect(published).toEqual([])
     expect(indeterminates).toContain('observation_diff_incoherent')
