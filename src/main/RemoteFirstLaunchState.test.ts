@@ -410,8 +410,8 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
       // Claude leads the lineup from the Opus 5.5 release (2026-09-22).
       'claude',
-      'kimi',
       'codex',
+      'kimi',
       'devin',
       'antigravity',
       'grok',

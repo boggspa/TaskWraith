@@ -310,6 +310,9 @@ function museReasoningOptions(
 const CODEX_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   { id: 'gpt-5.5', label: 'GPT-5.5' },
   { id: 'gpt-6-astra', label: 'GPT-6-Astra' },
+  // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
+  { id: 'gpt-6-sol', label: 'GPT-6-Sol' },
+  { id: 'gpt-6-luna', label: 'GPT-6-Luna' },
   // GPT-5.6 trio — GA 2026-07-09, official hyphenated display names. Dispatch
   // errors cleanly if the user's account hasn't been ramped into the staged
   // rollout yet (the id is simply absent from that account's live model/list).
@@ -612,6 +615,9 @@ const OLLAMA_MODELS = withCuratedUltraTaskSupport(OLLAMA_MODEL_ROWS)
 
 const CODEX_FAST_CAPABLE = new Set<string>([
   'gpt-5.5',
+  // GPT-6 Sol and Luna (2026-09-22) sit on OpenAI's Fast-mode pricing table.
+  'gpt-6-sol',
+  'gpt-6-luna',
   // GPT-5.6 trio (GA, 5.5 parity) — all expose the Fast speed tier
   // (additionalSpeedTiers:['fast'] in the preview catalog); the solo composer
   // derives Fast dynamically from that field, so mirror it here for ensemble seats.
@@ -703,9 +709,10 @@ export function getEnsembleReasoningOptions(
   switch (provider) {
     case 'codex': {
       // Mirrors main's codexModelSupportsMaxReasoning / -UltracodeReasoning
-      // tiers: Astra, Sol, and Terra get max + ultra('ultracode');
-      // Luna gets max only; everything else stops at xhigh. Stale
-      // pre-un-gate placeholder ids count as their concrete slugs.
+      // tiers: Astra, 5.6 Sol, and 5.6 Terra get max + ultra('ultracode');
+      // GPT-6 Sol, GPT-6 Luna and 5.6 Luna get max only (their official model
+      // pages document none..max and no `ultra`); everything else stops at
+      // xhigh. Stale pre-un-gate placeholder ids count as their concrete slugs.
       const codexModel = String(modelId || '')
         .trim()
         .toLowerCase()
@@ -718,7 +725,12 @@ export function getEnsembleReasoningOptions(
       ) {
         return CODEX_FULL_REASONING
       }
-      if (codexModel === 'gpt-5.6-luna' || codexModel === 'preview:openai:gpt-5.6:luna') {
+      if (
+        codexModel === 'gpt-6-sol' ||
+        codexModel === 'gpt-6-luna' ||
+        codexModel === 'gpt-5.6-luna' ||
+        codexModel === 'preview:openai:gpt-5.6:luna'
+      ) {
         return CODEX_TRIO_MAX_REASONING
       }
       return CODEX_REASONING

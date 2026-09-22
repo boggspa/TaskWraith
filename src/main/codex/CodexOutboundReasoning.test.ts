@@ -114,6 +114,22 @@ describe('resolveCodexOutboundReasoning', () => {
     })
   })
 
+  it.each(['gpt-6-sol', 'gpt-6-luna'])(
+    'requests the long-context policy for %s on the exec fallback and thread config',
+    (model) => {
+      const reasoning = resolveCodexOutboundReasoning(model, 'high')
+      expect(reasoning.execConfigArgs).toEqual([
+        '-c',
+        'model_reasoning_effort="high"',
+        ...longContextArgs
+      ])
+      expect(buildCodexThreadResumeRequest('gpt6-session', reasoning).config).toMatchObject({
+        model_context_window: 1_050_000,
+        model_auto_compact_token_limit: 850_000
+      })
+    }
+  )
+
   it('adds the preserved normalized effort to continuation turn requests', () => {
     const reasoning = resolveCodexOutboundReasoning('gpt-5.6-sol', 'max')
     expect(

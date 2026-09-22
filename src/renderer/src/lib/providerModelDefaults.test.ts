@@ -97,10 +97,18 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max'])
   })
 
-  it('leads the picker with Astra then the GPT-5.6 trio, keeping 5.5 the default', () => {
+  it('leads the picker with Astra, GPT-6 Sol and Luna, then the GPT-5.6 trio, keeping 5.5 the default', () => {
     const ids = CODEX_DEFAULT_MODELS.map((model) => model.id)
-    // Astra leads from 2026-09-03; the trio follows in Sol → Terra → Luna order.
-    expect(ids.slice(0, 4)).toEqual(['gpt-6-astra', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna'])
+    // Astra leads from 2026-09-03; GPT-6 Sol and Luna (2026-09-22) follow it,
+    // above the 5.6 trio in Sol → Terra → Luna order.
+    expect(ids.slice(0, 6)).toEqual([
+      'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol',
+      'gpt-5.6-terra',
+      'gpt-5.6-luna'
+    ])
     expect(ids.indexOf('gpt-6-astra')).toBeLessThan(ids.indexOf('gpt-5.5'))
     expect(ids.indexOf('gpt-5.6-sol')).toBeLessThan(ids.indexOf('gpt-5.5'))
     // The default must NOT follow the reorder to position 0 — it stays 5.5.
@@ -114,6 +122,28 @@ describe('Codex provider model defaults', () => {
     ).toEqual(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     expect(byId.get('gpt-6-astra')?.defaultReasoningEffort).toBe('low')
   })
+
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
+    ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
+  ])(
+    'offers %s the documented low..max ladder with a Medium default and Fast mode',
+    (id, label, description) => {
+      const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+      expect(byId.get(id)).toMatchObject({ label, description, defaultReasoningEffort: 'medium' })
+      // The official model pages document none..max and no `ultra`, so the
+      // internal `ultracode` tier is withheld until the live catalog lists it.
+      expect(byId.get(id)?.supportedReasoningEfforts?.map((o) => o.reasoningEffort)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(byId.get(id)?.additionalSpeedTiers).toContain('fast')
+      expect(byId.get(id)).not.toMatchObject({ isDefault: true })
+    }
+  )
 
   it('keeps active GPT-5.4 fallbacks without a retirement warning', () => {
     const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))

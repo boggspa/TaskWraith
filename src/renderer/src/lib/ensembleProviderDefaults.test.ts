@@ -814,6 +814,38 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   )
 
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol'],
+    ['gpt-6-luna', 'GPT-6-Luna']
+  ])(
+    'offers %s on the documented low..max ladder with the Fast toggle and no Ultra',
+    (id, label) => {
+      const codex = getEnsembleModelDefaults('codex')
+      const row = codex.modelOptions.find((option) => option.id === id)
+      expect(row).toMatchObject({ label, ultraTaskSupported: true })
+      expect(row?.disabled).not.toBe(true)
+      expect(getEnsembleReasoningOptions('codex', id).map((option) => option.value)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(codex.fastModeCapableModelIds.has(id)).toBe(true)
+      // GPT-5.5 keeps the default; the GPT-6 pair sits right behind Astra, above
+      // the 5.6 generation.
+      expect(codex.defaultModelId).toBe('gpt-5.5')
+      const ids = codex.modelOptions.map((option) => option.id)
+      expect(ids.indexOf(id)).toBeGreaterThan(ids.indexOf('gpt-6-astra'))
+      expect(ids.indexOf(id)).toBeLessThan(ids.indexOf('gpt-5.6-sol'))
+    }
+  )
+
+  it('preserves a saved GPT-6 Sol Max seat without snapping it down', () => {
+    const saved = participant({ model: 'gpt-6-sol', reasoningEffort: 'max' })
+    expect(resolveEnsembleParticipantSettings(saved).reasoningEffort).toBe('max')
+  })
+
   // Sanity check that the previously-existing model-options helper is
   // untouched by the F2 consolidation. The chip picker reads
   // `defaultModelId` here should match the concrete model persisted by

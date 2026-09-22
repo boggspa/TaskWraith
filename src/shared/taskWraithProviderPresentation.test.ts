@@ -117,6 +117,10 @@ describe('TaskWraith TUI provider presentation', () => {
   it('uses compact desktop-style labels instead of raw wire ids', () => {
     expect(taskWraithModelLabel('claude', 'claude-opus-4-8-1m')).toBe('Opus 4.8 1M')
     expect(taskWraithModelLabel('codex', 'gpt-5.6-sol')).toBe('GPT-5.6-Sol')
+    // GPT-6 Sol and Luna (2026-09-22): the generic GPT fallback would render
+    // "GPT-6 Sol", so the hyphenated catalog label has to be an explicit row.
+    expect(taskWraithModelLabel('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
+    expect(taskWraithModelLabel('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
     expect(taskWraithModelLabel('kimi', 'kimi-k3')).toBe('K3 (1M)')
     expect(taskWraithModelLabel('kimi', 'kimi-k3-256k')).toBe('K3 (256K)')
     expect(taskWraithModelLabel('grok', 'grok-4.6')).toBe('Grok 4.6 Fast')

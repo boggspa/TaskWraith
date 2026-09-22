@@ -137,6 +137,17 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('codex', 'gpt-6-astra', 258_400)).toBe(258_400)
   })
 
+  it.each(['gpt-6-sol', 'gpt-6-luna'])(
+    'carries the documented 1.05M window for %s on the table itself',
+    (modelId) => {
+      // The codex provider fallback is also 1_050_000, so `resolve` alone cannot
+      // tell a dropped row from a present one — pin the table entry directly.
+      expect(knownModelContextWindow(modelId)).toBe(1_050_000)
+      expect(resolveContextWindow('codex', modelId)).toBe(1_050_000)
+      expect(resolveContextWindow('codex', modelId, 258_400)).toBe(258_400)
+    }
+  )
+
   it('keeps live Ollama limits ahead of the global model table', () => {
     expect(resolveContextWindow('ollama', 'grok-4.5', undefined, 192_000)).toBe(192_000)
   })

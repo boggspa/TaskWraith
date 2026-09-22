@@ -192,6 +192,36 @@ describe('BAKED_IN_RATES', () => {
     expect(cursorComposer).toBeDefined()
   })
 
+  it('records GPT-6 Sol and Luna at their launch-day rates with the published long-context tier', () => {
+    const codexRows = BAKED_IN_RATES.codex.models
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-sol')).toMatchObject({
+      inputUsdPerMillion: 2,
+      cachedInputUsdPerMillion: 0.2,
+      outputUsdPerMillion: 10,
+      longContextThresholdTokens: 272_000,
+      longContextInputUsdPerMillion: 4,
+      longContextCachedInputUsdPerMillion: 0.4,
+      longContextOutputUsdPerMillion: 15,
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing'
+    })
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-luna')).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      cachedInputUsdPerMillion: 0.01,
+      outputUsdPerMillion: 0.5,
+      longContextThresholdTokens: 272_000,
+      longContextInputUsdPerMillion: 0.2,
+      longContextCachedInputUsdPerMillion: 0.02,
+      longContextOutputUsdPerMillion: 0.75,
+      sourceUrl: 'https://developers.openai.com/api/docs/pricing'
+    })
+    // Astra keeps its own $10/$50 row: the three GPT-6 ids never share a rate
+    // by prefix.
+    expect(codexRows.find((model) => model.modelId === 'gpt-6-astra')).toMatchObject({
+      inputUsdPerMillion: 10,
+      outputUsdPerMillion: 50
+    })
+  })
+
   it('records Claude Opus 5.5 at its launch-day $4/$20 rate with $0.20 cache reads', () => {
     const claudeRows = BAKED_IN_RATES.claude.models
     expect(claudeRows.find((model) => model.modelId === 'claude-opus-5-5')).toMatchObject({

@@ -113,6 +113,16 @@ describe('buildLadderModel', () => {
     }
   )
 
+  it('keeps GPT-6 Sol Max selectable on its max-topped ladder without an Ultra stop', () => {
+    const ladder = buildLadderModel('codex', getEnsembleReasoningOptions('codex', 'gpt-6-sol'))
+    expect(ladder.enabledIndices).toContain(5)
+    expect(nearestEnabledLadderIndex(5, ladder.enabledIndices)).toBe(5)
+    expect(ladder.valueByIndex[5]).toBe('max')
+    expect(clampedLadderIndex('codex', 'max', ladder)).toBe(5)
+    // No `ultra` is documented for GPT-6 Sol, so the Ultra stop stays disabled.
+    expect(ladder.enabledIndices).not.toContain(6)
+  })
+
   it('enables every Muse tier from minimal through ultra on stops [0,1,2,3,4,5,6]', () => {
     const ladder = buildLadderModel('muse', [
       { value: 'minimal', label: 'Minimal' },

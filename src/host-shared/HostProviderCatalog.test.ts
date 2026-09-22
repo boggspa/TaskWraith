@@ -197,6 +197,31 @@ describe('HostProviderCatalog', () => {
     expect(opus55?.reasoning.every((entry) => entry.available)).toBe(true)
   })
 
+  it('offers GPT-6 Sol and Luna as the leading Codex rows on the standard ladder without moving the default', () => {
+    const codex = hostProviderCatalogEntry('codex')
+    expect(codex?.models.map((model) => model.modelId).slice(0, 3)).toEqual([
+      'gpt-6-sol',
+      'gpt-6-luna',
+      'gpt-5.6-sol'
+    ])
+    for (const [modelId, label] of [
+      ['gpt-6-sol', 'GPT-6-Sol'],
+      ['gpt-6-luna', 'GPT-6-Luna']
+    ] as const) {
+      const row = codex?.models.find((model) => model.modelId === modelId)
+      expect(row).toMatchObject({ label, available: true })
+      expect(row?.default).toBeUndefined()
+      expect(row?.reasoning.map((entry) => entry.reasoningId)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh'
+      ])
+      expect(row?.reasoning.every((entry) => entry.available)).toBe(true)
+    }
+    expect(codex?.models.find((model) => model.default)?.modelId).toBe('gpt-5.6-terra')
+  })
+
   it('offers Full Access only for transports with an exact verified mapping', () => {
     for (const providerId of hostProviderCatalogIds()) {
       const withoutAuthority = hostProviderCatalogEntry(providerId)?.postures.find(

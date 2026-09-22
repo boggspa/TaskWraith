@@ -126,6 +126,18 @@ const CODEX_MODEL_CONTEXT_CONFIGS: Readonly<Record<string, CodexModelContextConf
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
   },
+  // GPT-6 Sol and Luna (rolling out from 2026-09-22): the official model pages
+  // (developers.openai.com/api/docs/models/gpt-6-sol and -luna) publish the
+  // same 1,050,000 raw API window and 128K max output as Astra, so both take
+  // the same long-context override.
+  'gpt-6-sol': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
+  'gpt-6-luna': {
+    model_context_window: CODEX_LONG_CONTEXT_WINDOW,
+    model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
+  },
   'gpt-5.5': {
     model_context_window: CODEX_LONG_CONTEXT_WINDOW,
     model_auto_compact_token_limit: CODEX_LONG_CONTEXT_AUTO_COMPACT_LIMIT
@@ -182,13 +194,16 @@ function codexModelRequiresFullStandardReasoning(modelId?: string | null): boole
 }
 
 // Official GPT-5.6 catalog (2026-07-09): ALL THREE trio models expose the
-// `max` tier ("Maximum reasoning depth for the hardest problems").
+// `max` tier ("Maximum reasoning depth for the hardest problems"). GPT-6 Sol
+// and Luna (2026-09-22) list `max` on their official model pages too.
 export function codexModelSupportsMaxReasoning(modelId?: string | null): boolean {
   const id = String(modelId || '')
     .trim()
     .toLowerCase()
   return (
     id === 'gpt-6-astra' ||
+    id === 'gpt-6-sol' ||
+    id === 'gpt-6-luna' ||
     id === 'gpt-5.6-sol' ||
     id === 'gpt-5.6-terra' ||
     id === 'gpt-5.6-luna' ||
@@ -380,6 +395,15 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
   // picker"), so the append offers a model the seat can really select. The
   // CLI's own row wins the id-dedupe the day discovery starts returning it.
   'gpt-6-astra',
+  // GPT-6 Sol and Luna (Codex changelog 2026-09-22, alongside Codex CLI
+  // 0.155.0). The official model pages list both ids, but neither the account
+  // catalog the installed 0.153.0 fetched that day nor upstream's bundled
+  // catalog at rust-v0.155.1 carries the rows, and a ChatGPT-account turn on
+  // 0.153.0 was refused with "model is not supported" — the same staged
+  // rollout the 5.6 trio went through. The CLI's own row wins the id-dedupe
+  // the day discovery returns it.
+  'gpt-6-sol',
+  'gpt-6-luna',
   'gpt-5.6-sol',
   'gpt-5.6-terra',
   'gpt-5.6-luna'
@@ -464,6 +488,41 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'xhigh' }
     ]),
     defaultReasoningEffort: 'low',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    // GPT-6 Sol and Luna (rolling out from 2026-09-22; the Codex changelog
+    // pairs them with Codex CLI 0.155.0). Metadata is from the official model
+    // pages (developers.openai.com/api/docs/models/gpt-6-sol and -luna): the
+    // documented ladder is none..max with a Medium default, and both sit on the
+    // pricing page's Fast-mode table. Neither page lists Codex's `ultra` tier
+    // and no catalog row is observable yet, so `ultracode` is deliberately NOT
+    // offered until the live `model/list` says so. Display names follow the
+    // Codex catalog's hyphenated convention (GPT-6-Astra, GPT-5.6-Sol).
+    // Neither takes the default: GPT-5.5 stays the fallback.
+    id: 'gpt-6-sol',
+    label: 'GPT-6-Sol',
+    description: 'Built to power complex coding and agentic workflows.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-sol', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast'],
+    ultraTaskSupported: true
+  },
+  {
+    id: 'gpt-6-luna',
+    label: 'GPT-6-Luna',
+    description: 'Our most efficient model for focused, high-volume tasks.',
+    supportedReasoningEfforts: codexReasoningEffortsForModel('gpt-6-luna', [
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' }
+    ]),
+    defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast'],
     ultraTaskSupported: true
   },

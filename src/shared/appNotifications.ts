@@ -138,7 +138,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Opus 5.5, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Claude Opus 5.5, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -160,6 +160,33 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         ]
       },
       {
+        // GPT-6 Sol and Luna began rolling out on 2026-09-22 (Codex changelog,
+        // alongside Codex CLI 0.155.0), so Codex sits right behind the headline
+        // Claude launch of the same day; Astra (2026-09-03) stays listed beneath
+        // them. All three are announced regardless of this seat's entitlement:
+        // access ramps by account and client version, so the card names the
+        // models rather than the seat's current access to them.
+        provider: 'codex',
+        label: 'Codex',
+        models: [
+          {
+            name: 'GPT-6 Sol',
+            blurb:
+              "OpenAI's GPT-6 for complex coding and agentic workflows — 1.05M context, Low through Max reasoning, $2/$10 per Mtok."
+          },
+          {
+            name: 'GPT-6 Luna',
+            blurb:
+              "OpenAI's most efficient GPT-6 for focused, high-volume tasks — the same 1.05M window and ladder at $0.10/$0.50 per Mtok."
+          },
+          {
+            name: 'GPT-6 Astra',
+            blurb:
+              "OpenAI's most capable GPT-6, for the hardest end-to-end work. Rolling out by organisation."
+          }
+        ]
+      },
+      {
         // K2.8 Preview rolled out 2026-09-11 on the UNCHANGED `kimi-for-coding`
         // wire id, so it is the same route the retired "K2.7 Coding" row
         // dispatched — relabelled, with K3's effort axis and a 1M window. The
@@ -176,20 +203,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'K2.7 Code Highspeed',
             blurb:
               'The low-latency K2.7 route, now its own row instead of a Fast toggle - 256K, always-on thinking.'
-          }
-        ]
-      },
-      {
-        // GPT-6 Astra launched 2026-09-03. Listed regardless of entitlement:
-        // access rolls out by organisation (OpenAI's Daybreak cyber programme
-        // first), so the card announces the model rather than this seat's
-        // current access to it.
-        provider: 'codex',
-        label: 'Codex',
-        models: [
-          {
-            name: 'GPT-6 Astra',
-            blurb: "OpenAI's newest frontier model. Rolling out by organisation."
           }
         ]
       },

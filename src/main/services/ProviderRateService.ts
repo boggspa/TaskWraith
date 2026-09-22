@@ -359,6 +359,38 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes:
           'Standard tier; prompts at or above 272K tokens bill every token at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
       },
+      // GPT-6 Sol and Luna — rolling out from 2026-09-22. The pricing page
+      // publishes the long-context tier outright for both, and each model page
+      // states the rule: prompts with more than 272K input tokens are priced at
+      // 2x input and cache rates and 1.5x output for the full request.
+      {
+        modelId: 'gpt-6-sol',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.2,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 4.0,
+        longContextOutputUsdPerMillion: 15.0,
+        longContextCachedInputUsdPerMillion: 0.4,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
+      {
+        modelId: 'gpt-6-luna',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.5,
+        cachedInputUsdPerMillion: 0.01,
+        longContextThresholdTokens: 272_000,
+        longContextInputUsdPerMillion: 0.2,
+        longContextOutputUsdPerMillion: 0.75,
+        longContextCachedInputUsdPerMillion: 0.02,
+        sourceUrl: 'https://developers.openai.com/api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Standard tier; prompts with more than 272K input tokens bill the full request at the long-context tier. Codex CLI typically billed via ChatGPT subscription, not per-token.'
+      },
       {
         modelId: 'gpt-5.5',
         inputUsdPerMillion: 5.0,

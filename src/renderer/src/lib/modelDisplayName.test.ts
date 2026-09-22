@@ -83,6 +83,12 @@ describe('humaniseModelId', () => {
       expect(humaniseModelId('codex', 'gpt-5.6-terra')).toBe('GPT-5.6-Terra')
       expect(humaniseModelId('codex', 'gpt-5.6-luna')).toBe('GPT-5.6-Luna')
       expect(humaniseModelId('codex', 'preview:openai:gpt-5.6:sol')).toBe('GPT-5.6-Sol')
+      // GPT-6 Sol and Luna (2026-09-22) follow the same hyphenated Codex
+      // catalog style; the generic fallback would render "GPT-6 Sol".
+      expect(humaniseModelId('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
+      expect(humaniseModelId('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+      expect(humaniseModelIdCompact('codex', 'gpt-6-luna')).toBe('GPT-6-Luna')
+      expect(humaniseModelIdTableCell('codex', 'gpt-6-sol')).toBe('GPT-6-Sol')
     })
   })
 
@@ -427,6 +433,8 @@ describe('humaniseModelId', () => {
       expect(labels['gemini-3-flash-preview']).toBeDefined()
       expect(labels['claude-opus-4-7']).toBeDefined()
       expect(labels['claude-opus-5-5']).toBe('Claude Opus 5.5')
+      expect(labels['gpt-6-sol']).toBe('GPT-6-Sol')
+      expect(labels['gpt-6-luna']).toBe('GPT-6-Luna')
       expect(labels['gpt-5.5']).toBeDefined()
       expect(labels['kimi-k3']).toBeDefined()
       expect(labels['kimi-k3-256k']).toBeDefined()

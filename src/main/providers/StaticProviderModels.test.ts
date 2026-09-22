@@ -33,6 +33,8 @@ describe('codexModelContextConfig', () => {
 
   it('returns the explicit 1M config for long-context Codex models', () => {
     expect(codexModelContextConfig('gpt-6-astra')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6-sol')).toEqual(longContextConfig)
+    expect(codexModelContextConfig('gpt-6-luna')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.5')).toEqual(longContextConfig)
     expect(codexModelContextConfig('gpt-5.4')).toEqual(longContextConfig)
     // GPT-5.6 trio (GA) — same long-context override as gpt-5.5 for parity.
@@ -510,8 +512,11 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const ids = models.map((model) => model.id)
     // GPT-6 Astra leads from 2026-09-03 but must NOT take the default: upstream
     // shipped it "without changing the default model".
-    expect(ids.slice(0, 4)).toEqual([
+    // GPT-6 Sol and Luna (2026-09-22) follow Astra, above the 5.6 generation.
+    expect(ids.slice(0, 6)).toEqual([
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna'
@@ -542,9 +547,39 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has('gpt-6-astra')).toBe(true)
   })
 
+  it.each([
+    ['gpt-6-sol', 'GPT-6-Sol', 'Built to power complex coding and agentic workflows.'],
+    ['gpt-6-luna', 'GPT-6-Luna', 'Our most efficient model for focused, high-volume tasks.']
+  ])(
+    'offers %s on the documented low..max ladder with a Medium default, staged, not the default',
+    (id, label, description) => {
+      const models = getStaticProviderModels('codex') as StaticModelShape[]
+      const row = models.find((model) => model.id === id)
+      expect(row).toBeDefined()
+      expect(row).toMatchObject({
+        label,
+        description,
+        defaultReasoningEffort: 'medium',
+        additionalSpeedTiers: ['fast']
+      })
+      // The official model pages document none..max and no `ultra`, so the
+      // internal `ultracode` tier is withheld until the live catalog lists it.
+      expect(row?.supportedReasoningEfforts?.map((e) => e.reasoningEffort)).toEqual([
+        'low',
+        'medium',
+        'high',
+        'xhigh',
+        'max'
+      ])
+      expect(row?.isDefault).toBeFalsy()
+      expect(models.find((model) => model.isDefault)?.id).toBe('gpt-5.5')
+      expect(CODEX_STAGED_ROLLOUT_MODEL_IDS.has(id)).toBe(true)
+    }
+  )
+
   it('advertises Light/low reasoning on GPT-5 Codex models', () => {
     const models = getStaticProviderModels('codex') as StaticModelShape[]
-    for (const modelId of ['gpt-5.5', 'gpt-6-astra']) {
+    for (const modelId of ['gpt-5.5', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna']) {
       expect(
         models
           .find((model) => model.id === modelId)
@@ -834,6 +869,8 @@ describe('mergeCodexLiveModelRows', () => {
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.5',
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna'
@@ -859,6 +896,8 @@ describe('mergeCodexLiveModelRows', () => {
   it('appends nothing extra once live discovery carries every managed row', () => {
     const live = [
       { id: 'gpt-6-astra' },
+      { id: 'gpt-6-sol' },
+      { id: 'gpt-6-luna' },
       { id: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna' },
@@ -870,9 +909,11 @@ describe('mergeCodexLiveModelRows', () => {
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(8)
+    expect(merged).toHaveLength(10)
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-6-astra',
+      'gpt-6-sol',
+      'gpt-6-luna',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',

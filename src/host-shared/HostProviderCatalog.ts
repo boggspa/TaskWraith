@@ -288,6 +288,11 @@ const CATALOG: Readonly<Record<string, Omit<HostProviderCatalogEntry, 'providerI
       displayProvider: 'Codex',
       shortCode: 'CODEX',
       models: [
+        // GPT-6 Sol and Luna (rolling out from 2026-09-22) lead the offers on
+        // the standard Host ladder; Terra keeps the requested default flag
+        // until that default is moved on purpose.
+        model('gpt-6-sol', 'GPT-6-Sol'),
+        model('gpt-6-luna', 'GPT-6-Luna'),
         model('gpt-5.6-sol', 'GPT-5.6-Sol'),
         model('gpt-5.6-terra', 'GPT-5.6-Terra', STANDARD_REASONING, true),
         model('gpt-5.6-luna', 'GPT-5.6-Luna'),

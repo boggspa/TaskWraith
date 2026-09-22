@@ -100,6 +100,38 @@ const CODEX_DEFAULT_MODEL_ROWS = activeCodexModelRows([
     additionalSpeedTiers: ['fast']
   },
   {
+    // GPT-6 Sol and Luna (2026-09-22). The official model pages document a
+    // none..max ladder with a Medium default and Fast mode on the pricing
+    // page; no `ultra` is documented, so ultracode waits for the live catalog.
+    // Neither takes the default.
+    id: 'gpt-6-sol',
+    label: 'GPT-6-Sol',
+    description: 'Built to power complex coding and agentic workflows.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'gpt-6-luna',
+    label: 'GPT-6-Luna',
+    description: 'Our most efficient model for focused, high-volume tasks.',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'medium' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'xhigh' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     id: 'gpt-5.6-sol',
     label: 'GPT-5.6-Sol',
     description: 'Latest frontier agentic coding model.',

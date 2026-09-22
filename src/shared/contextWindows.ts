@@ -142,6 +142,10 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/typesafe/jev-1.13': 32_000,
   // Codex
   'gpt-6-astra': 1_050_000,
+  // GPT-6 Sol and Luna (2026-09-22): 1,050,000 raw API window on both official
+  // model pages (developers.openai.com/api/docs/models/gpt-6-sol, -luna).
+  'gpt-6-sol': 1_050_000,
+  'gpt-6-luna': 1_050_000,
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
   // the CLI working window to match — see CODEX_MODEL_CONTEXT_CONFIGS).

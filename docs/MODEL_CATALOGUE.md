@@ -44,10 +44,21 @@ not the monoline glyph set.
 | Model                                         | Reasoning                                       | Fast   | Notes                                                            |
 | --------------------------------------------- | ----------------------------------------------- | ------ | ---------------------------------------------------------------- |
 | **GPT-6-Astra** `gpt-6-astra`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Leads the picker from 2026-09-03. Not the seat default.          |
+| **GPT-6-Sol** `gpt-6-sol`                     | Light · Medium · High · Extra · Max             | Toggle | Complex coding and agentic work. Rolling out from 2026-09-22.    |
+| **GPT-6-Luna** `gpt-6-luna`                   | Light · Medium · High · Extra · Max             | Toggle | Most efficient GPT-6 for focused, high-volume tasks.             |
 | **GPT-5.6-Sol** `gpt-5.6-sol`                 | Light · Medium · High · Extra · Max · Ultracode | Toggle | Latest frontier agentic coding model.                            |
 | **GPT-5.6-Terra** `gpt-5.6-terra`             | Light · Medium · High · Extra · Max · Ultracode | Toggle | Balanced agentic coding for everyday work.                       |
 | **GPT-5.6-Luna** `gpt-5.6-luna`               | Light · Medium · High · Extra · Max             | Toggle | Fast and affordable agentic coding.                              |
 | **GPT-5.5** `gpt-5.5` **(Default)**           | Light · Medium · High · Extra                   | Toggle | Default while the GPT-5.6 rollout remains account-dependent.     |
+
+GPT-6 Sol and GPT-6 Luna began rolling out on 2026-09-22 (Codex changelog,
+alongside Codex CLI 0.155.0). Their official model pages document a
+None..Max reasoning ladder, a 1,050,000-token window, 128K max output and Fast
+mode; no `ultra` tier is documented, so TaskWraith withholds Ultracode until the
+live catalogue lists it. Until an account's live `model/list` carries the rows,
+TaskWraith appends them through `CODEX_STAGED_ROLLOUT_MODEL_IDS`, exactly as it
+did for the GPT-5.6 trio; on an unramped account or an older CLI, OpenAI refuses
+a ChatGPT-account turn with "model is not supported".
 
 GPT-5.4, GPT-5.4 Mini and GPT-5.3 Codex Spark were **retired from the lineup on
 2026-09-18** by product decision. OpenAI published no sunset for any of them —
