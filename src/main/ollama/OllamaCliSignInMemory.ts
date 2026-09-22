@@ -90,6 +90,39 @@ export function nextOllamaCliSignInRecord(
 }
 
 /**
+ * A single `401` must not erase a remembered sign-in. The daemon relays
+ * `/api/me` to ollama.com and can answer `401` transiently (a restart, a
+ * refreshed token), and because the repair only ever stands in for a `true`
+ * record, one such answer disarmed the whole memory until a `200` arrived. A
+ * real `ollama signout` keeps answering `401`, so the confirming re-probe
+ * records it within the same call.
+ */
+export function requiresOllamaSignOutConfirmation(
+  previous: OllamaCliSignInRecord | null,
+  observation: OllamaCliSignInObservation
+): boolean {
+  return (
+    previous?.signedIn === true &&
+    observation.authenticated === false &&
+    observation.apiKeyConfigured !== true
+  )
+}
+
+/**
+ * Fold the confirming re-probe into the first answer. A second definitive
+ * `401` confirms the sign-out and a `200` is the account still there (with its
+ * plan); anything else — unknown, or a probe that threw — leaves the record
+ * untouched, and the next probe asks again.
+ */
+export function confirmOllamaSignOut(
+  first: OllamaCliSignInObservation,
+  second: OllamaCliSignInObservation | null
+): OllamaCliSignInObservation {
+  if (second && (second.authenticated === false || second.authenticated === true)) return second
+  return { ...first, authenticated: null }
+}
+
+/**
  * True when the memory should stand in for an unknown live answer.
  *
  * What keeps this honest is evidence that a daemon is PRESENT while only its

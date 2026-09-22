@@ -9,8 +9,10 @@ import {
 } from './providerSecretHandlerFactory'
 import { probeOllamaCloudAccount } from '../ollama/OllamaAccountProbe'
 import {
+  confirmOllamaSignOut,
   nextOllamaCliSignInRecord,
   normalizeOllamaCliSignIn,
+  requiresOllamaSignOutConfirmation,
   type OllamaCliSignInObservation,
   type OllamaCliSignInRecord
 } from '../ollama/OllamaCliSignInMemory'
@@ -93,6 +95,17 @@ async function refreshOllamaCliSignIn(
   } catch {
     // An unreachable daemon is not evidence of a signed-out account.
     return previous
+  }
+  if (requiresOllamaSignOutConfirmation(previous, observation)) {
+    // One 401 against a remembered sign-in is a claim to confirm, not a
+    // verdict; a real sign-out answers 401 again right now.
+    let confirmation: OllamaCliSignInObservation | null = null
+    try {
+      confirmation = await probe(settings.ollamaBaseUrl)
+    } catch {
+      confirmation = null
+    }
+    observation = confirmOllamaSignOut(observation, confirmation)
   }
   const next = nextOllamaCliSignInRecord(
     previous,

@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
   applyRememberedOllamaCliSignIn,
+  confirmOllamaSignOut,
   nextOllamaCliSignInRecord,
   normalizeOllamaCliSignIn,
+  requiresOllamaSignOutConfirmation,
   shouldApplyRememberedOllamaCliSignIn,
   type OllamaCliSignInRecord
 } from './OllamaCliSignInMemory'
@@ -109,6 +111,74 @@ describe('nextOllamaCliSignInRecord', () => {
     expect(
       nextOllamaCliSignInRecord(signedIn('pro'), { supported: true, authenticated: true }, NOW)
     ).toEqual({ signedIn: true, plan: 'pro', updatedAt: EARLIER })
+  })
+})
+
+describe('sign-out confirmation', () => {
+  it('asks for confirmation only when a 401 would overwrite a remembered sign-in', () => {
+    expect(
+      requiresOllamaSignOutConfirmation(signedIn('pro'), { supported: true, authenticated: false })
+    ).toBe(true)
+    expect(requiresOllamaSignOutConfirmation(null, { supported: true, authenticated: false })).toBe(
+      false
+    )
+    expect(
+      requiresOllamaSignOutConfirmation(
+        normalizeOllamaCliSignIn({ signedIn: false, updatedAt: EARLIER }),
+        {
+          supported: true,
+          authenticated: false
+        }
+      )
+    ).toBe(false)
+    expect(
+      requiresOllamaSignOutConfirmation(signedIn('pro'), { supported: true, authenticated: true })
+    ).toBe(false)
+    expect(
+      requiresOllamaSignOutConfirmation(signedIn('pro'), { supported: true, authenticated: null })
+    ).toBe(false)
+    // A key-authenticated observation never records a CLI state, so it never confirms one.
+    expect(
+      requiresOllamaSignOutConfirmation(signedIn('pro'), {
+        supported: true,
+        authenticated: false,
+        apiKeyConfigured: true
+      })
+    ).toBe(false)
+  })
+
+  it('confirms only on a second definitive answer', () => {
+    const first = { supported: true, authenticated: false as const }
+    expect(confirmOllamaSignOut(first, { supported: true, authenticated: false })).toEqual({
+      supported: true,
+      authenticated: false
+    })
+    expect(
+      confirmOllamaSignOut(first, { supported: true, authenticated: true, plan: 'max' })
+    ).toEqual({
+      supported: true,
+      authenticated: true,
+      plan: 'max'
+    })
+    expect(confirmOllamaSignOut(first, { supported: false, authenticated: null })).toEqual({
+      supported: true,
+      authenticated: null
+    })
+    expect(confirmOllamaSignOut(first, null)).toEqual({ supported: true, authenticated: null })
+  })
+
+  it('folds to the record it found when the re-probe did not confirm', () => {
+    const previous = signedIn('pro')
+    const unconfirmed = confirmOllamaSignOut({ supported: true, authenticated: false }, null)
+    expect(nextOllamaCliSignInRecord(previous, unconfirmed, NOW)).toBe(previous)
+    const confirmed = confirmOllamaSignOut(
+      { supported: true, authenticated: false },
+      { supported: true, authenticated: false }
+    )
+    expect(nextOllamaCliSignInRecord(previous, confirmed, NOW)).toEqual({
+      signedIn: false,
+      updatedAt: NOW
+    })
   })
 })
 

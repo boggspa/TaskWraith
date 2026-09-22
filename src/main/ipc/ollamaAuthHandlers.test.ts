@@ -173,6 +173,91 @@ describe('registerOllamaAuthHandlers', () => {
       expect(getSettingsSnapshot().ollamaCliSignIn).toEqual({ signedIn: false, updatedAt: NOW })
     })
 
+    // The daemon relays /api/me to ollama.com and has answered 401 transiently;
+    // because the repair stands in only for a `true` record, one such answer
+    // used to disarm the whole memory until a 200 happened to arrive.
+    it('does not forget a remembered sign-in on a single 401 the re-probe contradicts', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount
+        .mockResolvedValueOnce({ supported: true, authenticated: false })
+        .mockResolvedValueOnce({ supported: true, authenticated: true, plan: 'pro' })
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: true,
+        cliPlan: 'pro',
+        cliSignInUpdatedAt: '2026-08-01T00:00:00.000Z'
+      })
+      expect(probeCloudAccount).toHaveBeenCalledTimes(2)
+      expect(deps.updateSettings).not.toHaveBeenCalled()
+      expect(getSettingsSnapshot().ollamaCliSignIn).toBeUndefined()
+    })
+
+    it('records a real sign-out promptly when the daemon says no twice', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount.mockResolvedValue({ supported: true, authenticated: false })
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: false
+      })
+      expect(probeCloudAccount).toHaveBeenCalledTimes(2)
+      expect(getSettingsSnapshot().ollamaCliSignIn).toEqual({ signedIn: false, updatedAt: NOW })
+    })
+
+    it('leaves the record for the next probe when the confirming re-probe fails', async () => {
+      const { deps, probeCloudAccount } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount
+        .mockResolvedValueOnce({ supported: true, authenticated: false })
+        .mockRejectedValueOnce(new Error('socket hang up'))
+      registerOllamaAuthHandlers(deps)
+
+      await expect(handlerFor('get-ollama-auth-status')({})).resolves.toMatchObject({
+        cliSignedIn: true
+      })
+      expect(deps.updateSettings).not.toHaveBeenCalled()
+    })
+
+    it('re-stamps the plan when the re-probe says the account is still there', async () => {
+      const { deps, probeCloudAccount, getSettingsSnapshot } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount
+        .mockResolvedValueOnce({ supported: true, authenticated: false })
+        .mockResolvedValueOnce({ supported: true, authenticated: true, plan: 'max' })
+      registerOllamaAuthHandlers(deps)
+
+      await handlerFor('get-ollama-auth-status')({})
+      expect(getSettingsSnapshot().ollamaCliSignIn).toEqual({
+        signedIn: true,
+        plan: 'max',
+        updatedAt: NOW
+      })
+    })
+
+    it('needs no confirmation when the record was already signed out', async () => {
+      const { deps, probeCloudAccount } = createDeps()
+      deps.getSettings.mockReturnValue({
+        ollamaCliSignIn: { signedIn: false, updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+      probeCloudAccount.mockResolvedValue({ supported: true, authenticated: false })
+      registerOllamaAuthHandlers(deps)
+
+      await handlerFor('get-ollama-auth-status')({})
+      expect(probeCloudAccount).toHaveBeenCalledTimes(1)
+      expect(deps.updateSettings).not.toHaveBeenCalled()
+    })
+
     it('omits the CLI fields entirely before any daemon answer exists', async () => {
       const { deps } = createDeps()
       registerOllamaAuthHandlers(deps)
