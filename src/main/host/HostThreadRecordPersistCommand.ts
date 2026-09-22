@@ -35,6 +35,7 @@ import {
   type HostThreadRecordTransferDescriptor
 } from '../../host-runtime/HostThreadRecordTransfer'
 import { publishHostThreadRecordTransferOffLoop } from '../../host-runtime/HostThreadRecordTransferWorker'
+import { installHostThreadRecordTransferTransport } from './HostThreadRecordTransferTransport'
 import type { HostActorIdentity, HostCommand, HostCommandReceipt } from '../../shared/hostProtocol'
 import {
   HOST_PROTOCOL_VERSION,
@@ -1307,6 +1308,9 @@ export function createDesktopHostThreadRecordPersistClient(
     spans?: HostThreadRecordPersistClientOptions['spans']
   }
 ): HostThreadRecordPersistClient {
+  // Desktop publishes every record through the shared off-loop worker; run it
+  // out of process so a fatal V8 error there cannot abort the app.
+  installHostThreadRecordTransferTransport()
   const broker = createHostProjectionBroker({
     userDataPath: input.userDataPath,
     appVersion: input.appVersion,

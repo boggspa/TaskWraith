@@ -7,6 +7,19 @@
  * starts. No live record reference is retained in a deferred publication queue.
  * Structured cloning still costs time on the caller; stringify/hash/fsync and
  * read/hash/parse run on the worker. Replies omit the redundant verified Buffer.
+ *
+ * TRANSPORT. The embedding process chooses it: Desktop main installs an
+ * Electron `utilityProcess` factory (`src/main/host/HostThreadRecordTransferTransport.ts`)
+ * before its first persist; the standalone Host and tests keep the default
+ * `worker_threads` Worker. This module never references Electron itself — the
+ * standalone Host import audit forbids it. The split is crash containment, not
+ * performance: a worker thread shares the app's process and its V8 pointer
+ * cage, and a fatal V8 allocation failure while cloning or serializing a large
+ * record aborts the whole app (release 1.9.8, 2026-09-22, thread
+ * `WorkerThread`, `node::OOMErrorHandler`). Node's near-heap-limit escape
+ * cannot contain a large single allocation, so a `resourceLimits` cap would
+ * not have helped. A utility process ends alone and its pending jobs reject;
+ * the next request starts a fresh one.
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
@@ -81,6 +94,68 @@ export function readHostThreadRecordTransfer(input: ReadInput): DecodedHostThrea
   }
 }
 
+/**
+ * One job, run where the entry lives. Deliberately synchronous: jobs run in
+ * arrival order, and a success reply exists only after the shared publisher
+ * has fsynced the file AND its directory.
+ */
+export function handleHostThreadRecordTransferRequest(
+  request: HostThreadRecordTransferWorkerRequest
+): HostThreadRecordTransferWorkerReply {
+  try {
+    const value =
+      request.kind === 'publish'
+        ? publishHostThreadRecordTransfer(request.input)
+        : readHostThreadRecordTransfer(request.input)
+    return { id: request.id, ok: true, value }
+  } catch (error) {
+    return {
+      id: request.id,
+      ok: false,
+      error: {
+        name: error instanceof Error ? error.name : 'Error',
+        message: error instanceof Error ? error.message : 'Thread-record transfer failed.'
+      }
+    }
+  }
+}
+
+/**
+ * The parent-facing side of an entry. `worker_threads` delivers the request
+ * itself; a utility process wraps it as `{ data }`, so the entry supplies the
+ * unwrapping that matches its transport.
+ */
+export interface HostThreadRecordTransferEntryPort {
+  on(event: 'message', listener: (message: unknown) => void): unknown
+  postMessage(reply: HostThreadRecordTransferWorkerReply): void
+}
+
+export function bindHostThreadRecordTransferPort(
+  port: HostThreadRecordTransferEntryPort,
+  unwrap: (message: unknown) => HostThreadRecordTransferWorkerRequest
+): void {
+  port.on('message', (message) => {
+    port.postMessage(handleHostThreadRecordTransferRequest(unwrap(message)))
+  })
+}
+
+/** Electron's `process.parentPort`, present only inside a utility process. */
+export function utilityProcessParentPort(
+  env: { parentPort?: unknown } = process as { parentPort?: unknown }
+): HostThreadRecordTransferEntryPort | undefined {
+  const port = env.parentPort as Partial<HostThreadRecordTransferEntryPort> | undefined
+  return typeof port?.on === 'function' && typeof port.postMessage === 'function'
+    ? (port as HostThreadRecordTransferEntryPort)
+    : undefined
+}
+
+/** A utility-process message event, as the child sees it. */
+export function unwrapUtilityProcessMessage(
+  message: unknown
+): HostThreadRecordTransferWorkerRequest {
+  return (message as { data: HostThreadRecordTransferWorkerRequest }).data
+}
+
 function decodeError(error: { name: string; message: string }): HostThreadRecordTransferError {
   if (error.name === 'HostThreadRecordTransferIntegrityError') {
     return new HostThreadRecordTransferIntegrityError(error.message)
@@ -127,8 +202,146 @@ function canCloneRecord(record: unknown): boolean {
   return true
 }
 
+/**
+ * What the worker class needs from a transport. Both implementations carry the
+ * same request/reply messages; only failure delivery differs, and the class
+ * treats every failure the same way: reject on exit, then start fresh.
+ */
+export interface HostThreadRecordTransferChannel {
+  readonly kind: 'utility-process' | 'worker-thread'
+  post(message: HostThreadRecordTransferWorkerRequest): void
+  onMessage(listener: (reply: HostThreadRecordTransferWorkerReply) => void): void
+  /** An uncaught error preceding the exit that follows it; utility processes only exit. */
+  onError(listener: (error: Error) => void): void
+  onExit(listener: (code: number) => void): void
+  /** Keep the parent loop alive while jobs are pending; a no-op off `worker_threads`. */
+  ref(): void
+  unref(): void
+  terminate(): Promise<void>
+}
+
+export type HostThreadRecordTransferChannelFactory = (
+  entryPath: string
+) => HostThreadRecordTransferChannel
+
+/**
+ * The slice of Electron's `utilityProcess` API this module uses, typed locally
+ * because the standalone Host build has no Electron types.
+ */
+export interface UtilityProcessChildLike {
+  postMessage(message: unknown): void
+  on(event: 'message', listener: (message: unknown) => void): unknown
+  on(event: 'exit', listener: (code: number) => void): unknown
+  once(event: 'exit', listener: (code: number) => void): unknown
+  kill(): boolean
+}
+
+export interface UtilityProcessLike {
+  fork(
+    modulePath: string,
+    args?: string[],
+    options?: { serviceName?: string }
+  ): UtilityProcessChildLike
+}
+
+export const HOST_THREAD_RECORD_TRANSFER_SERVICE_NAME = 'taskwraith-thread-record-transfer'
+
+export function createUtilityProcessTransferChannel(
+  entryPath: string,
+  utility: UtilityProcessLike
+): HostThreadRecordTransferChannel {
+  const child = utility.fork(entryPath, [], {
+    serviceName: HOST_THREAD_RECORD_TRANSFER_SERVICE_NAME
+  })
+  let exited = false
+  let termination: Promise<void> | null = null
+  child.once('exit', () => {
+    exited = true
+  })
+  return {
+    kind: 'utility-process',
+    post: (message) => child.postMessage(message),
+    onMessage: (listener) => {
+      child.on('message', (message) => listener(message as HostThreadRecordTransferWorkerReply))
+    },
+    onError: () => {},
+    onExit: (listener) => {
+      child.on('exit', listener)
+    },
+    ref: () => {},
+    unref: () => {},
+    terminate: () => {
+      if (exited) return Promise.resolve()
+      termination ??= new Promise((resolve) => {
+        child.once('exit', () => resolve())
+        child.kill()
+      })
+      return termination
+    }
+  }
+}
+
+export function createWorkerThreadTransferChannel(
+  entryPath: string
+): HostThreadRecordTransferChannel {
+  const worker = new Worker(entryPath)
+  return {
+    kind: 'worker-thread',
+    post: (message) => worker.postMessage(message),
+    onMessage: (listener) => {
+      worker.on('message', listener)
+    },
+    onError: (listener) => {
+      worker.on('error', listener)
+    },
+    onExit: (listener) => {
+      worker.on('exit', listener)
+    },
+    ref: () => worker.ref(),
+    unref: () => worker.unref(),
+    terminate: async () => {
+      await worker.terminate()
+    }
+  }
+}
+
+/** A utility process when the embedder supplies one, `worker_threads` otherwise. */
+export function createHostThreadRecordTransferChannel(
+  entryPath: string,
+  utility?: UtilityProcessLike
+): HostThreadRecordTransferChannel {
+  return utility
+    ? createUtilityProcessTransferChannel(entryPath, utility)
+    : createWorkerThreadTransferChannel(entryPath)
+}
+
+let sharedWorker: HostThreadRecordTransferWorker | undefined
+let offLoopChannelFactory: HostThreadRecordTransferChannelFactory =
+  createWorkerThreadTransferChannel
+
+/**
+ * Chooses the transport behind the process-wide off-loop worker. Desktop main
+ * installs its utility-process factory at startup; installing the factory the
+ * worker already uses is a no-op, and replacing it retires the current worker
+ * so the next job starts on the new transport.
+ */
+export function configureHostThreadRecordTransferChannel(
+  factory: HostThreadRecordTransferChannelFactory
+): void {
+  if (factory === offLoopChannelFactory) return
+  offLoopChannelFactory = factory
+  const previous = sharedWorker
+  sharedWorker = undefined
+  if (previous) void previous.close().catch(() => undefined)
+}
+
+/** The factory the next off-loop worker will be built with. */
+export function hostThreadRecordTransferChannelFactory(): HostThreadRecordTransferChannelFactory {
+  return offLoopChannelFactory
+}
+
 export class HostThreadRecordTransferWorker {
-  private worker: Worker | undefined
+  private worker: HostThreadRecordTransferChannel | undefined
   private nextId = 0
   private closed = false
   private readonly pending = new Map<
@@ -137,30 +350,45 @@ export class HostThreadRecordTransferWorker {
   >()
   private readonly idle = new Set<() => void>()
 
-  constructor(private readonly entryPath = defaultEntryPath) {}
+  constructor(
+    private readonly entryPath = defaultEntryPath,
+    private readonly channel: HostThreadRecordTransferChannelFactory = createWorkerThreadTransferChannel
+  ) {}
 
   publish(input: PublishInput): Promise<HostThreadRecordTransferDescriptor> {
-    if (!this.closed && (this.pending.size >= MAX_PENDING_JOBS || !canCloneRecord(input.record))) {
-      // Capture exotic JSON values immediately too, with the same behavior as
-      // the existing sync publisher instead of changing their serialized bytes.
+    if (this.closed) return this.request({ kind: 'publish', input })
+    if (this.pending.size < MAX_PENDING_JOBS && canCloneRecord(input.record)) {
+      // A transport that cannot accept the job (spawn failure, a message the
+      // channel refuses) still has the unmutated record in hand right now.
       try {
-        return Promise.resolve(publishHostThreadRecordTransfer(input))
-      } catch (error) {
-        return Promise.reject(error)
+        return this.request({ kind: 'publish', input })
+      } catch {
+        // Capture synchronously below, exactly as saturation does.
       }
     }
-    return this.request({ kind: 'publish', input })
+    // Capture exotic JSON values immediately too, with the same behavior as
+    // the existing sync publisher instead of changing their serialized bytes.
+    try {
+      return Promise.resolve(publishHostThreadRecordTransfer(input))
+    } catch (error) {
+      return Promise.reject(error)
+    }
   }
 
   read(input: ReadInput): Promise<DecodedHostThreadRecordTransfer> {
-    if (!this.closed && this.pending.size >= MAX_PENDING_JOBS) {
+    if (this.closed) return this.request({ kind: 'read', input })
+    if (this.pending.size < MAX_PENDING_JOBS) {
       try {
-        return Promise.resolve(readHostThreadRecordTransfer(input))
-      } catch (error) {
-        return Promise.reject(error)
+        return this.request({ kind: 'read', input })
+      } catch {
+        // Verify synchronously below, exactly as saturation does.
       }
     }
-    return this.request({ kind: 'read', input })
+    try {
+      return Promise.resolve(readHostThreadRecordTransfer(input))
+    } catch (error) {
+      return Promise.reject(error)
+    }
   }
 
   /** Stop accepting jobs, finish every acknowledged durability barrier, then exit. */
@@ -178,12 +406,12 @@ export class HostThreadRecordTransferWorker {
     this.idle.clear()
   }
 
-  private getWorker(): Worker {
+  private getWorker(): HostThreadRecordTransferChannel {
     if (this.worker) return this.worker
-    const worker = new Worker(this.entryPath)
+    const worker = this.channel(this.entryPath)
     let failure: Error | undefined
     this.worker = worker
-    worker.on('message', (reply: HostThreadRecordTransferWorkerReply) => {
+    worker.onMessage((reply) => {
       const pending = this.pending.get(reply.id)
       if (!pending) return
       this.pending.delete(reply.id)
@@ -191,12 +419,12 @@ export class HostThreadRecordTransferWorker {
       else pending.reject(decodeError(reply.error))
       this.settleIdle()
     })
-    worker.on('error', (error: Error) => {
+    worker.onError((error) => {
       failure = error
       // Reject only on exit: callers may remove failed artifacts, so the old
       // worker must have stopped writing before they can observe the failure.
     })
-    worker.on('exit', (code) => {
+    worker.onExit((code) => {
       if (this.worker !== worker) return
       this.worker = undefined
       const error = new HostThreadRecordTransferError(
@@ -212,53 +440,71 @@ export class HostThreadRecordTransferWorker {
     return worker
   }
 
+  /**
+   * Dispatches one job. A closed worker rejects; a transport that fails to
+   * accept the job throws synchronously so the caller can still capture the
+   * record on the calling thread.
+   */
   private request<T>(
     request:
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'publish' }>, 'id'>
       | Omit<Extract<HostThreadRecordTransferWorkerRequest, { kind: 'read' }>, 'id'>
   ): Promise<T> {
-    return new Promise<T>((resolve, reject) => {
-      if (this.closed) {
-        reject(new HostThreadRecordTransferError('Thread-record transfer worker is closed.'))
-        return
-      }
-      const id = ++this.nextId
-      try {
-        const worker = this.getWorker()
-        this.pending.set(id, { resolve: (value) => resolve(value as T), reject })
-        worker.ref()
-        worker.postMessage({ ...request, id } satisfies HostThreadRecordTransferWorkerRequest)
-      } catch (cause) {
-        this.pending.delete(id)
-        this.settleIdle()
-        reject(
-          new HostThreadRecordTransferError('Thread-record transfer job could not be dispatched.', {
-            cause
-          })
-        )
-      }
+    if (this.closed) {
+      return Promise.reject(
+        new HostThreadRecordTransferError('Thread-record transfer worker is closed.')
+      )
+    }
+    const id = ++this.nextId
+    // The executor runs synchronously, so `settle` is assigned before use.
+    let settle: { resolve(value: unknown): void; reject(error: Error): void } = {
+      resolve: () => undefined,
+      reject: () => undefined
+    }
+    const result = new Promise<T>((resolve, reject) => {
+      settle = { resolve: (value) => resolve(value as T), reject }
     })
+    try {
+      const worker = this.getWorker()
+      this.pending.set(id, settle)
+      worker.ref()
+      worker.post({ ...request, id } satisfies HostThreadRecordTransferWorkerRequest)
+    } catch (cause) {
+      this.pending.delete(id)
+      this.settleIdle()
+      throw new HostThreadRecordTransferError(
+        'Thread-record transfer job could not be dispatched.',
+        { cause }
+      )
+    }
+    return result
   }
 }
 
-let sharedWorker: HostThreadRecordTransferWorker | undefined
-
-function compiledWorker(): HostThreadRecordTransferWorker | undefined {
-  // Standalone source tools/tests retain the exact synchronous implementation.
-  // Both production builds emit this sibling entry; worker integration tests
-  // exercise the compiled entry explicitly, rather than this compatibility path.
-  if (!existsSync(defaultEntryPath)) return undefined
-  return (sharedWorker ??= new HostThreadRecordTransferWorker())
+/**
+ * The process-wide worker behind the off-loop publish/read, built on the
+ * configured transport once its compiled entry exists. Standalone source
+ * tools/tests retain the exact synchronous implementation: both production
+ * builds emit the sibling entry, and worker integration tests exercise a
+ * compiled entry explicitly rather than this compatibility path.
+ */
+export function sharedHostThreadRecordTransferWorker(
+  entryPath = defaultEntryPath
+): HostThreadRecordTransferWorker | undefined {
+  if (!existsSync(entryPath)) return undefined
+  return (sharedWorker ??= new HostThreadRecordTransferWorker(entryPath, offLoopChannelFactory))
 }
 
 export function publishHostThreadRecordTransferOffLoop(
   input: PublishInput
 ): HostThreadRecordTransferDescriptor | Promise<HostThreadRecordTransferDescriptor> {
-  return compiledWorker()?.publish(input) ?? publishHostThreadRecordTransfer(input)
+  return (
+    sharedHostThreadRecordTransferWorker()?.publish(input) ?? publishHostThreadRecordTransfer(input)
+  )
 }
 
 export function readHostThreadRecordTransferOffLoop(
   input: ReadInput
 ): DecodedHostThreadRecordTransfer | Promise<DecodedHostThreadRecordTransfer> {
-  return compiledWorker()?.read(input) ?? readHostThreadRecordTransfer(input)
+  return sharedHostThreadRecordTransferWorker()?.read(input) ?? readHostThreadRecordTransfer(input)
 }
