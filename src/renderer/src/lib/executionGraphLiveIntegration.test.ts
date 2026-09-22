@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../../../main/mainSourceProbe.testutil'
 
 const appSource = readFileSync(new URL('../App.tsx', import.meta.url), 'utf8')
 const composerSource = readFileSync(new URL('../components/Composer.tsx', import.meta.url), 'utf8')
@@ -46,7 +47,7 @@ describe('live execution graph integration', () => {
     expect(subscription).toContain('.getExecutionRun(notice.executionId)')
   })
 
-  it('surfaces repository and recovery diagnostics through a stale-safe root notice', () => {
+  it('routes execution-graph diagnostics into the notification tray instead of a root aside', () => {
     const diagnostics = slice(
       appSource,
       'const refreshExecutionGraphDiagnostics =',
@@ -56,10 +57,56 @@ describe('live execution graph integration', () => {
       "typeof window.api.getExecutionGraphDiagnostics !== 'function'"
     )
     expect(diagnostics).toContain('.getExecutionGraphDiagnostics()')
-    expect(appSource).toContain('executionGraphDiagnostics.repositoryDiagnostics.map(')
-    expect(appSource).toContain('executionGraphDiagnostics.recoveryDiagnostics.map(')
-    expect(appSource).toContain('className="execution-graph-diagnostics-notice"')
-    expect(appSource).toContain('Stack history needs attention')
+
+    // Wiring only: the derivation and card mapping are tested against real
+    // snapshots in executionGraphDiagnosticNotices.test.ts. The probe throws
+    // when a subject is renamed, which a text slice would report as green.
+    const probe = new MainSourceProbe('App.tsx', new URL('../App.tsx', import.meta.url))
+    const app = probe.fn('App')
+    const derive = probe.callsTo(app, 'deriveExecutionGraphDiagnosticNotices')
+    expect(derive).toHaveLength(1)
+    expect(probe.argText(derive[0], 0)).toBe('executionGraphDiagnostics')
+    expect(probe.argText(derive[0], 1)).toBe('redactLog')
+    const cards = probe.callsTo(app, 'executionGraphDiagnosticAppNotifications')
+    expect(cards).toHaveLength(1)
+    expect(probe.argText(cards[0], 0)).toBe('executionGraphDiagnosticNotices')
+    expect(probe.propText(cards[0], 1, 'openStack')).toBe('handleOpenExecutionStackFromNotice')
+    expect(probe.propText(cards[0], 1, 'retryRecovery')).toBe('handleRetryExecutionGraphRecovery')
+    expect(probe.propText(cards[0], 1, 'archiveStack')).toBe('handleArchiveExecutionRun')
+    expect(probe.argText(cards[0], 2)).toBe('executionGraphNoticeFailures')
+    const publishes = probe.callsTo(app, 'publishDynamicAppNotifications')
+    expect(publishes.map((call) => probe.argText(call, 0))).toEqual([
+      'executionGraphAppNotifications',
+      '[]'
+    ])
+
+    // Each action reaches its preload seam and lands the refreshed snapshot.
+    const archive = slice(
+      appSource,
+      'const handleArchiveExecutionRun = useCallback(',
+      'const executionGraphAppNotifications = useMemo('
+    )
+    expect(archive).toContain(".archiveExecutionRun(executionId, 'Archived from the Stack notice.')")
+    expect(archive).toContain('setExecutionGraphDiagnostics(result.diagnostics)')
+    expect(archive).toContain('rememberExecutionRun(result.projection)')
+    const retry = slice(
+      appSource,
+      'const handleRetryExecutionGraphRecovery = useCallback(',
+      'const handleArchiveExecutionRun = useCallback('
+    )
+    expect(retry).toContain('.retryExecutionGraphRecovery({ executionId })')
+    expect(retry).toContain('setExecutionGraphDiagnostics(snapshot)')
+    const open = slice(
+      appSource,
+      'const handleOpenExecutionStackFromNotice = useCallback(',
+      'const handleRetryExecutionGraphRecovery = useCallback('
+    )
+    expect(open).toContain('.getExecutionRun(executionId)')
+    expect(open).toContain('handleOpenExecutionRunFromWork(executionId, run ?? undefined)')
+
+    // The collapsed root aside is gone for good.
+    expect(appSource).not.toContain('execution-graph-diagnostics-notice')
+    expect(appSource).not.toContain('Stack history needs attention')
   })
 
   it('routes busy composer sends to classic queue; Stack append is gated off', () => {
@@ -152,12 +199,17 @@ describe('live execution graph integration', () => {
   // The invariant is that EVERY Stack/execution error surface strips the
   // framing; the count is how that is enforced. A fourth surface was added with
   // the whole-execution killswitch (2026-08-29), which is why the count moved.
-  it('strips Electron invoke framing from all four Stack error surfaces', () => {
-    expect(appSource.match(/stripElectronInvokeErrorFraming\(error\)/g)).toHaveLength(5)
+  it('strips Electron invoke framing from all six Stack error surfaces', () => {
+    expect(appSource.match(/stripElectronInvokeErrorFraming\(error\)/g)).toHaveLength(7)
     expect(appSource).toContain('Could not add this message to the Stack:')
     expect(appSource).toContain('Could not save graph:')
     expect(appSource).toContain('Could not cancel the remaining Stack:')
     expect(appSource).toContain('Could not cancel the execution:')
+    // The notice actions surface their refusal on the notice itself.
+    expect(appSource).toContain(
+      '[executionId]: `Retry refused: ${redactLog(stripElectronInvokeErrorFraming(error))}`'
+    )
+    expect(appSource).toContain('[executionId]: redactLog(stripElectronInvokeErrorFraming(error))')
   })
 
   it('uses Execution Map as the focused primary-pane alternative to the transcript', () => {

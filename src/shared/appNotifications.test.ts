@@ -22,8 +22,10 @@ const sample: AppNotification[] = [
 ]
 
 describe('appNotificationTone', () => {
-  it('makes only deprecation red; everything else uses the default card', () => {
+  it('makes deprecation and error red, warning amber; everything else uses the default card', () => {
     expect(appNotificationTone('deprecation')).toBe('danger')
+    expect(appNotificationTone('error')).toBe('danger')
+    expect(appNotificationTone('warning')).toBe('warning')
     expect(appNotificationTone('addition')).toBe('default')
     expect(appNotificationTone('feature')).toBe('default')
     expect(appNotificationTone('info')).toBe('default')

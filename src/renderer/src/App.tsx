@@ -1071,6 +1071,12 @@ import {
   sortExecutionRunHistory
 } from './lib/executionGraphLiveState'
 import {
+  clearExecutionGraphNoticeFailure,
+  deriveExecutionGraphDiagnosticNotices,
+  executionGraphDiagnosticAppNotifications
+} from './lib/executionGraphDiagnosticNotices'
+import { publishDynamicAppNotifications } from './lib/dynamicAppNotifications'
+import {
   paneRecordsIncludingParked,
   removedCanvasIds,
   useMultiviewState
@@ -2909,24 +2915,18 @@ function App(): React.JSX.Element {
   >({})
   const [executionGraphDiagnostics, setExecutionGraphDiagnostics] =
     useState<ExecutionGraphDiagnosticsSnapshot | null>(null)
-  const executionGraphDiagnosticReasons = useMemo(() => {
-    if (!executionGraphDiagnostics) return []
-    const boundedReason = (value: string): string => redactLog(value).slice(0, 512)
-    return [
-      ...executionGraphDiagnostics.serviceDiagnostics.map(
-        (diagnostic) => `Stack service: ${boundedReason(diagnostic.message)}`
-      ),
-      ...executionGraphDiagnostics.repositoryDiagnostics.map(
-        (diagnostic) => `Stack ${diagnostic.executionId}: ${boundedReason(diagnostic.message)}`
-      ),
-      ...executionGraphDiagnostics.recoveryDiagnostics.map(
-        (diagnostic) =>
-          `Stack ${diagnostic.executionId}: startup recovery paused — ${boundedReason(
-            diagnostic.message
-          )}`
-      )
-    ]
-  }, [executionGraphDiagnostics])
+  // Diagnostics become tray notices (NotificationZone) rather than a root
+  // aside: derived purely from the snapshot, so a retry or archive that lands a
+  // refreshed snapshot clears its notice by re-derivation.
+  const executionGraphDiagnosticNotices = useMemo(
+    () => deriveExecutionGraphDiagnosticNotices(executionGraphDiagnostics, redactLog),
+    [executionGraphDiagnostics]
+  )
+  // The last refused notice action per stack (an archive the coordinator would
+  // not close), shown on the notice itself: an orphan has no thread log.
+  const [executionGraphNoticeFailures, setExecutionGraphNoticeFailures] = useState<
+    Readonly<Record<string, string>>
+  >({})
   const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<Record<string, string[]>>(
     {}
   )
@@ -24793,8 +24793,8 @@ function App(): React.JSX.Element {
    * chat, so opening it directly would flicker straight back shut.
    */
   const handleOpenExecutionRunFromWork = useCallback(
-    (executionId: string): void => {
-      const run = executionRunsById[executionId]
+    (executionId: string, knownRun?: ExecutionRunProjection): void => {
+      const run = knownRun ?? executionRunsById[executionId]
       const rootChatId = run?.owner?.threadId || run?.rootChatId
       const chat = rootChatId
         ? chatByIdRef.current.get(rootChatId) ||
@@ -24805,6 +24805,92 @@ function App(): React.JSX.Element {
     },
     [chats, executionRunsById, handleOpenExecutionMap]
   )
+  /**
+   * The ways out of a Stack diagnostic notice. Open fetches the run first when
+   * nothing visible has hydrated it (an orphan belongs to no open chat) so the
+   * map can select the owning thread; retry and archive answer with the
+   * refreshed snapshot, from which the notices re-derive, and a refusal lands
+   * on the notice rather than in a thread log the stack may not have.
+   */
+  const handleOpenExecutionStackFromNotice = useCallback(
+    (executionId: string): void => {
+      if (executionRunsById[executionId] || typeof window.api.getExecutionRun !== 'function') {
+        handleOpenExecutionRunFromWork(executionId)
+        return
+      }
+      void window.api
+        .getExecutionRun(executionId)
+        .then((run) => {
+          if (run) rememberExecutionRun(run)
+          handleOpenExecutionRunFromWork(executionId, run ?? undefined)
+        })
+        .catch((error) => {
+          console.warn('[execution graph] failed to load the stack behind its notice', error)
+        })
+    },
+    [executionRunsById, handleOpenExecutionRunFromWork, rememberExecutionRun]
+  )
+  const handleRetryExecutionGraphRecovery = useCallback((executionId: string): void => {
+    if (typeof window.api.retryExecutionGraphRecovery !== 'function') return
+    void window.api
+      .retryExecutionGraphRecovery({ executionId })
+      .then((snapshot) => {
+        setExecutionGraphDiagnostics(snapshot)
+        setExecutionGraphNoticeFailures((current) =>
+          clearExecutionGraphNoticeFailure(current, executionId)
+        )
+      })
+      .catch((error) => {
+        setExecutionGraphNoticeFailures((current) => ({
+          ...current,
+          [executionId]: `Retry refused: ${redactLog(stripElectronInvokeErrorFraming(error))}`
+        }))
+      })
+  }, [])
+  const handleArchiveExecutionRun = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.archiveExecutionRun !== 'function') return
+      void window.api
+        .archiveExecutionRun(executionId, 'Archived from the Stack notice.')
+        .then((result) => {
+          rememberExecutionRun(result.projection)
+          setExecutionGraphDiagnostics(result.diagnostics)
+          setExecutionGraphNoticeFailures((current) =>
+            clearExecutionGraphNoticeFailure(current, executionId)
+          )
+        })
+        .catch((error) => {
+          setExecutionGraphNoticeFailures((current) => ({
+            ...current,
+            [executionId]: redactLog(stripElectronInvokeErrorFraming(error))
+          }))
+        })
+    },
+    [rememberExecutionRun]
+  )
+  const executionGraphAppNotifications = useMemo(
+    () =>
+      executionGraphDiagnosticAppNotifications(
+        executionGraphDiagnosticNotices,
+        {
+          openStack: handleOpenExecutionStackFromNotice,
+          retryRecovery: handleRetryExecutionGraphRecovery,
+          archiveStack: handleArchiveExecutionRun
+        },
+        executionGraphNoticeFailures
+      ),
+    [
+      executionGraphDiagnosticNotices,
+      executionGraphNoticeFailures,
+      handleArchiveExecutionRun,
+      handleOpenExecutionStackFromNotice,
+      handleRetryExecutionGraphRecovery
+    ]
+  )
+  useEffect(() => {
+    publishDynamicAppNotifications(executionGraphAppNotifications)
+  }, [executionGraphAppNotifications])
+  useEffect(() => () => publishDynamicAppNotifications([]), [])
   const handleOpenExecutionThread = useCallback(
     (threadRef: string): void => {
       const chat =
@@ -32809,24 +32895,6 @@ function App(): React.JSX.Element {
     >
       <div className="window-drag-strip" aria-hidden />
       {bootMaskVisible && <AppBootMask leaving={isBootMaskLeaving} />}
-      {!isChatPopoutWindow && executionGraphDiagnosticReasons.length > 0 && (
-        <aside className="execution-graph-diagnostics-notice" role="status">
-          <details>
-            <summary>
-              Stack history needs attention
-              <span>{executionGraphDiagnosticReasons.length}</span>
-            </summary>
-            <ul>
-              {executionGraphDiagnosticReasons.slice(0, 12).map((reason, index) => (
-                <li key={`${index}:${reason}`}>{reason}</li>
-              ))}
-            </ul>
-            {executionGraphDiagnosticReasons.length > 12 && (
-              <p>{executionGraphDiagnosticReasons.length - 12} more diagnostics</p>
-            )}
-          </details>
-        </aside>
-      )}
       <MainAppLayout {...mainAppLayoutProps} />
       {sidebarActiveTab === 'terminal' && !showSettings && !isChatPopoutWindow && (
         <TerminalWorkbench

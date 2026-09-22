@@ -14791,12 +14791,54 @@ button.diff-file-row {
     inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.55)),
     inset 0 10px 22px -16px var(--tw-glass-rim-light, rgba(255, 255, 255, 0.42));
 }
-/* Red variant — deprecation/sunset only. */
+/* Red variant — deprecation/sunset and unresolved errors (damaged Stack history). */
 .notification-card--danger {
   --notification-accent: var(--danger);
   border-color: color-mix(in srgb, var(--danger) 55%, transparent);
   background: color-mix(in srgb, var(--danger) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--danger) 12%, transparent);
+}
+/* Amber variant — a condition that wants an action (a Stack whose startup
+   recovery paused), not an alarm. Same chassis as the red card on --warning. */
+.notification-card--warning {
+  --notification-accent: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 7%, var(--panel-bg, rgba(127, 127, 127, 0.06)));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warning) 12%, transparent);
+}
+/* Action row under a notice's copy (Open stack / Retry recovery / Archive
+   stack). Pills on the card's accent so they read as part of the notice; the
+   danger action borrows --danger for its rim and label only. */
+.notification-card-copy {
+  margin: 0;
+}
+.notification-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  position: relative;
+  z-index: 3;
+}
+.notification-card-action {
+  appearance: none;
+  min-height: 24px;
+  padding: 2px 10px;
+  border: 1px solid color-mix(in srgb, var(--notification-accent) 45%, var(--panel-border));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--notification-accent) 10%, transparent);
+  color: var(--text-primary, inherit);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+.notification-card-action:hover {
+  background: color-mix(in srgb, var(--notification-accent) 18%, transparent);
+}
+.notification-card-action--danger {
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--panel-border));
+  color: var(--danger);
 }
 .notification-card--accent-claude:not(.notification-card--danger) {
   --notification-accent: var(--provider-claude-color, #b16105);

@@ -16,10 +16,18 @@
  *   (currently empty — repopulate as future shipped features warrant a highlight)
  */
 
-export type AppNotificationKind = 'deprecation' | 'addition' | 'feature' | 'info'
+export type AppNotificationKind =
+  | 'deprecation'
+  | 'addition'
+  | 'feature'
+  | 'info'
+  /** A condition that wants an action (a paused Stack recovery); amber. */
+  | 'warning'
+  /** A failure the app could not resolve on its own (damaged Stack history); red. */
+  | 'error'
 
 /** Visual tone of a notification card. */
-export type AppNotificationTone = 'default' | 'danger'
+export type AppNotificationTone = 'default' | 'danger' | 'warning'
 
 /** Optional provider accent for model/provider-specific announcement cards. */
 export type AppNotificationAccent = 'default' | 'claude' | 'ensemble' | 'cursor' | 'grok'
@@ -78,6 +86,19 @@ export interface AppNotification {
    *  newly-added models. When present, renderers show this grouped list
    *  instead of the plain `body` paragraph. */
   groups?: AppNotificationProviderGroup[]
+  /** Buttons rendered under the copy. Data only: the renderer-side publisher
+   *  of a dynamic notice supplies the handler (lib/dynamicAppNotifications),
+   *  so this registry type stays serializable for the remote projection. */
+  actions?: readonly AppNotificationAction[]
+}
+
+/** One action button on a notice. */
+export interface AppNotificationAction {
+  /** Stable per-notice action id, e.g. 'open-stack'. */
+  id: string
+  label: string
+  /** Emphasis for a destructive action such as archiving. */
+  tone?: 'default' | 'danger'
 }
 
 /** Max changelog-derived cards in the carousel at once (after pinned notices). */
@@ -86,11 +107,14 @@ export const CHANGELOG_FEATURE_NOTIFICATION_MAX_ACTIVE = 2
 const MS_PER_DAY = 86_400_000
 
 /**
- * Card tone for a kind. Only deprecation/sunset notices are RED; every other
- * kind uses the theme-default card (contrast-aware text + shiny accent rim).
+ * Card tone for a kind. Deprecation/sunset and error notices are RED, a
+ * warning is amber; every other kind uses the theme-default card
+ * (contrast-aware text + shiny accent rim).
  */
 export function appNotificationTone(kind: AppNotificationKind): AppNotificationTone {
-  return kind === 'deprecation' ? 'danger' : 'default'
+  if (kind === 'deprecation' || kind === 'error') return 'danger'
+  if (kind === 'warning') return 'warning'
+  return 'default'
 }
 
 export function appNotificationAccent(notification: AppNotification): AppNotificationAccent {
