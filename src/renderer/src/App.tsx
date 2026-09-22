@@ -14696,6 +14696,21 @@ function App(): React.JSX.Element {
         }
       }
       if (runChat.chatKind === 'ensemble') {
+        // Consume the draft at gesture time, as the steer lane does. The round
+        // IPC resolves only after main's round-start durability barrier — a
+        // full-record Host write that takes seconds on a large thread — so
+        // clearing after it left the sent text in the composer and Enter
+        // looked ignored. Edit-aware rollback restores it on a refusal.
+        const ensembleSendDraft =
+          request.existingPrompt || request.preserveComposer
+            ? null
+            : beginComposerDraftSubmission({
+                chatId: runChat.appChatId,
+                submittedDraft: request.displayPrompt || request.prompt,
+                getDraft: composerDraftState.getDraft,
+                setDraft: setChatPromptDraft,
+                subscribeToDraft: composerDraftState.subscribeToChat
+              })
         // The pending picker choice must reach main before it resolves the
         // roster for this round. This waits only for seat edits, not history.
         await authoritativeParticipantSeatChangeQueueRef.current.get(runChat.appChatId)
@@ -14791,6 +14806,7 @@ function App(): React.JSX.Element {
               type: 'stderr',
               content: dispatchRefusal.message
             })
+            ensembleSendDraft?.restoreIfUntouched()
             return
           }
           const acceptedQueueWrapperReason = acceptedEnsembleRunQueueWrapperReason({
@@ -14813,11 +14829,16 @@ function App(): React.JSX.Element {
             redactLog(String(error))
           )
           settleProjectReferenceContextForRequest(request, 'rejected')
+          ensembleSendDraft?.restoreIfUntouched()
           throw error
         }
         dispatchAccepted = true
+        ensembleSendDraft?.commit()
         if (!request.existingPrompt && !request.preserveComposer) {
-          setChatPromptDraft(runChat.appChatId, '')
+          // Only a draft the gesture could not consume (it no longer matched
+          // the request's text) is still cleared here; a consumed one already
+          // is, and clearing again would erase whatever was typed meanwhile.
+          if (!ensembleSendDraft) setChatPromptDraft(runChat.appChatId, '')
           clearComposerAttachmentsForSubmittedRequest(request)
         }
         setIsThinking(true)
