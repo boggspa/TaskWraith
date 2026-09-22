@@ -121,6 +121,30 @@ function timed(
   }
 }
 
+/**
+ * White-box read of the pending entry's durability-fallback intent.
+ *
+ * Only for the limbs the interval cannot observe. `materializeSuccessor` reads
+ * the flag solely on a pending record that is waiting behind an in-flight
+ * submission, and a submission can only be created by materializing the
+ * pending record itself — so a lineage restored by a failed drain or rebased
+ * after a conflict is always next in line for a direct materialize, which
+ * spends the intent before the interval could ever consult it. The carry on
+ * those paths keeps the model consistent; this reads it so it cannot be
+ * dropped silently.
+ */
+function pendingIntent(
+  persistence: HostChatCompatibilityPersistence,
+  chatId: string
+): boolean | null {
+  const states = (
+    persistence as unknown as {
+      states: Map<string, { pending: { durabilityFallback: boolean } | null }>
+    }
+  ).states
+  return states.get(chatId)?.pending?.durabilityFallback ?? null
+}
+
 describe('HostChatCompatibilityPersistence', () => {
   it('retains the latest full record by reference while preserving the first Host CAS base', () => {
     const { enqueued, persistence } = harness()
@@ -695,7 +719,7 @@ describe('minimum interval between chained checkpoints', () => {
     expect(f.armed()[0].delayMs).toBe(25_000)
   })
 
-  it('the fallback intent survives replacement, duplication and a failed enqueue until it is published', () => {
+  it('the fallback intent survives replacement, an ordinary duplicate and a failed enqueue until it is published', () => {
     const published: HostThreadRecordPersistInput[] = []
     const enqueue = vi.fn((entry: HostThreadRecordPersistInput) => {
       published.push(entry)
@@ -704,9 +728,10 @@ describe('minimum interval between chained checkpoints', () => {
     f.persistence.stage(input('chat-1', 4, 3))
     f.persistence.materialize('chat-1')
     f.persistence.stage(input('chat-1', 7, 4), { durabilityFallback: true })
-    // Later ordinary saves replace the pending record; a repeated revision is
-    // a duplicate. The replacing record contains the failed save's state, so
-    // the intent stays with the slot.
+    // Later ordinary saves replace the pending record, and an ordinary
+    // repeated revision is a duplicate that neither adds nor clears intent.
+    // The replacing record contains the failed save's state, so the intent
+    // stays with the slot.
     expect(f.persistence.stage(input('chat-1', 9, 7))).toBe('replaced')
     expect(f.persistence.stage(input('chat-1', 9, 8))).toBe('duplicate')
     expect(f.persistence.materialize('chat-1')).toBe(false)
@@ -852,6 +877,130 @@ describe('minimum interval between chained checkpoints', () => {
     expect(f.enqueued).toHaveLength(2)
     expect(f.enqueued[1].record).toBe(successor.record)
     expect(f.timers).toEqual([])
+  })
+
+  it('a duplicate-revision restage carrying the fallback intent makes the waiting successor publish at once', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const ordinary = input('chat-1', 7, 4)
+    expect(f.persistence.stage(ordinary)).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    // A retried save at the pending revision failed its journal append. Its
+    // state is exactly the pending record's, so that entry inherits the
+    // intent even though the reference is not replaced.
+    expect(f.persistence.stage(input('chat-1', 7, 6), { durabilityFallback: true })).toBe(
+      'duplicate'
+    )
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(ordinary.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.timers).toEqual([])
+  })
+
+  it('an ordinary duplicate-revision restage leaves the waiting successor on the interval', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    expect(f.persistence.stage(input('chat-1', 7, 4))).toBe('staged')
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    expect(f.persistence.stage(input('chat-1', 7, 6))).toBe('duplicate')
+    f.advance(5_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+  })
+
+  it.each([
+    ['the failed submission', true, false],
+    ['the newer pending record', false, true]
+  ])(
+    'a failed drain merges the fallback intent from %s onto the restored pending lineage',
+    async (_side, onSubmitted, onPending) => {
+      let reject!: (error: Error) => void
+      const failed = new Promise<void>((_resolve, rejectPromise) => {
+        reject = rejectPromise
+      })
+      const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => failed) })
+      f.persistence.stage(input('chat-1', 4, 3), { durabilityFallback: onSubmitted })
+      const barrier = f.persistence.barrier('chat-1')
+      await Promise.resolve()
+      expect(f.enqueued).toHaveLength(1)
+      const newer = input('chat-1', 9, 8)
+      expect(f.persistence.stage(newer, { durabilityFallback: onPending })).toBe('staged')
+
+      reject(new Error('Host unavailable'))
+      await expect(barrier).rejects.toThrow('Host unavailable')
+      expect(f.persistence.snapshot()).toMatchObject({
+        pendingChatIds: ['chat-1'],
+        submittedChatIds: []
+      })
+      // The merged entry keeps whichever side carried the intent (see
+      // pendingIntent for why the interval cannot observe this), the newest
+      // body, and the failed entry's CAS base.
+      expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+      vi.mocked(f.port.drain).mockResolvedValue(undefined)
+      await f.persistence.barrier('chat-1')
+      expect(f.enqueued).toHaveLength(2)
+      expect(f.enqueued[1].record).toBe(newer.record)
+      expect(f.enqueued[1].expectedRevision).toBe(3)
+    }
+  )
+
+  it('a failed drain with no intent on either side restores an ordinary lineage', async () => {
+    let reject!: (error: Error) => void
+    const failed = new Promise<void>((_resolve, rejectPromise) => {
+      reject = rejectPromise
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => failed) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    expect(f.persistence.stage(input('chat-1', 9, 8))).toBe('staged')
+
+    reject(new Error('Host unavailable'))
+    await expect(barrier).rejects.toThrow('Host unavailable')
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(false)
+  })
+
+  it('a pending-branch rebase carries the fallback intent to the recovered record', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const f = timed({ minIntervalMs: 30_000, drain })
+    f.persistence.stage(input('chat-1', 9, 3), { durabilityFallback: true })
+    await expect(f.persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+    // Host CAS recovery rebases the restored (not in-flight) lineage: the
+    // recovered record replaces the body and CAS base, the intent stays.
+    const recovered = input('chat-1', 5, 4)
+    expect(f.persistence.rebase(recovered)).toBe(true)
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(true)
+
+    await f.persistence.barrier('chat-1')
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1]).toBe(recovered)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('a pending-branch rebase of an ordinary lineage stays ordinary', async () => {
+    const drain = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('revision conflict'))
+      .mockResolvedValue(undefined)
+    const f = timed({ minIntervalMs: 30_000, drain })
+    f.persistence.stage(input('chat-1', 9, 3))
+    await expect(f.persistence.barrier('chat-1')).rejects.toThrow('revision conflict')
+    expect(f.persistence.rebase(input('chat-1', 5, 4))).toBe(true)
+    expect(pendingIntent(f.persistence, 'chat-1')).toBe(false)
   })
 })
 
