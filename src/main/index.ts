@@ -1914,6 +1914,10 @@ import {
 } from './pi/PiCerebrasCompletionCap'
 import { writePiMistralModelRegistration } from './pi/PiMistralModelRegistration'
 import { writePiOpenRouterModelRegistration } from './pi/PiOpenRouterModelRegistration'
+import {
+  isPiXiaomiTokenPlanUpstream,
+  writePiXiaomiModelRegistration
+} from './pi/PiXiaomiModelRegistration'
 import { normalizePiReasoningEffortForModel } from '../shared/piReasoning'
 import { PI_CEREBRAS_429_BACKOFF_MS, PiCerebrasRateGovernor } from './pi/PiCerebrasRateGovernor'
 import { resolvePiNativeToolPosture } from './pi/PiNativeToolPosture'
@@ -24121,6 +24125,25 @@ async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentR
       isolatedHomeLease.cleanup()
       failFast(
         `Could not prepare Pi's Mistral model registration: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+        false
+      )
+      return
+    }
+  }
+
+  if (isPiXiaomiTokenPlanUpstream(upstream)) {
+    try {
+      writePiXiaomiModelRegistration({
+        isolatedHomeDir: isolatedHomeLease.path,
+        upstream,
+        modelId: split.modelId
+      })
+    } catch (error) {
+      isolatedHomeLease.cleanup()
+      failFast(
+        `Could not prepare Pi's Xiaomi model registration: ${
           error instanceof Error ? error.message : String(error)
         }`,
         false

@@ -372,6 +372,57 @@ describe('HostNodePiProvider containment', () => {
     }
   )
 
+  it.each([
+    ['xiaomi-token-plan-cn', 'mimo-v2.6-pro'],
+    ['xiaomi-token-plan-sgp', 'mimo-v2.6-flash'],
+    ['xiaomi-token-plan-ams', 'mimo-v2.6-pro']
+  ] as const)(
+    'registers the unbundled Xiaomi %s/%s from the real offer catalogue before spawning Pi',
+    async (upstream, modelId) => {
+      const runPort = new FakeRunPort()
+      runPort.thread = threadFixture({ modelId: `${upstream}/${modelId}`, reasoningId: 'high' })
+      const scripted = scriptedSpawn({ stdout: SUCCESS_STREAM, replyToPrompt: true })
+      let registeredConfig: unknown
+      const spawn: HostNodePiSpawn = (input) => {
+        registeredConfig = JSON.parse(
+          readFileSync(join(String(input.env.PI_CODING_AGENT_DIR), 'models.json'), 'utf8')
+        )
+        return scripted.spawn(input)
+      }
+      const result = await providerWith(runPort, spawn, {
+        offers: hostProviderOffers('pi', true)!,
+        baseEnv: { [PI_UPSTREAM_KEY_ENV[upstream]]: 'xiaomi-test-key', PATH: '/usr/bin' }
+      }).run({ runId: 'run-xiaomi', threadId: 'thread-1', prompt: 'hi', target: TARGET })
+
+      expect(result.status).toBe('completed')
+      expect(registeredConfig).toEqual({
+        providers: {
+          [upstream]: {
+            models: [
+              {
+                id: modelId,
+                name: expect.stringContaining('MiMo V2.6'),
+                api: 'openai-completions',
+                reasoning: true,
+                input: ['text', 'image'],
+                contextWindow: 1_048_576,
+                maxTokens: 131_072,
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+                compat: {
+                  requiresReasoningContentOnAssistantMessages: true,
+                  thinkingFormat: 'deepseek'
+                }
+              }
+            ]
+          }
+        }
+      })
+      expect(scripted.captured[0].args).toEqual(
+        expect.arrayContaining(['--provider', upstream, '--model', modelId, '--thinking', 'high'])
+      )
+    }
+  )
+
   it('spawns with the full containment flag surface and read-only native tools', async () => {
     const runPort = new FakeRunPort()
     const { spawn, captured } = scriptedSpawn({ stdout: SUCCESS_STREAM, replyToPrompt: true })

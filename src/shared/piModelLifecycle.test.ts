@@ -96,12 +96,14 @@ describe('Pi model lifecycle', () => {
     expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2-pro')).toBe('2026-08-30')
     expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2-pro')).toBe('2026-08-30')
 
-    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5')).toBeUndefined()
-    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5')).toBeUndefined()
-    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5')).toBeUndefined()
-    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5-pro')).toBeUndefined()
-    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5-pro')).toBeUndefined()
-    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5-pro')).toBeUndefined()
+    // The V2.5 pair carries Xiaomi's own later sunset (2026-10-21), never V2
+    // Pro's date — so on V2 Pro's day it is still offered, checked below.
+    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5')).toBe('2026-10-21')
+    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5')).toBe('2026-10-21')
+    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5')).toBe('2026-10-21')
+    expect(piModelRetiresAt('xiaomi-token-plan-cn/mimo-v2.5-pro')).toBe('2026-10-21')
+    expect(piModelRetiresAt('xiaomi-token-plan-sgp/mimo-v2.5-pro')).toBe('2026-10-21')
+    expect(piModelRetiresAt('xiaomi-token-plan-ams/mimo-v2.5-pro')).toBe('2026-10-21')
 
     expect(
       isPiModelRetired('xiaomi-token-plan-cn/mimo-v2-pro', new Date(2026, 7, 29, 23, 59))
@@ -146,5 +148,51 @@ describe('Pi model lifecycle', () => {
       'xiaomi-token-plan-ams/mimo-v2.5-pro'
     ])
     expect(active).toHaveLength(rows.length - 3)
+  })
+
+  it('dates the V2.5 pair 2026-10-21 on every region and leaves the V2.6 pair undated', () => {
+    for (const region of ['cn', 'sgp', 'ams']) {
+      const upstream = `xiaomi-token-plan-${region}`
+      expect(piModelRetiresAt(`${upstream}/mimo-v2.5`), upstream).toBe('2026-10-21')
+      expect(piModelRetiresAt(`${upstream}/mimo-v2.5-pro`), upstream).toBe('2026-10-21')
+      expect(piModelRetiresAt(`${upstream}/mimo-v2.6-pro`), upstream).toBeUndefined()
+      expect(piModelRetiresAt(`${upstream}/mimo-v2.6-flash`), upstream).toBeUndefined()
+      // Xiaomi's cutoff is 10:00 Beijing time on the 21st; the date-only rule
+      // drops the rows from the start of that local calendar day.
+      expect(isPiModelRetired(`${upstream}/mimo-v2.5`, new Date(2026, 9, 20, 23, 59))).toBe(false)
+      expect(isPiModelRetired(`${upstream}/mimo-v2.5`, new Date(2026, 9, 21, 0, 0))).toBe(true)
+      expect(isPiModelRetired(`${upstream}/mimo-v2.5-pro`, new Date(2026, 9, 21, 0, 0))).toBe(true)
+      expect(isPiModelRetired(`${upstream}/mimo-v2.6-pro`, new Date(2026, 9, 21, 0, 0))).toBe(false)
+      expect(isPiModelRetired(`${upstream}/mimo-v2.6-flash`, new Date(2027, 0, 1))).toBe(false)
+    }
+  })
+
+  it('warns on the V2.5 pair until 2026-10-21, then leaves only the V2.6 pair per region', () => {
+    const rows = ['cn', 'sgp', 'ams'].flatMap((region) =>
+      ['mimo-v2-pro', 'mimo-v2.5', 'mimo-v2.5-pro', 'mimo-v2.6-pro', 'mimo-v2.6-flash'].map(
+        (modelId) => ({ id: `xiaomi-token-plan-${region}/${modelId}` })
+      )
+    )
+    expect(rows).toHaveLength(15)
+
+    const warned = activePiModelRows(rows, new Date(2026, 9, 20))
+    expect(warned.map((row) => row.id)).toEqual(
+      rows.map((row) => row.id).filter((id) => !id.endsWith('/mimo-v2-pro'))
+    )
+    expect(warned.filter((row) => row.retiresAt === '2026-10-21').map((row) => row.id)).toEqual(
+      rows.map((row) => row.id).filter((id) => /\/mimo-v2\.5(-pro)?$/.test(id))
+    )
+    expect(warned.filter((row) => row.retiresAt).length).toBe(6)
+
+    const after = activePiModelRows(rows, new Date(2026, 9, 21))
+    expect(after.map((row) => row.id)).toEqual([
+      'xiaomi-token-plan-cn/mimo-v2.6-pro',
+      'xiaomi-token-plan-cn/mimo-v2.6-flash',
+      'xiaomi-token-plan-sgp/mimo-v2.6-pro',
+      'xiaomi-token-plan-sgp/mimo-v2.6-flash',
+      'xiaomi-token-plan-ams/mimo-v2.6-pro',
+      'xiaomi-token-plan-ams/mimo-v2.6-flash'
+    ])
+    expect(after.every((row) => row.retiresAt === undefined)).toBe(true)
   })
 })

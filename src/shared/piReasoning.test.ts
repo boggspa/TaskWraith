@@ -28,6 +28,10 @@ describe('resolvePiReasoningSupport', () => {
     ['cerebras/qwen-3.8-27b', ['off', 'low', 'medium', 'high']],
     ['minimax/MiniMax-M3', ['off', 'high']],
     ['xiaomi-token-plan-sgp/mimo-v2.5-pro', ['off', 'high']],
+    // V2.6 keeps MiMo's on/off toggle; dropping either row would fall back to
+    // the 7-stop FULL ladder and offer efforts Xiaomi has no parameter for.
+    ['xiaomi-token-plan-cn/mimo-v2.6-pro', ['off', 'high']],
+    ['xiaomi-token-plan-ams/mimo-v2.6-flash', ['off', 'high']],
     // Mistral documents `high` and `none` only.
     ['mistral/mistral-medium-3.5', ['off', 'high']],
     ['mistral/zai-glm-5-2', ['off', 'high']],

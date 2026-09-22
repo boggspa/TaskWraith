@@ -64,6 +64,10 @@ import {
 import { writePiOpenRouterModelRegistration } from '../host-shared/pi/PiOpenRouterModelRegistration'
 import { writePiCerebrasModelRegistration } from '../host-shared/pi/PiCerebrasModelRegistration'
 import {
+  isPiXiaomiTokenPlanUpstream,
+  writePiXiaomiModelRegistration
+} from '../host-shared/pi/PiXiaomiModelRegistration'
+import {
   PiRpcTurnReducer,
   parsePiStreamChunk,
   piAbortCommand,
@@ -542,6 +546,19 @@ export class HostNodePiProvider implements HostNodeProviderInstance {
 
       if (upstream === 'cerebras') {
         writePiCerebrasModelRegistration({ isolatedHomeDir: lease.path, modelId })
+      }
+
+      if (isPiXiaomiTokenPlanUpstream(upstream)) {
+        try {
+          writePiXiaomiModelRegistration({ isolatedHomeDir: lease.path, upstream, modelId })
+        } catch {
+          return this.finishPrelaunchFailure({
+            request,
+            thread,
+            finishOnce,
+            message: `Could not prepare Pi's Xiaomi model registration for '${modelId}'.`
+          })
+        }
       }
 
       if (upstream === 'openrouter') {

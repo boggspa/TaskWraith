@@ -512,7 +512,8 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
           },
           {
             name: 'Xiaomi MiMo',
-            blurb: 'MiMo V2.5 and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.',
+            blurb:
+              'MiMo V2.6 Pro and V2.6 Flash join V2.5 and V2.5 Pro on a Xiaomi Token Plan key — CN, SGP, or AMS region.',
             accentProvider: 'xiaomi'
           },
           {

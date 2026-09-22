@@ -107,16 +107,23 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   'minimax/MiniMax-M3': BOOLEAN,
   'minimax/MiniMax-M2.7': ALWAYS_ON,
 
-  // MiMo is `thinking.type` enabled/disabled with no effort control.
+  // MiMo is `thinking.type` enabled/disabled with no effort control. V2.6 keeps
+  // that toggle (Xiaomi's V2.6 Pro and Flash model pages, read 2026-09-22).
   'xiaomi-token-plan-cn/mimo-v2-pro': BOOLEAN,
   'xiaomi-token-plan-cn/mimo-v2.5': BOOLEAN,
   'xiaomi-token-plan-cn/mimo-v2.5-pro': BOOLEAN,
+  'xiaomi-token-plan-cn/mimo-v2.6-pro': BOOLEAN,
+  'xiaomi-token-plan-cn/mimo-v2.6-flash': BOOLEAN,
   'xiaomi-token-plan-sgp/mimo-v2-pro': BOOLEAN,
   'xiaomi-token-plan-sgp/mimo-v2.5': BOOLEAN,
   'xiaomi-token-plan-sgp/mimo-v2.5-pro': BOOLEAN,
+  'xiaomi-token-plan-sgp/mimo-v2.6-pro': BOOLEAN,
+  'xiaomi-token-plan-sgp/mimo-v2.6-flash': BOOLEAN,
   'xiaomi-token-plan-ams/mimo-v2-pro': BOOLEAN,
   'xiaomi-token-plan-ams/mimo-v2.5': BOOLEAN,
   'xiaomi-token-plan-ams/mimo-v2.5-pro': BOOLEAN,
+  'xiaomi-token-plan-ams/mimo-v2.6-pro': BOOLEAN,
+  'xiaomi-token-plan-ams/mimo-v2.6-flash': BOOLEAN,
 
   // Mistral documents `high` and `none` for its own reasoning models. The raw
   // schema enum is wider, but only those two have defined semantics.

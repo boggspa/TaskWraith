@@ -337,8 +337,10 @@ lane, and their metadata is written into the run's isolated Pi home at launch.
 | **MiniMax M3** `minimax/MiniMax-M3`                        | Off / High   | —    | 1M context via MiniMax; High is the on/adaptive control. |
 | **MiniMax M2.7** `minimax/MiniMax-M2.7`                    | —            | —    | ~200K context via MiniMax.                  |
 | **MiMo V2 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2-pro` | —          | —    | 1M context via the Xiaomi token plan. **Retired 2026-08-30** after Xiaomi sunset it in favor of MiMo V2.5 and MiMo V2.5 Pro; no longer offered for new runs, kept here so older transcripts still decode. |
-| **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | —            | —    | 1M context via the Xiaomi token plan.       |
-| **MiMo V2.5 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5-pro` | —      | —    | 1M context via the Xiaomi token plan.       |
+| **MiMo V2.5** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5`   | Off / High   | —    | 1M context via the Xiaomi token plan. **Retires 2026-10-21**: Xiaomi's Token Plan notice takes it offline at 10:00 Beijing time that day, so the pickers warn until then and drop the row from the start of the day; kept here so older transcripts still decode. |
+| **MiMo V2.5 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.5-pro` | Off / High | —    | 1M context via the Xiaomi token plan. **Retires 2026-10-21** on the same Xiaomi notice as V2.5; kept here so older transcripts still decode. |
+| **MiMo V2.6 Pro** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.6-pro` | Off / High | —    | 1,048,576 context and 131,072 output via the Xiaomi token plan; text + image input (Xiaomi also takes video and audio, which the Pi transport does not carry). Xiaomi's omni-modal flagship, released 2026-09-22. No pi release up to 0.87.0 bundles the id, so TaskWraith registers it in the run's isolated Pi home at launch. |
+| **MiMo V2.6 Flash** `xiaomi-token-plan-{cn,sgp,ams}/mimo-v2.6-flash` | Off / High | —    | Same window, output ceiling and input surface as V2.6 Pro on the efficiency route; registered at launch the same way. |
 | **Devstral 2512** `mistral/devstral-2512`                  | —            | —    | 256K context via Mistral.                   |
 | **Mistral Medium 3.5** `mistral/mistral-medium-3.5`        | High (fixed) | —    | 256K context via Mistral. Always thinks at High. |
 | **Mistral Large 3 (2512)** `mistral/mistral-large-2512`    | —            | —    | 256K context via Mistral. Not a reasoning model. |

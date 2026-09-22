@@ -16,9 +16,9 @@
  * list can transiently be empty vanishes from every picker, so the seat
  * ships a bundled list rather than shelling out to `pi --list-models`.
  * Built-in metadata below is extracted from pi 0.84.2's bundled catalog
- * (@earendil-works/pi-ai providers/data). Newer Mistral deployments and the
- * curated OpenRouter routes are registered per run; re-check both sources on
- * pi upgrades.
+ * (@earendil-works/pi-ai providers/data). Newer Mistral deployments, the
+ * curated OpenRouter routes, Cerebras Qwen 3.8 and the Xiaomi MiMo V2.6 pair
+ * are registered per run; re-check every source on pi upgrades.
  *
  * Curation is deliberate: flagship coder models per allowed upstream. Resold
  * duplicates stay out unless they expose a distinct user-paid entitlement
@@ -151,7 +151,16 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   },
   // Xiaomi token plan — three regional deployments of the SAME catalog; the
   // Settings card's region picker files the key under exactly one of them.
-  // Metadata from pi 0.84.2's bundled xiaomi-token-plan-{cn,sgp,ams} catalogs.
+  // V2 Pro, V2.5 and V2.5 Pro metadata is from pi 0.84.2's bundled
+  // xiaomi-token-plan-{cn,sgp,ams} catalogs. The V2.6 pair (released
+  // 2026-09-22) is bundled by no pi release up to 0.87.0, so
+  // PiXiaomiModelRegistration writes the selected row into the isolated
+  // per-run home; its metadata is Xiaomi's own model pages (1M context, 128K
+  // output, text/image/video/audio input, a `thinking.type` toggle) and the
+  // models.dev token-plan entries pi generates from (1,048,576 / 131,072).
+  // Video and audio are not advertised because the Pi RPC transport carries
+  // text and image only. Xiaomi takes V2.5 and V2.5 Pro offline at 10:00
+  // Beijing time on 2026-10-21 (see PI_MODEL_RETIREMENTS).
   {
     wireId: 'xiaomi-token-plan-cn/mimo-v2-pro',
     upstream: 'xiaomi-token-plan-cn',
@@ -181,6 +190,26 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 131_072,
     thinking: true,
     images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-cn/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-cn',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (CN)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
   },
   {
     wireId: 'xiaomi-token-plan-sgp/mimo-v2-pro',
@@ -213,6 +242,26 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     images: false
   },
   {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-sgp/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-sgp',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (SGP)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
     wireId: 'xiaomi-token-plan-ams/mimo-v2-pro',
     upstream: 'xiaomi-token-plan-ams',
     modelId: 'mimo-v2-pro',
@@ -241,6 +290,26 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 131_072,
     thinking: true,
     images: false
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.6-pro',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.6-pro',
+    label: 'MiMo V2.6 Pro (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
+  },
+  {
+    wireId: 'xiaomi-token-plan-ams/mimo-v2.6-flash',
+    upstream: 'xiaomi-token-plan-ams',
+    modelId: 'mimo-v2.6-flash',
+    label: 'MiMo V2.6 Flash (AMS)',
+    contextWindow: 1_048_576,
+    maxOutputTokens: 131_072,
+    thinking: true,
+    images: true
   },
   // Mistral API — includes Mistral-hosted third-party and Labs deployments.
   // Pi 0.82.1 does not bundle six of these ids; PiMistralModelRegistration

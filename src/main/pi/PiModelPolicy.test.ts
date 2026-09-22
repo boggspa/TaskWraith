@@ -4,6 +4,7 @@ import {
   PI_ALLOWED_UPSTREAMS,
   PI_OPENROUTER_ALLOWED_MODEL_IDS,
   PI_UPSTREAM_KEY_ENV,
+  XIAOMI_TOKEN_PLAN_UPSTREAMS,
   buildPiCredentialEnv,
   isPiUpstreamAllowed,
   piModelPolicyVerdict
@@ -188,6 +189,43 @@ describe('catalog/policy lockstep', () => {
       'openrouter/unbiased/pareto',
       'openrouter/typesafe/jev-1.13'
     ])
+  })
+
+  it('offers the Xiaomi V2.6 pair on every region and retires the V2.5 pair on 2026-10-21', () => {
+    const lastDay = new Date(2026, 9, 20, 23, 59)
+    const retired = new Date(2026, 9, 21, 0, 0)
+    for (const upstream of XIAOMI_TOKEN_PLAN_UPSTREAMS) {
+      const configured = new Set([upstream])
+      expect(
+        piModelsForConfiguredUpstreams(configured, lastDay).map((model) => model.wireId),
+        upstream
+      ).toEqual([
+        `${upstream}/mimo-v2.5`,
+        `${upstream}/mimo-v2.5-pro`,
+        `${upstream}/mimo-v2.6-pro`,
+        `${upstream}/mimo-v2.6-flash`
+      ])
+      const offered = piModelsForConfiguredUpstreams(configured, retired)
+      expect(
+        offered.map((model) => model.wireId),
+        upstream
+      ).toEqual([`${upstream}/mimo-v2.6-pro`, `${upstream}/mimo-v2.6-flash`])
+      for (const model of offered) {
+        expect(piModelPolicyVerdict(model.upstream, model.modelId, retired).allowed).toBe(true)
+        expect(model).toMatchObject({
+          contextWindow: 1_048_576,
+          maxOutputTokens: 131_072,
+          thinking: true,
+          images: true
+        })
+        expect(resolveContextWindow('pi', model.wireId)).toBe(1_048_576)
+      }
+      expect(piModelPolicyVerdict(upstream, 'mimo-v2.5-pro', lastDay).allowed).toBe(true)
+      expect(piModelPolicyVerdict(upstream, 'mimo-v2.5-pro', retired)).toMatchObject({
+        allowed: false,
+        reason: expect.stringContaining('2026-10-21')
+      })
+    }
   })
 
   it('every static wire id round-trips through splitPiWireModelId', () => {

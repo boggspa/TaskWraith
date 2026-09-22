@@ -252,6 +252,19 @@ describe('provider dispatch integration', () => {
     )
   })
 
+  it('registers the unbundled Xiaomi MiMo V2.6 rows only inside Pi’s isolated home', () => {
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+
+    // pi 0.84.2 (pinned) through 0.87.0 bundle nothing newer than V2.5 Pro, so
+    // without this write every V2.6 run is refused before a request is made.
+    expect(pi).toContain('isPiXiaomiTokenPlanUpstream(upstream)')
+    expect(pi).toContain('writePiXiaomiModelRegistration({')
+    expect(pi).toContain('isolatedHomeDir: isolatedHomeLease.path')
+    expect(pi.indexOf('writePiXiaomiModelRegistration({')).toBeLessThan(
+      pi.indexOf('runCliProviderProcess(')
+    )
+  })
+
   it('clamps the composer effort through the selected Pi model ladder before argv', () => {
     const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
 
