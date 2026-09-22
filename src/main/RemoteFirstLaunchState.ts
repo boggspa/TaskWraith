@@ -212,6 +212,17 @@ export function buildRemoteFirstLaunchState(
   }
 }
 
+/**
+ * The iOS carousel knows two tones (RemoteNoticeCarousel.swift only ever
+ * compares `tone == "danger"`). The renderer's amber `warning` treatment is a
+ * session-notice affordance that never reaches this projection, so anything
+ * that is not red projects as the default card instead of leaking a value the
+ * remote cannot render.
+ */
+function remoteNoticeTone(kind: AppNotification['kind']): RemoteFirstLaunchNotice['tone'] {
+  return appNotificationTone(kind) === 'danger' ? 'danger' : 'default'
+}
+
 function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLaunchNotice[] {
   const now = Date.now()
   return notifications
@@ -221,7 +232,7 @@ function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLau
       kind: notice.kind,
       title: notice.title,
       body: notice.body,
-      tone: appNotificationTone(notice.kind),
+      tone: remoteNoticeTone(notice.kind),
       accent: appNotificationAccent(notice),
       ...(notice.icon ? { icon: notice.icon } : {}),
       dismissible: notice.dismissible !== false,

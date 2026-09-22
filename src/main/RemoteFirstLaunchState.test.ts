@@ -381,6 +381,26 @@ describe('buildRemoteFirstLaunchState', () => {
     })
   })
 
+  it('projects only the two tones the iOS carousel renders: error is red, warning is the default card', () => {
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-06-21T18:02:00.000Z',
+      notifications: [
+        { id: 'stack-warning', kind: 'warning', title: 'Stack recovery paused', body: 'w' },
+        { id: 'stack-error', kind: 'error', title: 'Stack history is damaged', body: 'e' },
+        { id: 'sunset', kind: 'deprecation', title: 'Retired', body: 'd' }
+      ],
+      workspace,
+      providers: {},
+      usage: {}
+    })
+
+    expect(state.notifications.map((notice) => [notice.id, notice.tone])).toEqual([
+      ['stack-warning', 'default'],
+      ['stack-error', 'danger'],
+      ['sunset', 'danger']
+    ])
+  })
+
   it('projects active app notices for the iOS first-launch sheet', () => {
     const state = buildRemoteFirstLaunchState({
       generatedAt: '2026-06-21T18:02:00.000Z',
