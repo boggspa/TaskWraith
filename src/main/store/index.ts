@@ -108,6 +108,7 @@ import {
 import { observePersistBarrierSpan } from '../perf/persistBarrierSpan'
 import { mainWorkSpanSink } from '../perf/mainWorkSpanSink'
 import { HostChatCompatibilityPersistence } from './HostChatCompatibilityPersistence'
+import { resolveHostMaterializeMinIntervalMs } from './hostChatCompatibilityPolicy'
 import { createHostMaterializationBarrier } from './hostMaterializationBarrier'
 import {
   DEFERRED_HOST_MATERIALIZE_MIN_BYTES,
@@ -632,7 +633,11 @@ function lastPersistBarrierHostCommandId(chatId: string): string | undefined {
 const hostChatCompatibility = (): HostChatCompatibilityPersistence => {
   const port = hostThreadRecordPersist()
   if (!hostChatCompatibilityPersistence || hostChatCompatibilityPersistPort !== port) {
-    hostChatCompatibilityPersistence = new HostChatCompatibilityPersistence(port)
+    // Chained successors are spaced by the policy interval (env-overridable,
+    // see hostChatCompatibilityPolicy.ts); barriers and shutdown never wait.
+    hostChatCompatibilityPersistence = new HostChatCompatibilityPersistence(port, {
+      minIntervalMs: resolveHostMaterializeMinIntervalMs()
+    })
     hostChatCompatibilityPersistPort = port
   }
   return hostChatCompatibilityPersistence
@@ -665,6 +670,11 @@ const deferredHostMaterialize = (): DeferredHostMaterialization => {
       // out-wait; every other false is a settled outcome (nothing staged, a
       // submission already in flight, or a delete in progress).
       retryWhen: (chatId) => threadCatalogueWriteGate.isHeld(chatId),
+      // Meter the accumulated-mutation gate on the journal's own count of
+      // bytes appended since the last full checkpoint. Without this the gate
+      // never arms (the entry is unmetered) and the deferral is a bare 5 s
+      // trailing debounce that re-serializes the whole record per fire.
+      getPendingMutationBytes: (chatId) => incrementalChatPersistence.pendingMutationBytes(chatId),
       ...(Number.isFinite(envDelay) && envDelay >= 0 ? { delayMs: Math.floor(envDelay) } : {})
     })
   }

@@ -352,4 +352,52 @@ describe('IncrementalChatPersistence', () => {
       expect(appendDurability(first, streamedB, 'terminal')).toEqual({ durability: 'immediate' })
     })
   })
+
+  describe('pending mutation bytes (meters the deferred compatibility checkpoint)', () => {
+    it('accumulates the estimated bytes appended since the last full checkpoint and resets on it', () => {
+      const first = chat()
+      expect(persistence.persist(null, first, 'normal').mutationBytes).toBe(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+
+      const second = advance(first, 'streamed second state')
+      const appended = persistence.persist(first, second, 'normal').mutationBytes
+      expect(appended).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(appended)
+
+      const third = advance(second, 'streamed third state, a little longer')
+      const appendedAgain = persistence.persist(second, third, 'normal').mutationBytes
+      expect(appendedAgain).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(appended + appendedAgain)
+
+      expect(persistence.checkpointChat('chat-1')).toBe(true)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+      expect(persistence.pendingMutationBytes('never-seen')).toBe(0)
+    })
+
+    it('keeps counting across a deferred terminal checkpoint and resets on an eager one', () => {
+      const first = chat()
+      persistence.persist(null, first, 'normal')
+      const second = advance(first, 'second')
+      const deferred = persistence.persist(first, second, 'terminal', undefined, {
+        deferTerminalCheckpoint: true
+      })
+      expect(deferred.terminalCheckpointDeferred).toBe(true)
+      expect(deferred.mutationBytes).toBeGreaterThan(0)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(deferred.mutationBytes)
+
+      const third = advance(second, 'third')
+      const eager = persistence.persist(second, third, 'terminal')
+      expect(eager.checkpointed).toBe(true)
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+    })
+
+    it('forgets a purged chat', () => {
+      const first = chat()
+      persistence.persist(null, first, 'normal')
+      persistence.persist(first, advance(first, 'second'), 'normal')
+      expect(persistence.pendingMutationBytes('chat-1')).toBeGreaterThan(0)
+      persistence.purge('chat-1')
+      expect(persistence.pendingMutationBytes('chat-1')).toBe(0)
+    })
+  })
 })

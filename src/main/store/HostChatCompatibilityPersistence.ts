@@ -6,6 +6,7 @@ import {
   type HostThreadRecordPersistInput,
   type HostThreadRecordPersistPort
 } from '../host/HostThreadRecordPersistCommand'
+import { HOST_MATERIALIZE_MIN_INTERVAL_MS } from './hostChatCompatibilityPolicy'
 
 /**
  * Latest-wins coordination for full-record Host compatibility checkpoints.
@@ -20,6 +21,17 @@ import {
  * sequence of locally durable mutations may advance 3 -> 9 while the Host's
  * compatibility record remains at 3, so the eventual checkpoint must CAS from
  * 3 and atomically publish 9.
+ *
+ * A successor requested while its predecessor is in flight
+ * (`materializeAfterSubmitted`) is chained once the predecessor settles or is
+ * acknowledged — but not before `minIntervalMs` has passed since the last
+ * enqueue for that chat. Paced only by the Host round trip, that chain
+ * re-published a 23 MB record every ~0.4 s on a streaming thread while the
+ * journal already carried every mutation. The interval spaces ONLY the chained
+ * successor: `barrier`, `prepareDelete` and `shutdown` materialize directly, so
+ * an explicit durability edge never waits on it. The clock is stamped only by a
+ * successful enqueue; an attempt that found a submission in flight, threw, or
+ * was refused before reaching this coordinator never restarts it.
  */
 
 export type HostChatCompatibilityStageResult =
@@ -41,6 +53,20 @@ export type HostChatCompatibilityPersistencePort = Pick<
   HostThreadRecordPersistPort,
   'enqueue' | 'drain' | 'drainAll'
 >
+
+export interface HostChatCompatibilityPersistenceOptions extends HostPersistenceDiagnosticOptions {
+  /**
+   * Minimum wall time between two chained full-record checkpoints for one
+   * chat (see the module header). `0` disables the wait; an absent or invalid
+   * value takes the policy default. Barriers, delete preparation and shutdown
+   * never wait.
+   */
+  readonly minIntervalMs?: number
+  /** Business clock for the interval, independent of the diagnostic clock. */
+  readonly nowMs?: () => number
+  readonly setTimer?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
+  readonly clearTimer?: (timer: ReturnType<typeof setTimeout>) => void
+}
 
 interface CompatibilityEntry {
   input: HostThreadRecordPersistInput
@@ -64,6 +90,10 @@ interface ChatCompatibilityState {
   deletePromise: Promise<void> | null
   deleting: boolean
   deleted: boolean
+  /** Clock of the last successful enqueue; -Infinity until the first one. */
+  lastMaterializedAtMs: number
+  /** The one armed wait for a chained successor; re-checks the clock on fire. */
+  intervalTimer: ReturnType<typeof setTimeout> | null
 }
 
 function persistenceRevision(input: HostThreadRecordPersistInput): number {
@@ -106,7 +136,9 @@ function createState(): ChatCompatibilityState {
     activeBarrier: null,
     deletePromise: null,
     deleting: false,
-    deleted: false
+    deleted: false,
+    lastMaterializedAtMs: Number.NEGATIVE_INFINITY,
+    intervalTimer: null
   }
 }
 
@@ -114,6 +146,13 @@ export class HostChatCompatibilityPersistence {
   private readonly port: HostChatCompatibilityPersistencePort
   private readonly diagnostics?: HostPersistenceDiagnostics
   private readonly states = new Map<string, ChatCompatibilityState>()
+  private readonly minIntervalMs: number
+  private readonly nowMs: () => number
+  private readonly setTimer: (
+    callback: () => void,
+    delayMs: number
+  ) => ReturnType<typeof setTimeout>
+  private readonly clearTimer: (timer: ReturnType<typeof setTimeout>) => void
   private nextSequence = 1
   private closing = false
   private closed = false
@@ -121,7 +160,7 @@ export class HostChatCompatibilityPersistence {
 
   constructor(
     port: HostChatCompatibilityPersistencePort,
-    options: HostPersistenceDiagnosticOptions = {}
+    options: HostChatCompatibilityPersistenceOptions = {}
   ) {
     if (
       !port ||
@@ -136,6 +175,13 @@ export class HostChatCompatibilityPersistence {
       typeof options.observer === 'function'
         ? new HostPersistenceDiagnostics('compatibility', options)
         : undefined
+    this.minIntervalMs =
+      Number.isFinite(options.minIntervalMs) && (options.minIntervalMs ?? -1) >= 0
+        ? Math.floor(options.minIntervalMs!)
+        : HOST_MATERIALIZE_MIN_INTERVAL_MS
+    this.nowMs = typeof options.nowMs === 'function' ? options.nowMs : () => Date.now()
+    this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
+    this.clearTimer = options.clearTimer ?? ((timer) => clearTimeout(timer))
   }
 
   /**
@@ -201,6 +247,9 @@ export class HostChatCompatibilityPersistence {
     }
 
     const entry = state.pending
+    // Read the interval clock before any custody change so a throwing clock
+    // leaves the lineage untouched; it is only stamped once enqueue succeeds.
+    const now = this.nowMs()
     // Snapshot optional metadata before changing custody. A failed diagnostic
     // read cannot create a submitted checkpoint that never crossed enqueue.
     const prepared = this.diagnostics
@@ -225,6 +274,11 @@ export class HostChatCompatibilityPersistence {
     state.materializeAfterSubmitted = false
     try {
       this.port.enqueue(submission)
+      // The successful enqueue is the only event that restarts the interval;
+      // an armed successor wait is moot because the pending slot it guarded
+      // has just been consumed.
+      state.lastMaterializedAtMs = now
+      this.clearIntervalTimer(state)
       observation?.finish('succeeded')
       return true
     } catch (error) {
@@ -270,6 +324,7 @@ export class HostChatCompatibilityPersistence {
       state.submitted.sequence = latestSequence
       state.pending = null
       state.materializeAfterSubmitted = false
+      this.clearIntervalTimer(state)
       return true
     }
 
@@ -295,6 +350,7 @@ export class HostChatCompatibilityPersistence {
     if (!state || state.submitted || !state.pending) return false
     state.pending = null
     state.materializeAfterSubmitted = false
+    this.clearIntervalTimer(state)
     return true
   }
 
@@ -342,11 +398,7 @@ export class HostChatCompatibilityPersistence {
     state.durableRevision = revision
     state.submitted = null
     if (state.materializeAfterSubmitted && state.pending && !state.deleting && !state.deleted) {
-      try {
-        this.materialize(chatId)
-      } catch {
-        // materialize restored the pending reference; a barrier/shutdown retries.
-      }
+      this.materializeSuccessor(chatId, state)
     }
     return true
   }
@@ -418,6 +470,7 @@ export class HostChatCompatibilityPersistence {
     state.deleting = true
     state.pending = null
     state.materializeAfterSubmitted = false
+    this.clearIntervalTimer(state)
     const operation = (async () => {
       try {
         if (state.submitted) await this.settleSubmitted(chatId, state)
@@ -535,11 +588,7 @@ export class HostChatCompatibilityPersistence {
         state.durableRevision = persistenceRevision(submitted.input)
         state.submitted = null
         if (state.materializeAfterSubmitted && state.pending && !state.deleting && !state.deleted) {
-          try {
-            this.materialize(chatId)
-          } catch {
-            // The pending reference was restored; a later barrier retries it.
-          }
+          this.materializeSuccessor(chatId, state)
         }
       })
       .catch((error) => {
@@ -554,6 +603,50 @@ export class HostChatCompatibilityPersistence {
       })
     state.settlement = settlement
     return settlement
+  }
+
+  /**
+   * Chain the successor a settled or acknowledged predecessor left pending,
+   * waiting out the remainder of the minimum interval since the last enqueue.
+   * One armed wait per chat; it re-reads the clock when it fires, so a barrier
+   * enqueue in between (which re-stamps the clock) is honoured, and a delete,
+   * discard, rebase or shutdown in between cancels it. The direct
+   * `materialize` callers — barrier, delete, shutdown — never come through here.
+   */
+  private materializeSuccessor(chatId: string, state: ChatCompatibilityState): void {
+    if (!state.pending || state.submitted || state.deleting || state.deleted) return
+    if (this.minIntervalMs > 0 && !this.closing && !this.closed) {
+      const remainingMs = this.minIntervalMs - (this.nowMs() - state.lastMaterializedAtMs)
+      if (remainingMs > 0) {
+        this.armIntervalTimer(chatId, state, remainingMs)
+        return
+      }
+    }
+    try {
+      this.materialize(chatId)
+    } catch {
+      // materialize restored the pending reference; a barrier/shutdown retries.
+    }
+  }
+
+  private armIntervalTimer(chatId: string, state: ChatCompatibilityState, delayMs: number): void {
+    if (state.intervalTimer !== null) return
+    const timer = this.setTimer(() => {
+      state.intervalTimer = null
+      // Shutdown materializes and drains every remaining checkpoint itself; a
+      // late timer must not enqueue behind its drain.
+      if (this.closing || this.closed) return
+      this.materializeSuccessor(chatId, state)
+    }, delayMs)
+    ;(timer as { unref?: () => void }).unref?.()
+    state.intervalTimer = timer
+  }
+
+  private clearIntervalTimer(state: ChatCompatibilityState): void {
+    if (state.intervalTimer === null) return
+    const timer = state.intervalTimer
+    state.intervalTimer = null
+    this.clearTimer(timer)
   }
 
   /** Restore one failed enqueue/drain without replacing a newer record body. */
@@ -576,6 +669,7 @@ export class HostChatCompatibilityPersistence {
   }
 
   private async runShutdown(): Promise<void> {
+    for (const state of this.states.values()) this.clearIntervalTimer(state)
     const active = [...this.states.values()].flatMap((state) =>
       [state.activeBarrier?.promise, state.deletePromise].filter(
         (promise): promise is Promise<void> => Boolean(promise)
@@ -616,7 +710,7 @@ export class HostChatCompatibilityPersistence {
 
 export function createHostChatCompatibilityPersistence(
   port: HostChatCompatibilityPersistencePort,
-  options?: HostPersistenceDiagnosticOptions
+  options?: HostChatCompatibilityPersistenceOptions
 ): HostChatCompatibilityPersistence {
   return new HostChatCompatibilityPersistence(port, options)
 }

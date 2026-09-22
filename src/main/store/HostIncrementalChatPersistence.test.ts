@@ -157,6 +157,15 @@ async function waitForLength(values: readonly unknown[], length: number): Promis
   expect(values).toHaveLength(length)
 }
 
+/** Poll a real-timer outcome without pinning the exact fire instant. */
+async function waitUntil(condition: () => boolean, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error(`condition not met within ${timeoutMs} ms`)
+    await new Promise((resolve) => setTimeout(resolve, 10))
+  }
+}
+
 describe('Stage 2 — incremental persistence on the Host write path', () => {
   it('appends the journal batch alongside the whole-record enqueue for an authored mutation save', async () => {
     const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
@@ -672,12 +681,52 @@ describe('Stage 2c — large terminal journal checkpoints defer to the trailing 
       // ...while the mutation itself is already durable in the journal.
       expect(stats.mutationBatchesAppended).toBe(1)
 
-      // The trailing flush carries BOTH deferred writes.
-      await new Promise((resolve) => setTimeout(resolve, 400))
+      // The trailing flush is METERED on pending mutation volume: a title edit
+      // is far below the 512 KB gate, so the first fires reschedule instead of
+      // re-serializing a 5 MB record. Nothing can publish before the reschedule
+      // budget (12 x delay) is spent — timers never fire early.
+      await new Promise((resolve) => setTimeout(resolve, 120))
+      expect(enqueued).toHaveLength(0)
+      expect(AppStore.getIncrementalChatPersistenceStats().idleCheckpoints).toBe(0)
+
+      // Once the budget is spent the trailing flush carries BOTH deferred writes.
+      await waitUntil(() => enqueued.length === 1, 3_000)
       const flushed = AppStore.getIncrementalChatPersistenceStats()
       expect(flushed.idleCheckpoints).toBe(1)
       expect(enqueued).toHaveLength(1)
       expect(enqueued[0].chatId).toBe(chatId)
+    } finally {
+      delete process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS
+    }
+  })
+
+  it('publishes at the first trailing fire once the pending mutation volume crosses the gate', async () => {
+    process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS = '30'
+    try {
+      const { AppStore, profilePath, enqueued } = await importStoreWithHostOwnedGate()
+      const { DEFERRED_HOST_MATERIALIZE_MUTATION_THRESHOLD_BYTES } =
+        await import('./hostChatCompatibilityDeferral')
+      const chatId = 'chat-large-journal-volume'
+      const previous = durableChat(chatId, 3)
+      previous.messages.push(message('m-big', 'user', 'x'.repeat(5 * 1024 * 1024)))
+      seedDurableChat(profilePath, previous)
+
+      // One save whose own delta is above the gate: the same trailing timer
+      // that held a title edit for the whole reschedule budget publishes this
+      // at its first fire, because the journal's pending volume says so.
+      const big = message(
+        'm-answer',
+        'assistant',
+        'y'.repeat(DEFERRED_HOST_MATERIALIZE_MUTATION_THRESHOLD_BYTES + 64 * 1024)
+      )
+      AppStore.saveChat({ ...previous, messages: [...previous.messages, big] })
+      expect(AppStore.getIncrementalChatPersistenceStats().terminalCheckpointsDeferred).toBe(1)
+      expect(enqueued).toHaveLength(0)
+
+      // Well inside the 390 ms (13 x 30 ms) floor a below-gate delta needs.
+      await waitUntil(() => enqueued.length === 1, 300)
+      expect(enqueued[0].chatId).toBe(chatId)
+      expect(AppStore.getIncrementalChatPersistenceStats().idleCheckpoints).toBe(1)
     } finally {
       delete process.env.TASKWRAITH_DEFERRED_MATERIALIZE_DELAY_MS
     }
@@ -739,5 +788,50 @@ describe('Stage 2b — large terminal checkpoints defer off the save path', () =
     AppStore.saveChat({ ...previous, title: 'Small edit' })
     expect(enqueued).toHaveLength(1)
     expect(enqueued[0].chatId).toBe(chatId)
+  })
+})
+
+describe('Stage 2d — chained compatibility checkpoints are spaced by the policy interval', () => {
+  async function chainedSuccessor(): Promise<
+    WiredStore & { first: ChatRecord; second: ChatRecord }
+  > {
+    const wired = await importStoreWithHostOwnedGate()
+    const { AppStore, profilePath, enqueued } = wired
+    const { projectThreadCatalogueRecord } = await import('./ThreadCatalogueFromRecord')
+    const chatId = 'chat-host-chained-successor'
+    seedDurableChat(profilePath, durableChat(chatId, 3))
+    // A small idle record materializes its first terminal save at once...
+    const first = AppStore.saveChat({ ...durableChat(chatId, 3), title: 'First' })
+    expect(enqueued).toHaveLength(1)
+    // ...and the second arrives while that checkpoint is in flight: latched.
+    const second = AppStore.saveChat({ ...first, title: 'Second' })
+    expect(enqueued).toHaveLength(1)
+    // The Host acknowledges the first through the catalogue mutation path.
+    AppStore.acceptCatalogueMutation(projectThreadCatalogueRecord(first))
+    return { ...wired, first, second }
+  }
+
+  it('holds an acknowledged successor back for the interval, but a barrier publishes it at once', async () => {
+    const { AppStore, enqueued, second } = await chainedSuccessor()
+    // Before the interval the successor was enqueued by the acknowledgement
+    // itself, paced only by the Host round trip.
+    expect(enqueued).toHaveLength(1)
+
+    await AppStore.awaitChatRecordPersisted('chat-host-chained-successor')
+    expect(enqueued).toHaveLength(2)
+    expect(enqueued[1].record).toBe(second)
+    expect(enqueued[1].expectedRevision).toBe(4)
+  })
+
+  it('an environment override of 0 restores the immediate chain', async () => {
+    process.env.TASKWRAITH_HOST_MATERIALIZE_MIN_INTERVAL_MS = '0'
+    try {
+      const { enqueued, second } = await chainedSuccessor()
+      expect(enqueued).toHaveLength(2)
+      expect(enqueued[1].record).toBe(second)
+      expect(enqueued[1].expectedRevision).toBe(4)
+    } finally {
+      delete process.env.TASKWRAITH_HOST_MATERIALIZE_MIN_INTERVAL_MS
+    }
   })
 })

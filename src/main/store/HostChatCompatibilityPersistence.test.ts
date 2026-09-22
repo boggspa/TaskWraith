@@ -13,6 +13,7 @@ import {
   HostChatCompatibilityPersistence,
   type HostChatCompatibilityPersistencePort
 } from './HostChatCompatibilityPersistence'
+import { HOST_MATERIALIZE_MIN_INTERVAL_MS } from './hostChatCompatibilityPolicy'
 import type { ChatRecord } from './types'
 
 function record(chatId: string, revision: number, content = `body-${revision}`): ChatRecord {
@@ -69,6 +70,54 @@ async function waitForLength(values: readonly unknown[], length: number): Promis
     await Promise.resolve()
   }
   expect(values).toHaveLength(length)
+}
+
+interface FakeTimer {
+  callback: () => void
+  delayMs: number
+  cleared: boolean
+  fired: boolean
+}
+
+/**
+ * The plain harness plus a fake interval clock and fake timers. `advance`
+ * moves the clock; `fire` runs the one armed wait; `armed` lists live waits.
+ */
+function timed(
+  options: { minIntervalMs?: number } & Partial<HostChatCompatibilityPersistencePort> = {}
+) {
+  const { minIntervalMs, ...overrides } = options
+  let now = 0
+  const timers: FakeTimer[] = []
+  const f = harness(overrides)
+  const persistence = new HostChatCompatibilityPersistence(f.port, {
+    ...(minIntervalMs !== undefined ? { minIntervalMs } : {}),
+    nowMs: () => now,
+    setTimer: (callback, delayMs) => {
+      const timer: FakeTimer = { callback, delayMs, cleared: false, fired: false }
+      timers.push(timer)
+      return timer as unknown as ReturnType<typeof setTimeout>
+    },
+    clearTimer: (timer) => {
+      ;(timer as unknown as FakeTimer).cleared = true
+    }
+  })
+  const armed = (): FakeTimer[] => timers.filter((timer) => !timer.cleared && !timer.fired)
+  return {
+    ...f,
+    persistence,
+    timers,
+    armed,
+    advance: (ms: number) => {
+      now += ms
+    },
+    fire: () => {
+      const [timer] = armed()
+      expect(timer).toBeDefined()
+      timer.fired = true
+      timer.callback()
+    }
+  }
 }
 
 describe('HostChatCompatibilityPersistence', () => {
@@ -276,8 +325,8 @@ describe('HostChatCompatibilityPersistence', () => {
     expect(persistence.stage(input('chat-1', 10, 9))).toBe('staged')
   })
 
-  it('materializes a requested terminal successor as soon as its predecessor is acknowledged', () => {
-    const { enqueued, persistence } = harness()
+  it('materializes a requested terminal successor once its predecessor is acknowledged and the minimum interval has elapsed', () => {
+    const { enqueued, persistence, advance, timers } = timed()
     persistence.stage(input('chat-1', 4, 3))
     persistence.materialize('chat-1')
     const terminal = input('chat-1', 7, 4)
@@ -285,11 +334,13 @@ describe('HostChatCompatibilityPersistence', () => {
 
     expect(persistence.materialize('chat-1')).toBe(false)
     expect(enqueued).toHaveLength(1)
+    advance(HOST_MATERIALIZE_MIN_INTERVAL_MS)
     expect(persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
 
     expect(enqueued).toHaveLength(2)
     expect(enqueued[1].record).toBe(terminal.record)
     expect(enqueued[1].expectedRevision).toBe(4)
+    expect(timers).toEqual([])
   })
 
   it('fences delete, discards pending work, drains submitted work, and is idempotent', async () => {
@@ -434,6 +485,454 @@ describe('HostChatCompatibilityPersistence', () => {
       /expected revision/
     )
     expect(persistence.snapshot().pendingChatIds).toEqual([])
+  })
+})
+
+/**
+ * Minimum interval between chained checkpoints. A successor requested while
+ * its predecessor was in flight used to be enqueued the instant the
+ * predecessor settled or was acknowledged — paced only by the Host round
+ * trip, that re-published a 23 MB record every ~0.4 s on a streaming thread.
+ * Only the chained successor waits: barriers, delete and shutdown never do.
+ */
+describe('minimum interval between chained checkpoints', () => {
+  it('defaults to the policy interval and waits it out before chaining an acknowledged successor', () => {
+    const f = timed()
+    f.persistence.stage(input('chat-1', 4, 3))
+    expect(f.persistence.materialize('chat-1')).toBe(true)
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(10_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    // Before the interval the successor was enqueued right here.
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(HOST_MATERIALIZE_MIN_INTERVAL_MS - 10_000)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: ['chat-1'],
+      submittedChatIds: []
+    })
+
+    f.advance(HOST_MATERIALIZE_MIN_INTERVAL_MS - 10_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.snapshot()).toMatchObject({
+      pendingChatIds: [],
+      submittedChatIds: ['chat-1']
+    })
+  })
+
+  it('waits out the interval before chaining a successor left behind by a settled drain', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    // The barrier's target is the in-flight checkpoint; the successor arrives
+    // afterwards, so the drain settles it and the chain must hold it back.
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(5_000)
+
+    release()
+    await barrier
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+
+    f.advance(25_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.enqueued[1].expectedRevision).toBe(4)
+  })
+
+  it('a barrier inside the interval materializes the successor at once and cancels the wait', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.barrier('chat-1')
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.port.drain).toHaveBeenCalledTimes(1)
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('shutdown inside the interval drains the successor at once', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.shutdown()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.port.drainAll).toHaveBeenCalled()
+    expect(f.timers[0].cleared).toBe(true)
+    // A wait that raced the shutdown clear enqueues nothing behind the drain.
+    f.timers[0].callback()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.persistence.snapshot()).toMatchObject({ pendingChatIds: [], closed: true })
+  })
+
+  it('delete preparation inside the interval cancels the wait; a late fire enqueues nothing', async () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+
+    await f.persistence.prepareDelete('chat-1')
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.enqueued).toHaveLength(1)
+    f.advance(60_000)
+    f.timers[0].callback()
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.persistence.snapshot().deletingChatIds).toEqual(['chat-1'])
+  })
+
+  it('discarding the pending successor cancels the wait', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+
+    expect(f.persistence.discard('chat-1')).toBe(true)
+    expect(f.timers[0].cleared).toBe(true)
+    expect(f.armed()).toHaveLength(0)
+    expect(f.persistence.hasUnconfirmed('chat-1')).toBe(false)
+  })
+
+  it('a materialize attempt that finds a submission in flight does not restart the clock', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.advance(20_000)
+    // Latched, not enqueued: had this stamped the clock, the successor below
+    // would wait until 50 s instead of publishing at 30 s.
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+    f.advance(10_000)
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.armed()).toHaveLength(0)
+  })
+
+  it('a barrier enqueue restarts the clock for the next chained successor', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const f = timed({ minIntervalMs: 30_000, drain: vi.fn(() => held) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    f.advance(10_000)
+    f.persistence.stage(input('chat-1', 7, 4))
+    const barrier = f.persistence.barrier('chat-1')
+    await Promise.resolve()
+    expect(f.enqueued).toHaveLength(2)
+    f.advance(2_000)
+    f.persistence.stage(input('chat-1', 9, 7))
+    expect(f.persistence.materialize('chat-1')).toBe(false)
+
+    release()
+    await barrier
+    expect(f.enqueued).toHaveLength(2)
+    // Measured from the barrier's enqueue at 10 s, not the first one at 0 s.
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(28_000)
+  })
+
+  it('arms one wait per chat and re-reads the clock when it fires', () => {
+    const f = timed({ minIntervalMs: 30_000 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4))
+    f.persistence.materialize('chat-1')
+    f.advance(5_000)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(false)
+    expect(f.armed()).toHaveLength(1)
+
+    // A wait that fires before the clock has moved re-arms for the remainder.
+    f.fire()
+    expect(f.enqueued).toHaveLength(1)
+    expect(f.armed()).toHaveLength(1)
+    expect(f.armed()[0].delayMs).toBe(25_000)
+
+    f.advance(25_000)
+    f.fire()
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.armed()).toHaveLength(0)
+  })
+
+  it('an interval of 0 restores the immediate chain', () => {
+    const f = timed({ minIntervalMs: 0 })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    const successor = input('chat-1', 7, 4)
+    f.persistence.stage(successor)
+    f.persistence.materialize('chat-1')
+
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(true)
+    expect(f.enqueued).toHaveLength(2)
+    expect(f.enqueued[1].record).toBe(successor.record)
+    expect(f.timers).toEqual([])
+  })
+})
+
+/**
+ * Equivalence with the pre-interval coordinator. The walk below was run
+ * against the coordinator BEFORE the interval existed (HEAD e55a8c75d) and its
+ * event log recorded verbatim; the same walk must reproduce that log exactly
+ * whenever the interval cannot bite. The walk contains both chained-successor
+ * shapes, which is what makes the golden evidence rather than decoration.
+ */
+describe('pre-interval walk equivalence', () => {
+  const PRE_INTERVAL_WALK = [
+    'stage c1 4/3 -> "staged" P=c1 S=',
+    'enqueue c1 rev=4 expected=3',
+    'materialize c1 -> true P= S=c1',
+    'stage c1 7/4 -> "staged" P=c1 S=c1',
+    'materialize c1 (latched) -> false P=c1 S=c1',
+    'enqueue c1 rev=7 expected=4',
+    'ack c1 4 -> true P= S=c1',
+    'stage c1 7/6 duplicate -> "duplicate" P= S=c1',
+    'stage c1 6/5 stale -> "stale" P= S=c1',
+    'stage c1 9/7 -> "staged" P=c1 S=c1',
+    'barrier c1 #1 requested -> "pending" P=c1 S=c1',
+    'drain c1',
+    'release barrier1 drain 1 ok',
+    'enqueue c1 rev=9 expected=7',
+    'drain c1',
+    'release barrier1 drain 2 ok',
+    'barrier c1 #1 resolved -> false P= S=',
+    'stage c1 12/9 -> "staged" P=c1 S=',
+    'enqueue c1 rev=12 expected=9',
+    'materialize c1 -> true P= S=c1',
+    'barrier c1 #2 requested -> "pending" P= S=c1',
+    'drain c1',
+    'stage c1 14/12 while draining -> "staged" P=c1 S=c1',
+    'materialize c1 (latched) -> false P=c1 S=c1',
+    'release barrier2 drain ok',
+    'enqueue c1 rev=14 expected=12',
+    'barrier c1 #2 resolved -> true P= S=c1',
+    'ack c1 20 (nothing submitted) -> true P= S=',
+    'stage c1 21/20 -> "staged" P=c1 S=',
+    'rebase c1 pending 21/19 -> true P=c1 S=',
+    'enqueue c1 rev=21 expected=19',
+    'materialize c1 -> true P= S=c1',
+    'stage c1 23/21 -> "staged" P=c1 S=c1',
+    'rebase c1 submitted 22/20 -> true P= S=c1',
+    'ack c1 22 -> true P= S=',
+    'stage c2 4/3 -> "staged" P=c2 S=',
+    'discard c2 -> true P= S=',
+    'stage c2 5/4 -> "staged" P=c2 S=',
+    'enqueue c2 rev=5 expected=4',
+    'materialize c2 -> true P= S=c2',
+    'stage c2 6/5 -> "staged" P=c2 S=c2',
+    'materialize c2 (latched) -> false P=c2 S=c2',
+    'prepareDelete c2 requested -> "pending" P= S=c2',
+    'drain c2',
+    'release delete drain ok',
+    'prepareDelete c2 resolved -> ["c2"] P= S=',
+    'stage c2 7/6 blocked -> "blocked" P= S=',
+    'stage c3 4/3 -> "staged" P=c3 S=',
+    'enqueue c3 rev=4 expected=3',
+    'materialize c3 -> true P= S=c3',
+    'stage c3 8/4 -> "staged" P=c3 S=c3',
+    'materialize c3 (latched) -> false P=c3 S=c3',
+    'drainAll',
+    'enqueue c3 rev=8 expected=4',
+    'drainAll',
+    'shutdown resolved -> {"pendingChatIds":[],"submittedChatIds":[],"deletingChatIds":["c2"],"closing":true,"closed":true} P= S='
+  ]
+
+  async function tick(times = 6): Promise<void> {
+    for (let index = 0; index < times; index += 1) await Promise.resolve()
+  }
+
+  /** Verbatim copy of the walk the golden was captured with. Do not edit. */
+  async function compatibilityWalk(
+    create: (port: HostChatCompatibilityPersistencePort) => HostChatCompatibilityPersistence
+  ): Promise<string[]> {
+    const log: string[] = []
+    const releases: Array<() => void> = []
+    const port: HostChatCompatibilityPersistencePort = {
+      enqueue: (entry) => {
+        log.push(
+          `enqueue ${entry.chatId} rev=${entry.record.persistenceRevision} expected=${entry.expectedRevision}`
+        )
+      },
+      drain: (chatId) => {
+        log.push(`drain ${chatId}`)
+        return new Promise<void>((resolve) => {
+          releases.push(resolve)
+        })
+      },
+      drainAll: async () => {
+        log.push('drainAll')
+      }
+    }
+    const persistence = create(port)
+    const step = (label: string, result: unknown): void => {
+      const snap = persistence.snapshot()
+      log.push(
+        `${label} -> ${JSON.stringify(result)} P=${snap.pendingChatIds.join(',')} S=${snap.submittedChatIds.join(',')}`
+      )
+    }
+    const release = async (label: string): Promise<void> => {
+      const next = releases.shift()
+      log.push(`release ${label} ${next ? 'ok' : 'NONE'}`)
+      next?.()
+      await tick()
+    }
+
+    // Shape 1: acknowledge-driven successor.
+    step('stage c1 4/3', persistence.stage(input('c1', 4, 3)))
+    step('materialize c1', persistence.materialize('c1'))
+    step('stage c1 7/4', persistence.stage(input('c1', 7, 4)))
+    step('materialize c1 (latched)', persistence.materialize('c1'))
+    step('ack c1 4', persistence.acknowledgeRevision('c1', 4))
+    step('stage c1 7/6 duplicate', persistence.stage(input('c1', 7, 6)))
+    step('stage c1 6/5 stale', persistence.stage(input('c1', 6, 5)))
+
+    // Barrier over the in-flight successor plus a newer pending record.
+    step('stage c1 9/7', persistence.stage(input('c1', 9, 7)))
+    const barrier1 = persistence.barrier('c1')
+    step('barrier c1 #1 requested', 'pending')
+    await tick()
+    await release('barrier1 drain 1')
+    await release('barrier1 drain 2')
+    await barrier1
+    step('barrier c1 #1 resolved', persistence.hasUnconfirmed('c1'))
+
+    // Shape 2: settle-driven successor whose target the barrier already covers.
+    step('stage c1 12/9', persistence.stage(input('c1', 12, 9)))
+    step('materialize c1', persistence.materialize('c1'))
+    const barrier2 = persistence.barrier('c1')
+    step('barrier c1 #2 requested', 'pending')
+    await tick()
+    step('stage c1 14/12 while draining', persistence.stage(input('c1', 14, 12)))
+    step('materialize c1 (latched)', persistence.materialize('c1'))
+    await release('barrier2 drain')
+    await barrier2
+    step('barrier c1 #2 resolved', persistence.hasUnconfirmed('c1'))
+
+    // Acknowledge with nothing submitted, then rebase paths.
+    step('ack c1 20 (nothing submitted)', persistence.acknowledgeRevision('c1', 20))
+    step('stage c1 21/20', persistence.stage(input('c1', 21, 20)))
+    step('rebase c1 pending 21/19', persistence.rebase(input('c1', 21, 19)))
+    step('materialize c1', persistence.materialize('c1'))
+    step('stage c1 23/21', persistence.stage(input('c1', 23, 21)))
+    step('rebase c1 submitted 22/20', persistence.rebase(input('c1', 22, 20)))
+    step('ack c1 22', persistence.acknowledgeRevision('c1', 22))
+
+    // Discard and delete.
+    step('stage c2 4/3', persistence.stage(input('c2', 4, 3)))
+    step('discard c2', persistence.discard('c2'))
+    step('stage c2 5/4', persistence.stage(input('c2', 5, 4)))
+    step('materialize c2', persistence.materialize('c2'))
+    step('stage c2 6/5', persistence.stage(input('c2', 6, 5)))
+    step('materialize c2 (latched)', persistence.materialize('c2'))
+    const deleting = persistence.prepareDelete('c2')
+    step('prepareDelete c2 requested', 'pending')
+    await tick()
+    await release('delete drain')
+    await deleting
+    step('prepareDelete c2 resolved', persistence.snapshot().deletingChatIds)
+    step('stage c2 7/6 blocked', persistence.stage(input('c2', 7, 6)))
+
+    // Shutdown with a pending successor behind a submission.
+    step('stage c3 4/3', persistence.stage(input('c3', 4, 3)))
+    step('materialize c3', persistence.materialize('c3'))
+    step('stage c3 8/4', persistence.stage(input('c3', 8, 4)))
+    step('materialize c3 (latched)', persistence.materialize('c3'))
+    await persistence.shutdown()
+    step('shutdown resolved', persistence.snapshot())
+    return log
+  }
+
+  const inertTimers = {
+    setTimer: () => ({}) as ReturnType<typeof setTimeout>,
+    clearTimer: () => {}
+  }
+
+  it('the walk exercises both chained-successor shapes (precondition for the golden)', () => {
+    const ackChain = PRE_INTERVAL_WALK.indexOf('enqueue c1 rev=7 expected=4')
+    const ack = PRE_INTERVAL_WALK.indexOf('ack c1 4 -> true P= S=c1')
+    const settleChain = PRE_INTERVAL_WALK.indexOf('enqueue c1 rev=14 expected=12')
+    const settled = PRE_INTERVAL_WALK.indexOf('barrier c1 #2 resolved -> true P= S=c1')
+    expect(ackChain).toBeGreaterThan(0)
+    expect(ackChain).toBe(ack - 1)
+    expect(settleChain).toBeGreaterThan(0)
+    expect(settleChain).toBe(settled - 1)
+  })
+
+  it('reproduces the pre-interval walk exactly when the interval is disabled', async () => {
+    const log = await compatibilityWalk(
+      (port) => new HostChatCompatibilityPersistence(port, { minIntervalMs: 0, ...inertTimers })
+    )
+    expect(log).toEqual(PRE_INTERVAL_WALK)
+  })
+
+  it('reproduces the pre-interval walk exactly when every chain finds the interval elapsed', async () => {
+    let now = 0
+    const log = await compatibilityWalk(
+      (port) =>
+        new HostChatCompatibilityPersistence(port, {
+          minIntervalMs: 30_000,
+          nowMs: () => (now += 31_000),
+          ...inertTimers
+        })
+    )
+    expect(log).toEqual(PRE_INTERVAL_WALK)
+  })
+
+  it('holds both chained successors back on a frozen clock with the default interval', async () => {
+    const log = await compatibilityWalk(
+      (port) => new HostChatCompatibilityPersistence(port, { nowMs: () => 0, ...inertTimers })
+    )
+    const ack = log.findIndex((line) => line.startsWith('ack c1 4 ->'))
+    expect(ack).toBeGreaterThan(0)
+    expect(log.slice(0, ack + 1)).not.toContain('enqueue c1 rev=7 expected=4')
+    expect(log[ack]).toBe('ack c1 4 -> true P=c1 S=')
   })
 })
 
