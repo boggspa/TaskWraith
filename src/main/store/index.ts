@@ -8889,6 +8889,29 @@ export class AppStore {
     )
   }
 
+  /**
+   * Dispatch-edge durability: resolves once the current revision is durable in
+   * the incremental journal — the crash-recovery authority — without waiting
+   * for the full-record Host compatibility write, which on a 20MB+ thread is
+   * seconds of clone/serialize/hash/fsync and was the whole Enter-to-first-seat
+   * delay. The full barrier still starts (or joins) here and keeps its conflict
+   * healing; a failure after dispatch is reported loudly instead of refusing a
+   * round whose prompt is already safe in the journal.
+   */
+  static awaitChatRecordDispatchDurable(chatId: string): Promise<void> {
+    if (threadCatalogueWriteGate.isHeld(chatId))
+      return threadCatalogueWriteGate
+        .wait(chatId)
+        .then(() => this.awaitChatRecordDispatchDurable(chatId))
+    void this.awaitChatRecordPersisted(chatId).catch((error: unknown) => {
+      console.error(
+        `[host-persist] background Host write for chat ${chatId} failed after dispatch: ` +
+          (error instanceof Error ? error.message : String(error))
+      )
+    })
+    return incrementalChatPersistence.awaitDeferredDurability(chatId)
+  }
+
   private static awaitChatRecordPersistedWork(chatId: string): Promise<void> {
     if (threadCatalogueWriteGate.isHeld(chatId))
       return threadCatalogueWriteGate

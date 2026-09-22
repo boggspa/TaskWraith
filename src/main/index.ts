@@ -62097,7 +62097,7 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       broadcastTranscriptTail: (chat) => broadcastTranscriptTail(chat),
-      persistChatBarrier: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
+      persistChatBarrier: (chatId) => AppStore.awaitChatRecordDispatchDurable(chatId),
       getSettings: () => AppStore.getSettings(),
       hostAdmissionRuntime: ensembleHostAdmissionRuntime,
       getChildChats: (chatId) => AppStore.getChildChats(chatId),
@@ -62933,7 +62933,7 @@ if (isGeminiMcpBridgeProcess) {
         getEnsembleOrchestrator: () => ensembleOrchestratorRef,
         isEnsembleModeEnabled: () => AppStore.getSettings().ensembleModeEnabled !== false,
         getChat: (chatId) => AppStore.getChat(chatId),
-        awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordPersisted(chatId),
+        awaitChatRecordPersisted: (chatId) => AppStore.awaitChatRecordDispatchDurable(chatId),
         requireNonEmptyString: (value, label) => requireNonEmptyString(value, label),
         assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
         assertScheduledEnsembleInteractiveAvailable: (chatId) =>

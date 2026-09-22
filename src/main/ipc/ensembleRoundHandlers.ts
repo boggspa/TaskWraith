@@ -234,8 +234,8 @@ export async function handleRunEnsembleRound(
       ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {})
     })
     if (absorbed?.status === 'steered') {
-      // Durability barrier: the absorbed steer row must be persisted
-      // through the Host before this handler reports success.
+      // Durability barrier: the absorbed steer row must be durable (journal
+      // fsync; the Host copy follows in the background) before success.
       await deps.awaitChatRecordPersisted(chatId)
       return absorbed
     }
@@ -261,8 +261,8 @@ export async function handleRunEnsembleRound(
     ...(rewind ? { rewind } : {})
   })
   if (ensembleStartResult?.status === 'started' || ensembleStartResult?.status === 'steered') {
-    // Durability barrier: the round-started record must be persisted
-    // through the Host before this handler reports success.
+    // Durability barrier: the round-started record must be durable (journal
+    // fsync; the Host copy follows in the background) before success.
     await deps.awaitChatRecordPersisted(chatId)
   }
   return ensembleStartResult

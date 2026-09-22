@@ -462,4 +462,22 @@ describe('HostEnsemblePersistWiring', () => {
     utimesSync(chatPath, later, later)
     expect(AppStore.getChat(chatId)?.title?.trim()).toBe('Landed')
   })
+  it('releases dispatch on journal durability while the Host write is still draining', async () => {
+    const { AppStore, persistPort } = await importStoreWithHostOwnedGate()
+    const chatId = 'chat-dispatch-durable'
+    // The Host lane never settles: the full-record write is still in flight.
+    persistPort.drain.mockImplementation(() => new Promise<void>(() => {}))
+    AppStore.saveChat({ ...ensembleChatRecord(chatId) } as never)
+
+    const settled = (promise: Promise<void>): Promise<boolean> =>
+      Promise.race([
+        promise.then(() => true),
+        new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 50))
+      ])
+    const drainsBefore = persistPort.drain.mock.calls.length
+    expect(await settled(AppStore.awaitChatRecordDispatchDurable(chatId))).toBe(true)
+    // The dispatch edge still STARTED the Host drain rather than skipping it.
+    expect(persistPort.drain.mock.calls.length).toBeGreaterThan(drainsBefore)
+    expect(await settled(AppStore.awaitChatRecordPersisted(chatId))).toBe(false)
+  })
 })

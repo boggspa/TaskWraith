@@ -14750,8 +14750,9 @@ export class EnsembleOrchestrator {
     if (this.hostAdmissionStopping) return
     if (this.deps.persistChatBarrier) {
       // Durability barrier: the round-started save (and every queued save
-      // before it) must have landed in the Host profile before the first
-      // participant dispatch. A rejection here rejects runRound; the startRound
+      // before it) must be durable in the journal before the first
+      // participant dispatch; the full Host write drains behind it. A
+      // rejection here rejects runRound; the startRound
       // kickoff's catch fails the round loudly rather than dispatching on
       // unpersisted state. A Host revision conflict is deliberately NOT one of
       // those rejections: the Host record is intact and the barrier re-anchors
