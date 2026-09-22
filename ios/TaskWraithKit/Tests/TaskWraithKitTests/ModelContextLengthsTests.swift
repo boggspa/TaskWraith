@@ -62,6 +62,18 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
+    @Test("claude-opus-5-5 row leads the claude group: 1_000_000 / 1.0M")
+    func claudeOpus55() {
+        let claudeModels =
+            ModelContextLengths.buildGroups().first { $0.provider == "claude" }?.models ?? []
+        #expect(claudeModels.first?.modelId == "claude-opus-5-5")
+        let row = claudeModels.first { $0.modelId == "claude-opus-5-5" }
+        #expect(row != nil)
+        #expect(row?.label == "Opus 5.5")
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
     @Test("claude-fable-5-1 row: 1_000_000 / 1.0M")
     func claudeFable51() {
         let groups = ModelContextLengths.buildGroups()
@@ -112,6 +124,7 @@ struct ModelContextLengthsTests {
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
         // Current models first, the Legacy cluster (Fable 5 and 4.8 1M among them) below.
         #expect(claudeModels.map(\.modelId) == [
+            "claude-opus-5-5",
             "claude-opus-5",
             "claude-fable-5-1",
             "claude-sonnet-5",

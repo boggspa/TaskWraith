@@ -69,6 +69,7 @@ public enum ModelContextLengths {
                 // Labels omit the "Claude " prefix and the Legacy cluster sits
                 // below the current models — VERBATIM mirror of the TS picker
                 // (StaticProviderModels.ts CLAUDE_STATIC_MODELS).
+                (id: "claude-opus-5-5",     label: "Opus 5.5"),
                 (id: "claude-opus-5",       label: "Opus 5"),
                 (id: "claude-fable-5-1",    label: "Fable 5.1"),
                 (id: "claude-sonnet-5",     label: "Sonnet 5"),

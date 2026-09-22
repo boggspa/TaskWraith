@@ -45,6 +45,19 @@ struct TWSeatStripTests {
         #expect(side.roleLabel == "#8 GemProWork")
     }
 
+    @Test func rendersTheOpus55SeatWithTheIosCatalogueLabel() {
+        // Resolved through ModelContextLengths (the iOS catalogue), so a dropped
+        // "claude-opus-5-5" row would fall through to the raw wire id.
+        let side = twSeatStripSide(
+            seat(
+                provider: "claude", model: "claude-opus-5-5", role: "Lead", seatNumber: 1,
+                reasoningEffort: "max", permissionPresetId: "default", grantsCount: 1))
+        #expect(side.modelLabel == "Opus 5.5")
+        #expect(
+            twSeatStripAccessibilityLabel(before: side, after: side)
+                == "Seat: #1 Lead, Claude, Opus 5.5, Max reasoning, Accept Edits, 1 grant")
+    }
+
     @Test func aRoleWithoutASeatNumberDropsTheHashPrefix() {
         #expect(twSeatStripSide(seat(provider: "claude", role: "Lead")).roleLabel == "Lead")
         #expect(twSeatStripSide(seat(provider: "claude", seatNumber: 3)).roleLabel == "")

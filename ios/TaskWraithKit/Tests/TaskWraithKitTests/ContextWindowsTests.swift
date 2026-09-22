@@ -66,6 +66,10 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-5") == 1_000_000)
+        // Opus 5.5 (2026-09-22): pinned on the table too, because the claude
+        // fallback is a plausible 200_000 rather than a loud failure.
+        #expect(ContextWindows.byModel["claude-opus-5-5"] == 1_000_000)
+        #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-5-5") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)

@@ -11,6 +11,7 @@ struct IosParityFixesTests {
         #expect(!twModelUsesFastToggle("claude-fable-5"))
         #expect(!twModelUsesFastToggle("claude-fable-5-1m"))
         #expect(twModelUsesFastToggle("claude-opus-4-8-1m"))
+        #expect(twModelUsesFastToggle("claude-opus-5-5"))
     }
 
     @MainActor
@@ -56,6 +57,25 @@ struct IosParityFixesTests {
                 .supportedReasoningEfforts?.map(\.reasoningEffort)
                 == ["low", "medium", "high"])
         #expect(!grok.contains(where: { $0.id == "grok-4.5-mini" }))
+    }
+
+    @MainActor
+    @Test func offlineDemoClaudeCatalogLeadsWithOpus55() {
+        let model = makeRemoteSessionModel()
+        model.enterDemoMode()
+
+        let claude = model.providerModels["claude"] ?? []
+        #expect(claude.first?.id == "claude-opus-5-5")
+        #expect(claude.first(where: { $0.id == "claude-opus-5-5" })?.label == "Opus 5.5")
+        #expect(
+            claude.first(where: { $0.id == "claude-opus-5-5" })?
+                .supportedReasoningEfforts?.map(\.reasoningEffort)
+                == ["low", "medium", "high", "xhigh", "max"])
+        #expect(
+            claude.first(where: { $0.id == "claude-opus-5-5" })?.defaultReasoningEffort
+                == "medium")
+        // Opus 5 stays its own row beside it.
+        #expect(claude.contains(where: { $0.id == "claude-opus-5" }))
     }
 
     @Test func transcriptTouchTrackerUsesLargerMinimumDistanceOnIPad() {

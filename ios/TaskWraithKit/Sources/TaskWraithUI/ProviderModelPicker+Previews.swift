@@ -37,6 +37,11 @@ enum ProviderModelPickerPreviewData {
                 // Labels omit the "Claude " prefix; Legacy cluster below the
                 // current models (mirrors CLAUDE_STATIC_MODELS).
                 .init(
+                    id: "claude-opus-5-5",
+                    label: "Opus 5.5",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "medium"),
+                .init(
                     id: "claude-opus-5",
                     label: "Opus 5",
                     supportedReasoningEfforts: claudeEfforts,
@@ -291,7 +296,7 @@ private struct RosterEditorGapPreviewHost: View {
     @State private var entry = RemoteSessionModel.RosterDraftEntry(
         id: "preview-seat",
         provider: "claude",
-        model: "claude-opus-5",
+        model: "claude-opus-5-5",
         role: "Reviewer",
         brief: "",
         enabled: true,
