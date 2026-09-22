@@ -22,6 +22,8 @@ import type {
   AppStoreHostAuthoritySnapshotDonorFamilies
 } from './AppStoreHostAuthority'
 import type { HostAuthorityCallContext } from './HostAuthority'
+import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
+import { HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME } from './HostCommandReceiptStore'
 import { HostCommandMutationPipeline } from './HostCommandMutationPipeline'
 import { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import { HostDeferredCommandBridge } from './HostDeferredCommandBridge'
@@ -29,6 +31,8 @@ import { HostDeferredCommandEnvelopeResolver } from './HostDeferredCommandEnvelo
 import { HostDomainDeltaPublisher } from './HostDomainDeltaPublisher'
 import { HostMutationCompletionCoordinator } from './HostMutationCompletionCoordinator'
 import { HostObservedMutationExecutor } from './HostObservedMutationExecutor'
+import type { HostProjectionReconcileResult } from './HostProjectionReconciler'
+import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import type { HostRuntimeBootstrap } from './HostRuntimeBootstrap'
 import {
   createHostMainComposition,
@@ -724,6 +728,354 @@ describe('HostMainComposition', () => {
       await composition.shutdown()
 
       await expect(composition.reconcileProjection()).resolves.toEqual({ kind: 'stopped' })
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Independent Threads M2 — optional queued-start composition ports
+  // -----------------------------------------------------------------------
+
+  describe('queued-start ports', () => {
+    const composerSend = (overrides: Partial<HostCommand> = {}): HostCommand =>
+      makeCommand({
+        commandId: '33333333-3333-4333-8333-333333333333',
+        idempotencyKey: 'queued-composer-send-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-queued' },
+        arguments: { text: 'hello' },
+        ...overrides
+      })
+
+    const receiptCheckpointExists = (): boolean =>
+      existsSync(join(composition.hostDataDir, HOST_COMMAND_RECEIPT_CHECKPOINT_FILENAME))
+
+    /** Short-start ACK executor; supplying it is what arms the queued path. */
+    let queuedAck: AppStoreHostAuthorityExecutor & ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+      queuedAck = vi.fn(async () => ({
+        status: 'succeeded' as const,
+        resultSummary: 'run_queued'
+      })) as AppStoreHostAuthorityExecutor & ReturnType<typeof vi.fn>
+    })
+
+    // GOLDEN — captured at HEAD BEFORE the queued-start ports existed, so the
+    // default-OFF path is tested against the OLD code rather than against the
+    // change that was about to be made. Every assertion below held before the
+    // ports were added and must keep holding after: supplying no queued-start
+    // port must remain construction-equivalent.
+    it('OFF path keeps composer.send on the legacy executor, shares no projection queue, and shuts down reconciler.stop then runtime.flush then onShutdown', async () => {
+      const order: string[] = []
+      let stoppedInsideShutdown: HostProjectionReconcileResult | undefined
+      let flushedInsideShutdown = false
+      let releaseHeld!: () => void
+      const held = new Promise<void>((resolve) => {
+        releaseHeld = resolve
+      })
+      executor = vi.fn(async (received: HostCommand) => {
+        order.push(`executor:${received.name}`)
+        if (received.name === 'thread.select') await held
+        return { status: 'succeeded' as const, resultSummary: 'ok' }
+      })
+      composition = open({
+        onShutdown: async () => {
+          order.push('onShutdown')
+          // reconciler.stop already ran => a further pass is refused.
+          stoppedInsideShutdown = await composition.reconcileProjection()
+          // runtime.flush already ran => the receipt checkpoint is on disk.
+          flushedInsideShutdown = receiptCheckpointExists()
+        }
+      })
+
+      // (a) composer.send reaches the injected legacy executor and terminalizes
+      //     there — no pending ACK, no queued phase.
+      const sent = await composition.authority.command(contextFor(ACTOR_A), composerSend())
+      expect(sent).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+      expect(sent).not.toHaveProperty('value.phase')
+      expect(order).toEqual(['executor:composer.send'])
+
+      // (b) No shared serial queue is constructed, so reconciliation is NOT
+      //     serialized behind an in-flight ordinary command. Reconciliation
+      //     MUST be running first: reconcileNow short-circuits to `stopped`
+      //     otherwise, which would make this pin vacuous.
+      await composition.startProjectionReconciliation()
+      const blocked = composition.authority.command(
+        contextFor(ACTOR_A),
+        makeCommand({ commandId: 'cmd-hold-off', idempotencyKey: 'key-hold-off', actor: ACTOR_A })
+      )
+      await vi.waitFor(() => expect(executor).toHaveBeenCalledTimes(2))
+      let reconciledWhileHeld = false
+      const pass = composition.reconcileProjection().then((result) => {
+        reconciledWhileHeld = true
+        return result
+      })
+      await vi.waitFor(() => expect(reconciledWhileHeld).toBe(true))
+      expect(await pass).not.toEqual({ kind: 'stopped' })
+      releaseHeld()
+      await blocked
+
+      // (c) The checkpoint is written by runtime.flush, never at construction —
+      //     without this the ordering pin inside onShutdown would be vacuous.
+      expect(receiptCheckpointExists()).toBe(false)
+      await composition.shutdown()
+      expect(stoppedInsideShutdown).toEqual({ kind: 'stopped' })
+      expect(flushedInsideShutdown).toBe(true)
+      expect(order.at(-1)).toBe('onShutdown')
+    })
+
+    it('refuses a queued-start lifecycle bind when queuedComposerSend is absent', () => {
+      const bindError = /requires queuedComposerSend to accept a queued-start lifecycle bind/
+      expect(() => open({ queuedStartStartingBind: () => {} })).toThrow(bindError)
+      expect(() => open({ queuedStartStartedBind: () => {} })).toThrow(bindError)
+      expect(() => open({ queuedStartDispatchSettledBind: () => {} })).toThrow(bindError)
+
+      // The same binds are accepted once the publication executor is supplied,
+      // so the refusal is about the missing coordinator, not the binds.
+      expect(() =>
+        open({
+          queuedComposerSend: queuedAck,
+          queuedStartStartingBind: () => {},
+          queuedStartStartedBind: () => {},
+          queuedStartDispatchSettledBind: () => {}
+        })
+      ).not.toThrow()
+    })
+
+    it('requires every supplied queued-start port to be callable', () => {
+      const notAFunction = 'nope' as unknown as () => void
+      const notAnExecutor = 'nope' as unknown as AppStoreHostAuthorityExecutor
+      expect(() => open({ queuedComposerSend: notAnExecutor })).toThrow(
+        'HostMainComposition requires an injected queuedComposerSend'
+      )
+      expect(() =>
+        open({ queuedComposerSend: queuedAck, queuedStartStartingBind: notAFunction })
+      ).toThrow('HostMainComposition requires an injected queuedStartStartingBind')
+      expect(() =>
+        open({ queuedComposerSend: queuedAck, queuedStartStartedBind: notAFunction })
+      ).toThrow('HostMainComposition requires an injected queuedStartStartedBind')
+      expect(() =>
+        open({ queuedComposerSend: queuedAck, queuedStartDispatchSettledBind: notAFunction })
+      ).toThrow('HostMainComposition requires an injected queuedStartDispatchSettledBind')
+    })
+
+    it('binds starting, started, and dispatch settlement through the same queued-start authority', async () => {
+      let startingHandler: ((view: HostQueuedStartStartedView) => void) | undefined
+      let startedHandler: ((view: HostQueuedStartStartedView) => void) | undefined
+      let settledHandler:
+        | ((commandId: string, result: HostCommandExecutionResult) => void)
+        | undefined
+      const queuedStartStartingBind = vi.fn(
+        (handler: (view: HostQueuedStartStartedView) => void) => {
+          startingHandler = handler
+        }
+      )
+      const queuedStartStartedBind = vi.fn(
+        (handler: (view: HostQueuedStartStartedView) => void) => {
+          startedHandler = handler
+        }
+      )
+      const queuedStartDispatchSettledBind = vi.fn(
+        (handler: (commandId: string, result: HostCommandExecutionResult) => void) => {
+          settledHandler = handler
+        }
+      )
+      composition = open({
+        queuedComposerSend: queuedAck,
+        queuedStartStartingBind,
+        queuedStartStartedBind,
+        queuedStartDispatchSettledBind
+      })
+      try {
+        expect(queuedStartStartingBind).toHaveBeenCalledOnce()
+        expect(queuedStartStartedBind).toHaveBeenCalledOnce()
+        expect(queuedStartDispatchSettledBind).toHaveBeenCalledOnce()
+
+        // An unregistered commandId must be absorbed by the coordinator rather
+        // than thrown back at the Domain lifecycle that raised the phase.
+        const base = {
+          commandId: 'unregistered',
+          threadId: 'thread-queued',
+          fingerprint: 'fp',
+          startedEvidence: false,
+          terminalOutcome: null
+        }
+        expect(() => startingHandler?.({ ...base, phase: 'starting' })).not.toThrow()
+        expect(() =>
+          startedHandler?.({ ...base, phase: 'started', startedEvidence: true })
+        ).not.toThrow()
+        expect(() => settledHandler?.('unregistered', { status: 'succeeded' })).not.toThrow()
+
+        // Each bind reached the ONE coordinator the Authority owns: a real
+        // queued ACK leaves a pending receipt whose phase the handlers drive.
+        await expect(
+          composition.authority.command(contextFor(ACTOR_A), composerSend())
+        ).resolves.toMatchObject({ ok: true, value: { status: 'pending', phase: 'queued' } })
+        expect(queuedAck).toHaveBeenCalledOnce()
+        expect(executor).not.toHaveBeenCalled()
+      } finally {
+        await composition.shutdown()
+      }
+    })
+
+    it('shares one projection queue between the Authority and the reconciler', async () => {
+      let releaseHeld!: () => void
+      const held = new Promise<void>((resolve) => {
+        releaseHeld = resolve
+      })
+      const order: string[] = []
+      executor = vi.fn(async (received: HostCommand) => {
+        if (received.name === 'thread.select') {
+          await held
+          order.push('command')
+        }
+        return { status: 'succeeded' as const, resultSummary: 'ok' }
+      })
+      composition = open({ queuedComposerSend: queuedAck })
+      try {
+        // Running first: reconcileNow short-circuits to `stopped` otherwise,
+        // and a short-circuit would satisfy "did not settle" for the wrong
+        // reason. The release assertions below prove it really was queued.
+        await composition.startProjectionReconciliation()
+        const blocked = composition.authority.command(
+          contextFor(ACTOR_A),
+          makeCommand({ commandId: 'cmd-hold-on', idempotencyKey: 'key-hold-on', actor: ACTOR_A })
+        )
+        await vi.waitFor(() => expect(executor).toHaveBeenCalledOnce())
+
+        // The command is holding the shared queue, so a reconcile pass must
+        // wait behind it.
+        const pass = composition.reconcileProjection().then((result) => {
+          order.push('reconcile')
+          return result
+        })
+
+        // A REAL-TIMER window, not a microtask tick. Everything a pass touches
+        // here is in-memory, and authority.snapshot() is deliberately NOT
+        // queued, so with a pass-through runner on EITHER side the pass
+        // settles well inside this window and `order` would already hold
+        // 'reconcile'. Draining microtasks instead makes this pin VACUOUS: it
+        // then reads empty whether or not the queue is shared, and neither
+        // injection deletion reds. The periodic loop is 1s, so it cannot fire
+        // inside the window, and it would be queued behind the command anyway.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(order).toEqual([])
+
+        releaseHeld()
+        await blocked
+        expect(await pass).not.toEqual({ kind: 'stopped' })
+        // Serialized, in that order — not merely "both eventually finished".
+        expect(order).toEqual(['command', 'reconcile'])
+      } finally {
+        releaseHeld()
+        await composition.shutdown()
+      }
+    })
+
+    it('drains start publications before stopping the reconciler, flushing, and onShutdown', async () => {
+      const order: string[] = []
+      let reconcileDuringDrain: HostProjectionReconcileResult | undefined
+      let stoppedInsideShutdown: HostProjectionReconcileResult | undefined
+      let flushedInsideShutdown = false
+      composition = open({
+        queuedComposerSend: queuedAck,
+        onShutdown: async () => {
+          order.push('onShutdown')
+          stoppedInsideShutdown = await composition.reconcileProjection()
+          flushedInsideShutdown = receiptCheckpointExists()
+        }
+      })
+      // Running, so a `stopped` reading inside the drain means reconciler.stop
+      // really had already happened rather than never having started.
+      await composition.startProjectionReconciliation()
+      const drain = vi
+        .spyOn(
+          composition.authority as unknown as { drainQueuedStartPublication(): Promise<void> },
+          'drainQueuedStartPublication'
+        )
+        .mockImplementation(async () => {
+          order.push('publication')
+          // Still reconcilable here => the drain ran BEFORE reconciler.stop.
+          reconcileDuringDrain = await composition.reconcileProjection()
+        })
+
+      await composition.shutdown()
+
+      expect(drain).toHaveBeenCalledOnce()
+      expect(order).toEqual(['publication', 'onShutdown'])
+      expect(reconcileDuringDrain).not.toEqual({ kind: 'stopped' })
+      expect(stoppedInsideShutdown).toEqual({ kind: 'stopped' })
+      expect(flushedInsideShutdown).toBe(true)
+    })
+
+    // The drain is the FIRST step, so its rejection is the one that proves the
+    // attempt aborts rather than limping on: a swallowed or reordered drain
+    // would let onShutdown run anyway. The sibling test below rejects at the
+    // LAST step instead; together they pin both ends of the same attempt.
+    it('a rejected publication drain rejects both callers, never reaches onShutdown, and stays retryable', async () => {
+      const onShutdown = vi.fn<() => Promise<void>>().mockResolvedValue(undefined)
+      composition = open({ queuedComposerSend: queuedAck, onShutdown })
+      const refusal = new Error('simulated publication drain refusal')
+      // Once only: the retry below falls through to the real drain, so the
+      // recovery is genuine rather than a second mocked success.
+      const drain = vi
+        .spyOn(
+          composition.authority as unknown as { drainQueuedStartPublication(): Promise<void> },
+          'drainQueuedStartPublication'
+        )
+        .mockRejectedValueOnce(refusal)
+
+      const first = composition.shutdown()
+      const second = composition.shutdown()
+      expect(second).toBe(first)
+      await expect(Promise.allSettled([first, second])).resolves.toEqual([
+        { status: 'rejected', reason: refusal },
+        { status: 'rejected', reason: refusal }
+      ])
+      // Aborted at the first step: the rest of the sequence never ran.
+      expect(drain).toHaveBeenCalledOnce()
+      expect(onShutdown).not.toHaveBeenCalled()
+
+      // Retryable, and the retry runs the WHOLE sequence — the negative
+      // control for the assertion above, which would otherwise pass for a
+      // composition that simply never wires onShutdown at all.
+      await expect(composition.shutdown()).resolves.toBeUndefined()
+      expect(drain).toHaveBeenCalledTimes(2)
+      expect(onShutdown).toHaveBeenCalledOnce()
+    })
+
+    // Named OFF-path semantics CHANGE. Before this slice a one-way `stopped`
+    // flag was set on entry, so a rejected cleanup resolved on every later
+    // call — skipping the flush and onShutdown while reporting success.
+    it('OFF path change: concurrent callers share one shutdown attempt and a rejected cleanup stays retryable', async () => {
+      let rejectFirst!: (error: Error) => void
+      const firstAttempt = new Promise<void>((_resolve, reject) => {
+        rejectFirst = reject
+      })
+      const onShutdown = vi
+        .fn<() => Promise<void>>()
+        .mockImplementationOnce(() => firstAttempt)
+        .mockResolvedValueOnce(undefined)
+      composition = open({ onShutdown })
+
+      const first = composition.shutdown()
+      const second = composition.shutdown()
+      expect(second).toBe(first)
+      await vi.waitFor(() => expect(onShutdown).toHaveBeenCalledOnce())
+
+      const refusal = new Error('simulated durable flush refusal')
+      rejectFirst(refusal)
+      await expect(Promise.allSettled([first, second])).resolves.toEqual([
+        { status: 'rejected', reason: refusal },
+        { status: 'rejected', reason: refusal }
+      ])
+
+      // Retryable, not swallowed: the second attempt really runs again.
+      await expect(composition.shutdown()).resolves.toBeUndefined()
+      expect(onShutdown).toHaveBeenCalledTimes(2)
+      // ...and success is idempotent from then on.
+      await expect(composition.shutdown()).resolves.toBeUndefined()
+      expect(onShutdown).toHaveBeenCalledTimes(2)
     })
   })
 

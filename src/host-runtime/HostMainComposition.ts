@@ -31,6 +31,25 @@
  *
  * POSITION AUTHORITY. Generation/cursor are read from HostRuntimeBootstrap,
  * which reads them from the sole delta journal. This module never counts.
+ *
+ * QUEUED START (Independent Threads M2) — OPTIONAL PORTS, DEFAULT OFF.
+ * `queuedComposerSend` plus the three lifecycle binds mirror the ports
+ * HostStandaloneComposition already accepts, so the in-main route can later
+ * use the same short-start publication coordinator instead of a second one.
+ * They are OPTIONAL and nothing in production supplies them yet:
+ * HostProductionBootstrap is unchanged, no flag is read here, and an in-main
+ * PRODUCER (a Bridge `prepared` event carrying a persisted run identity) does
+ * not exist. Omitting them is construction-equivalent to the code before this
+ * slice — no serial queue is built, the Authority keeps its pass-through
+ * runner, and composer.send stays on the legacy observed executor.
+ *
+ * Supplying `queuedComposerSend` builds exactly ONE projection serial queue
+ * and injects that same instance into BOTH the Authority and the reconciler,
+ * so a start-publication window and a background reconcile pass cannot
+ * interleave inside one another's before/after observation. Supplying a
+ * lifecycle bind WITHOUT `queuedComposerSend` is a wiring mistake that would
+ * bind handlers to a null publication and silently drop every phase, so it is
+ * refused at construction.
  */
 
 import type { HostApprovalProjection, HostCapability } from '../shared/hostProtocol'
@@ -52,6 +71,7 @@ import {
   type AppStoreHostAuthorityThreadOffersProvider
 } from './AppStoreHostAuthority'
 import type { HostAuthority, HostAuthorityCallContext } from './HostAuthority'
+import type { HostCommandExecutionResult } from './HostCommandExecutionResult'
 import type { HostDeferredAllowPipeline } from './HostDeferredAllowPipeline'
 import {
   captureTwMissionFromHostSnapshot,
@@ -72,6 +92,8 @@ import {
   HostProjectionReconciler,
   type HostProjectionReconcileResult
 } from './HostProjectionReconciler'
+import { createHostProjectionSerialQueue } from './HostProjectionSerialQueue'
+import type { HostQueuedStartStartedView } from './HostQueuedStartPublication'
 import { HostSession, type HostSessionHostIdentity, type HostSessionIdFactory } from './HostSession'
 import { hostRuntimeDataDir } from './HostRuntimePaths'
 
@@ -118,6 +140,23 @@ export interface HostMainCompositionInput {
    * root supplies a HostBridgeCommandExecutor; this module never builds one.
    */
   readonly commandExecutor: AppStoreHostAuthorityExecutor
+  /**
+   * Independent Threads M2 queued-start ports, mirroring the standalone
+   * composition's contract (HostStandaloneCompositionInput). ALL OPTIONAL and
+   * unsupplied in production today — see the QUEUED START note in the module
+   * header for why omitting them is construction-equivalent.
+   *
+   * `queuedComposerSend` is the ACK executor that turns composer.send into the
+   * short-start path; it is also the switch that builds the shared projection
+   * serial queue. The three binds hand the Domain lifecycle's phase callbacks
+   * to the Authority's publication coordinator and are refused without it.
+   */
+  readonly queuedComposerSend?: AppStoreHostAuthorityExecutor
+  readonly queuedStartStartingBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
+  readonly queuedStartStartedBind?: (handler: (view: HostQueuedStartStartedView) => void) => void
+  readonly queuedStartDispatchSettledBind?: (
+    handler: (commandId: string, result: HostCommandExecutionResult) => void
+  ) => void
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
@@ -305,6 +344,26 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     throw new Error('HostMainComposition requires an injected userDataPath')
   }
   requireFunction(input.commandExecutor, 'commandExecutor')
+  // Queued start: every supplied port must be callable, and a lifecycle bind
+  // without the ACK executor is refused rather than accepted. Without
+  // queuedComposerSend the Authority builds no publication coordinator, so
+  // such a bind would attach handlers that silently discard every phase — the
+  // same "wiring mistake worth failing on" doctrine as pipeline+pipelineFactory.
+  const queuedStartBinds = [
+    ['queuedStartStartingBind', input.queuedStartStartingBind],
+    ['queuedStartStartedBind', input.queuedStartStartedBind],
+    ['queuedStartDispatchSettledBind', input.queuedStartDispatchSettledBind]
+  ] as const
+  for (const [label, bind] of queuedStartBinds) {
+    if (bind !== undefined) requireFunction(bind, label)
+  }
+  if (input.queuedComposerSend !== undefined) {
+    requireFunction(input.queuedComposerSend, 'queuedComposerSend')
+  } else if (queuedStartBinds.some(([, bind]) => bind !== undefined)) {
+    throw new Error(
+      'HostMainComposition requires queuedComposerSend to accept a queued-start lifecycle bind'
+    )
+  }
   requireFunction(input.snapshotDonor, 'snapshotDonor')
   requireFunction(input.authorityEvaluator, 'authorityEvaluator')
   requireFunction(input.healthProvider, 'healthProvider')
@@ -413,18 +472,56 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     }
   }
 
+  // Exactly ONE serial queue per composition, built only when the queued-start
+  // ACK executor is supplied. The same instance is injected into the Authority
+  // and into the reconciler below, so a background reconcile pass cannot
+  // publish inside a start publication's before/after observation window.
+  // Default OFF builds nothing at all: both sides keep their own pass-through
+  // runner, which is what makes the OFF path construction-equivalent.
+  const runProjectionOperation = input.queuedComposerSend ? createHostProjectionSerialQueue() : null
+
   // Idempotent so an authoritative host shutdown and a supervisor stop cannot
   // double-flush, and so shutdown can never re-enter through the Authority.
   // The reconciler is assigned after Authority construction; its shutdown is
   // awaited before flushing so it cannot append behind the final flush.
+  //
+  // Shutdown state is a shared ATTEMPT, not a one-way flag. A flag flipped on
+  // entry turns a FAILED cleanup into a false success on the next call: the
+  // retry would skip the drain, the flush and onShutdown while resolving, and
+  // a concurrent caller would observe success while the first attempt was
+  // still running. Callers therefore share one attempt, a rejection reaches
+  // all of them, and only success is idempotent.
+  //
+  // This deliberately changes OFF-path failure semantics — a throwing
+  // onShutdown used to be swallowed by the flag and is now retryable. That is
+  // pinned by a named test rather than left as a silent side effect.
   let projectionReconciler: HostProjectionReconciler | null = null
-  let stopped = false
-  const flushDurableState = async (): Promise<void> => {
-    if (stopped) return
-    stopped = true
-    await projectionReconciler?.stop()
-    runtime.flush()
-    await input.onShutdown?.()
+  let drainQueuedStartPublication: () => Promise<void> = async () => undefined
+  let shutdownPromise: Promise<void> | null = null
+  let shutdownComplete = false
+  const flushDurableState = (): Promise<void> => {
+    if (shutdownComplete) return Promise.resolve()
+    if (shutdownPromise) return shutdownPromise
+    const attempt = async (): Promise<void> => {
+      // Drain start publications FIRST: one may still be holding the shared
+      // queue, and a snapshot-only drain after the flush could miss it.
+      await drainQueuedStartPublication()
+      await projectionReconciler?.stop()
+      // Quiesce the shared queue itself. No-op when none was built.
+      if (runProjectionOperation) await runProjectionOperation(async () => undefined)
+      runtime.flush()
+      await input.onShutdown?.()
+    }
+    shutdownPromise = attempt().then(
+      () => {
+        shutdownComplete = true
+      },
+      (error: unknown) => {
+        shutdownPromise = null
+        throw error
+      }
+    )
+    return shutdownPromise
   }
 
   const authority = new AppStoreHostAuthority({
@@ -433,9 +530,11 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     ...(now ? { now } : {}),
     ports: {
       runtime,
+      ...(runProjectionOperation ? { runProjectionOperation } : {}),
       snapshotDonor: wrappedSnapshotDonor,
       authorityEvaluator: input.authorityEvaluator,
       commandExecutor: input.commandExecutor,
+      ...(input.queuedComposerSend ? { queuedComposerSend: input.queuedComposerSend } : {}),
       ...(input.setupExecutor ? { setupExecutor: input.setupExecutor } : {}),
       healthProvider: input.healthProvider,
       ...(input.threadOffersProvider ? { threadOffersProvider: input.threadOffersProvider } : {}),
@@ -470,8 +569,24 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     }
   })
 
+  // Bound after Authority construction, exactly as standalone does: the
+  // handlers route into the ONE publication coordinator the Authority built
+  // from queuedComposerSend, so no second coordinator can exist in-main.
+  drainQueuedStartPublication = () => authority.drainQueuedStartPublication()
+  input.queuedStartStartingBind?.((view) => {
+    authority.handleQueuedStartStarting(view)
+  })
+  input.queuedStartStartedBind?.((view) => {
+    authority.handleQueuedStartStarted(view)
+  })
+  input.queuedStartDispatchSettledBind?.((commandId, result) => {
+    authority.handleQueuedStartDispatchSettled(commandId, result)
+  })
+
   const projectionPublisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })
   const reconciler = new HostProjectionReconciler({
+    // Same instance the Authority received — sharing it is the whole point.
+    ...(runProjectionOperation ? { runProjectionOperation } : {}),
     captureSnapshot: async () => {
       const result = await authority.snapshot(HOST_RECONCILER_CONTEXT)
       if (!result.ok) throw new Error(`host_projection_snapshot_${result.error}`)
