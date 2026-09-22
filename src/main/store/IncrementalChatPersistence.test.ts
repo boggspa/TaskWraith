@@ -114,17 +114,52 @@ describe('IncrementalChatPersistence', () => {
     ]
     persistence.persist(null, first, 'normal')
 
+    // The checkpoint is written from the in-memory authoritative record: no
+    // replay of the on-disk checkpoint and no whole-record parity pass.
     expect(persistence.persist(first, terminal, 'terminal')).toMatchObject({
       checkpointed: true,
-      parityVerified: true
+      parityVerified: null
     })
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
     expect(persistence.stats()).toMatchObject({
       terminalCheckpoints: 1,
-      parityChecks: 1,
-      parityMatches: 1,
-      parityMismatches: 0
+      parityChecks: 0
     })
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(1)
+    expect(persistence.replay('chat-1').record).toEqual(terminal)
+  })
+
+  it('checkpoints bounded/idle compaction from the last journaled head', () => {
+    const first = chat()
+    const second = advance(first, 'second')
+    persistence.persist(null, first, 'normal')
+    persistence.persist(first, second, 'normal')
+
+    expect(persistence.checkpointChat('chat-1')).toBe(true)
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(1)
+    expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(false)
+    expect(persistence.replay('chat-1').record).toEqual(second)
+  })
+
+  it('replays instead when the journaled head was mutated in place', () => {
+    const first = chat()
+    const second = advance(first, 'second')
+    persistence.persist(null, first, 'normal')
+    persistence.persist(first, second, 'normal')
+    // A caller growing the persisted object after the save: that row was
+    // never journaled, so it must not be smuggled into the checkpoint.
+    second.messages.push({
+      id: 'unjournaled',
+      role: 'assistant',
+      content: 'late',
+      timestamp: '2026-08-16T00:00:09.000Z'
+    })
+
+    expect(persistence.checkpointChat('chat-1')).toBe(true)
+    expect(persistence.stats().journal.checkpointsFromMemory).toBe(0)
+    expect(
+      persistence.replay('chat-1').record?.messages.map((message) => message.id)
+    ).not.toContain('unjournaled')
   })
 
   it('repairs a same-revision side-band drift before deriving the next batch', () => {
@@ -172,15 +207,16 @@ describe('IncrementalChatPersistence', () => {
     expect(snapshotTree(baseDir)).toEqual(before)
   })
 
-  it('retains the approval fsync boundary and verifies without checkpointing', () => {
+  it('retains the approval fsync boundary without checkpointing or a parity pass', () => {
     const first = chat()
     const approval = advance(first, 'approval opened')
     persistence.persist(null, first, 'normal')
 
     expect(persistence.persist(first, approval, 'approval')).toMatchObject({
       checkpointed: false,
-      parityVerified: true
+      parityVerified: null
     })
+    expect(persistence.stats().parityChecks).toBe(0)
     expect(fs.existsSync(path.join(baseDir, 'chat-1.mutations.jsonl'))).toBe(true)
     expect(persistence.replay('chat-1').record).toEqual(approval)
   })
@@ -199,7 +235,7 @@ describe('IncrementalChatPersistence', () => {
 
     expect(() => persistence.persist(first, second, 'normal')).toThrow(/simulated fsync failure/)
     expect(persistence.persist(second, third, 'terminal')).toMatchObject({
-      parityVerified: true
+      checkpointed: true
     })
     expect(persistence.replay('chat-1').record).toEqual(third)
     expect(persistence.stats().baselineRepairs).toBe(1)

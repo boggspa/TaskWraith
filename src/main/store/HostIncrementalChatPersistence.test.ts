@@ -188,15 +188,16 @@ describe('Stage 2 — incremental persistence on the Host write path', () => {
     expect(saved?.persistenceRevision).toBe(4)
 
     // ...and the authored mutation is durable in the sideband journal too.
-    // The terminal boundary (no running run) checkpoints and parity-verifies.
+    // The terminal boundary (no running run) checkpoints from the in-memory
+    // head; only ensureBaseline's one-time verify of the seeded baseline
+    // runs a parity pass.
     const stats = AppStore.getIncrementalChatPersistenceStats()
     expect(stats.seeds).toBe(0)
     expect(stats.mutationBatchesAppended).toBe(1)
     expect(stats.terminalCheckpoints).toBe(1)
-    // Two parity checks by construction: ensureBaseline verifies the freshly
-    // seeded baseline, then the terminal boundary verifies the append.
-    expect(stats.parityChecks).toBe(2)
-    expect(stats.parityMatches).toBe(2)
+    expect(stats.journal.checkpointsFromMemory).toBe(1)
+    expect(stats.parityChecks).toBe(1)
+    expect(stats.parityMatches).toBe(1)
     expect(stats.parityMismatches).toBe(0)
     expect(journalV2Files(profilePath, chatId)).toEqual([`${chatId}.checkpoint.json`])
     const checkpoint = readJournalCheckpoint(profilePath, chatId)

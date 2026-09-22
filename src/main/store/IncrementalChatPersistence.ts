@@ -207,9 +207,65 @@ export function createIncrementalChatPersistence(
     appendsSinceCheckpointByChatId.set(chatId, 0)
   }
 
+  /**
+   * The exact record most recently written to each chat's journal head, so a
+   * checkpoint serializes it from memory instead of re-reading and re-parsing
+   * the whole on-disk checkpoint. The fingerprint catches a caller mutating
+   * the object in place after persisting it: any mismatch falls back to the
+   * journal's own replay. Taken on use, so a chat's record is retained only
+   * until its next checkpoint.
+   */
+  const headRecordByChatId = new Map<
+    string,
+    { record: ChatRecord; revision: number; fingerprint: HeadFingerprint }
+  >()
+  // Identity and O(1) fields only: the hot append path must never index into
+  // (or clone) verified history.
+  type HeadFingerprint = {
+    revision: number
+    updatedAt: unknown
+    messages: unknown
+    messageCount: number
+    runs: unknown
+    runCount: number
+  }
+  const headFingerprint = (record: ChatRecord): HeadFingerprint => ({
+    revision: recordRevision(record),
+    updatedAt: record.updatedAt,
+    messages: record.messages,
+    messageCount: Array.isArray(record.messages) ? record.messages.length : -1,
+    runs: record.runs,
+    runCount: Array.isArray(record.runs) ? record.runs.length : -1
+  })
+  const sameFingerprint = (a: HeadFingerprint, b: HeadFingerprint): boolean =>
+    a.revision === b.revision &&
+    a.updatedAt === b.updatedAt &&
+    a.messages === b.messages &&
+    a.messageCount === b.messageCount &&
+    a.runs === b.runs &&
+    a.runCount === b.runCount
+  const rememberHead = (record: ChatRecord): void => {
+    headRecordByChatId.set(record.appChatId, {
+      record,
+      revision: recordRevision(record),
+      fingerprint: headFingerprint(record)
+    })
+  }
+  const takeHead = (chatId: string, headRevision: number): ChatRecord | null => {
+    const entry = headRecordByChatId.get(chatId)
+    if (!entry) return null
+    headRecordByChatId.delete(chatId)
+    if (entry.revision !== headRevision) return null
+    return sameFingerprint(headFingerprint(entry.record), entry.fingerprint) ? entry.record : null
+  }
+  journal.setHeadRecordResolver?.(takeHead)
+
   const replaceAuthoritative = (chatId: string, record: ChatRecord): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
-    journal.replaceAuthoritativeCheckpoint(chatId, durableClone(record))
+    // The journal serializes immediately; a JSON clone first was a second
+    // whole-record parse+stringify for no isolation it did not already get.
+    journal.replaceAuthoritativeCheckpoint(chatId, record)
+    rememberHead(record)
     baselineVerifiedChatIds.add(chatId)
     lastPersistedRevisionByChatId.set(chatId, recordRevision(record))
     noteCheckpoint(chatId)
@@ -255,7 +311,7 @@ export function createIncrementalChatPersistence(
       return
     }
     try {
-      journal.initialize(chatId, durableClone(previous))
+      journal.initialize(chatId, previous)
       lastPersistedRevisionByChatId.set(chatId, recordRevision(previous))
     } catch (error) {
       if (!baselineMismatch(error)) throw error
@@ -280,7 +336,8 @@ export function createIncrementalChatPersistence(
     try {
       boundaryMix[boundary] += 1
       if (!previous) {
-        journal.initialize(next.appChatId, durableClone(next))
+        journal.initialize(next.appChatId, next)
+        rememberHead(next)
         baselineVerifiedChatIds.add(next.appChatId)
         lastPersistedRevisionByChatId.set(next.appChatId, recordRevision(next))
         noteCheckpoint(next.appChatId)
@@ -306,6 +363,7 @@ export function createIncrementalChatPersistence(
       const durability: IncrementalChatAppendDurability =
         boundary === 'normal' && isDeferrableStreamingMutation(batch) ? 'deferred' : 'immediate'
       journal.append(batch, { durability })
+      rememberHead(next)
       mutationBatchesAppended += 1
       mutationBytesAppended += mutationBytes
       lastPersistedRevisionByChatId.set(next.appChatId, batch.revision)
@@ -329,16 +387,18 @@ export function createIncrementalChatPersistence(
             derived
           }
         }
-        checkpointed = journal.checkpoint(next.appChatId, 'terminal')
+        // Checkpoint straight from `next`, the authoritative record at the
+        // head revision. The former replay-then-verify (read + parse the
+        // on-disk checkpoint twice, JSON-clone, deep-compare) could only ever
+        // conclude by writing this same record, at ~1s of main per terminal
+        // save on a 20MB+ thread.
+        const head = takeHead(next.appChatId, recordRevision(next)) ?? next
+        checkpointed = journal.checkpoint(next.appChatId, 'terminal', head)
         if (checkpointed) terminalCheckpoints += 1
         noteCheckpoint(next.appChatId)
-        parityVerified = verify(next.appChatId, next, true)
-      } else if (boundary === 'approval') {
-        // Approval state is already fsynced by append. A bounded parity check
-        // retains the old barrier's fail-safe semantics without forcing a full
-        // checkpoint into every subsequent save while the card remains open.
-        parityVerified = verify(next.appChatId, next, true)
       }
+      // Approval state is fsynced by the append above; no whole-record parity
+      // replay rides the approval boundary any more.
       return { seeded: false, mutationBytes, checkpointed, parityVerified, derived }
     } catch (error) {
       failures += 1
@@ -403,6 +463,7 @@ export function createIncrementalChatPersistence(
   const purge = (chatId: string): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.purge(chatId)
+    headRecordByChatId.delete(chatId)
     baselineVerifiedChatIds.delete(chatId)
     lastPersistedRevisionByChatId.delete(chatId)
     appendsSinceCheckpointByChatId.delete(chatId)
@@ -411,6 +472,7 @@ export function createIncrementalChatPersistence(
   const clear = (): void => {
     if (!canWrite()) throw new Error('Incremental chat persistence is read-only')
     journal.clear()
+    headRecordByChatId.clear()
     baselineVerifiedChatIds.clear()
     lastPersistedRevisionByChatId.clear()
     appendsSinceCheckpointByChatId.clear()

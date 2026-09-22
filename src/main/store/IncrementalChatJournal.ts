@@ -72,6 +72,8 @@ export interface IncrementalChatJournalStats {
   drainedDeferredFsyncs: number
   mutationBytesWritten: number
   checkpointsWritten: number
+  /** Checkpoints written from the caller's in-memory head, with no replay. */
+  checkpointsFromMemory: number
   checkpointBytesWritten: number
   replayedBatches: number
   skippedDuplicateBatches: number
@@ -127,7 +129,23 @@ export interface IncrementalChatJournal {
    *  the legacy record; see {@link IncrementalChatPendingReplayState}. */
   pendingReplayState(chatId: string): IncrementalChatPendingReplayState
   replaceAuthoritativeCheckpoint(chatId: string, record: ChatRecord): void
-  checkpoint(chatId: string, reason: IncrementalChatCheckpointReason): boolean
+  /**
+   * Compact the journal into a full checkpoint. `headRecord`, when it is the
+   * in-memory record at exactly the journal head revision, is written as-is;
+   * otherwise the head is rebuilt by replaying the on-disk checkpoint + tail.
+   */
+  checkpoint(
+    chatId: string,
+    reason: IncrementalChatCheckpointReason,
+    headRecord?: ChatRecord | null
+  ): boolean
+  /**
+   * Supply the in-memory head record for checkpoints the journal takes on its
+   * own (bounded, idle, shutdown). Same contract as `checkpoint`'s headRecord.
+   */
+  setHeadRecordResolver?(
+    resolve: ((chatId: string, headRevision: number) => ChatRecord | null) | null
+  ): void
   checkpointIdle(nowMs?: number): number
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
   /** Synchronously fsync every journal file with an unsettled deferred flush. */
@@ -188,10 +206,6 @@ function positiveInteger(value: number | undefined, fallback: number): number {
 
 function recordRevision(record: ChatRecord): number {
   return nonNegativeInteger(record.persistenceRevision) ? record.persistenceRevision : 0
-}
-
-function cloneRecord(record: ChatRecord): ChatRecord {
-  return JSON.parse(JSON.stringify(record)) as ChatRecord
 }
 
 function validMutationBatch(value: unknown, chatId: string): value is ChatRecordMutationBatch {
@@ -275,6 +289,7 @@ export function createIncrementalChatJournal(
   let drainedDeferredFsyncs = 0
   let mutationBytesWritten = 0
   let checkpointsWritten = 0
+  let checkpointsFromMemory = 0
   let checkpointBytesWritten = 0
   let replayedBatches = 0
   let skippedDuplicateBatches = 0
@@ -649,7 +664,8 @@ export function createIncrementalChatJournal(
       revision,
       savedAt: new Date(now()).toISOString(),
       reason: 'initial',
-      record: cloneRecord(record)
+      // Serialized immediately below; see replaceAuthoritativeCheckpoint.
+      record
     }
     const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(checkpoint))
     checkpointsWritten += 1
@@ -760,14 +776,50 @@ export function createIncrementalChatJournal(
     return { hasTail, checkpointRevision: peekCheckpointRevision(chatId) }
   }
 
-  const checkpoint = (chatId: string, reason: IncrementalChatCheckpointReason): boolean => {
+  let headRecordResolver: ((chatId: string, headRevision: number) => ChatRecord | null) | null =
+    null
+
+  /**
+   * The in-memory head, when the caller holds the record at exactly the
+   * journal head revision. Replaying instead reads and parses the whole
+   * on-disk checkpoint and re-applies the tail — on a 20MB+ thread that was
+   * a full-file parse on main for every bounded/idle/terminal checkpoint.
+   */
+  const resolveHead = (
+    chatId: string,
+    state: RuntimeState,
+    headRecord: ChatRecord | null | undefined
+  ): ChatRecord | null => {
+    const headRevision = state.headRevision
+    if (headRevision === null) return null
+    let candidate: ChatRecord | null = headRecord ?? null
+    if (!candidate) {
+      try {
+        candidate = headRecordResolver?.(chatId, headRevision) ?? null
+      } catch {
+        candidate = null
+      }
+    }
+    if (!candidate || candidate.appChatId !== chatId) return null
+    return recordRevision(candidate) === headRevision ? candidate : null
+  }
+
+  const checkpoint = (
+    chatId: string,
+    reason: IncrementalChatCheckpointReason,
+    headRecord?: ChatRecord | null
+  ): boolean => {
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
     const state = loadState(chatId)
     if (state.tombstoned || state.journalEntries === 0) return false
-    const replayed = replay(chatId)
+    const inMemoryHead = resolveHead(chatId, state, headRecord)
+    const replayed = inMemoryHead
+      ? { record: inMemoryHead, revision: recordRevision(inMemoryHead) }
+      : replay(chatId)
     if (!replayed.record || replayed.revision === null) return false
+    if (inMemoryHead) checkpointsFromMemory += 1
     const nextCheckpoint: IncrementalChatCheckpoint = {
       format: INCREMENTAL_CHAT_CHECKPOINT_FORMAT,
       version: INCREMENTAL_CHAT_CHECKPOINT_VERSION,
@@ -814,7 +866,9 @@ export function createIncrementalChatJournal(
       revision,
       savedAt: new Date(now()).toISOString(),
       reason: 'recovery',
-      record: cloneRecord(record)
+      // Serialized immediately below, so the snapshot IS the stringify; a
+      // JSON clone first only doubled a whole-record parse+stringify.
+      record
     }
     const bytes = atomicWrite(checkpointPath(chatId), JSON.stringify(nextCheckpoint))
     checkpointsWritten += 1
@@ -1022,6 +1076,7 @@ export function createIncrementalChatJournal(
     drainedDeferredFsyncs,
     mutationBytesWritten,
     checkpointsWritten,
+    checkpointsFromMemory,
     checkpointBytesWritten,
     replayedBatches,
     skippedDuplicateBatches,
@@ -1036,6 +1091,9 @@ export function createIncrementalChatJournal(
     pendingReplayState,
     replaceAuthoritativeCheckpoint,
     checkpoint,
+    setHeadRecordResolver: (resolve) => {
+      headRecordResolver = resolve
+    },
     checkpointIdle,
     checkpointAll,
     drainDeferredDurability,
