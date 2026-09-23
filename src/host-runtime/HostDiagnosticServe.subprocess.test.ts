@@ -12,7 +12,11 @@ import {
 import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from './HostProfileAuthorityLease'
 
 const REPO_ROOT = resolve(process.cwd())
-const CLI_PATH = resolve(REPO_ROOT, 'out/host/host-runtime/cli.js')
+// Compiled into a directory of its own: rebuilding the repository's out/host
+// here would leave it without the history-worker bundles that the four-stage
+// `npm run host:build` adds, under a development app that runs from it.
+let BUILD_ROOT = ''
+let CLI_PATH = ''
 // The hosted Windows runner is several times slower than the POSIX legs.
 const WAIT_BUDGET_MS = process.platform === 'win32' ? 30_000 : 8_000
 const profiles: string[] = []
@@ -92,10 +96,17 @@ async function waitForExit(
 }
 
 beforeAll(() => {
-  execFileSync(process.execPath, ['scripts/clean-host-output.cjs'], { cwd: REPO_ROOT })
+  BUILD_ROOT = realpathSync(mkdtempSync(join(tmpdir(), 'taskwraith-diagnostic-host-build-')))
+  CLI_PATH = join(BUILD_ROOT, 'host-runtime', 'cli.js')
   execFileSync(
     process.execPath,
-    [require.resolve('typescript/bin/tsc'), '-p', 'src/host-runtime/tsconfig.json'],
+    [
+      require.resolve('typescript/bin/tsc'),
+      '-p',
+      'src/host-runtime/tsconfig.json',
+      '--outDir',
+      BUILD_ROOT
+    ],
     {
       cwd: REPO_ROOT
     }
@@ -112,6 +123,7 @@ afterAll(async () => {
   }
   await Promise.all(activeChildren.map((child) => waitForExit(child).catch(() => undefined)))
   for (const profile of profiles.splice(0)) rmSync(profile, { recursive: true, force: true })
+  if (BUILD_ROOT) rmSync(BUILD_ROOT, { recursive: true, force: true })
   // Child exits are awaited with the platform wait budget (30s on win32), which
   // exceeds vitest's 10s default hook budget.
 }, 120_000)

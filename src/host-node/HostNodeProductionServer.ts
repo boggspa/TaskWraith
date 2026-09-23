@@ -49,6 +49,7 @@ import {
 } from '../host-runtime/HostLeaseRegistry'
 import { HOST_REGISTRY_REFRESH_MS } from '../host-runtime/HostRegistry'
 import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
+import { writeHostStderr } from '../host-runtime/HostStdioGuard'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
@@ -186,6 +187,17 @@ function deferred(): {
 
 function asError(value: unknown): Error {
   return value instanceof Error ? value : new Error(String(value))
+}
+
+/** An error and its `cause` chain on one line: the stderr record of a failed stop. */
+function describeFailure(value: unknown): string {
+  const parts: string[] = []
+  let current: unknown = value
+  for (let depth = 0; current !== undefined && current !== null && depth < 4; depth += 1) {
+    parts.push(current instanceof Error ? current.message : String(current))
+    current = current instanceof Error ? (current as Error & { cause?: unknown }).cause : undefined
+  }
+  return parts.join(' <- ')
 }
 
 function defaultRuntimePath(profilePath: string): string {
@@ -488,7 +500,7 @@ export class HostNodeProductionServer {
         onThreadQuarantined: (threadId, reason) => {
           // The Host previously refused to start over one bad record; it now
           // skips it, so the skip has to be as loud as the refusal was.
-          process.stderr.write(`taskwraith-host: chat ${threadId} skipped (${reason})\n`)
+          writeHostStderr(`taskwraith-host: chat ${threadId} skipped (${reason})\n`)
         }
       })
       const events = {
@@ -682,7 +694,7 @@ export class HostNodeProductionServer {
       if (leaseProtocolDisabled) {
         // Test-only legacy simulation: no lease kinds, no lease lifetime, no
         // registry entry — what a Host from before this programme looks like.
-        process.stderr.write(
+        writeHostStderr(
           `taskwraith-host: [host-lease] ${HOST_LEASE_DISABLED_ENV}=1 under ${HOST_LEASE_TIMING_ENV}: answering host.lease and host.status as a pre-lease Host\n`
         )
       }
@@ -831,7 +843,7 @@ export class HostNodeProductionServer {
     const environment = this.options.environment ?? process.env
     const timing = resolveHostLeaseTiming(environment)
     const persist = isHostPersistEnabled(environment)
-    const log = (line: string) => process.stderr.write(`taskwraith-host: ${line}\n`)
+    const log = (line: string) => writeHostStderr(`taskwraith-host: ${line}\n`)
     if (timing.source === 'rejected') {
       log(`[host-lease] ${HOST_LEASE_TIMING_ENV}=${timing.raw} ignored: ${timing.reason}`)
     } else if (timing.source === 'environment') {
@@ -870,8 +882,24 @@ export class HostNodeProductionServer {
   }
 
   private onLeaseExit(reason: HostLeaseExitReason): void {
-    process.stderr.write(`taskwraith-host: stopping after the last client lease (${reason})\n`)
-    void this.stop().catch(() => undefined)
+    writeHostStderr(`taskwraith-host: stopping after the last client lease (${reason})\n`)
+    this.stopForLifetime('stopping after the last client lease')
+  }
+
+  /**
+   * A stop the Host decides on its own: the last lease is gone, or its registry
+   * entry is. Nobody retries it the way a second SIGTERM retries a signalled
+   * stop, so a cleanup failure must not end in a silent exit 0 with the profile
+   * authority left behind: name what failed, and settle waitForShutdown as a
+   * failure, which the CLI turns into a non-zero exit.
+   */
+  private stopForLifetime(action: string): void {
+    void this.stop().catch((error: unknown) => {
+      writeHostStderr(
+        `taskwraith-host: ${action} failed, profile authority retained: ${describeFailure(error)}\n`
+      )
+      this.shutdown.reject(asError(error))
+    })
   }
 
   private onLeaseTick(info: HostLeaseTickInfo): void {
@@ -887,22 +915,22 @@ export class HostNodeProductionServer {
         lifetimePhase: summary.phase
       })
     } catch (error) {
-      process.stderr.write(`taskwraith-host: registry refresh failed: ${String(error)}\n`)
+      writeHostStderr(`taskwraith-host: registry refresh failed: ${String(error)}\n`)
     }
     let verdict: ReturnType<HostRegistryPublisherPort['check']>
     try {
       verdict = registry.check()
     } catch (error) {
-      process.stderr.write(`taskwraith-host: registry self-check failed: ${String(error)}\n`)
+      writeHostStderr(`taskwraith-host: registry self-check failed: ${String(error)}\n`)
       verdict = 'unreadable'
     }
     if (verdict === 'missing' || verdict === 'foreign') {
       this.registrySelfCheckStrikes += 1
       if (this.registrySelfCheckStrikes >= HOST_REGISTRY_SELF_CHECK_STRIKES) {
-        process.stderr.write(
+        writeHostStderr(
           `taskwraith-host: registry entry ${verdict} on ${this.registrySelfCheckStrikes} consecutive checks; stopping\n`
         )
-        void this.stop().catch(() => undefined)
+        this.stopForLifetime('stopping after the registry self-check')
       }
       return
     }
@@ -936,7 +964,7 @@ export class HostNodeProductionServer {
       })
       this.registryPublished = true
     } catch (error) {
-      process.stderr.write(`taskwraith-host: registry publish failed: ${String(error)}\n`)
+      writeHostStderr(`taskwraith-host: registry publish failed: ${String(error)}\n`)
     }
   }
 
@@ -946,7 +974,7 @@ export class HostNodeProductionServer {
     try {
       this.options.registry?.remove()
     } catch (error) {
-      process.stderr.write(`taskwraith-host: registry remove failed: ${String(error)}\n`)
+      writeHostStderr(`taskwraith-host: registry remove failed: ${String(error)}\n`)
     }
   }
 

@@ -1462,6 +1462,76 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     expect(h.server.phase).toBe('stopped')
   })
 
+  it('says why a lease-driven stop failed, keeps the profile authority, and fails the shutdown', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const clock = steppedLeaseClock()
+      const h = harness({ environment: {}, leasePorts: clock.ports })
+      h.composition.shutdown.mockRejectedValueOnce(new Error('claim compaction refused'))
+      await h.server.start()
+      clock.advance(leasesOf(h), HOST_LAST_LEASE_GRACE_MS)
+      const lines = () => write.mock.calls.map(([text]) => String(text))
+      await vi.waitFor(() =>
+        expect(lines()).toContain(
+          'taskwraith-host: stopping after the last client lease failed, profile authority retained: ' +
+            'Production Host runtime cleanup failed; retaining profile authority. <- claim compaction refused\n'
+        )
+      )
+      // Not a success: nobody retries a stop the Host decided on, so the CLI
+      // must see the failure and exit non-zero instead of a silent 0.
+      await expect(h.server.waitForShutdown()).rejects.toThrow('runtime cleanup failed')
+      expect(h.server.phase).toBe('failed')
+      expect(h.lease.release).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('says why a registry self-check stop failed, and fails the shutdown too', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const clock = steppedLeaseClock()
+      const registry = fakeRegistryPort(['missing', 'missing'])
+      const h = harness({ environment: {}, leasePorts: clock.ports, registry: registry.port })
+      h.listener.stop.mockRejectedValueOnce(new Error('socket busy'))
+      await h.server.start()
+      const leases = leasesOf(h)
+      leases.authenticated(1)
+      clock.advance(leases, 120_000)
+      await expect(h.server.waitForShutdown()).rejects.toThrow('listener cleanup failed')
+      expect(write.mock.calls.map(([text]) => String(text))).toContain(
+        'taskwraith-host: stopping after the registry self-check failed, profile authority retained: ' +
+          'Production Host listener cleanup failed; retaining profile authority. <- socket busy\n'
+      )
+      expect(h.lease.release).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('never lets a failing stderr write take the lease lifetime down', async () => {
+    // What a Host sees once the app that spawned it has quit: every stderr
+    // write fails. The lease lines around the grace exit are exactly those.
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => {
+      throw Object.assign(new Error('write EPIPE'), { code: 'EPIPE' })
+    })
+    try {
+      const clock = steppedLeaseClock()
+      const h = harness({ environment: {}, leasePorts: clock.ports })
+      await h.server.start()
+      const leases = leasesOf(h)
+      leases.authenticated(1)
+      leases.closed(1)
+      clock.advance(leases, HOST_LAST_LEASE_GRACE_MS)
+      await h.server.waitForShutdown()
+      expect(h.server.phase).toBe('stopped')
+      expect(h.lease.release).toHaveBeenCalledOnce()
+      expect(write).toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
   it('publishes nothing and never self-checks when its registry publish fails', async () => {
     const clock = steppedLeaseClock()
     const registry = fakeRegistryPort(['missing', 'missing', 'missing'])

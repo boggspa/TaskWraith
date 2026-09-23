@@ -45,7 +45,11 @@ import type {
 } from './HostAuthority'
 import { HostSession, type HostSessionBinding } from './HostSession'
 import { HostLocalServer } from './HostLocalServer'
-import { HOST_LEASE_DEFAULT_TIMING, HostLeaseRegistry } from './HostLeaseRegistry'
+import {
+  HOST_LEASE_DEFAULT_TIMING,
+  HostLeaseRegistry,
+  type HostLeaseSummary
+} from './HostLeaseRegistry'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2293,13 +2297,14 @@ describe('HostLocalServer', () => {
 // ---------------------------------------------------------------------------
 
 /**
- * Wire goldens recorded from a pristine worktree at 2a71f9580 (the last commit
- * before the lease slice; HostLocalServer, HostSession and both protocol
- * modules are byte-identical there and at the slice's base) against a REAL
- * HostSession with a fixed session id. The welcome, the health response, the
- * shutdown walk and clientCount() must not move by a byte when leases land,
- * and a pre-lease Host's answers to the two new kinds are what the legacy
- * simulation has to reproduce.
+ * Wire goldens recorded from a pristine worktree at 2a71f9580 against a REAL
+ * HostSession with a fixed session id. The lease slice landed on top of
+ * a6c49813f, twelve commits later; HostLocalServer, HostSession and both
+ * protocol modules are byte-identical at the two, and these goldens replay
+ * green at a6c49813f. The welcome, the health response, the shutdown walk and
+ * clientCount() must not move by a byte when leases land, and a pre-lease
+ * Host's answers to the two new kinds are what the legacy simulation has to
+ * reproduce.
  */
 const GOLDEN_SESSION_ID = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f'
 const GOLDEN_EPOCH = 'd4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8'
@@ -2800,6 +2805,33 @@ describe('HostLocalServer leases (Host-lifetime programme)', () => {
     phone.close()
     desktop.close()
     holder.close()
+  })
+
+  it('answers host_unavailable rather than send a status it would refuse to read itself', async () => {
+    const { leases } = steppedLeases({})
+    // A lifetime phase the wire does not know. Whatever the projection is
+    // assembled from, the Host decodes it before it goes out.
+    vi.spyOn(leases, 'summary').mockReturnValue({
+      ...leases.summary(),
+      phase: 'resting' as HostLeaseSummary['phase']
+    })
+    const logs: string[] = []
+    const server = startServer({ leases, log: (line) => logs.push(line) })
+    await server.start()
+    const client = await authenticated(server, ['bootstrap', 'health'])
+    client.writeLine(JSON.stringify(makeRequest('host.status', 'status-invalid')))
+    expect(await client.readFrame()).toMatchObject({
+      id: 'status-invalid',
+      ok: false,
+      error: { code: 'host_unavailable' }
+    })
+    expect(logs).toEqual(
+      expect.arrayContaining([expect.stringContaining('status projection is invalid')])
+    )
+    // Refused, not dropped: the connection keeps answering.
+    client.writeLine(JSON.stringify(makeRequest('health.get', 'health-after')))
+    expect(await client.readFrame()).toMatchObject({ id: 'health-after', ok: true })
+    client.close()
   })
 
   it('refuses composer.send while draining, and still admits cancels and reads', async () => {

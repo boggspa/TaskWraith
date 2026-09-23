@@ -26,6 +26,7 @@ import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
   readHostFullAccessBootstrapSecret
 } from './HostFullAccessBootstrap'
+import { installHostStdioGuard, writeHostStderr } from './HostStdioGuard'
 
 export interface HostProductionCliStdio {
   readonly stdin?: { readonly isTTY?: boolean }
@@ -93,7 +94,7 @@ export async function runHostProductionCli(
       env: environment,
       cliPath: resolve(__dirname, 'cli.js'),
       nodeExecutable: process.execPath,
-      log: (line) => void process.stderr.write(`taskwraith-host: ${line}\n`)
+      log: (line) => writeHostStderr(`taskwraith-host: ${line}\n`)
     })
     host = createProduction({
       profilePath: command.profilePath,
@@ -230,12 +231,15 @@ export async function runHostCli(
 }
 
 async function main(): Promise<void> {
+  // First, before anything can write: a stdio reader that goes away (the app
+  // that spawned this Host quit) must never be able to kill the process.
+  installHostStdioGuard()
   try {
     const exitCode = await runHostCli()
     if (typeof exitCode === 'number') process.exitCode = exitCode
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    process.stderr.write(`taskwraith-host: ${message}\n`)
+    writeHostStderr(`taskwraith-host: ${message}\n`)
     process.exitCode =
       error instanceof HostDiagnosticCliError || error instanceof HostProductionCliError ? 2 : 1
   }

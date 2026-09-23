@@ -21,13 +21,23 @@
  * the fourth deadline gone. Wall-clock time never expires anything; the
  * `hostNowMs` on the wire is for display only.
  *
+ * Deadlines never fire early. A beat, a close or an arm that lands between two
+ * ticks is stamped at its own awake instant (the last tick's total plus the
+ * elapsed part of this one), not at the last tick's value, and every deadline
+ * is judged only on a tick: it fires on the first tick at or after it, so at
+ * most one tick late and never before, however late the timer itself runs.
+ *
  * Lifetime: with no holder the Host arms `graceMs` of awake time (from
  * listener start too — a Host nobody attaches to is a ghost from birth); any
  * holder cancels it. At grace expiry an idle Host asks its owner to stop; a
  * busy one enters `draining`, where the owner refuses new run-starting work,
  * in-flight runs finish, and the stop follows within one tick of the last run
- * ending or at the busy cap, whichever is first. `persist` disables the grace
- * exit only — nothing else in this module.
+ * ending or at the busy cap, whichever is first. A holder that interrupts a
+ * drain and is gone again within one grace (a status poll, a socket that
+ * declines a moment later) has not taken the Host back: the drain resumes at
+ * once, busy cap still counted from its first start, so a poller can never
+ * keep a wedged run's Host alive by resetting the cap. `persist` disables the
+ * grace exit only — nothing else in this module.
  *
  * Only an owner that can act on an exit gets a bounded lifetime: a registry
  * built without `onExit` (the in-process Host inside Electron main, the
@@ -54,7 +64,8 @@ export const HOST_LEASE_MIN_GRACE_MS = 500
  * Diagnostic-only timing override: `heartbeat:<ms>,ttl:<ms>,grace:<ms>`. Each
  * value is bounded below (heartbeat >= 100, ttl >= 2 x heartbeat, grace >=
  * 500) and can only SHORTEN the defaults, never extend them. Meant for the
- * subprocess suites; the production server logs whatever it resolves.
+ * subprocess suites; the production server logs whatever it resolves, and the
+ * production launchers strip it (`withoutHostLeaseTestKnobs`).
  */
 export const HOST_LEASE_TIMING_ENV = 'TASKWRAITH_HOST_LEASE_TIMING'
 /** `1` disables the last-lease grace exit only. */
@@ -64,10 +75,25 @@ export const HOST_PERSIST_ENV = 'TASKWRAITH_HOST_PERSIST'
  * `host.status` exactly as a pre-lease Host does (`unknown_request_kind`) and
  * run without a lease lifetime, so a subprocess suite can stand up a "legacy"
  * Host from the current build. Honoured only while a valid
- * `TASKWRAITH_HOST_LEASE_TIMING` override is in force, which no production
- * launcher sets.
+ * `TASKWRAITH_HOST_LEASE_TIMING` override is in force, and stripped by the
+ * production launchers like it.
  */
 export const HOST_LEASE_DISABLED_ENV = 'TASKWRAITH_HOST_LEASE_DISABLED'
+
+/** The two test-only knobs; `TASKWRAITH_HOST_PERSIST` is the user's and is not one. */
+export const HOST_LEASE_TEST_ONLY_ENV = [HOST_LEASE_TIMING_ENV, HOST_LEASE_DISABLED_ENV] as const
+
+/**
+ * A copy of `environment` without the test-only lease knobs, for a production
+ * launcher to hand the Host it spawns. A stray export in the shell that
+ * starts the app must never cut a real Host's grace to half a second, or run
+ * it with no lease lifetime at all. `TASKWRAITH_HOST_PERSIST` passes through.
+ */
+export function withoutHostLeaseTestKnobs(environment: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const result = { ...environment }
+  for (const key of HOST_LEASE_TEST_ONLY_ENV) delete result[key]
+  return result
+}
 
 export interface HostLeaseTiming {
   readonly heartbeatMs: number
@@ -256,6 +282,8 @@ export class HostLeaseRegistry {
   private lastTick: { readonly mono: number; readonly wall: number } | null = null
   private graceStartAwakeMs: number | null = null
   private drainStartAwakeMs: number | null = null
+  /** A drain a holder interrupted: its busy-cap start, and when the holder came. */
+  private interruptedDrain: { anchorAwakeMs: number; heldSinceAwakeMs: number } | null = null
   private exited = false
 
   constructor(options: HostLeaseRegistryOptions = {}) {
@@ -281,6 +309,20 @@ export class HostLeaseRegistry {
   /** Monotonic milliseconds since the registry was built (Host time, display only). */
   nowMs(): number {
     return Number((this.monotonicNowNs() - this.startNs) / 1_000_000n)
+  }
+
+  /**
+   * Awake time at this instant: the last tick's total plus the elapsed part of
+   * the current tick. Stamping an event with the last tick's total instead
+   * would date it up to a whole tick early and fire its deadline that early.
+   * The partial is capped at the suspend gap: a longer one is a suspend the
+   * next tick has yet to detect, and until then the sleep must not count as
+   * awake time (that tick resets every deadline, but a visit's length is
+   * judged the moment the visitor leaves).
+   */
+  private awakeNowMs(): number {
+    if (!this.lastTick) return this.awakeMs
+    return this.awakeMs + Math.min(this.nowMs() - this.lastTick.mono, this.timing.suspendGapMs)
   }
 
   get lifetimePhase(): HostLifetimePhase {
@@ -334,7 +376,7 @@ export class HostLeaseRegistry {
       record.state = 'explicit'
       record.leaseId = this.mintLeaseId()
     }
-    record.lastBeatAwakeMs = this.awakeMs
+    record.lastBeatAwakeMs = this.awakeNowMs()
     this.evaluateHolders()
     return {
       leaseId: record.leaseId,
@@ -349,7 +391,7 @@ export class HostLeaseRegistry {
     const record = this.connections.get(connectionId)
     if (!record || this.phase === 'stopping') return null
     if (record.state !== 'explicit' || record.leaseId !== leaseId) return null
-    record.lastBeatAwakeMs = this.awakeMs
+    record.lastBeatAwakeMs = this.awakeNowMs()
     return { leaseId, expiresInMs: this.timing.ttlMs, hostNowMs: this.nowMs() }
   }
 
@@ -386,7 +428,7 @@ export class HostLeaseRegistry {
     }
     const graceRemainingMs =
       this.phase === 'grace' && this.graceStartAwakeMs !== null
-        ? Math.max(0, this.timing.graceMs - (this.awakeMs - this.graceStartAwakeMs))
+        ? Math.max(0, this.timing.graceMs - (this.awakeNowMs() - this.graceStartAwakeMs))
         : undefined
     return {
       phase: this.phase,
@@ -426,6 +468,7 @@ export class HostLeaseRegistry {
       }
       if (this.graceStartAwakeMs !== null) this.graceStartAwakeMs = this.awakeMs
       if (this.drainStartAwakeMs !== null) this.drainStartAwakeMs = this.awakeMs
+      if (this.interruptedDrain) this.interruptedDrain.anchorAwakeMs = this.awakeMs
       this.log(
         `[host-lease] suspend-observed: deadlines reset (phase=${this.phase}, awake=${this.awakeMs}ms)`
       )
@@ -472,7 +515,12 @@ export class HostLeaseRegistry {
   private evaluateHolders(): void {
     if (this.phase === 'stopping' || !this.started) return
     const holders = this.holderCount()
+    const now = this.awakeNowMs()
     if (holders > 0) {
+      if (this.phase === 'draining' && this.drainStartAwakeMs !== null) {
+        // Remembered, not forgotten: see the rule for a brief holder below.
+        this.interruptedDrain = { anchorAwakeMs: this.drainStartAwakeMs, heldSinceAwakeMs: now }
+      }
       if (this.phase === 'grace' || this.phase === 'draining') {
         this.log(`[host-lease] ${this.phase} cancelled: ${holders} holder(s)`)
         this.phase = 'held'
@@ -483,8 +531,19 @@ export class HostLeaseRegistry {
     }
     // No exit handler, nothing to arm: the embedder owns this lifetime.
     if (this.phase === 'held' && !this.persist && this.onExit !== null) {
+      const interrupted = this.interruptedDrain
+      this.interruptedDrain = null
+      if (interrupted && now - interrupted.heldSinceAwakeMs < this.timing.graceMs) {
+        // Gone again within one grace: a poll or a socket that declined, not a
+        // client taking the Host back. The drain resumes, and its busy cap
+        // keeps counting from the drain's first start.
+        this.phase = 'draining'
+        this.drainStartAwakeMs = interrupted.anchorAwakeMs
+        this.log('[host-lease] no holder again within the grace: draining resumes')
+        return
+      }
       this.phase = 'grace'
-      this.graceStartAwakeMs = this.awakeMs
+      this.graceStartAwakeMs = now
       this.log(`[host-lease] no holder: grace armed for ${this.timing.graceMs}ms awake`)
     }
   }

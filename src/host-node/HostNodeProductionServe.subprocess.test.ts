@@ -591,4 +591,63 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     expect(legacy.child.exitCode).toBe(0)
     expectArtefactsGone(legacyProfile)
   }, 90_000)
+
+  /**
+   * S1a review F1. The Desktop supervisor spawns the Host detached with a
+   * stderr pipe it reads only while the app lives. Once the app has exited,
+   * every lease log line (grace armed, grace cancelled, exit requested) is a
+   * write into a pipe with no reader. An unguarded stderr turned the first one
+   * into an uncaught EPIPE: exit 1, no cleanup, runs orphaned.
+   */
+  it('outlives a stderr reader that has gone: every lease line after it is dropped, and it still stops cleanly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-epipe-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root)
+    const profile = join(root, 'orphaned')
+    mkdirSync(profile, { recursive: true })
+    // A longer grace than the rest of this block: the relaunch below must land inside it.
+    const graceMs = 3_000
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      PATH: '',
+      TASKWRAITH_HOST_REGISTRY_ROOT: join(root, 'registry'),
+      [HOST_LEASE_TIMING_ENV]: `heartbeat:200,ttl:1000,grace:${graceMs}`
+    }
+    delete env[HOST_PERSIST_ENV]
+    delete env[HOST_LEASE_DISABLED_ENV]
+    // HostExternalSupervisor's spawn shape.
+    const child = spawn(
+      process.execPath,
+      [cli, 'serve', '--mode', 'production', '--profile', profile],
+      { env, detached: true, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true }
+    )
+    spawned.push(child)
+    const app = await connect(profile, 'tui-epipe-app')
+
+    // The app process exits: the read end of the Host's stderr pipe goes away...
+    const stderr = child.stderr!
+    const readerGone = new Promise((resolve) => stderr.once('close', resolve))
+    stderr.destroy()
+    await readerGone
+    // ...and its socket with it. The Host logs "no holder: grace armed".
+    app.close()
+    await new Promise((resolve) => setTimeout(resolve, 500))
+    expect(child.exitCode, 'the Host must outlive its stderr reader').toBeNull()
+    expect(child.signalCode).toBeNull()
+
+    // The app is reopened within the grace: "grace cancelled", and it finds its Host.
+    const relaunched = await connect(profile, 'tui-epipe-relaunched')
+    await expect(relaunched.getHostStatus()).resolves.toMatchObject({
+      pid: child.pid,
+      lifetime: { phase: 'held', holders: 1 }
+    })
+
+    // Quit for good: grace armed, then "exit requested" and the stop line at expiry.
+    relaunched.close()
+    const leftAt = Date.now()
+    await waitForExit(child)
+    expect(child.exitCode).toBe(0)
+    expect(Date.now() - leftAt).toBeGreaterThanOrEqual(graceMs - 300)
+    expectArtefactsGone(profile)
+  }, 90_000)
 })

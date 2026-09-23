@@ -8,11 +8,13 @@ import {
   HOST_LEASE_HEARTBEAT_MS,
   HOST_LEASE_TIMING_ENV,
   HOST_LEASE_TTL_MS,
+  HOST_LEASE_TEST_ONLY_ENV,
   HOST_PERSIST_ENV,
   HostLeaseRegistry,
   isHostLeaseProtocolDisabled,
   isHostPersistEnabled,
   resolveHostLeaseTiming,
+  withoutHostLeaseTestKnobs,
   type HostLeaseExitReason,
   type HostLeaseRegistryOptions,
   type HostLeaseTickInfo
@@ -155,6 +157,18 @@ describe('resolveHostLeaseTiming', () => {
     expect(isHostPersistEnabled({ [HOST_PERSIST_ENV]: ' 1 ' })).toBe(true)
     expect(isHostPersistEnabled({ [HOST_PERSIST_ENV]: 'true' })).toBe(false)
     expect(isHostPersistEnabled({ [HOST_PERSIST_ENV]: '0' })).toBe(false)
+  })
+
+  it('strips only the two test-only knobs for a production launcher, leaving its input alone', () => {
+    const env = {
+      PATH: '/bin',
+      [HOST_LEASE_TIMING_ENV]: 'heartbeat:100,ttl:200,grace:500',
+      [HOST_LEASE_DISABLED_ENV]: '1',
+      [HOST_PERSIST_ENV]: '1'
+    }
+    expect(withoutHostLeaseTestKnobs(env)).toEqual({ PATH: '/bin', [HOST_PERSIST_ENV]: '1' })
+    expect(env[HOST_LEASE_TIMING_ENV]).toBe('heartbeat:100,ttl:200,grace:500')
+    expect(HOST_LEASE_TEST_ONLY_ENV).toEqual([HOST_LEASE_TIMING_ENV, HOST_LEASE_DISABLED_ENV])
   })
 })
 
@@ -330,6 +344,74 @@ describe('HostLeaseRegistry', () => {
       expect(h.exits).toEqual([])
     })
 
+    it('never lapses a lease early: a beat between two ticks is stamped at its own instant', () => {
+      const h = harness()
+      h.registry.start()
+      h.registry.authenticated(1)
+      // Half a tick after the last tick, with the next one not yet run.
+      h.sleep(TICK_MS / 2)
+      h.registry.acquire(1)
+      h.advance(TICK_MS / 2)
+      // 20 s on the Host clock, but only 19.5 s since the beat.
+      h.advanceTicks(19)
+      expect(h.registry.stateOf(1)).toBe('explicit')
+      // The first tick at or after the deadline: 20.5 s, at most one tick late.
+      h.advance(TICK_MS)
+      expect(h.registry.stateOf(1)).toBe('declined')
+    })
+
+    it('never fires the grace early: a close between two ticks arms it at its own instant', () => {
+      const h = harness()
+      h.registry.start()
+      h.registry.authenticated(1)
+      h.advanceTicks(10)
+      h.sleep(TICK_MS / 2)
+      h.registry.closed(1)
+      h.advance(TICK_MS / 2)
+      h.advanceTicks(44)
+      // 44.5 s since the last holder left.
+      expect(h.exits).toEqual([])
+      expect(h.registry.summary().graceRemainingMs).toBe(500)
+      // Between two ticks, the status counts the elapsed part of this one too.
+      h.sleep(TICK_MS / 4)
+      expect(h.registry.summary().graceRemainingMs).toBe(250)
+      h.advance((TICK_MS * 3) / 4)
+      expect(h.exits).toEqual(['idle'])
+    })
+
+    it('never lapses a renewed lease early either: a renew between two ticks is stamped at its own instant', () => {
+      const h = harness()
+      h.registry.start()
+      h.registry.authenticated(1)
+      const lease = h.registry.acquire(1)
+      h.advanceTicks(10)
+      h.sleep(TICK_MS / 2)
+      expect(h.registry.renew(1, lease!.leaseId)).not.toBeNull()
+      h.advance(TICK_MS / 2)
+      // 30 s on the Host clock, but only 19.5 s since the renew.
+      h.advanceTicks(19)
+      expect(h.registry.stateOf(1)).toBe('explicit')
+      h.advance(TICK_MS)
+      expect(h.registry.stateOf(1)).toBe('declined')
+    })
+
+    it('stays never-early when the timer itself runs late: a margin of one tick would not', () => {
+      const h = harness()
+      h.registry.start()
+      h.registry.authenticated(1)
+      h.advanceTicks(5)
+      // The tick timer is 2.5 s late (a busy loop, not a suspend) and a beat
+      // lands before it runs: a stamp at the last tick's total would date the
+      // beat 2.5 s early, more than any one-tick margin absorbs.
+      h.sleep(2_500)
+      h.registry.acquire(1)
+      h.advance(500)
+      h.advanceTicks(19)
+      expect(h.registry.stateOf(1)).toBe('explicit')
+      h.advance(TICK_MS)
+      expect(h.registry.stateOf(1)).toBe('declined')
+    })
+
     it('resets an armed grace once on a suspend instead of firing it on wake', () => {
       const h = harness()
       h.registry.start()
@@ -441,6 +523,98 @@ describe('HostLeaseRegistry', () => {
       h.advanceTicks(45)
       expect(h.registry.lifetimePhase).toBe('draining')
       expect(h.exits).toEqual([])
+    })
+
+    it('resumes a drain a brief holder interrupted, busy cap still counted from its first start', () => {
+      const h = harness({ liveWork: () => 1 })
+      h.registry.start()
+      h.advanceTicks(45)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.advanceTicks(600)
+      // A status poll: it authenticates, declines a moment later and goes.
+      h.registry.authenticated(7)
+      expect(h.registry.lifetimePhase).toBe('held')
+      h.sleep(TICK_MS / 2)
+      h.registry.decline(7)
+      // Straight back to draining: no fresh grace for a visitor.
+      expect(h.registry.lifetimePhase).toBe('draining')
+      expect(h.logs.at(-1)).toContain('draining resumes')
+      h.registry.closed(7)
+      h.advance(TICK_MS / 2)
+      // The drain began at 45 s, so the cap falls at 45 s + 30 min, not later.
+      h.advanceTicks((45_000 + HOST_LEASE_BUSY_CAP_MS) / TICK_MS - 646 - 1)
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['busy_cap'])
+    })
+
+    it('lets a holder that stayed a full grace take the Host back: the next drain starts afresh', () => {
+      const h = harness({ liveWork: () => 1 })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.registry.authenticated(8)
+      h.advanceTicks(44)
+      h.registry.closed(8)
+      // 44 s is still a visit.
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.registry.authenticated(9)
+      h.advanceTicks(45)
+      h.registry.closed(9)
+      // A full grace held is a return: a fresh grace, and later a fresh busy cap.
+      expect(h.registry.summary()).toMatchObject({
+        phase: 'grace',
+        graceRemainingMs: HOST_LAST_LEASE_GRACE_MS
+      })
+      h.advanceTicks(45)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.advanceTicks(HOST_LEASE_BUSY_CAP_MS / TICK_MS - 1)
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['busy_cap'])
+    })
+
+    it('resets a drain busy cap once on a suspend, like every other deadline', () => {
+      const h = harness({ liveWork: () => 1 })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.advanceTicks(HOST_LEASE_BUSY_CAP_MS / TICK_MS - 10)
+      h.sleep(60 * 60_000)
+      h.advance(TICK_MS)
+      expect(h.ticks.at(-1)?.suspendObserved).toBe(true)
+      // Ten seconds of cap were left; a full cap runs again from the wake tick.
+      h.advanceTicks(HOST_LEASE_BUSY_CAP_MS / TICK_MS - 1)
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['busy_cap'])
+    })
+
+    it('resets the busy cap of a drain a holder interrupted on a suspend too', () => {
+      const h = harness({ liveWork: () => 1 })
+      h.registry.start()
+      h.advanceTicks(45 + HOST_LEASE_BUSY_CAP_MS / TICK_MS - 10)
+      h.registry.authenticated(3)
+      h.sleep(60 * 60_000)
+      h.advance(TICK_MS)
+      h.registry.closed(3)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.advanceTicks(HOST_LEASE_BUSY_CAP_MS / TICK_MS - 1)
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['busy_cap'])
+    })
+
+    it('counts no sleep into a visit, even before a tick has seen the suspend', () => {
+      const h = harness({ liveWork: () => 1 })
+      h.registry.start()
+      h.advanceTicks(45)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.registry.authenticated(4)
+      // An hour asleep, and the visitor leaves on wake before the first tick.
+      h.sleep(60 * 60_000)
+      h.registry.closed(4)
+      // An hour asleep is not an hour held: still a visit, so the drain resumes.
+      expect(h.registry.lifetimePhase).toBe('draining')
+      expect(h.logs.at(-1)).toContain('draining resumes')
     })
 
     it('treats a throwing live-work probe as busy rather than idle', () => {

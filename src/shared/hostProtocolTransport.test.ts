@@ -1276,9 +1276,11 @@ describe('hostProtocolTransport Wave 3.2', () => {
   })
 
   describe('pre-lease wire bytes', () => {
-    // Recorded from a pristine worktree at 2a71f9580, the last commit before
-    // the lease request kinds landed. The lease slice may add kinds; it may not
-    // move a byte of any frame an older client or Host already speaks.
+    // Recorded from a pristine worktree at 2a71f9580. The lease request kinds
+    // landed on top of a6c49813f, twelve commits later; neither protocol module
+    // changed in between, and these goldens replay green at a6c49813f. The
+    // lease slice may add kinds; it may not move a byte of any frame an older
+    // client or Host already speaks.
     it('encodes every pre-lease client frame byte-identically to the HEAD goldens', () => {
       const base = (kind: string) => ({
         type: 'request' as const,
