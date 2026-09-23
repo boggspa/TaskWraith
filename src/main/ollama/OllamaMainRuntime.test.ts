@@ -92,6 +92,45 @@ describe('createOllamaMainRuntime', () => {
     )
   })
 
+  it.each(['canvas_screenshot', 'capability_invoke'] as const)(
+    'preserves image content on the canonical %s execution route',
+    async (toolName) => {
+      const images = [
+        { type: 'image' as const, mimeType: 'image/png', data: 'c2NyZWVu' },
+        { type: 'image' as const, mimeType: 'image/jpeg', data: 'ZGV0YWls' }
+      ]
+      const metadata = { width: 1200, height: 800, coordinateSpace: 'image-pixels' }
+      const text = JSON.stringify(metadata)
+      const deps = dependencies({
+        executeMcpTool: vi.fn(async () => ({
+          text,
+          structuredContent: metadata,
+          content: [{ type: 'text' as const, text }, ...images]
+        }))
+      })
+      const args =
+        toolName === 'canvas_screenshot'
+          ? { canvasId: 'canvas-1' }
+          : { name: 'canvas_screenshot', arguments: { canvasId: 'canvas-1' } }
+
+      const result = await createOllamaMainRuntime(deps).executeLocalTool({
+        toolName,
+        arguments: args,
+        workspacePath: '/repo',
+        appRunId: 'run-screen',
+        appChatId: 'chat-screen'
+      })
+
+      expect(result).toMatchObject({ ok: true, output: text, images, structuredContent: metadata })
+      expect(deps.executeMcpTool).toHaveBeenCalledWith(
+        toolName,
+        args,
+        { appRunId: 'run-screen', appChatId: 'chat-screen' },
+        'ollama'
+      )
+    }
+  )
+
   it('denies sub-thread tools without UltraTask consent, including capability_invoke', async () => {
     const deps = dependencies()
     const runtime = createOllamaMainRuntime(deps)

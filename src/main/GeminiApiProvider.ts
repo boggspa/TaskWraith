@@ -95,6 +95,8 @@ import { isPortableEnsembleControlMcpProfile } from './mcp/McpSessionProfileFenc
 import { taskWraithMcpAdvertisedToolNamesForProfile } from './mcp/McpToolProfiles'
 import { gatewayToolDefinitions } from './mcp/McpToolGateway'
 import { normalizePortableEnsembleControlArguments } from './TaskWraithMcpTools'
+import { mcpToolResultImages } from './mcp/McpToolResultImages'
+import type { McpToolContentBlock } from './mcp/McpBridgeRuntime'
 
 /** Hard cap on how many tool-call rounds we permit inside a single
  *  Gemini turn. Each round adds one model response + at least one tool
@@ -176,6 +178,7 @@ export function filterGeminiApiMcpToolsForProfile(
 export interface GeminiApiMcpExecutionResult {
   text: string
   isError?: boolean
+  content?: McpToolContentBlock[]
 }
 
 /**
@@ -1322,6 +1325,11 @@ export async function tryRunGeminiApi(
             response: responseObject
           }
         })
+        // Use ordinary user-turn image parts so pre-Gemini-3 vision models
+        // also receive screenshots. Binary data never enters response JSON.
+        for (const image of mcpToolResultImages(result.content)) {
+          responseParts.push({ inlineData: { mimeType: image.mimeType, data: image.data } })
+        }
       }
 
       if (aborted || !geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {

@@ -672,6 +672,157 @@ describe('runOllamaProvider streaming', () => {
     expect(exits.at(-1)?.code).toBe(0)
   })
 
+  it.each([
+    { protocolMode: 'native_first', vision: true, measured: true },
+    { protocolMode: 'json_only', vision: true, measured: true },
+    { protocolMode: 'native_first', vision: false, measured: true },
+    { protocolMode: 'json_only', vision: false, measured: true },
+    { protocolMode: 'native_first', vision: true, measured: false }
+  ] as const)(
+    'delivers fresh tool images with $protocolMode using exact vision=$vision and measured context=$measured',
+    async ({ protocolMode, vision, measured }) => {
+      const chatBodies: Array<Record<string, any>> = []
+      const images = Array.from({ length: 8 }, (_, index) =>
+        Buffer.from(`tool image ${index}`).toString('base64')
+      )
+      const initialImage = Buffer.from('initial user attachment')
+      const metadata = 'Screen dimensions: 1200 x 800 pixels; coordinates are image pixels.'
+      const args = { name: 'canvas_screenshot', arguments: { canvasId: 'canvas-1' } }
+      const executeTool = vi.fn(async () => {
+        const offset = (executeTool.mock.calls.length - 1) * 2
+        return {
+          ok: true,
+          output: metadata,
+          images: [
+            { type: 'image' as const, mimeType: 'image/png', data: images[offset] },
+            { type: 'image' as const, mimeType: 'image/jpeg', data: images[offset + 1] }
+          ]
+        }
+      })
+      const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+        const path = new URL(String(url)).pathname
+        if (path === '/api/tags') {
+          return jsonResponse({
+            models: [
+              {
+                name: 'screen-model:latest',
+                digest: 'digest-screen',
+                details: { family: 'qwen' },
+                capabilities: ['tools', 'vision']
+              }
+            ]
+          })
+        }
+        if (path === '/api/show') {
+          return jsonResponse({
+            details: { family: 'qwen', ...(measured ? { context_length: 131_072 } : {}) },
+            capabilities: vision ? ['tools', 'vision'] : ['tools']
+          })
+        }
+        if (path === '/api/chat') {
+          chatBodies.push(JSON.parse(String(init?.body || '{}')))
+          const message =
+            chatBodies.length > 4
+              ? { role: 'assistant', content: 'Finished inspecting the tool output.' }
+              : protocolMode === 'native_first'
+                ? {
+                    role: 'assistant',
+                    content: '',
+                    tool_calls: [{ function: { name: 'capability_invoke', arguments: args } }]
+                  }
+                : {
+                    role: 'assistant',
+                    content: JSON.stringify({
+                      taskwraith_tool: { name: 'capability_invoke', arguments: args }
+                    })
+                  }
+          return ollamaStreamResponse([
+            JSON.stringify({ message }),
+            JSON.stringify({ done: true, prompt_eval_count: 12, eval_count: 5 })
+          ])
+        }
+        throw new Error(`unexpected fetch ${url}`)
+      })
+      const { deps, errors, lines, exits } = makeProviderDeps({
+        fetchMock,
+        executeTool,
+        settings: {
+          ollamaDefaultModel: 'screen-model:latest',
+          ollamaRunProfiles: { 'screen-model:latest': { protocolMode } }
+        }
+      })
+      deps.readImageAttachment = vi.fn(async () => initialImage)
+
+      await runOllamaProvider(
+        deps,
+        stubEvent,
+        {
+          ...basePayload,
+          model: 'screen-model:latest',
+          imagePaths: ['/authorized/initial.png']
+        },
+        baseRoute
+      )
+
+      expect(errors).toEqual([])
+      expect(exits.at(-1)?.code).toBe(0)
+      expect(executeTool).toHaveBeenCalledTimes(4)
+      expect(chatBodies).toHaveLength(5)
+      for (let round = 1; round <= 4; round += 1) {
+        const resultMessage = chatBodies[round].messages.at(-1)
+        expect(resultMessage.role).toBe(protocolMode === 'native_first' ? 'tool' : 'user')
+        expect(resultMessage.content).toContain(metadata)
+        expect(resultMessage.images).toEqual(
+          vision ? images.slice((round - 1) * 2, round * 2) : undefined
+        )
+        if (!vision) expect(resultMessage.content).toContain('exact /api/show')
+        const initialUserMessage = chatBodies[round].messages.find(
+          (message: { role: string }) => message.role === 'user'
+        )
+        expect(initialUserMessage.images).toEqual(
+          vision ? [initialImage.toString('base64')] : undefined
+        )
+        const resultMessages = chatBodies[round].messages.filter(
+          (message: { role: string; content: string }) =>
+            message.role === (protocolMode === 'native_first' ? 'tool' : 'user') &&
+            message.content.includes(metadata)
+        )
+        const compressedTurns = !measured && round >= 3 ? 2 : 0
+        expect(resultMessages).toHaveLength(round - compressedTurns)
+        for (const [index, message] of resultMessages.entries()) {
+          const imageIndex = index + compressedTurns
+          expect(message.images).toEqual(
+            vision && imageIndex >= round - 2
+              ? images.slice(imageIndex * 2, imageIndex * 2 + 2)
+              : undefined
+          )
+        }
+        if (protocolMode === 'native_first') {
+          const toolCallMessages = chatBodies[round].messages.filter(
+            (message: { tool_calls?: unknown[] }) => message.tool_calls?.length
+          )
+          expect(toolCallMessages).toHaveLength(resultMessages.length)
+          for (const [index, message] of toolCallMessages.entries()) {
+            expect(message.tool_calls[0].function.name).toBe(resultMessages[index].tool_name)
+          }
+        }
+        for (const message of chatBodies[round].messages) {
+          for (const image of images) expect(message.content).not.toContain(image)
+        }
+      }
+      expect(
+        lines.filter((line) => line.payload.id === 'ollama-tool-images-no-vision')
+      ).toHaveLength(vision ? 0 : 1)
+      expect(deps.saveOllamaSessionMemory).toHaveBeenCalledOnce()
+      const memory = (deps.saveOllamaSessionMemory as ReturnType<typeof vi.fn>).mock.calls[0][1]
+      for (const image of images) {
+        expect(JSON.stringify(memory)).not.toContain(image)
+        expect(JSON.stringify(lines)).not.toContain(image)
+        if (!vision) expect(JSON.stringify(chatBodies)).not.toContain(image)
+      }
+    }
+  )
+
   it('warns once and continues text-only when the exact model show lacks vision', async () => {
     const chatBodies: Array<Record<string, any>> = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

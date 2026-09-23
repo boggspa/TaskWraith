@@ -22,6 +22,8 @@ export const OLLAMA_WORKING_MEMORY_MAX_CHARS = 1800
 export const OLLAMA_TOOL_RESULT_MEMORY_MAX_CHARS = 220
 export const CANVAS_FILL_RESULT_REDACTED =
   'Canvas fill result redacted; typed value is not retained.'
+export const COMPUTER_USE_RESULT_REDACTED =
+  'Computer use result redacted; screen content and input text are not retained.'
 
 export interface OllamaWorkingMemoryLimits {
   toolResultMaxChars: number
@@ -54,9 +56,7 @@ export function normalizeOllamaSessionMemory(
 ): OllamaSessionMemory | null {
   if (!memory) return null
   const trajectory = memory.trajectory ?? []
-  const containsSensitiveCanvas = trajectory.some(
-    (entry) => isCanvasEvalTrajectoryEntry(entry) || isCanvasFillTrajectoryEntry(entry)
-  )
+  const containsSensitiveCanvas = trajectory.some(isSensitiveCanvasTrajectoryEntry)
   const sanitizedTrajectory = trajectory.map(sanitizeOllamaTrajectoryEntryForPersist)
   return {
     ...memory,
@@ -219,8 +219,8 @@ interface CanvasEvalMemoryInvocation {
   viaGateway: boolean
 }
 
-interface CanvasFillMemoryInvocation {
-  effectiveToolName: 'canvas_fill'
+interface MetadataOnlyCanvasMemoryInvocation {
+  effectiveToolName: 'canvas_fill' | 'computer_use'
   route: 'direct' | 'gateway' | 'permission_retry' | 'gateway_permission_retry'
 }
 
@@ -248,34 +248,35 @@ function resolveCanvasEvalMemoryInvocation(
   }
 }
 
-function resolveCanvasFillMemoryInvocation(
+function resolveMetadataOnlyCanvasMemoryInvocation(
   toolName: string,
-  args: Record<string, unknown>
-): CanvasFillMemoryInvocation | null {
+  args: Record<string, unknown>,
+  effectiveToolName: MetadataOnlyCanvasMemoryInvocation['effectiveToolName']
+): MetadataOnlyCanvasMemoryInvocation | null {
   const canonical = canonicalTaskWraithToolName(toolName)
-  if (canonical === 'canvas_fill') {
-    return { effectiveToolName: 'canvas_fill', route: 'direct' }
+  if (canonical === effectiveToolName) {
+    return { effectiveToolName, route: 'direct' }
   }
   if (canonical === 'request_tool_permission') {
     return (
       typeof args.toolName === 'string' &&
-      canonicalTaskWraithToolName(args.toolName) === 'canvas_fill'
+      canonicalTaskWraithToolName(args.toolName) === effectiveToolName
     )
-      ? { effectiveToolName: 'canvas_fill', route: 'permission_retry' }
+      ? { effectiveToolName, route: 'permission_retry' }
       : null
   }
   if (canonical !== 'capability_invoke') return null
   const target =
     typeof args.name === 'string' ? canonicalTaskWraithToolName(args.name) : undefined
-  if (target === 'canvas_fill') {
-    return { effectiveToolName: 'canvas_fill', route: 'gateway' }
+  if (target === effectiveToolName) {
+    return { effectiveToolName, route: 'gateway' }
   }
   if (target !== 'request_tool_permission' || !isRecord(args.arguments)) return null
   return (
     typeof args.arguments.toolName === 'string' &&
-    canonicalTaskWraithToolName(args.arguments.toolName) === 'canvas_fill'
+    canonicalTaskWraithToolName(args.arguments.toolName) === effectiveToolName
   )
-    ? { effectiveToolName: 'canvas_fill', route: 'gateway_permission_retry' }
+    ? { effectiveToolName, route: 'gateway_permission_retry' }
     : null
 }
 
@@ -328,20 +329,38 @@ function canvasEvalArgsSummary(toolName: string, viaGateway: boolean): string {
     : `${toolName} script=[redacted]`
 }
 
-function canvasFillArgsSummary(
+function metadataOnlyCanvasArgsSummary(
   toolName: string,
-  invocation: CanvasFillMemoryInvocation
+  invocation: MetadataOnlyCanvasMemoryInvocation
 ): string {
+  const target = invocation.effectiveToolName
+  const redactedArgs = target === 'canvas_fill' ? 'value=[redacted]' : 'arguments=[redacted]'
   switch (invocation.route) {
     case 'gateway':
-      return `${toolName} name=canvas_fill value=[redacted]`
+      return `${toolName} name=${target} ${redactedArgs}`
     case 'permission_retry':
-      return `${toolName} target=canvas_fill value=[redacted]`
+      return `${toolName} target=${target} ${redactedArgs}`
     case 'gateway_permission_retry':
-      return `${toolName} name=request_tool_permission target=canvas_fill value=[redacted]`
+      return `${toolName} name=request_tool_permission target=${target} ${redactedArgs}`
     default:
-      return `${toolName} value=[redacted]`
+      return `${toolName} ${redactedArgs}`
   }
+}
+
+function summaryReferencesTool(
+  summary: string,
+  expectedToolName: string,
+  field?: 'name' | 'target'
+): boolean {
+  for (const match of summary.matchAll(/\b(name|target)=([a-zA-Z0-9_.:-]+)/g)) {
+    if (
+      (!field || match[1] === field) &&
+      canonicalTaskWraithToolName(match[2]) === expectedToolName
+    ) {
+      return true
+    }
+  }
+  return false
 }
 
 function isCanvasEvalTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean {
@@ -349,7 +368,7 @@ function isCanvasEvalTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean 
     isCanvasEvalToolName(entry.toolName) ||
     isCanvasEvalToolName(entry.effectiveToolName) ||
     (canonicalTaskWraithToolName(entry.toolName) === 'capability_invoke' &&
-      /\bname=canvas_eval\b/.test(entry.argsSummary))
+      summaryReferencesTool(entry.argsSummary, 'canvas_eval', 'name'))
   )
 }
 
@@ -357,7 +376,23 @@ function isCanvasFillTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean 
   return (
     canonicalTaskWraithToolName(entry.toolName) === 'canvas_fill' ||
     canonicalTaskWraithToolName(entry.effectiveToolName || '') === 'canvas_fill' ||
-    /\b(?:name|target)=canvas_fill\b/.test(entry.argsSummary)
+    summaryReferencesTool(entry.argsSummary, 'canvas_fill')
+  )
+}
+
+function isComputerUseTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean {
+  return (
+    canonicalTaskWraithToolName(entry.toolName) === 'computer_use' ||
+    canonicalTaskWraithToolName(entry.effectiveToolName || '') === 'computer_use' ||
+    summaryReferencesTool(entry.argsSummary, 'computer_use')
+  )
+}
+
+function isSensitiveCanvasTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean {
+  return (
+    isCanvasEvalTrajectoryEntry(entry) ||
+    isCanvasFillTrajectoryEntry(entry) ||
+    isComputerUseTrajectoryEntry(entry)
   )
 }
 
@@ -378,24 +413,32 @@ export function sanitizeOllamaTrajectoryEntryForPersist(
       ...(canvasEvalReceipt ? { canvasEvalReceipt } : {})
     }
   }
-  if (!isCanvasFillTrajectoryEntry(redactedEntry)) return redactedEntry
-  const route: CanvasFillMemoryInvocation['route'] =
-    canonicalTaskWraithToolName(redactedEntry.toolName) === 'canvas_fill'
+  const effectiveToolName = isCanvasFillTrajectoryEntry(redactedEntry)
+    ? 'canvas_fill'
+    : isComputerUseTrajectoryEntry(redactedEntry)
+      ? 'computer_use'
+      : null
+  if (!effectiveToolName) return redactedEntry
+  const route: MetadataOnlyCanvasMemoryInvocation['route'] =
+    canonicalTaskWraithToolName(redactedEntry.toolName) === effectiveToolName
       ? 'direct'
-      : /\bname=request_tool_permission\b/.test(redactedEntry.argsSummary)
+      : summaryReferencesTool(redactedEntry.argsSummary, 'request_tool_permission', 'name')
         ? 'gateway_permission_retry'
         : canonicalTaskWraithToolName(redactedEntry.toolName) === 'request_tool_permission'
           ? 'permission_retry'
           : 'gateway'
   return {
     toolName: redactedEntry.toolName,
-    effectiveToolName: 'canvas_fill',
-    argsSummary: canvasFillArgsSummary(redactedEntry.toolName, {
-      effectiveToolName: 'canvas_fill',
+    effectiveToolName,
+    argsSummary: metadataOnlyCanvasArgsSummary(redactedEntry.toolName, {
+      effectiveToolName,
       route
     }),
     ok: redactedEntry.ok,
-    resultSummary: CANVAS_FILL_RESULT_REDACTED
+    resultSummary:
+      effectiveToolName === 'canvas_fill'
+        ? CANVAS_FILL_RESULT_REDACTED
+        : COMPUTER_USE_RESULT_REDACTED
   }
 }
 
@@ -413,7 +456,9 @@ export function appendOllamaTrajectoryEntry(
   const safeArgs = redactPermissionOpportunityIdsForDurableStorage(entry.args)
   const safeResultSummary = redactPermissionOpportunityIdsForDurableStorage(entry.resultSummary)
   const canvasEvalInvocation = resolveCanvasEvalMemoryInvocation(entry.toolName, safeArgs)
-  const canvasFillInvocation = resolveCanvasFillMemoryInvocation(entry.toolName, safeArgs)
+  const metadataOnlyCanvasInvocation =
+    resolveMetadataOnlyCanvasMemoryInvocation(entry.toolName, safeArgs, 'canvas_fill') ??
+    resolveMetadataOnlyCanvasMemoryInvocation(entry.toolName, safeArgs, 'computer_use')
   const canvasEvalReceipt = canvasEvalInvocation
     ? canvasEvalReceiptForMemory(canvasEvalInvocation, entry.canvasEvalApproval)
     : undefined
@@ -428,13 +473,19 @@ export function appendOllamaTrajectoryEntry(
           resultSummary: CANVAS_EVAL_RESULT_REDACTED,
           ...(canvasEvalReceipt ? { canvasEvalReceipt } : {})
         }
-      : canvasFillInvocation
+      : metadataOnlyCanvasInvocation
         ? {
             toolName: entry.toolName,
-            effectiveToolName: canvasFillInvocation.effectiveToolName,
-            argsSummary: canvasFillArgsSummary(entry.toolName, canvasFillInvocation),
+            effectiveToolName: metadataOnlyCanvasInvocation.effectiveToolName,
+            argsSummary: metadataOnlyCanvasArgsSummary(
+              entry.toolName,
+              metadataOnlyCanvasInvocation
+            ),
             ok: entry.ok,
-            resultSummary: CANVAS_FILL_RESULT_REDACTED
+            resultSummary:
+              metadataOnlyCanvasInvocation.effectiveToolName === 'canvas_fill'
+                ? CANVAS_FILL_RESULT_REDACTED
+                : COMPUTER_USE_RESULT_REDACTED
           }
         : {
             toolName: entry.toolName,
@@ -538,9 +589,7 @@ export function pruneOllamaSessionMemoryForPersist(memory: OllamaSessionMemory):
   const trajectory = (memory.trajectory ?? [])
     .slice(-8)
     .map(sanitizeOllamaTrajectoryEntryForPersist)
-  const containsSensitiveCanvas = trajectory.some(
-    (entry) => isCanvasEvalTrajectoryEntry(entry) || isCanvasFillTrajectoryEntry(entry)
-  )
+  const containsSensitiveCanvas = (memory.trajectory ?? []).some(isSensitiveCanvasTrajectoryEntry)
   return {
     modelId: memory.modelId,
     updatedAt: memory.updatedAt,

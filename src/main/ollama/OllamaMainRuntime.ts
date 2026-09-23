@@ -16,6 +16,7 @@ import {
   type WorkspaceToolContext
 } from '../mcp/WorkspaceToolExecutors'
 import { isCapabilityGatewayToolName, type CapabilityGatewayToolName } from '../mcp/McpToolGateway'
+import { mcpToolResultImages } from '../mcp/McpToolResultImages'
 import {
   readScopedDirectory,
   readScopedRegularFile,
@@ -390,6 +391,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }
@@ -536,6 +538,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }
@@ -584,6 +587,7 @@ export function createOllamaMainRuntime(deps: OllamaMainRuntimeDependencies): Ol
         return {
           ok: result.isError !== true,
           output: result.text,
+          images: mcpToolResultImages(result.content),
           structuredContent: result.structuredContent,
           canvasEvalApproval: result.canvasEvalApproval
         }

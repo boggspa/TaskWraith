@@ -24,6 +24,7 @@ import {
   type CapabilityGatewayToolName
 } from '../mcp/McpToolGateway'
 import { isTaskWraithMcpToolName } from '../mcp/McpResultHelpers'
+import type { McpToolResultImage } from '../mcp/McpToolResultImages'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { hasUltraTaskDelegationAutoAllow } from '../UltraTaskDelegationConsent'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
@@ -460,6 +461,8 @@ export interface OllamaToolExecutionRequest {
 export interface OllamaToolExecutionResult {
   ok: boolean
   output: string
+  /** Transient vision input; never included in text summaries or session memory. */
+  images?: McpToolResultImage[]
   structuredContent?: unknown
   /** Out-of-band approval proof for privacy-safe durable canvas_eval memory. */
   canvasEvalApproval?: CanvasEvalApprovalReceipt
@@ -4276,6 +4279,7 @@ export async function runOllamaProvider(
     const requestedImagePaths = payload.imagePaths || []
     const exactModelSupportsVision = ollamaModelShowSupportsVision(launchPlan.modelManifest.show)
     let imageAttachmentWarning: string | null = null
+    let toolImageWarningSent = false
     let imageAttachmentBase64: string[] = []
     if (requestedImagePaths.length > 0) {
       if (exactModelSupportsVision) {
@@ -4318,6 +4322,7 @@ export async function runOllamaProvider(
     const memoryKey = launchPlan.memoryKey ?? undefined
     let sessionMemory = JSON.parse(JSON.stringify(launchPlan.sessionMemory)) as OllamaSessionMemory
     const messages = JSON.parse(JSON.stringify(launchPlan.openingMessages)) as OllamaChatMessage[]
+    const retainedToolImageMessages: OllamaChatMessage[] = []
     if (imageAttachmentBase64.length > 0) {
       const initialUserMessage = messages.find((message) => message.role === 'user')
       if (!initialUserMessage) {
@@ -4862,14 +4867,16 @@ export async function runOllamaProvider(
       if (preToolContent) {
         emitOllamaContent(unstreamedOllamaContent(preToolContent, turn.streamedContent))
       }
+      let nativeToolCallMessage: OllamaChatMessage | undefined
       if (usingNativeToolCalls) {
-        messages.push({
+        nativeToolCallMessage = {
           role: 'assistant',
           content: turn.content || '',
           tool_calls: toolRequests.map((request) => ({
             function: { name: request.toolName, arguments: request.arguments }
           }))
-        })
+        }
+        messages.push(nativeToolCallMessage)
       }
       // Reset the ceiling only when a tool actually executes (not when the
       // model just re-emits an arg-invalid call that fails pre-execution).
@@ -4945,8 +4952,10 @@ export async function runOllamaProvider(
           // a compression, re-serve the content) instead of re-dumping
           // identical output. The UI tool_result + trajectory below still
           // record the real read; only the model-facing follow-up changes.
+          // A fresh screenshot can change while its text metadata stays the
+          // same, so visual observations bypass this text-only comparison.
           repeat =
-            toolResult.ok || noActiveGoalToolResult
+            (toolResult.ok || noActiveGoalToolResult) && !toolResult.images?.length
               ? evaluateOllamaRepeatedToolCall(
                   toolCallSignatures,
                   toolRequest.toolName,
@@ -5089,6 +5098,29 @@ export async function runOllamaProvider(
           resultSummary: truncatedOutput,
           canvasEvalApproval: toolResult.canvasEvalApproval
         })
+        const toolImages = toolResult.images ?? []
+        const modelImages = exactModelSupportsVision ? toolImages.map((image) => image.data) : []
+        if (toolImages.length > 0 && !exactModelSupportsVision) {
+          const warning =
+            `${modelLabel}'s exact /api/show response did not advertise the vision capability. ` +
+            'Tool-result images were not sent to Ollama; only the tool text is available.'
+          modelFacingOutput = `${modelFacingOutput}\n\n${warning}`
+          if (!toolImageWarningSent) {
+            toolImageWarningSent = true
+            deps.sendAgentCompatLine(
+              event.sender,
+              'ollama',
+              {
+                type: 'provider_warning',
+                id: 'ollama-tool-images-no-vision',
+                severity: 'warning',
+                title: 'Ollama model does not advertise vision',
+                message: warning
+              },
+              route
+            )
+          }
+        }
         goalLifecycleStopContent = toolResult.ok
           ? ollamaGoalLifecycleStopContent(toolRequest.toolName)
           : null
@@ -5117,13 +5149,20 @@ export async function runOllamaProvider(
             toolTurnCount: sessionMemory.toolTurnCount
           })
         ) {
+          // Preserve the pending native call and any earlier results from this
+          // same batch. The next tool reply must not lose its assistant pairing.
+          const nativeBatchStart = nativeToolCallMessage
+            ? messages.indexOf(nativeToolCallMessage)
+            : -1
+          const currentNativeBatch = nativeBatchStart >= 0 ? messages.slice(nativeBatchStart) : []
           messages.splice(
             0,
             messages.length,
             ...(compressOllamaMessagesWithWorkingMemory(
               messages,
               sessionMemory.workingMemory
-            ) as OllamaChatMessage[])
+            ) as OllamaChatMessage[]),
+            ...currentNativeBatch
           )
           compressionEpoch += 1
         }
@@ -5133,6 +5172,7 @@ export async function runOllamaProvider(
           messages.push({
             role: 'tool',
             content: modelFacingOutput,
+            ...(modelImages.length ? { images: modelImages } : {}),
             tool_name: toolRequest.toolName
           })
         } else {
@@ -5142,6 +5182,7 @@ export async function runOllamaProvider(
           })
           messages.push({
             role: 'user',
+            ...(modelImages.length ? { images: modelImages } : {}),
             content:
               toolResult.validationError || identicalFailureStrategyNudge
                 ? modelFacingOutput
@@ -5161,6 +5202,15 @@ export async function runOllamaProvider(
                       currentRequestExcerpt: stickyRetryOptions.currentRequestExcerpt
                     })
           })
+        }
+        if (modelImages.length) {
+          // Image tokens are model-specific and absent from our text estimate.
+          // Bound replay to the latest two tool observations, retaining their
+          // message/call pairing and leaving initial user attachments intact.
+          retainedToolImageMessages.push(messages[messages.length - 1])
+          while (retainedToolImageMessages.length > 2) {
+            delete retainedToolImageMessages.shift()!.images
+          }
         }
       }
       if (productiveToolRanThisTurn) {
