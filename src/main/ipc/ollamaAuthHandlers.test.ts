@@ -1,5 +1,7 @@
+import ts from 'typescript'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import { normalizeOllamaWebSessionInput, registerOllamaAuthHandlers } from './ollamaAuthHandlers'
 
 vi.mock('electron', () => ({
@@ -455,5 +457,36 @@ describe('normalizeOllamaWebSessionInput', () => {
     expect(normalizeOllamaWebSessionInput('   ')).toBeNull()
     expect(normalizeOllamaWebSessionInput('Cookie:   ')).toBeNull()
     expect(normalizeOllamaWebSessionInput(42)).toBeNull()
+  })
+})
+
+// The handler announcing a changed record is pinned above; this is the other
+// half. Without it the roster stays frozen on the pre-sign-in answer until an
+// unrelated settings change happens to restart discovery. index.ts cannot be
+// imported under test, so the wiring is pinned on its syntax tree.
+describe('remembered CLI sign-in wiring in index.ts', () => {
+  const probe = new MainSourceProbe('index.ts', new URL('../index.ts', import.meta.url))
+
+  it('restarts roster discovery and the remote model refresh when the record changes', () => {
+    const calls = probe.callsTo(probe.source, 'registerOllamaAuthHandlers')
+    expect(calls).toHaveLength(1)
+    const deps = calls[0].arguments[0]
+    if (!deps || !ts.isObjectLiteralExpression(deps)) {
+      throw new Error('registerOllamaAuthHandlers is no longer handed an object literal')
+    }
+    const announce = deps.properties.find(
+      (property): property is ts.PropertyAssignment =>
+        ts.isPropertyAssignment(property) &&
+        property.name.getText(probe.source) === 'onCliSignInChanged'
+    )
+    if (!announce) throw new Error('index.ts no longer wires onCliSignInChanged')
+
+    const compact = (call: ts.CallExpression): string => probe.text(call).replace(/\s+/g, '')
+    expect(probe.callsTo(announce.initializer, 'start').map(compact)).toEqual([
+      'managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())'
+    ])
+    expect(
+      probe.callsTo(announce.initializer, 'requestRemoteProviderModelsRefresh').map(compact)
+    ).toEqual(['requestRemoteProviderModelsRefresh()'])
   })
 })
