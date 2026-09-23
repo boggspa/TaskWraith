@@ -22,6 +22,7 @@ import {
   TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
   TASKWRAITH_DESKTOP_HOST_CLIENT_ID
 } from '../../shared/hostProtocol'
+import { releaseExternalHostBootHold } from './HostExternalBootHold'
 import { HostProjectionClient, HostProjectionTransportError } from './HostProjectionClient'
 
 export type HostProjectionSnapshotResult =
@@ -193,6 +194,9 @@ export function createHostProjectionBroker(
           throw new Error('Host projection connection was superseded')
         }
         client = next
+        // One of main's own lasting clients is authenticated and holding the
+        // Host, so the spawner's boot hold has done its job.
+        releaseExternalHostBootHold()
         return next
       } catch (error) {
         if (client !== next) closeClient(next)

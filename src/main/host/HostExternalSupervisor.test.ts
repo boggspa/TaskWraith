@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ChildProcess } from 'node:child_process'
 import type { HostBootstrapWelcome } from '../../shared/hostProtocol'
+import { hasExternalHostBootHold, releaseExternalHostBootHold } from './HostExternalBootHold'
 import { HostExternalProductionModeError, HostExternalSupervisor } from './HostExternalSupervisor'
 
 const welcome = {
@@ -271,5 +272,172 @@ describe('HostExternalSupervisor', () => {
     })
     expect(order).toEqual(['shutdown', 'spawn'])
     expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  /**
+   * S1a review F2: the Host must stay held from readiness until main's own
+   * lasting client authenticates, or a slow boot outlasts its last-lease
+   * grace. The probe connection behind the returned result is that hold.
+   */
+  describe('boot hold', () => {
+    afterEach(() => {
+      releaseExternalHostBootHold()
+    })
+
+    const launch = {
+      executable: '/node',
+      args: [],
+      cwd: '/',
+      env: {},
+      payloadVersion: CURRENT_PAYLOAD
+    }
+
+    function fakeChild(pid: number): ChildProcess {
+      return Object.assign(new EventEmitter(), { pid, unref: vi.fn() }) as unknown as ChildProcess
+    }
+
+    it('holds a launched Host by its final probe until main lets go, and closes every other probe', async () => {
+      const stale = { close: vi.fn() }
+      const ready = { close: vi.fn() }
+      const probe = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD, connection: stale })
+        .mockResolvedValueOnce({ welcome, payloadVersion: CURRENT_PAYLOAD, connection: ready })
+      const supervisor = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe,
+        resolveLaunch: async () => launch,
+        spawn: vi.fn(() => fakeChild(55)),
+        delay: async () => {}
+      })
+
+      await expect(supervisor.ensureAvailable()).resolves.toEqual({
+        kind: 'launched',
+        pid: 55,
+        welcome
+      })
+      expect(probe).toHaveBeenCalledTimes(3)
+      expect(stale.close).toHaveBeenCalledTimes(1)
+      expect(ready.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold()).toBe(true)
+
+      // Main's lasting client authenticated: the hold goes, once.
+      expect(releaseExternalHostBootHold()).toBe(true)
+      expect(ready.close).toHaveBeenCalledTimes(1)
+      supervisor.close()
+      expect(ready.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('holds an existing Host it attaches to until it closes, and never one it replaces', async () => {
+      const current = { close: vi.fn() }
+      const attached = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe: async () => ({ welcome, payloadVersion: CURRENT_PAYLOAD, connection: current }),
+        resolveLaunch: async () => launch
+      })
+      await expect(attached.ensureAvailable()).resolves.toEqual({ kind: 'existing', welcome })
+      expect(current.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold()).toBe(true)
+      // Teardown before main's client ever took over lets the hold go.
+      attached.close()
+      expect(current.close).toHaveBeenCalledTimes(1)
+      expect(hasExternalHostBootHold()).toBe(false)
+
+      const order: string[] = []
+      const old = { close: vi.fn(() => order.push('close old probe')) }
+      const replacement = { close: vi.fn() }
+      const replacing = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe: vi
+          .fn()
+          .mockResolvedValueOnce({ welcome, payloadVersion: OLD_PAYLOAD, connection: old })
+          .mockResolvedValue({ welcome, payloadVersion: CURRENT_PAYLOAD, connection: replacement }),
+        resolveLaunch: async () => launch,
+        shutdownExisting: async () => {
+          order.push('shutdown')
+        },
+        spawn: vi.fn(() => {
+          order.push('spawn')
+          return fakeChild(74)
+        }),
+        delay: async () => {}
+      })
+      await expect(replacing.ensureAvailable()).resolves.toMatchObject({ kind: 'launched' })
+      expect(order).toEqual(['close old probe', 'shutdown', 'spawn'])
+      expect(replacement.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold()).toBe(true)
+      replacing.close()
+      expect(replacement.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('lets go of only its own hold when it closes', async () => {
+      const held = { close: vi.fn() }
+      const holder = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe: async () => ({ welcome, connection: held }),
+        resolveLaunch: async () => null
+      })
+      await holder.ensureAvailable()
+      new HostExternalSupervisor({ profilePath: PROFILE, resolveLaunch: async () => null }).close()
+      expect(held.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold()).toBe(true)
+      holder.close()
+      expect(held.close).toHaveBeenCalledTimes(1)
+    })
+
+    it('closes the probe on every path that fails, and holds nothing', async () => {
+      const appMode = { close: vi.fn() }
+      await expect(
+        new HostExternalSupervisor({
+          profilePath: PROFILE,
+          probe: async () => ({
+            welcome: { ...welcome, hostVersion: '1.9.6' },
+            connection: appMode
+          }),
+          resolveLaunch: async () => null
+        }).ensureAvailable()
+      ).rejects.toBeInstanceOf(HostExternalProductionModeError)
+      expect(appMode.close).toHaveBeenCalledTimes(1)
+
+      const unresolved = { close: vi.fn() }
+      await expect(
+        new HostExternalSupervisor({
+          profilePath: PROFILE,
+          probe: async () => ({ welcome, connection: unresolved }),
+          resolveLaunch: async () => {
+            throw new Error('resolver failed')
+          }
+        }).ensureAvailable()
+      ).rejects.toThrow('resolver failed')
+      expect(unresolved.close).toHaveBeenCalledTimes(1)
+
+      // Closed while the launched Host's ready probe was in flight.
+      let answer: ((value: unknown) => void) | undefined
+      const late = { close: vi.fn() }
+      const probe = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              answer = resolve
+            })
+        )
+      const closing = new HostExternalSupervisor({
+        profilePath: PROFILE,
+        probe,
+        resolveLaunch: async () => launch,
+        spawn: vi.fn(() => fakeChild(56)),
+        delay: async () => {}
+      })
+      const pending = closing.ensureAvailable()
+      await vi.waitFor(() => expect(answer).toBeTypeOf('function'))
+      closing.close()
+      answer?.({ welcome, payloadVersion: CURRENT_PAYLOAD, connection: late })
+      await expect(pending).rejects.toThrow('closed')
+      expect(late.close).toHaveBeenCalledTimes(1)
+      expect(hasExternalHostBootHold()).toBe(false)
+    })
   })
 })

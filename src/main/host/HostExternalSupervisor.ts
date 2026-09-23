@@ -9,6 +9,11 @@ import {
 } from '../../host-client/HostProjectionClient'
 import type { HostCapability, HostBootstrapWelcome } from '../../shared/hostProtocol'
 import { HostShutdownClient } from '../../host-client/HostShutdownClient'
+import {
+  holdExternalHostForBoot,
+  releaseExternalHostBootHold,
+  type HostExternalHeldConnection
+} from './HostExternalBootHold'
 import type { HostExternalLaunchCommand } from './HostExternalLaunchResolver'
 
 /** The Host used to be spawned with stdio:'ignore', so a refusal to start was
@@ -71,6 +76,12 @@ export interface HostExternalSupervisorOptions {
 export interface HostExternalProbeResult {
   readonly welcome: HostBootstrapWelcome
   readonly payloadVersion?: string
+  /**
+   * The probe's still-open authenticated connection. The supervisor keeps the
+   * one behind the result it returns as the boot hold (`HostExternalBootHold`)
+   * and closes every other.
+   */
+  readonly connection?: HostExternalHeldConnection
 }
 
 function assertProduction(welcome: HostBootstrapWelcome): void {
@@ -106,9 +117,20 @@ async function defaultProbe(
   try {
     const welcome = await client.connect()
     const payloadVersion = client.discoveryProcessIdentity?.payloadVersion
-    return { welcome, ...(payloadVersion ? { payloadVersion } : {}) }
-  } finally {
+    // Left open: the supervisor decides whether this connection holds the
+    // Host across main's boot or closes now.
+    return { welcome, ...(payloadVersion ? { payloadVersion } : {}), connection: client }
+  } catch (error) {
     client.close()
+    throw error
+  }
+}
+
+function closeProbe(result: HostExternalProbeResult | null): void {
+  try {
+    result?.connection?.close()
+  } catch {
+    // A probe connection that cannot close is already gone.
   }
 }
 
@@ -156,6 +178,9 @@ export class HostExternalSupervisor {
       this.generation += 1
       this.statusValue = 'closed'
       this.signalClose()
+      // Teardown, an explicit stop or a failed preparation: this supervisor's
+      // hold on the Host (if main's client never took over) goes with it.
+      releaseExternalHostBootHold(this)
     }
   }
 
@@ -170,8 +195,20 @@ export class HostExternalSupervisor {
     const probeTimeout = this.options.probeTimeoutMs ?? 1_500
     const probeProduction = async (): Promise<HostExternalProbeResult> => {
       const result = normalizeProbeResult(await probe(probeTimeout))
-      assertProduction(result.welcome)
+      try {
+        assertProduction(result.welcome)
+      } catch (error) {
+        closeProbe(result)
+        throw error
+      }
       return result
+    }
+    // The connection behind the result this supervisor returns stays open:
+    // the Host must not start its last-lease grace before main's own client
+    // exists, and main's first socket waits for all of main's synchronous
+    // start-up. Every other probe connection closes on its own path.
+    const holdForBoot = (result: HostExternalProbeResult): void => {
+      if (result.connection) holdExternalHostForBoot(this, result.connection)
     }
     this.statusValue = 'probing'
     let existing: HostExternalProbeResult | null = null
@@ -186,16 +223,20 @@ export class HostExternalSupervisor {
     let command: HostExternalLaunchCommand | null
     try {
       command = await this.options.resolveLaunch()
+      assertOpen()
     } catch (error) {
+      closeProbe(existing)
       if (!this.closed) this.statusValue = 'failed'
       throw error
     }
-    assertOpen()
     if (existing && (!command || existing.payloadVersion === command.payloadVersion)) {
       this.statusValue = 'attached-existing'
+      holdForBoot(existing)
       return { kind: 'existing', welcome: existing.welcome }
     }
     if (existing) {
+      // Never hold a Host this supervisor is about to replace.
+      closeProbe(existing)
       this.statusValue = 'restarting'
       try {
         await (
@@ -296,14 +337,20 @@ export class HostExternalSupervisor {
             withStderr(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
           )
         }
+        let ready: HostExternalProbeResult | null = null
         try {
-          const ready = await probeProduction()
-          if (ready.payloadVersion !== command.payloadVersion) continue
+          ready = await probeProduction()
+          if (ready.payloadVersion !== command.payloadVersion) {
+            closeProbe(ready)
+            continue
+          }
           assertOpen()
           this.statusValue = 'attached-launched'
           drainStderr()
+          holdForBoot(ready)
           return { kind: 'launched', pid: child.pid ?? null, welcome: ready.welcome }
         } catch (error) {
+          closeProbe(ready)
           if (error instanceof HostProjectionIncompatibleProtocolError) {
             this.statusValue = 'failed'
             throw error

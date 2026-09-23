@@ -7,6 +7,11 @@ import {
   createEmptyHostSnapshot,
   type HostCommand
 } from '../../shared/hostProtocol'
+import {
+  hasExternalHostBootHold,
+  holdExternalHostForBoot,
+  releaseExternalHostBootHold
+} from './HostExternalBootHold'
 import { createHostProjectionBroker, type HostProjectionClientPort } from './HostProjectionBroker'
 import { HostProjectionTransportError } from './HostProjectionClient'
 import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
@@ -323,5 +328,50 @@ describe('HostProjectionBroker', () => {
     expect(client.close).not.toHaveBeenCalled()
     await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
     expect(createClient).toHaveBeenCalledTimes(1)
+  })
+
+  /**
+   * S1a review F2: the spawner's probe holds the Host across main's boot, and
+   * main's own lasting client takes over the moment it authenticates — not
+   * before, or a slow boot could still outlast the Host's last-lease grace.
+   */
+  it('releases the boot hold once its own client authenticates, and never on a failed connect', async () => {
+    const held = { close: vi.fn() }
+    holdExternalHostForBoot({}, held)
+    try {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+      const port = (connect: () => Promise<unknown>): HostProjectionClientPort => ({
+        connect: vi.fn(connect),
+        getSnapshot: vi.fn(async () => ({ snapshot })),
+        getDeltasSince: vi.fn(),
+        submitCommand: vi.fn(),
+        lookupReceipt: vi.fn(),
+        close: vi.fn()
+      })
+      const createClient = vi
+        .fn()
+        .mockReturnValueOnce(
+          port(async () => {
+            throw new Error('Timed out connecting to the TaskWraith Host.')
+          })
+        )
+        .mockReturnValueOnce(port(async () => undefined))
+      const broker = createHostProjectionBroker({
+        userDataPath: '/tmp/taskwraith-host-broker-test',
+        appVersion: 'test',
+        createClient
+      })
+
+      await expect(broker.snapshot()).resolves.toMatchObject({ ok: false })
+      expect(held.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold()).toBe(true)
+
+      await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+      expect(held.close).toHaveBeenCalledTimes(1)
+      expect(hasExternalHostBootHold()).toBe(false)
+      broker.close()
+    } finally {
+      releaseExternalHostBootHold()
+    }
   })
 })
