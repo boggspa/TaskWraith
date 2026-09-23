@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  BIRTH_IDENTITY_VERDICT_MEMO_MS,
+  BIRTH_IDENTITY_REVERIFY_MS,
   HOST_PROFILE_AUTHORITY_LEASE_FILENAME,
   HOST_PROFILE_AUTHORITY_MAX_RECORD_BYTES,
   HOST_PROFILE_AUTHORITY_RECLAIM_GUARD_FILENAME,
@@ -474,6 +474,29 @@ describe('HostProfileAuthorityLease birth identity', () => {
     expect(port.current.processStartIdentity).toMatch(/^node:778:[0-9a-f]+$/)
   })
 
+  it('observes itself again after a failed first observation instead of keeping the nonce for life', () => {
+    const results: ProcessBirthObservation[] = [
+      { state: 'identity_unavailable' },
+      live('c'.repeat(64))
+    ]
+    const observeSelf = vi.fn(
+      (): ProcessBirthObservation => results.shift() ?? { state: 'identity_unavailable' }
+    )
+    const port = createBirthIdentityProcessPort({ pid: 779, observeSelf })
+    const legacy = port.current
+    expect(legacy.processStartIdentity).toMatch(/^node:779:[0-9a-f]+$/)
+    const recovered = port.current
+    expect(recovered).toMatchObject({ pid: 779, processStartIdentity: 'c'.repeat(64) })
+    expect(recovered.processStartedAt).toBe(legacy.processStartedAt)
+    expect(port.current).toBe(recovered)
+    expect(observeSelf).toHaveBeenCalledTimes(2)
+    // A lease taken after the recovery carries the birth digest.
+    const profile = createProfile()
+    const lease = HostProfileAuthorityLease.acquire({ profilePath: profile, processPort: port })
+    expect(lease.owner.processStartIdentity).toBe('c'.repeat(64))
+    expect(lease.release()).toBe(true)
+  })
+
   it('reclaims a lease whose pid was reused', () => {
     const profile = createProfile()
     const bornFirst = 'a'.repeat(64)
@@ -529,7 +552,7 @@ describe('HostProfileAuthorityLease birth identity', () => {
     expect(incumbent.release()).toBe(true)
   })
 
-  it('never reclaims an owner whose birth identity is unavailable', () => {
+  it('degrades an owner whose birth cannot be observed to pid existence and never reclaims one that exists', () => {
     const profile = createProfile()
     const incumbent = HostProfileAuthorityLease.acquire({
       profilePath: profile,
@@ -539,22 +562,55 @@ describe('HostProfileAuthorityLease birth identity', () => {
       })
     })
     const raw = readFileSync(ownerPath(profile), 'utf8')
-    let thrown: unknown
-    try {
-      HostProfileAuthorityLease.acquire({
-        profilePath: profile,
-        processPort: createBirthIdentityProcessPort({
-          pid: 202,
-          observeSelf: () => live('d'.repeat(64)),
-          observe: () => ({ state: 'identity_unavailable' })
-        })
+    for (const [error, expected] of [
+      [null, 'live'],
+      ['EPERM', 'unknown']
+    ] as const) {
+      const processKill = vi.fn(() => {
+        if (error) throw Object.assign(new Error(error), { code: error })
       })
-    } catch (error) {
-      thrown = error
+      let thrown: unknown
+      try {
+        HostProfileAuthorityLease.acquire({
+          profilePath: profile,
+          processPort: createBirthIdentityProcessPort({
+            pid: 202,
+            observeSelf: () => live('d'.repeat(64)),
+            observe: () => ({ state: 'identity_unavailable' }),
+            processKill
+          })
+        })
+      } catch (caught) {
+        thrown = caught
+      }
+      expect(thrown).toBeInstanceOf(HostProfileAuthorityLeaseBusyError)
+      expect((thrown as HostProfileAuthorityLeaseBusyError).liveness).toBe(expected)
+      expect(processKill).toHaveBeenCalledWith(101, 0)
+      expect(readFileSync(ownerPath(profile), 'utf8')).toBe(raw)
     }
-    expect(thrown).toBeInstanceOf(HostProfileAuthorityLeaseBusyError)
-    expect((thrown as HostProfileAuthorityLeaseBusyError).liveness).toBe('unknown')
-    expect(readFileSync(ownerPath(profile), 'utf8')).toBe(raw)
+    expect(incumbent.release()).toBe(true)
+  })
+
+  it('peeks a running owner live when its birth cannot be observed, so peek consumers never refuse it', () => {
+    const profile = createProfile()
+    const incumbent = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({
+        pid: 101,
+        observeSelf: () => live('a'.repeat(64))
+      })
+    })
+    // `ps` failing (EAGAIN at the process limit, the 2 s timeout) is what the
+    // history worker and Desktop writer arbitration used to see as `unknown`.
+    const blind = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => live('d'.repeat(64)),
+      observe: () => ({ state: 'identity_unavailable' }),
+      processKill: () => undefined
+    })
+    expect(
+      HostProfileAuthorityLease.peek({ profilePath: profile, processPort: blind })
+    ).toMatchObject({ kind: 'live', owner: { pid: 101 } })
     expect(incumbent.release()).toBe(true)
   })
 
@@ -642,30 +698,87 @@ describe('HostProfileAuthorityLease birth identity', () => {
     expect(observe).toHaveBeenCalledWith(202)
   })
 
-  it('memoizes a positive digest verdict for the memo window only', () => {
+  it('observes an owner birth once per re-verify interval and trusts kill(0) in between', () => {
     let clock = 1_000_000
     const born = 'a'.repeat(64)
     const observe = vi.fn((): ProcessBirthObservation => live(born))
+    const processKill = vi.fn()
     const port = createBirthIdentityProcessPort({
       pid: 202,
       observeSelf: () => live('d'.repeat(64)),
       observe,
+      processKill,
       now: () => clock
     })
     const owner = { pid: 101, processStartIdentity: born, processStartedAt: STARTED_AT }
     expect(port.inspectOwner(owner)).toBe('live')
-    clock += BIRTH_IDENTITY_VERDICT_MEMO_MS - 1
-    expect(port.inspectOwner(owner)).toBe('live')
     expect(observe).toHaveBeenCalledTimes(1)
-    clock += 1
+    for (let check = 0; check < 100; check += 1) {
+      clock += Math.floor(BIRTH_IDENTITY_REVERIFY_MS / 101)
+      expect(port.inspectOwner(owner)).toBe('live')
+    }
+    expect(observe).toHaveBeenCalledTimes(1)
+    expect(processKill).toHaveBeenCalledTimes(100)
+    clock = 1_000_000 + BIRTH_IDENTITY_REVERIFY_MS
     expect(port.inspectOwner(owner)).toBe('live')
     expect(observe).toHaveBeenCalledTimes(2)
-    // A negative verdict is never memoized: the next call observes again.
-    observe.mockImplementationOnce(() => ({ state: 'identity_unavailable' }))
-    clock += BIRTH_IDENTITY_VERDICT_MEMO_MS
-    expect(port.inspectOwner(owner)).toBe('unknown')
+  })
+
+  it('reads a trusted owner that died as stale at once, and a record proven stale stays stale', () => {
+    let clock = 1_000_000
+    const born = 'a'.repeat(64)
+    const observe = vi.fn((): ProcessBirthObservation => live(born))
+    let alive = true
+    const port = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => live('d'.repeat(64)),
+      observe,
+      processKill: () => {
+        if (!alive) throw Object.assign(new Error('ESRCH'), { code: 'ESRCH' })
+      },
+      now: () => clock
+    })
+    const owner = { pid: 101, processStartIdentity: born, processStartedAt: STARTED_AT }
     expect(port.inspectOwner(owner)).toBe('live')
-    expect(observe).toHaveBeenCalledTimes(4)
+    alive = false
+    clock += 1
+    expect(port.inspectOwner(owner)).toBe('stale')
+    // The pid comes back as another process inside the interval: the record
+    // it once proved stale is never revived.
+    alive = true
+    clock += 1
+    expect(port.inspectOwner(owner)).toBe('stale')
+    expect(observe).toHaveBeenCalledTimes(1)
+    // A birth mismatch is final for that record too, without a second `ps`.
+    const reused = { pid: 303, processStartIdentity: 'e'.repeat(64), processStartedAt: STARTED_AT }
+    expect(port.inspectOwner(reused)).toBe('stale')
+    expect(port.inspectOwner(reused)).toBe('stale')
+    expect(observe).toHaveBeenCalledTimes(2)
+  })
+
+  it('degrades to pid existence when the birth cannot be observed, and never re-observes inside the interval', () => {
+    let clock = 1_000_000
+    const born = 'a'.repeat(64)
+    const observe = vi.fn((): ProcessBirthObservation => ({ state: 'identity_unavailable' }))
+    const processKill = vi.fn()
+    const port = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => live('d'.repeat(64)),
+      observe,
+      processKill,
+      now: () => clock
+    })
+    const owner = { pid: 101, processStartIdentity: born, processStartedAt: STARTED_AT }
+    for (let check = 0; check < 50; check += 1) {
+      expect(port.inspectOwner(owner)).toBe('live')
+      clock += 1_000
+    }
+    expect(observe).toHaveBeenCalledTimes(1)
+    expect(processKill).toHaveBeenCalledTimes(50)
+    clock = 1_000_000 + BIRTH_IDENTITY_REVERIFY_MS
+    observe.mockImplementationOnce(() => live(born))
+    expect(port.inspectOwner(owner)).toBe('live')
+    expect(observe).toHaveBeenCalledTimes(2)
   })
 })
 

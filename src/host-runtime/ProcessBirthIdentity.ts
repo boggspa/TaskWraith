@@ -569,16 +569,47 @@ export function matchProcessBirth(
   return 'unverifiable'
 }
 
-let currentObservation: ProcessBirthObservation | null = null
+/**
+ * A failed self observation is not retried sooner than this: the failure may
+ * have been the full exec timeout, and callers sit on synchronous paths.
+ */
+export const CURRENT_PROCESS_BIRTH_RETRY_MS = 5_000
+
+export interface CurrentProcessBirthIdentityOptions {
+  readonly observe?: () => ProcessBirthObservation
+  readonly now?: () => number
+  readonly retryMs?: number
+}
 
 /**
  * This process's own birth identity, observed on first use (never at module
- * load: Electron main imports the lease module that calls this). Only a live
- * observation is cached; a transient failure is observed again next time.
+ * load: Electron main imports the lease module that calls this). A live
+ * observation is cached for the process's life; a failure is answered from
+ * memory for CURRENT_PROCESS_BIRTH_RETRY_MS and then observed again, so a
+ * transient failure neither sticks nor runs a `ps` per call.
  */
-export function currentProcessBirthIdentity(): ProcessBirthObservation {
-  if (currentObservation) return currentObservation
-  const observation = observeProcessBirthIdentitySync(process.pid)
-  if (observation.state === 'live') currentObservation = observation
-  return observation
+export function createCurrentProcessBirthIdentity(
+  options: CurrentProcessBirthIdentityOptions = {}
+): () => ProcessBirthObservation {
+  const observe = options.observe ?? (() => observeProcessBirthIdentitySync(process.pid))
+  const now = options.now ?? (() => Date.now())
+  const retryMs = options.retryMs ?? CURRENT_PROCESS_BIRTH_RETRY_MS
+  let observed: ProcessBirthObservation | null = null
+  let failure: { readonly at: number; readonly observation: ProcessBirthObservation } | null = null
+  return () => {
+    if (observed) return observed
+    const at = now()
+    if (failure && at >= failure.at && at - failure.at < retryMs) return failure.observation
+    const observation = observe()
+    if (observation.state === 'live') {
+      observed = observation
+      failure = null
+    } else {
+      failure = { at, observation }
+    }
+    return observation
+  }
 }
+
+export const currentProcessBirthIdentity: () => ProcessBirthObservation =
+  createCurrentProcessBirthIdentity()

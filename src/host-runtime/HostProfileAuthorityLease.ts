@@ -63,7 +63,9 @@ export interface HostProfileAuthorityProcessIdentity {
  * different moment is a reused pid and reads as `stale`. A record written by
  * a pre-birth-identity Host carries a per-process nonce nobody can re-derive,
  * so for those the port keeps the older conservative rule: a pid that exists
- * is live. A launcher may still inject its own port.
+ * is live. The same rule answers whenever a birth cannot be observed, and
+ * between the port's periodic birth checks (createBirthIdentityProcessPort).
+ * A launcher may still inject its own port.
  */
 export interface HostProfileAuthorityProcessPort {
   readonly current: HostProfileAuthorityProcessIdentity
@@ -187,18 +189,25 @@ export interface BirthIdentityProcessPortOptions {
   readonly pid?: number
   /** Observation of an arbitrary pid; defaults to the synchronous platform observer. */
   readonly observe?: (pid: number) => ProcessBirthObservation
-  /** Observation of this process; defaults to the lazily cached self observation. */
+  /** Observation of this process; defaults to the cached self observation. */
   readonly observeSelf?: () => ProcessBirthObservation
   readonly processKill?: (pid: number, signal: 0) => void
   readonly now?: () => number
-  /** How long a positive digest verdict is reused before the pid is observed again. */
-  readonly memoTtlMs?: number
+  /** How long an owner's observed birth is trusted on pid existence alone. */
+  readonly reverifyMs?: number
 }
 
-/** Memo window for repeated liveness checks of one digest owner (peek runs on hot paths). */
-export const BIRTH_IDENTITY_VERDICT_MEMO_MS = 1_000
-/** Distinct owners a port remembers; a profile has one owner, so this is only a bound. */
-const BIRTH_IDENTITY_VERDICT_MEMO_ENTRIES = 16
+/**
+ * How long an owner's observed birth is trusted on `kill(pid, 0)` alone before
+ * it is observed again. The observation is a synchronous `ps` (PowerShell on
+ * Windows) and peek runs on hot paths — the history worker checks its source
+ * authority several times per flushed file — so it runs at most once per
+ * owner record per interval. In between, only an owner that died and whose
+ * pid was reused inside the interval can be misread, and only as alive.
+ */
+export const BIRTH_IDENTITY_REVERIFY_MS = 60_000
+/** Distinct owner records a port remembers; a profile has one owner, so this is only a bound. */
+const BIRTH_IDENTITY_REMEMBERED_OWNERS = 16
 
 function legacyProcessStartIdentity(pid: number): string {
   return `node:${pid}:${process.hrtime.bigint().toString(16)}`
@@ -218,45 +227,79 @@ function pidExistenceLiveness(
 }
 
 /**
+ * What a port last learned about one owner record (pid + birth digest):
+ * `verified` (alive with that birth), `stale` (dead, or alive with another
+ * birth: final for that record), or `unobservable` (the birth could not be
+ * read, so pid existence decides).
+ */
+type OwnerFinding = { readonly kind: 'verified' | 'stale' | 'unobservable'; readonly at: number }
+
+/**
  * Process port whose `current` identity is this process's birth digest and
- * whose owner inspection re-derives the owner's digest from its pid.
+ * whose owner inspection binds an owner's pid to its recorded birth digest.
  *
  * `current` is computed on first access, never at module load: Electron main
  * imports this module, and the observation shells out to `ps` on darwin.
  * When the birth cannot be observed the current identity falls back to the
- * legacy nonce so acquisition still succeeds; a later reader then treats the
- * record under the legacy pid-existence rule.
+ * legacy nonce so acquisition still succeeds, and the next access observes
+ * again (the default self observer rate-limits its own retries): one failed
+ * first observation does not cost the process birth-bound reclaim for life.
  *
  * An owner record naming this process's own pid is judged against the cached
- * self observation without shelling out (the history worker peeks its own
- * Host's record on every source-authority check); a positive verdict for any
- * other owner is memoized for BIRTH_IDENTITY_VERDICT_MEMO_MS. A negative or
- * indeterminate verdict is never memoized, so a memo can only delay a reclaim,
- * never cause one.
+ * self observation without shelling out. Any other digest owner's birth is
+ * observed once per record and then trusted on `kill(pid, 0)` alone for
+ * BIRTH_IDENTITY_REVERIFY_MS; ESRCH is still stale at once. When the birth
+ * cannot be observed — `ps` failed, timed out or was refused — the verdict
+ * degrades to that same pid-existence rule, never to `unknown`: a peek
+ * consumer must not refuse a Host that is plainly running, and acquisition
+ * still never reclaims a pid that exists. A record proven stale stays stale;
+ * nothing here can turn a live owner stale.
  */
 export function createBirthIdentityProcessPort(
   options: BirthIdentityProcessPortOptions = {}
 ): HostProfileAuthorityProcessPort {
   const pid = options.pid ?? process.pid
   const observe = options.observe ?? observeProcessBirthIdentitySync
-  const observeSelf = options.observeSelf ?? currentProcessBirthIdentity
+  const observeSelf = options.observeSelf ?? (() => currentProcessBirthIdentity())
   const processKill = options.processKill ?? ((target, signal) => process.kill(target, signal))
   const now = options.now ?? (() => Date.now())
-  const memoTtlMs = options.memoTtlMs ?? BIRTH_IDENTITY_VERDICT_MEMO_MS
+  const reverifyMs = options.reverifyMs ?? BIRTH_IDENTITY_REVERIFY_MS
   let current: HostProfileAuthorityProcessIdentity | null = null
-  const memo = new Map<string, { readonly verdict: 'live'; readonly observedAt: number }>()
+  let currentIsLegacy = false
+  const findings = new Map<string, OwnerFinding>()
+  const remember = (key: string, kind: OwnerFinding['kind'], at: number): void => {
+    findings.delete(key)
+    for (const [otherKey, finding] of findings) {
+      if (at - finding.at >= reverifyMs || at < finding.at) findings.delete(otherKey)
+    }
+    if (findings.size >= BIRTH_IDENTITY_REMEMBERED_OWNERS) {
+      const oldest = findings.keys().next()
+      if (!oldest.done) findings.delete(oldest.value)
+    }
+    findings.set(key, { kind, at })
+  }
   return {
     get current(): HostProfileAuthorityProcessIdentity {
-      if (!current) {
-        const self = observeSelf()
+      if (current && !currentIsLegacy) return current
+      const self = observeSelf()
+      if (self.state === 'live') {
         current = Object.freeze({
           pid,
-          processStartIdentity:
-            self.state === 'live' ? self.birthIdentity : legacyProcessStartIdentity(pid),
+          processStartIdentity: self.birthIdentity,
+          processStartedAt:
+            current?.processStartedAt ??
+            new Date(Date.now() - Math.floor(process.uptime() * 1_000)).toISOString()
+        })
+        currentIsLegacy = false
+      } else if (!current) {
+        current = Object.freeze({
+          pid,
+          processStartIdentity: legacyProcessStartIdentity(pid),
           processStartedAt: new Date(
             Date.now() - Math.floor(process.uptime() * 1_000)
           ).toISOString()
         })
+        currentIsLegacy = true
       }
       return current
     },
@@ -273,25 +316,28 @@ export function createBirthIdentityProcessPort(
         }
       }
       const key = `${owner.pid}:${owner.processStartIdentity}`
-      const cached = memo.get(key)
       const at = now()
-      if (cached && at - cached.observedAt >= 0 && at - cached.observedAt < memoTtlMs) {
-        return cached.verdict
+      const known = findings.get(key)
+      if (known && at >= known.at && at - known.at < reverifyMs) {
+        if (known.kind === 'stale') return 'stale'
+        const liveness = pidExistenceLiveness(processKill, owner.pid)
+        if (liveness === 'stale') remember(key, 'stale', at)
+        return liveness
       }
-      memo.delete(key)
       const observation = observe(owner.pid)
-      if (observation.state === 'dead') return 'stale'
-      if (observation.state !== 'live') return 'unknown'
-      if (observation.birthIdentity !== owner.processStartIdentity) return 'stale'
-      for (const [staleKey, entry] of memo) {
-        if (at - entry.observedAt >= memoTtlMs || at < entry.observedAt) memo.delete(staleKey)
+      if (
+        observation.state === 'dead' ||
+        (observation.state === 'live' && observation.birthIdentity !== owner.processStartIdentity)
+      ) {
+        remember(key, 'stale', at)
+        return 'stale'
       }
-      if (memo.size >= BIRTH_IDENTITY_VERDICT_MEMO_ENTRIES) {
-        const oldest = memo.keys().next()
-        if (!oldest.done) memo.delete(oldest.value)
+      if (observation.state === 'live') {
+        remember(key, 'verified', at)
+        return 'live'
       }
-      memo.set(key, { verdict: 'live', observedAt: at })
-      return 'live'
+      remember(key, 'unobservable', at)
+      return pidExistenceLiveness(processKill, owner.pid)
     }
   }
 }

@@ -3,9 +3,11 @@ import { spawn } from 'node:child_process'
 import { describe, expect, it, vi } from 'vitest'
 
 import {
+  CURRENT_PROCESS_BIRTH_RETRY_MS,
   PROCESS_BIRTH_IDENTITY_PATTERN,
   PROCESS_BIRTH_START_TOLERANCE_MS,
   PROCESS_LISTING_MAX_BUFFER_BYTES,
+  createCurrentProcessBirthIdentity,
   currentProcessBirthIdentity,
   digestProcessBirth,
   listProcessCommandLines,
@@ -21,7 +23,8 @@ import {
   parseProcStatStartTicks,
   parseWindowsStartTicks,
   procStatHasExited,
-  type ProcessBirthExecOptions
+  type ProcessBirthExecOptions,
+  type ProcessBirthObservation
 } from './ProcessBirthIdentity'
 
 const LSTART = 'Tue Sep 22 13:43:18 2026'
@@ -48,6 +51,27 @@ describe('ProcessBirthIdentity', () => {
         PROCESS_BIRTH_START_TOLERANCE_MS
       )
     }
+  })
+
+  it('retries a failed self observation only after the retry window and keeps a live one for life', () => {
+    let clock = 1_000
+    const results: ProcessBirthObservation[] = [
+      { state: 'identity_unavailable' },
+      { state: 'live', birthIdentity: 'a'.repeat(64), startedAtMs: null }
+    ]
+    const observe = vi.fn(
+      (): ProcessBirthObservation => results.shift() ?? { state: 'identity_unavailable' }
+    )
+    const current = createCurrentProcessBirthIdentity({ observe, now: () => clock })
+    expect(current()).toEqual({ state: 'identity_unavailable' })
+    clock += CURRENT_PROCESS_BIRTH_RETRY_MS - 1
+    expect(current()).toEqual({ state: 'identity_unavailable' })
+    expect(observe).toHaveBeenCalledTimes(1)
+    clock += 1
+    expect(current()).toMatchObject({ state: 'live', birthIdentity: 'a'.repeat(64) })
+    clock += 3_600_000
+    expect(current()).toMatchObject({ state: 'live' })
+    expect(observe).toHaveBeenCalledTimes(2)
   })
 
   it('never probes an invalid pid', () => {
