@@ -6,7 +6,7 @@ import { tmpdir } from 'os'
 import { join, resolve } from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import { buildSync } from 'esbuild'
-import { describe, expect, it, vi } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import {
   PI_ENSEMBLE_COORDINATION_TOOL_NAMES,
   PI_EXACT_FILE_TOOL_NAMES,
@@ -45,6 +45,48 @@ import {
 } from './McpToolProfiles'
 
 const TEST_INSTANCE_EPOCH = 'f'.repeat(32)
+
+/**
+ * The in-process McpBridgeRuntime cases log through `bridgeLog`, which (with
+ * no socket-bound location, as in Electron main) resolves the canonical
+ * `canonicalBridgeLogDirectory()` under os.homedir(): ~/Library/Logs/TaskWraith
+ * on darwin. So the whole file runs with HOME, USERPROFILE (win32's
+ * os.homedir()) and the XDG roots in a temporary directory, pinned before the
+ * first log line resolves and caches that location, and restored after all
+ * cases. The spawned bridge processes below pin their own homes.
+ */
+const HERMETIC_HOME_VARIABLES = [
+  'HOME',
+  'USERPROFILE',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME'
+] as const
+const realHomeEnvironment = new Map<string, string | undefined>()
+let hermeticHome = ''
+beforeAll(() => {
+  hermeticHome = fs.realpathSync(fs.mkdtempSync(join(tmpdir(), 'mcp-bridge-safe-write-home-')))
+  const values: Record<(typeof HERMETIC_HOME_VARIABLES)[number], string> = {
+    HOME: hermeticHome,
+    USERPROFILE: hermeticHome,
+    XDG_CONFIG_HOME: join(hermeticHome, '.config'),
+    XDG_CACHE_HOME: join(hermeticHome, '.cache'),
+    XDG_DATA_HOME: join(hermeticHome, '.local', 'share'),
+    XDG_STATE_HOME: join(hermeticHome, '.local', 'state')
+  }
+  for (const name of HERMETIC_HOME_VARIABLES) {
+    realHomeEnvironment.set(name, process.env[name])
+    process.env[name] = values[name]
+  }
+})
+afterAll(() => {
+  for (const [name, value] of realHomeEnvironment) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  fs.rmSync(hermeticHome, { recursive: true, force: true })
+})
 
 function privateBridgeTestDirectory(prefix: string): string {
   const path = fs.mkdtempSync(join(tmpdir(), prefix))
