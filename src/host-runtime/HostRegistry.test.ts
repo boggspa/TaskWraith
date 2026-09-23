@@ -31,7 +31,7 @@ import {
   hostRegistryDefaultRoot,
   readHostRegistry,
   readHostRegistryEntry,
-  removeHostRegistryEntryForPid,
+  removeHostRegistryEntryFor,
   removeHostRegistryEntryIfStill,
   resolveHostRegistryRoot,
   sweepHostRegistry,
@@ -136,9 +136,9 @@ describe('HostRegistry root and naming', () => {
     expect(
       resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: '/tmp/registry ' }, '/home/tw', {})
     ).toBe('/tmp/registry')
-    expect(
-      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: 'relative' }, '/home/tw', {})
-    ).toBe(home)
+    expect(resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: 'relative' }, '/home/tw', {})).toBe(
+      home
+    )
   })
 
   it("falls back to this process's override when a hand-built env names none, never to HOME", () => {
@@ -437,15 +437,24 @@ describe('HostRegistryPublisher', () => {
     })
   })
 
-  it('removeHostRegistryEntryForPid deletes only an entry that still names the pid', () => {
+  it('removeHostRegistryEntryFor deletes only the entry of that exact Host, never a same-pid successor', () => {
     const root = join(scratch('host-registry-'), 'hosts')
     const profile = scratch('host-registry-profile-')
+    const dead = { pid: 5151, birthIdentity: BORN, bootEpoch: 'e'.repeat(64) }
     writeEntry(root, entryFor(profile, 5151, BORN))
-    expect(removeHostRegistryEntryForPid(root, profile, 4242)).toBe(false)
+    expect(removeHostRegistryEntryFor(root, profile, { ...dead, pid: 4242 })).toBe(false)
+    // The operating system handed a successor Host the same pid: another
+    // birth, or the same birth with another boot epoch, is not the dead Host.
+    expect(
+      removeHostRegistryEntryFor(root, profile, { ...dead, birthIdentity: 'b'.repeat(64) })
+    ).toBe(false)
+    expect(removeHostRegistryEntryFor(root, profile, { ...dead, bootEpoch: 'x'.repeat(64) })).toBe(
+      false
+    )
     expect(existsSync(hostRegistryEntryPath(root, profile))).toBe(true)
-    expect(removeHostRegistryEntryForPid(root, profile, 5151)).toBe(true)
+    expect(removeHostRegistryEntryFor(root, profile, dead)).toBe(true)
     expect(existsSync(hostRegistryEntryPath(root, profile))).toBe(false)
-    expect(removeHostRegistryEntryForPid(root, profile, 5151)).toBe(false)
+    expect(removeHostRegistryEntryFor(root, profile, dead)).toBe(false)
   })
 
   it('removeHostRegistryEntryIfStill keeps an entry replaced between the judged read and the unlink', () => {

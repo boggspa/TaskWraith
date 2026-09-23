@@ -41,8 +41,14 @@ import {
  * only): a `host-runtime/cli.js serve … --profile <p>` process is a candidate
  * only when that profile's discovery and authority lease both name its pid
  * and the lease's recorded process start is within
- * PROCESS_BIRTH_START_TOLERANCE_MS of the observed start. Anything else is
- * listed as unverified and left alone. Windows has no argv scan here.
+ * PROCESS_BIRTH_START_TOLERANCE_MS of the observed start. Every process that
+ * names a profile is judged, so a look-alike (a wrapper, a hand-typed
+ * command) can never hide the genuine Host; anything unverified is listed and
+ * left alone. Windows has no argv scan here.
+ *
+ * `--sweep` removes dead registry entries and socket directories after the
+ * terminations; it needs a scope like any other mutation, and a listing
+ * never sweeps.
  */
 
 export type HostStopAllScope =
@@ -135,21 +141,35 @@ export function isUnderPayloadRoot(
   return candidates.some((candidate) => candidate.startsWith(`${root}${api.sep}`))
 }
 
+/** `…/host-runtime/cli.js` immediately followed (after an optional quote) by `serve`. */
+const SERVE_CLI = /host-runtime[\\/]cli\.js"?\s+serve(?:\s|$)/
+
 /**
- * The argv form of the payload-root test for a scanned process: the joined
- * command line must name `<payloadRoot>/host-runtime/cli.js` literally.
+ * The argv form of the payload-root test for a scanned process: the CLI token
+ * that `serve` follows must be exactly `<payloadRoot>/host-runtime/cli.js`.
+ * The match is anchored at both ends of that token — it must start the line
+ * or follow whitespace or a quote — so a CLI that merely ends with the needle
+ * (`/Volumes/Backup/Users/me/repo/out/host/…` for `/Users/me/repo/out/host`)
+ * is another payload, and a needle elsewhere on the line (inside a profile
+ * path) is never the CLI.
  */
-function commandServesPayloadRoot(
+export function commandServesPayloadRoot(
   commandLine: string,
   payloadRoot: string,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform = process.platform
 ): boolean {
   const api = pathApi(platform)
+  const fold = (value: string): string => (platform === 'win32' ? value.toLowerCase() : value)
+  const line = fold(commandLine)
+  const serve = SERVE_CLI.exec(line)
+  if (!serve) return false
+  const cli = line.slice(0, serve.index + 'host-runtime/cli.js'.length)
   const roots = new Set([api.resolve(payloadRoot), canonical(payloadRoot, platform)])
-  const haystack = platform === 'win32' ? commandLine.toLowerCase() : commandLine
   return [...roots].some((root) => {
-    const needle = api.join(root, 'host-runtime', 'cli.js')
-    return haystack.includes(platform === 'win32' ? needle.toLowerCase() : needle)
+    const needle = fold(api.join(root, 'host-runtime', 'cli.js'))
+    if (!cli.endsWith(needle)) return false
+    const start = cli.length - needle.length
+    return start === 0 || /[\s"]/.test(cli[start - 1])
   })
 }
 
@@ -219,14 +239,20 @@ async function scannedCandidates(
   const listing = await ports.listProcesses()
   if (!listing.ok) return { scan: { ok: false, reason: listing.reason }, hosts: [] }
   const hosts: Candidate[] = []
-  const seen = new Set<string>()
+  const evidenceByProfile = new Map<string, HostTerminationEvidence>()
+  // Every process naming a profile is judged on its own: at most one can match
+  // that profile's discovery and lease, and a look-alike listed first (a lower
+  // pid) must not hide it.
   for (const process_ of listing.processes) {
     const parsed = parseHostServeCommandLine(process_.commandLine)
     if (!parsed) continue
     const key = canonical(parsed.profilePath, platform)
-    if (known.has(key) || seen.has(key)) continue
-    seen.add(key)
-    const evidence = ports.readEvidence(parsed.profilePath, registryRoot)
+    if (known.has(key)) continue
+    let evidence = evidenceByProfile.get(key)
+    if (!evidence) {
+      evidence = ports.readEvidence(parsed.profilePath, registryRoot)
+      evidenceByProfile.set(key, evidence)
+    }
     const observation = await ports.observe(process_.pid)
     let liveness: HostStopAllLiveness = 'unverified'
     let note: string | undefined
@@ -360,7 +386,11 @@ export async function stopAllHosts(options: HostStopAllOptions): Promise<HostSto
       return reportedHost(candidate, selected, outcome)
     })
   )
-  const sweep = options.sweep === true ? await ports.sweep(registryRoot) : undefined
+  // A listing changes nothing, a sweep included.
+  const sweep =
+    options.sweep === true && options.scope.kind !== 'list'
+      ? await ports.sweep(registryRoot)
+      : undefined
   const failed = hosts.some(
     (host) => host.outcome && !HOST_TERMINATION_SUCCESS_KINDS.has(host.outcome.kind)
   )

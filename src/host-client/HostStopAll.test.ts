@@ -12,6 +12,7 @@ import {
 import type { ProcessBirthObservation } from '../host-runtime/ProcessBirthIdentity'
 import type { HostTerminationEvidence, HostTerminationOutcome } from './HostProcessTermination'
 import {
+  commandServesPayloadRoot,
   formatHostStopAllReport,
   isUnderPayloadRoot,
   stopAllHosts,
@@ -310,6 +311,25 @@ describe('stopAllHosts', () => {
     expect(report.scan).toEqual({ ok: true })
   })
 
+  it('judges every scanned process for a profile, so a look-alike listed first never hides the Host', async () => {
+    const processes = [
+      // A wrapper with a lower pid naming the same profile: it matches neither
+      // the discovery nor the lease.
+      {
+        pid: 150,
+        commandLine: `/bin/sh -c node ${APP_PAYLOAD}/host-runtime/cli.js serve --profile ${LEGACY_PROFILE}`
+      },
+      { pid: LEGACY_PID, commandLine: LEGACY_COMMAND }
+    ]
+    const injected = ports({ entries: [], processes, evidence: () => legacyEvidence() })
+    const report = await run({ kind: 'all' }, injected, { scanArgv: true })
+    expect(report.hosts.map((host) => [host.pid, host.liveness, host.selected])).toEqual([
+      [150, 'unverified', false],
+      [LEGACY_PID, 'live', true]
+    ])
+    expect(injected.terminated).toEqual([LEGACY_PROFILE])
+  })
+
   it('selects a scanned Host for --payload-root by the CLI path its argv names', async () => {
     const injected = ports({
       entries: [],
@@ -355,6 +375,30 @@ describe('stopAllHosts', () => {
     ])
   })
 
+  it('leaves a scanned Host whose CLI merely ends with the payload root alive', async () => {
+    // Discovery, lease and start all agree: only the payload root is wrong.
+    const mirrored = `/usr/local/bin/node /Volumes/Backup${REPO_PAYLOAD}/host-runtime/cli.js serve --mode production --profile ${LEGACY_PROFILE}`
+    const injected = ports({
+      entries: [],
+      processes: [{ pid: LEGACY_PID, commandLine: mirrored }],
+      evidence: () => legacyEvidence()
+    })
+    const report = await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected, {
+      scanArgv: true
+    })
+    expect(report.hosts).toMatchObject([{ pid: LEGACY_PID, liveness: 'live', selected: false }])
+    expect(injected.terminated).toEqual([])
+  })
+
+  it('never sweeps while it only lists, even when asked to', async () => {
+    const injected = ports()
+    const report = await run({ kind: 'list' }, injected, { sweep: true })
+    expect(report.exitCode).toBe(3)
+    expect(report.sweep).toBeUndefined()
+    expect(injected.swept).toEqual([])
+    expect(injected.terminated).toEqual([])
+  })
+
   it('sweeps the registry after the terminations only when asked', async () => {
     const injected = ports()
     const quiet = await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected)
@@ -367,6 +411,46 @@ describe('stopAllHosts', () => {
     expect(formatHostStopAllReport(swept)).toContain(
       'swept 0 registry entries and 0 socket directories'
     )
+  })
+})
+
+describe('commandServesPayloadRoot', () => {
+  it('matches only the CLI token that serve follows, anchored at both ends', () => {
+    const root = '/Users/me/repo/out/host'
+    const cli = `${root}/host-runtime/cli.js`
+    expect(
+      commandServesPayloadRoot(`/usr/local/bin/node ${cli} serve --profile /p`, root, 'darwin')
+    ).toBe(true)
+    expect(commandServesPayloadRoot(`${cli} serve --profile /p`, root, 'darwin')).toBe(true)
+    expect(
+      commandServesPayloadRoot(`/usr/local/bin/node "${cli}" serve --profile /p`, root, 'darwin')
+    ).toBe(true)
+    // Same suffix, another payload.
+    expect(
+      commandServesPayloadRoot(`node /Volumes/Backup${cli} serve --profile /p`, root, 'darwin')
+    ).toBe(false)
+    expect(commandServesPayloadRoot(`node /x${cli} serve --profile /p`, root, 'darwin')).toBe(false)
+    // The needle appears on the line, but not as the CLI serve follows.
+    expect(
+      commandServesPayloadRoot(
+        `node /other/host-runtime/cli.js serve --profile ${cli}`,
+        root,
+        'darwin'
+      )
+    ).toBe(false)
+    expect(commandServesPayloadRoot(`node ${cli}.bak serve --profile /p`, root, 'darwin')).toBe(
+      false
+    )
+    expect(commandServesPayloadRoot(`node ${cli} stop --profile /p`, root, 'darwin')).toBe(false)
+  })
+
+  it('matches a quoted Windows CLI case-insensitively and no other drive', () => {
+    const line =
+      '"C:\\Program Files\\node.exe" "C:\\TW\\resources\\host\\host-runtime\\cli.js" serve --mode production --profile "C:\\Users\\x"'
+    expect(commandServesPayloadRoot(line, 'C:\\TW\\resources\\host', 'win32')).toBe(true)
+    expect(commandServesPayloadRoot(line, 'c:\\tw\\RESOURCES\\host', 'win32')).toBe(true)
+    expect(commandServesPayloadRoot(line, 'D:\\TW\\resources\\host', 'win32')).toBe(false)
+    expect(commandServesPayloadRoot(line, 'C:\\resources\\host', 'win32')).toBe(false)
   })
 })
 

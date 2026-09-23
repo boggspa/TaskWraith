@@ -371,18 +371,29 @@ export function removeHostRegistryEntryIfStill(
   return true
 }
 
+/** Who wrote an entry: a pid alone is reused by the operating system. */
+export interface HostRegistryEntryIdentity {
+  readonly pid: number
+  readonly birthIdentity: string | null
+  readonly bootEpoch: string | null
+}
+
 /**
- * Removes the entry for a profile only while it still names `pid`; a
- * successor Host's entry is never touched.
+ * Removes the entry for a profile only while it still names this exact Host:
+ * the same pid, birth identity and boot epoch. A successor Host's entry is
+ * never touched, even when the operating system handed it the same pid.
  */
-export function removeHostRegistryEntryForPid(
+export function removeHostRegistryEntryFor(
   root: string,
   profilePath: string,
-  pid: number
+  identity: HostRegistryEntryIdentity
 ): boolean {
   return removeHostRegistryEntryIfStill(
     hostRegistryEntryPath(root, canonicalHostProfilePath(profilePath)),
-    (entry) => entry.pid === pid
+    (entry) =>
+      entry.pid === identity.pid &&
+      entry.birthIdentity === identity.birthIdentity &&
+      entry.bootEpoch === identity.bootEpoch
   )
 }
 
@@ -642,6 +653,26 @@ function socketUnchangedSinceProbe(socketPath: string, probed: Stats | null): bo
   const current = lstatOrNull(socketPath)
   if (probed === null || current === null) return probed === current
   return sameStatIdentity(probed, current) && newestChange(probed) === newestChange(current)
+}
+
+/**
+ * Unlinks a Host socket only when it does not answer and is still exactly the
+ * file that was probed: a Host that re-bound the path in between keeps it.
+ */
+export async function unlinkDeadHostSocket(
+  socketPath: string,
+  socketIsLive: (socketPath: string) => Promise<boolean> = hostSocketIsLive,
+  unlink: (path: string) => void = unlinkSync
+): Promise<boolean> {
+  const probed = lstatOrNull(socketPath)
+  if (!probed || (await socketIsLive(socketPath))) return false
+  if (!socketUnchangedSinceProbe(socketPath, probed)) return false
+  try {
+    unlink(socketPath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 /**

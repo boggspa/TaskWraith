@@ -29,7 +29,8 @@ export interface HostProductionStatusCommand {
 
 /**
  * What `stop-all` may stop. No scope lists only (exit 3); the three scopes are
- * mutually exclusive so a typo can never widen `--profile` into `--all`.
+ * mutually exclusive so a typo can never widen `--profile` into `--all`, and
+ * `--sweep` (a mutation) needs one of them: a listing changes nothing.
  */
 export type HostProductionStopAllScope =
   | { readonly kind: 'list' }
@@ -138,6 +139,10 @@ function parseRegistryCommand(
       : payloadRoot
         ? { kind: 'payload-root', payloadRoot }
         : { kind: 'list' }
+  if (sweep && scope.kind === 'list')
+    throw new HostProductionCliError(
+      '--sweep needs a scope: --all, --profile <path> or --payload-root <dir>.'
+    )
   return { command, scope, scanArgv, sweep, json }
 }
 

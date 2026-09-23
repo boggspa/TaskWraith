@@ -6,8 +6,9 @@ import {
   canonicalHostProfilePath,
   hostSocketIsLive,
   readHostRegistryEntry,
-  removeHostRegistryEntryForPid,
-  resolveHostRegistryRoot
+  removeHostRegistryEntryFor,
+  resolveHostRegistryRoot,
+  unlinkDeadHostSocket
 } from '../host-runtime/HostRegistry'
 import {
   HostProfileAuthorityLease,
@@ -46,7 +47,9 @@ import { HostShutdownClient } from './HostShutdownClient'
  * immediately before every signal.
  *
  * Refusals, all without a signal:
- *  - the evidence names more than one pid (`inconsistent`);
+ *  - the evidence names more than one pid, or two birth digests for one pid,
+ *    and observing each pid cannot prove every disagreeing record stale
+ *    (`inconsistent`);
  *  - the birth identity or the command line cannot be observed
  *    (`identity_unavailable`; the caller may only retry the socket path);
  *  - the evidence carries no birth to compare with (`unverifiable`);
@@ -58,10 +61,11 @@ import { HostShutdownClient } from './HostShutdownClient'
  * only its artefacts are swept (`pid_reused`), and an identity that changes
  * between TERM and KILL aborts the escalation the same way. After death the
  * socket file and directory, discovery, token, lease and registry entry are
- * removed — each only while it still names the dead Host, and the profile-side
- * artefacts only while no successor holds the profile's authority lease — so
- * the next launch neither waits on a stale socket nor loses a successor's
- * state.
+ * removed — each only while it still carries exactly the record read before
+ * termination (never by pid alone: a successor may have been handed the same
+ * pid), and the profile-side artefacts only while no other owner holds the
+ * profile's authority lease — so the next launch neither waits on a stale
+ * socket nor loses a successor's state.
  *
  * Electron-free: shared by Electron main, the TUI, `cli.js stop-all` and the
  * build script.
@@ -133,7 +137,15 @@ export interface HostTerminationPorts {
   observe(pid: number): Promise<ProcessBirthObservation>
   observeCommand(pid: number): Promise<ProcessCommandLineObservation>
   signal(pid: number, signal: HostTerminationSignal): void
-  sweep(profilePath: string, pid: number | null, registryRoot: string): Promise<readonly string[]>
+  /**
+   * Removes the artefacts that still carry exactly one of `dead`'s records:
+   * every record in it names a process proven gone.
+   */
+  sweep(
+    profilePath: string,
+    dead: HostTerminationEvidence,
+    registryRoot: string
+  ): Promise<readonly string[]>
   delay(ms: number): Promise<void>
   now(): number
   log?(line: string): void
@@ -253,7 +265,12 @@ export function readHostTerminationEvidence(
   }
 }
 
-/** The single pid the evidence names, or null when it names none or several. */
+/**
+ * The single pid the evidence names, or null when it names none. It is
+ * inconsistent when it names several pids, or when the registry and the lease
+ * both carry a birth digest and the digests differ: neither may then decide
+ * alone which process is the Host.
+ */
 export function hostTerminationTargetPid(evidence: HostTerminationEvidence): {
   readonly pid: number | null
   readonly inconsistent: boolean
@@ -263,8 +280,65 @@ export function hostTerminationTargetPid(evidence: HostTerminationEvidence): {
   if (evidence.lease) pids.add(evidence.lease.pid)
   if (evidence.discovery) pids.add(evidence.discovery.pid)
   if (pids.size > 1) return { pid: null, inconsistent: true }
+  const registryBirth = evidence.registry?.birthIdentity
+  const leaseBirth = evidence.lease?.processStartIdentity
+  if (
+    isProcessBirthIdentityDigest(registryBirth) &&
+    isProcessBirthIdentityDigest(leaseBirth) &&
+    registryBirth !== leaseBirth
+  ) {
+    return { pid: null, inconsistent: true }
+  }
   const [pid] = pids
   return { pid: pid ?? null, inconsistent: false }
+}
+
+function leaseExpectation(lease: HostTerminationLeaseEvidence): HostTerminationExpectation {
+  if (isProcessBirthIdentityDigest(lease.processStartIdentity)) {
+    return { birthIdentity: lease.processStartIdentity }
+  }
+  const startedAtMs = Date.parse(lease.processStartedAt)
+  return Number.isFinite(startedAtMs) ? { startedAtMs } : {}
+}
+
+/**
+ * Resolves inconsistent evidence by observation: a record whose pid is dead,
+ * or alive with a birth other than the one the record carries, is stale and
+ * is dropped (and swept after the termination). A record that cannot be
+ * proven stale — an unobservable pid, or a discovery or birthless registry
+ * entry whose pid is alive — is kept, so the evidence stays inconsistent and
+ * nothing is signalled.
+ */
+async function dropStaleEvidence(
+  ports: Pick<HostTerminationPorts, 'observe'>,
+  evidence: HostTerminationEvidence
+): Promise<{ readonly evidence: HostTerminationEvidence; readonly dropped: readonly string[] }> {
+  const observations = new Map<number, Promise<ProcessBirthObservation>>()
+  const stale = async (pid: number, expected: HostTerminationExpectation): Promise<boolean> => {
+    let observation = observations.get(pid)
+    if (!observation) {
+      observation = ports.observe(pid)
+      observations.set(pid, observation)
+    }
+    const observed = await observation
+    if (observed.state === 'dead') return true
+    return matchProcessBirth(observed, expected) === 'mismatch'
+  }
+  const dropped: string[] = []
+  let { registry, lease, discovery } = evidence
+  if (registry && (await stale(registry.pid, { birthIdentity: registry.birthIdentity }))) {
+    registry = null
+    dropped.push('registry')
+  }
+  if (lease && (await stale(lease.pid, leaseExpectation(lease)))) {
+    lease = null
+    dropped.push('lease')
+  }
+  if (discovery && (await stale(discovery.pid, {}))) {
+    discovery = null
+    dropped.push('discovery')
+  }
+  return { evidence: { registry, lease, discovery }, dropped }
 }
 
 /**
@@ -279,14 +353,7 @@ export function hostTerminationExpectation(
   evidence: HostTerminationEvidence
 ): HostTerminationExpectation {
   if (evidence.registry?.birthIdentity) return { birthIdentity: evidence.registry.birthIdentity }
-  if (evidence.lease && isProcessBirthIdentityDigest(evidence.lease.processStartIdentity)) {
-    return { birthIdentity: evidence.lease.processStartIdentity }
-  }
-  if (evidence.lease) {
-    const startedAtMs = Date.parse(evidence.lease.processStartedAt)
-    return Number.isFinite(startedAtMs) ? { startedAtMs } : {}
-  }
-  return {}
+  return evidence.lease ? leaseExpectation(evidence.lease) : {}
 }
 
 export interface HostServeCommand {
@@ -372,18 +439,40 @@ export function isHostServeCommandFor(
   return parsed !== null && sameProfile(parsed.profilePath, profilePath, platform)
 }
 
-function defaultSignal(platform: NodeJS.Platform): HostTerminationPorts['signal'] {
+export interface HostTerminationSignalPorts {
+  readonly spawnSync: (
+    file: string,
+    args: readonly string[],
+    options: { readonly stdio: 'ignore'; readonly windowsHide: true }
+  ) => unknown
+  readonly kill: (pid: number, signal: HostTerminationSignal) => void
+  /** %SystemRoot%, as ProcessBirthIdentity pins PowerShell. */
+  readonly windowsRoot: string
+}
+
+/**
+ * The signal port. On Windows both stages are the tree kill the smoke script
+ * uses, by the fixed system path: a `taskkill` resolved through PATH could be
+ * any program earlier on it.
+ */
+export function createHostTerminationSignal(
+  platform: NodeJS.Platform,
+  ports: Partial<HostTerminationSignalPorts> = {}
+): HostTerminationPorts['signal'] {
+  const run =
+    ports.spawnSync ?? ((file, args, options) => spawnSync(file, [...args], { ...options }))
+  const kill = ports.kill ?? ((pid, signal) => process.kill(pid, signal))
+  const windowsRoot = ports.windowsRoot ?? (process.env.SystemRoot || 'C:\\Windows')
   return (pid, signal) => {
     if (platform === 'win32') {
-      // No SIGTERM on Windows; both stages are the tree kill the smoke script uses.
-      spawnSync('taskkill', ['/PID', String(pid), '/T', '/F'], {
+      run(win32.join(windowsRoot, 'System32', 'taskkill.exe'), ['/PID', String(pid), '/T', '/F'], {
         stdio: 'ignore',
         windowsHide: true
       })
       return
     }
     try {
-      process.kill(pid, signal)
+      kill(pid, signal)
     } catch {
       // ESRCH: already gone; the poll that follows observes it.
     }
@@ -412,16 +501,47 @@ function unlinkIfStill(path: string, still: () => boolean): boolean {
   }
 }
 
+function sameLeaseRecord(
+  current: Pick<
+    HostProfileAuthorityOwnerRecord,
+    'pid' | 'processStartIdentity' | 'acquiredAt'
+  > | null,
+  dead: HostTerminationLeaseEvidence
+): boolean {
+  return (
+    current !== null &&
+    current.pid === dead.pid &&
+    current.processStartIdentity === dead.processStartIdentity &&
+    current.acquiredAt === dead.acquiredAt
+  )
+}
+
+function sameDiscoveryRecord(
+  current: HostTerminationEvidence['discovery'],
+  dead: NonNullable<HostTerminationEvidence['discovery']>
+): boolean {
+  return (
+    current !== null &&
+    current.pid === dead.pid &&
+    current.socketPath === dead.socketPath &&
+    current.startedAt === dead.startedAt
+  )
+}
+
 /**
- * Removes the artefacts that still name `pid` — discovery + token, the
- * authority lease, the socket file and its directory, and the registry entry.
- * The profile-side artefacts are left alone while the lease names another
- * owner: a successor has taken the profile and they are its artefacts now.
- * With no pid only a dead socket is removed, and only with no lease owner.
+ * Removes the artefacts that still carry exactly one of `dead`'s records —
+ * the registry entry (pid, birth identity and boot epoch), the discovery
+ * (pid, socket and start), the authority lease (pid, birth and acquisition)
+ * — then the token once no discovery is left, and a socket that no longer
+ * answers. A pid alone is never enough: a successor for the same profile may
+ * have been handed the dead Host's pid. The profile-side artefacts are left
+ * alone while any other owner holds the lease: a successor has taken the
+ * profile and they are its artefacts now. With no records only a dead socket
+ * is removed, and only with no lease owner.
  */
 export async function sweepHostArtefacts(
   profilePath: string,
-  pid: number | null,
+  dead: HostTerminationEvidence,
   registryRoot: string,
   options: {
     readonly platform?: NodeJS.Platform
@@ -432,53 +552,42 @@ export async function sweepHostArtefacts(
   const socketIsLive = options.socketIsLive ?? hostSocketIsLive
   const removed: string[] = []
   const owner = readLeaseOwner(profilePath)
-  const successorHoldsProfile = owner !== null && (pid === null || owner.pid !== pid)
-  if (pid !== null) {
+  const deadLease = dead.lease
+  const ownerIsDead = deadLease !== null && sameLeaseRecord(owner, deadLease)
+  const successorHoldsProfile = owner !== null && !ownerIsDead
+  if (dead.registry) {
     try {
-      if (removeHostRegistryEntryForPid(registryRoot, profilePath, pid)) removed.push('registry')
+      if (removeHostRegistryEntryFor(registryRoot, profilePath, dead.registry)) {
+        removed.push('registry')
+      }
     } catch {
       // A registry that cannot be written is swept by the next stop-all --sweep.
     }
   }
   if (successorHoldsProfile) return removed
 
-  if (pid !== null) {
+  if (dead.discovery || dead.lease || dead.registry) {
     const discoveryPath = taskWraithHostDiscoveryPath(profilePath)
-    const discovery = readDiscovery(profilePath)
-    if (discovery?.pid === pid) {
-      if (unlinkIfStill(discoveryPath, () => readDiscovery(profilePath)?.pid === pid)) {
-        removed.push('discovery')
-      }
+    const deadDiscovery = dead.discovery
+    if (deadDiscovery && sameDiscoveryRecord(readDiscovery(profilePath), deadDiscovery)) {
+      const still = (): boolean => sameDiscoveryRecord(readDiscovery(profilePath), deadDiscovery)
+      if (unlinkIfStill(discoveryPath, still)) removed.push('discovery')
     }
     // The token carries no pid; it is removed once no discovery names a live Host.
     if (!existsSync(discoveryPath)) {
       const tokenPath = taskWraithHostTokenPath(profilePath)
       if (unlinkIfStill(tokenPath, () => !existsSync(discoveryPath))) removed.push('token')
     }
-    if (owner && owner.pid === pid) {
+    if (deadLease && ownerIsDead) {
       const leasePath = taskWraithHostAuthorityLeasePath(profilePath)
-      const still = (): boolean => {
-        const current = readLeaseOwner(profilePath)
-        return (
-          current !== null &&
-          current.pid === owner.pid &&
-          current.processStartIdentity === owner.processStartIdentity &&
-          current.acquiredAt === owner.acquiredAt
-        )
-      }
+      const still = (): boolean => sameLeaseRecord(readLeaseOwner(profilePath), deadLease)
       if (unlinkIfStill(leasePath, still)) removed.push('lease')
     }
   }
   if (platform !== 'win32') {
     const socketPath = taskWraithHostSocketPath(profilePath, platform)
-    if (existsSync(socketPath) && !(await socketIsLive(socketPath))) {
-      try {
-        unlinkSync(socketPath)
-        removed.push('socket')
-      } catch {
-        // Already gone.
-      }
-    }
+    // Re-checked after the probe: a Host that re-bound it in between keeps it.
+    if (await unlinkDeadHostSocket(socketPath, socketIsLive)) removed.push('socket')
     if (!existsSync(socketPath)) {
       try {
         rmdirSync(dirname(socketPath))
@@ -502,9 +611,9 @@ function defaultPorts(platform: NodeJS.Platform): HostTerminationPorts {
     readEvidence: readHostTerminationEvidence,
     observe: (pid) => observeProcessBirthIdentity(pid),
     observeCommand: (pid) => observeProcessCommandLine(pid),
-    signal: defaultSignal(platform),
-    sweep: (profilePath, pid, registryRoot) =>
-      sweepHostArtefacts(profilePath, pid, registryRoot, { platform }),
+    signal: createHostTerminationSignal(platform),
+    sweep: (profilePath, dead, registryRoot) =>
+      sweepHostArtefacts(profilePath, dead, registryRoot, { platform }),
     delay: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now()
   }
@@ -570,34 +679,44 @@ export async function terminateHostProcess(
   const steps: string[] = []
   const log = (line: string): void => ports.log?.(`[host-termination] ${profilePath}: ${line}`)
 
+  // Every record read here is swept only once the process it names is proven
+  // gone; `judged` is what the termination itself acts on.
   const before = ports.readEvidence(profilePath, registryRoot)
-  const target = hostTerminationTargetPid(before)
+  let judged = before
+  let target = hostTerminationTargetPid(before)
   if (target.inconsistent) {
-    log('evidence names more than one pid; refusing to signal')
-    return { kind: 'inconsistent', pid: null, steps: ['evidence:inconsistent'], swept: [] }
+    const resolved = await dropStaleEvidence(ports, before)
+    for (const source of resolved.dropped) steps.push(`evidence:stale-${source}`)
+    judged = resolved.evidence
+    target = hostTerminationTargetPid(judged)
+    if (target.inconsistent) {
+      steps.push('evidence:inconsistent')
+      log('evidence names more than one Host and none is provably stale; refusing to signal')
+      return { kind: 'inconsistent', pid: null, steps, swept: [] }
+    }
   }
   const pid = target.pid
-  const expected = hostTerminationExpectation(before)
+  const expected = hostTerminationExpectation(judged)
 
   const finish = async (
     kind: HostTerminationOutcomeKind,
     sweep: boolean,
     detail?: string
   ): Promise<HostTerminationOutcome> => {
-    const swept = sweep ? await ports.sweep(profilePath, pid, registryRoot) : []
+    const swept = sweep ? await ports.sweep(profilePath, before, registryRoot) : []
     if (swept.length) steps.push(`swept:${swept.join(',')}`)
     log(`${kind}${detail ? ` (${detail})` : ''} after ${steps.join(' -> ') || 'no steps'}`)
     return { kind, pid, steps, swept, ...(detail ? { detail } : {}) }
   }
 
-  if (!before.discovery && !before.lease && !before.registry) {
+  if (!judged.discovery && !judged.lease && !judged.registry) {
     steps.push('evidence:none')
     return finish('already_gone', true)
   }
 
   // 1. The Host's own graceful path. With neither discovery nor a lease in the
   // profile (only a registry entry names the pid) there is no socket to ask.
-  if (before.discovery || before.lease) {
+  if (judged.discovery || judged.lease) {
     try {
       const state = await ports.shutdown(profilePath, {
         ackMs: timings.ackMs,

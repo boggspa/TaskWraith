@@ -237,6 +237,20 @@ it('parses stop-all with one explicit scope and lists only without one', () => {
   expect(() => parseHostProductionCli(['stop-all', '--payload-root'])).toThrow(/requires one value/)
 })
 
+it('refuses --sweep without a scope: a listing changes nothing', () => {
+  for (const argv of [
+    ['stop-all', '--sweep'],
+    ['stop-all', '--json', '--sweep', '--scan-argv']
+  ]) {
+    expect(() => parseHostProductionCli(argv)).toThrow(
+      '--sweep needs a scope: --all, --profile <path> or --payload-root <dir>.'
+    )
+  }
+  expect(
+    parseHostProductionCli(['stop-all', '--sweep', '--payload-root', PAYLOAD_ROOT])
+  ).toMatchObject({ scope: { kind: 'payload-root', payloadRoot: PAYLOAD_ROOT }, sweep: true })
+})
+
 it('parses status as a listing that can never stop anything', () => {
   expect(parseHostProductionCli(['status'])).toEqual({
     command: 'status',
