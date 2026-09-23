@@ -189,7 +189,7 @@ control below); it is no longer rejected.
 | `/archive`                                      | Archive the open thread.                                                                                                                   |
 | `/cancel`                                       | Stop the active run.                                                                                                                       |
 | `/dismiss`                                      | Dismiss the pending Host question.                                                                                                         |
-| `/quit`, `/q`                                   | Leave the TUI while the Host keeps running.                                                                                                |
+| `/quit`, `/q`                                   | Leave the TUI. The Host exits after grace once no client holds a lease.                                                                    |
 
 Every setup, cancellation, and configuration action remains a bounded Host
 command with capability, actor, offer, and receipt validation.

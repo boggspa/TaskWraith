@@ -34,7 +34,10 @@
 >
 > The historical body is retained below. Do not treat its acceptance
 > contract (packaged App launch, windowless Electron main) as current TUI
-> smoke requirements.
+> smoke requirements. Its lifetime and PID rules are also historical: the
+> Host is now lease-owned (see [`README.md`](./README.md)), and the TUI
+> stops a stale or selected Host only through verified termination, which
+> checks the process's recorded birth before signalling it.
 
 **Status:** Superseded — historical closeout 2026-08-16
 
