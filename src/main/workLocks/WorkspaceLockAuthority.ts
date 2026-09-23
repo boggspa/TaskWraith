@@ -1857,6 +1857,10 @@ export class WorkspaceLockAuthority {
           const lease = active.get(candidate.decision.leaseId)
           if (!lease) continue
           if (candidate.verdict) {
+            // Lapse retires only held/orphan_live. The pre-check read the lease
+            // before its await; a peer's boot may have quarantined it as
+            // recovery_blocked since, and that one is left for a human.
+            if (lease.status !== 'held' && lease.status !== 'orphan_live') continue
             const current = fresh.get(workspaceLockHolderKey(holderKeyOfLease(lease)))
             if (!current || current.beatSeq !== candidate.verdict.beatSeq) continue
             // A lapsed holder still inside its commit critical section is left

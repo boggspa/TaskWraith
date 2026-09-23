@@ -7,6 +7,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   WorkspaceLockRuntime,
+  createCommitFenceOwnerReader,
   createWorkspaceExternalMutationAuthorityReceipt,
   listCommitFenceOwners,
   workspaceLockAuthorityRootForHome
@@ -367,6 +368,76 @@ describe('listCommitFenceOwners', () => {
         const before = snapshot()
         for (let read = 0; read < 3; read += 1) listCommitFenceOwners(f.root)
         expect(snapshot()).toEqual(before)
+      } finally {
+        await rm(f.root, { recursive: true, force: true })
+      }
+    }
+  )
+})
+
+describe('createCommitFenceOwnerReader', () => {
+  it('warns once when reads start failing, once per different failure, and once when they recover', async () => {
+    const f = await commitFenceRoot(live(11))
+    try {
+      await f.fence.acquire(f.owner(11), PARTITION_A)
+      const warnings: string[] = []
+      const read = createCommitFenceOwnerReader(f.root, (message) => warnings.push(message))
+      expect(read().map((owner) => owner.pid)).toEqual([11])
+      expect(warnings).toEqual([])
+
+      // An outside writer's entry: every read throws (so every lapse reclaim
+      // defers), scan after scan, and only the first failure is named.
+      const stray = join(f.directory, 'desktop.ini')
+      await writeFile(stray, '[.ShellClassInfo]\n')
+      for (let scan = 0; scan < 5; scan += 1) {
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry: desktop\.ini/)
+      }
+      expect(warnings).toHaveLength(1)
+      expect(warnings[0]).toMatch(/^Lapse reclaim is paused: /)
+      expect(warnings[0]).toContain(JSON.stringify(f.directory))
+      expect(warnings[0]).toContain('Unrecognised commit-fence entry: desktop.ini')
+
+      // A different failure is news: named once more.
+      await rm(stray)
+      await mkdir(join(f.directory, 'backup'))
+      for (let scan = 0; scan < 3; scan += 1) {
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry: backup/)
+      }
+      expect(warnings).toHaveLength(2)
+      expect(warnings[1]).toContain('Unrecognised commit-fence entry: backup')
+
+      // Clean again: said once, then silence.
+      await rm(join(f.directory, 'backup'), { recursive: true })
+      for (let scan = 0; scan < 3; scan += 1) {
+        expect(read().map((owner) => owner.pid)).toEqual([11])
+      }
+      expect(warnings).toHaveLength(3)
+      expect(warnings[2]).toMatch(/^Lapse reclaim resumed: /)
+
+      // A failure after the recovery is named again.
+      await writeFile(stray, '[.ShellClassInfo]\n')
+      expect(() => read()).toThrow(/Unrecognised commit-fence entry/)
+      expect(warnings).toHaveLength(4)
+      expect(warnings[3]).toMatch(/^Lapse reclaim is paused: /)
+    } finally {
+      await rm(f.root, { recursive: true, force: true })
+    }
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'names an entry with a control character escaped, on one line',
+    async () => {
+      const f = await commitFenceRoot(live(11))
+      try {
+        await f.fence.acquire(f.owner(11), PARTITION_A)
+        const warnings: string[] = []
+        const read = createCommitFenceOwnerReader(f.root, (message) => warnings.push(message))
+        // Finder's custom-folder-icon file.
+        await writeFile(join(f.directory, 'Icon\r'), '')
+        expect(() => read()).toThrow(/Unrecognised commit-fence entry/)
+        expect(warnings).toHaveLength(1)
+        expect(warnings[0]).toContain('Unrecognised commit-fence entry: Icon\\r')
+        expect(warnings[0]).not.toMatch(/[\r\n]/)
       } finally {
         await rm(f.root, { recursive: true, force: true })
       }

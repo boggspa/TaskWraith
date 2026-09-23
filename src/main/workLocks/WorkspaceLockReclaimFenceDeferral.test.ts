@@ -48,6 +48,8 @@ const H = { pid: 101, processBirthIdentity: 'birth-h' }
 const R = { pid: 202, processBirthIdentity: 'birth-r' }
 /** The peer that would write next. */
 const C = { pid: 303, processBirthIdentity: 'birth-c' }
+/** An earlier, dead process that had H's pid. */
+const H_PREVIOUS = { pid: H.pid, processBirthIdentity: 'birth-h-previous' }
 
 async function world() {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'tw-reclaim-fence-')))
@@ -147,6 +149,7 @@ async function world() {
   return {
     workspace,
     userData,
+    observations,
     fence,
     holder,
     reclaimer,
@@ -309,6 +312,35 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
         WorkspaceMutationCommitFenceBusyError
       )
       w.fence.release(holderFence)
+    } finally {
+      w.dispose()
+    }
+  })
+
+  it('reclaims a lapsed holder whose pid an earlier, dead process left in a fence record', async () => {
+    const w = await world()
+    try {
+      const held = await w.holder.acquire(w.owner(H, 'run-h'), w.request('existing.ts'))
+      if (!held.ok) throw new Error('admission failed')
+      // An earlier process with H's pid crashed inside its commit fence and
+      // left the record; the fence observed it live when it entered. The pid
+      // now names H, whose birth differs: the record is not H's.
+      const leftover = `mutation-target:${'e'.repeat(64)}`
+      w.observations.set(H.pid, {
+        state: 'live',
+        processBirthIdentity: H_PREVIOUS.processBirthIdentity
+      })
+      await w.fence.acquire(w.fenceOwner(H_PREVIOUS, 'run-previous'), leftover)
+      w.observations.set(H.pid, { state: 'live', processBirthIdentity: H.processBirthIdentity })
+      expect(listCommitFenceOwners(w.userData)).toEqual([{ ...H_PREVIOUS, partitionKey: leftover }])
+
+      expect(await w.lapseHolder()).toMatchObject({
+        skipped: false,
+        decisions: [{ leaseId: held.leases[0].leaseId, status: 'recovered', reason: 'owner_dead' }],
+        deferred: [],
+        reclaimed: [expect.objectContaining({ evidence: 'lease_lapsed' })]
+      })
+      expect(w.status(held.leases[0].leaseId)).toBe('recovered')
     } finally {
       w.dispose()
     }

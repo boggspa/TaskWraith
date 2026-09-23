@@ -205,11 +205,14 @@ describe('workspace-lock commit fence isolation', () => {
   it('the runtime port lists fence records strictly read-only and is wired into open()', () => {
     const port = runtime.fn('listCommitFenceOwners')
     const read = runtime.fn('readCommitFenceRecord')
-    // Positive control for the scans: the port really lists and really reads.
+    const reader = runtime.fn('createCommitFenceOwnerReader')
+    // Positive control for the scans: the port really lists and really reads,
+    // and the production reader only wraps the listing with its warning.
     expect(runtime.callsTo(port, 'readdirSync')).toHaveLength(1)
     expect(runtime.callsTo(port, 'readCommitFenceRecord')).toHaveLength(1)
     expect(runtime.callsTo(read, 'readFileSync')).toHaveLength(1)
-    for (const scope of [port, read]) {
+    expect(runtime.callsTo(reader, 'listCommitFenceOwners')).toHaveLength(1)
+    for (const scope of [port, read, reader]) {
       for (const forbidden of PORT_FORBIDDEN) {
         expect(runtime.callsTo(scope, forbidden), forbidden).toHaveLength(0)
       }
@@ -227,7 +230,7 @@ describe('workspace-lock commit fence isolation', () => {
       .find((call) => runtime.text(call.expression) === 'WorkspaceLockAuthority.open')
     if (!authorityOpen) throw new Error('WorkspaceLockRuntime.open no longer opens the authority')
     expect(runtime.propText(authorityOpen, 0, 'dependencies')).toContain(
-      'readCommitFenceOwners: () => listCommitFenceOwners(options.userDataRoot)'
+      'readCommitFenceOwners: createCommitFenceOwnerReader(options.userDataRoot)'
     )
   })
 

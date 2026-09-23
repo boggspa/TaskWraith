@@ -1968,6 +1968,8 @@ async function lapseFixture(
     fencePort?: boolean
     /** Observation of the holder's pid while the reclaimer boots (live by default). */
     observationAtBoot?: WorkspaceLockProcessObservation
+    /** Runs inside every reclaimer observation, before it answers. */
+    onReclaimerObserve?: (pid: number) => Promise<void>
     holderLease?: WorkspaceLockHolderLeaseOptions
   } = {}
 ) {
@@ -1999,6 +2001,14 @@ async function lapseFixture(
     dependencies: {
       ...h.dependencies,
       monotonicNowMs: () => monotonicMs,
+      ...(options.onReclaimerObserve
+        ? {
+            observeProcess: async (pid: number) => {
+              await options.onReclaimerObserve!(pid)
+              return h.dependencies.observeProcess(pid)
+            }
+          }
+        : {}),
       ...(options.fencePort === false
         ? {}
         : {
@@ -2155,6 +2165,90 @@ describe('WorkspaceLockAuthority holder leases', () => {
     authority.dispose()
   })
 
+  it('retires a lease another incarnation of its own pid holds, and never its own', async () => {
+    const h = harness('instance-a')
+    let monotonicMs = 0
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        monotonicNowMs: () => monotonicMs,
+        readCommitFenceOwners: () => []
+      },
+      holderLease: { heartbeatIntervalMs: 3_600_000, scanIntervalMs: 3_600_000 }
+    })
+    // Opened before any lease exists, so its boot relabels nothing.
+    const injector = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        instance: {
+          instanceId: 'instance-injector',
+          pid: 202,
+          processBirthIdentity: 'owner-b-birth'
+        }
+      },
+      holderLease: { enabled: false }
+    })
+    const self = owner({
+      lockOwnerId: 'owner-self',
+      runId: 'run-self',
+      pid: 100,
+      processBirthIdentity: 'authority-birth'
+    })
+    const own = await authority.acquire(self, {
+      workspacePath: h.workspace,
+      kind: 'file',
+      targetPath: path.join(h.workspace, 'src', 'a.ts')
+    })
+    if (!own.ok) throw new Error('fixture acquisition failed')
+    // Synthetic: two live processes never share a pid, and boot retires the
+    // lease of an earlier incarnation. So pid 100 is observed as an earlier
+    // incarnation only while the injector acquires in its name.
+    h.observations.set(100, { state: 'live', processBirthIdentity: 'authority-birth-previous' })
+    const stranger = await injector.acquire(
+      owner({
+        lockOwnerId: 'owner-previous',
+        runId: 'run-previous',
+        pid: 100,
+        processBirthIdentity: 'authority-birth-previous'
+      }),
+      {
+        workspacePath: h.workspace,
+        kind: 'file',
+        targetPath: path.join(h.workspace, 'src', 'b.ts')
+      }
+    )
+    h.observations.set(100, { state: 'live', processBirthIdentity: 'authority-birth' })
+    if (!stranger.ok) throw new Error('fixture injection failed')
+
+    // Same pid, another birth: not this process, so a candidate like any other.
+    expect(await authority.runPeriodicRecovery()).toMatchObject({
+      skipped: false,
+      decisions: [
+        { leaseId: stranger.leases[0].leaseId, status: 'recovered', reason: 'pid_reused' }
+      ],
+      deferred: []
+    })
+    for (let scan = 0; scan < 3; scan += 1) {
+      globalTime += 60_000
+      monotonicMs += 60_000
+      expect(await authority.runPeriodicRecovery()).toEqual({
+        skipped: true,
+        reason: 'no_active_leases'
+      })
+    }
+    const status = (leaseId: string) =>
+      authority.snapshot().leases.find((lease) => lease.leaseId === leaseId)?.status
+    expect(status(own.leases[0].leaseId)).toBe('held')
+    expect(status(stranger.leases[0].leaseId)).toBe('recovered')
+    expect(await authority.verifyAcquisitionForMutation(self, own.transitionId)).toMatchObject({
+      ok: true
+    })
+    injector.dispose()
+    authority.dispose()
+  })
+
   it('never retires a recovery_blocked lease by lapse, however long its live owner stays silent', async () => {
     // Boot could not observe the holder, so its lease is blocked for a human;
     // the holder is observable and silent afterwards. Lapse only ever retires
@@ -2190,6 +2284,61 @@ describe('WorkspaceLockAuthority holder leases', () => {
         f.request
       )
     ).toMatchObject({ ok: false, reason: 'conflict' })
+    f.dispose()
+  })
+
+  it('never retires a lease a peer quarantined as recovery_blocked while the pass was observing its owner', async () => {
+    const peers: WorkspaceLockAuthority[] = []
+    let armed = false
+    const f = await lapseFixture({
+      onReclaimerObserve: async (pid) => {
+        if (!armed || pid !== 201) return
+        armed = false
+        // A peer boots now and cannot observe the holder (a resolver timeout,
+        // say), so its boot quarantines the lease as recovery_blocked.
+        peers.push(
+          await WorkspaceLockAuthority.open({
+            persistence: f.h.persistence,
+            dependencies: {
+              ...f.h.dependencies,
+              observeProcess: async (observed) =>
+                observed === 201
+                  ? { state: 'identity_unavailable' }
+                  : f.h.dependencies.observeProcess(observed),
+              instance: { instanceId: 'instance-p', pid: 505, processBirthIdentity: 'peer-birth' }
+            },
+            holderLease: { enabled: false }
+          })
+        )
+      }
+    })
+    await f.beat()
+    f.advanceWall(10 * 60_000)
+    expect(await f.scan()).toEqual({ skipped: true, reason: 'no_candidates' })
+    f.advanceMonotonic(181_000)
+    armed = true
+    // The pre-check judged the lease lapsed before its await. Under the fence
+    // it is recovery_blocked, which lapse never retires.
+    expect(await f.scan()).toEqual({ skipped: false, decisions: [], deferred: [], reclaimed: [] })
+    expect(peers).toHaveLength(1)
+    expect(
+      walEvents(f.h.persistence)
+        .filter((event) => event.kind === 'recover')
+        .map((event) => [
+          event.authority.instanceId,
+          ...event.payload.decisions.map((decision) => decision.status)
+        ])
+    ).toEqual([
+      ['instance-b', 'orphan_live'],
+      ['instance-p', 'recovery_blocked']
+    ])
+    expect(f.leaseStatus()).toBe('recovery_blocked')
+    expect(readAuditLines(f.h.userData)).toEqual([])
+    // The next pass reads the status before anything else and leaves it.
+    f.advanceMonotonic(181_000)
+    expect(await f.scan()).toEqual({ skipped: true, reason: 'no_candidates' })
+    expect(f.leaseStatus()).toBe('recovery_blocked')
+    for (const peer of peers) peer.dispose()
     f.dispose()
   })
 

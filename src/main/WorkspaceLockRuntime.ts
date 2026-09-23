@@ -335,7 +335,7 @@ export class WorkspaceLockRuntime {
           resolveCanonicalWorkspaceLockPath({ rootPath, targetPath }),
         verifyTargetPath: (expected) => verifyCanonicalWorkspaceLockPath(expected),
         validateHunkBaseline,
-        readCommitFenceOwners: () => listCommitFenceOwners(options.userDataRoot),
+        readCommitFenceOwners: createCommitFenceOwnerReader(options.userDataRoot),
         instance: {
           instanceId: options.instanceId,
           pid: process.pid,
@@ -1512,6 +1512,45 @@ export function listCommitFenceOwners(
     owners.push(identity)
   }
   return owners
+}
+
+/**
+ * The production fence port: `listCommitFenceOwners`, plus a warning when it
+ * starts failing. Every read that fails holds back the lapse reclaim of every
+ * stopped holder on this authority root, scan after scan, and it takes an
+ * outside writer (a Finder `Icon\r`, an editor backup, a damaged record) to
+ * cause one. So the first failure is named once, a different failure once
+ * more, and the recovery once; repeats of the same failure stay silent.
+ */
+export function createCommitFenceOwnerReader(
+  userDataRoot: string,
+  warn: (message: string) => void = (message) => console.warn(`[workspace-lock] ${message}`)
+): () => WorkspaceLockCommitFenceOwnerIdentity[] {
+  const directory = join(resolve(userDataRoot), WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY)
+  let failing: string | null = null
+  return () => {
+    let owners: WorkspaceLockCommitFenceOwnerIdentity[]
+    try {
+      owners = listCommitFenceOwners(userDataRoot)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (message !== failing) {
+        failing = message
+        // Quoted: an entry name can carry a carriage return or a newline.
+        warn(
+          `Lapse reclaim is paused: the commit fence at ${JSON.stringify(directory)} cannot be read: ${JSON.stringify(message)}. A stopped holder keeps its leases until the entry is removed or repaired; dead holders are still freed.`
+        )
+      }
+      throw error
+    }
+    if (failing !== null) {
+      failing = null
+      warn(
+        `Lapse reclaim resumed: the commit fence at ${JSON.stringify(directory)} reads cleanly again.`
+      )
+    }
+    return owners
+  }
 }
 
 function readCommitFenceRecord(path: string): string | null {
