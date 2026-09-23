@@ -7,10 +7,12 @@ import {
   renameSync,
   rmSync,
   unlinkSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
+import { MessageChannel } from 'node:worker_threads'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -29,9 +31,11 @@ import {
   readRegistrySnapshot,
   realHostRegistryRoots,
   startHostRegistryIsolation,
+  temporaryRoots,
   watchRegistryDirectory,
   type ProcessParents,
-  type RegistryGuardProcessPorts
+  type RegistryGuardProcessPorts,
+  type RegistryIsolationGuardOptions
 } from './hostRegistryIsolation'
 
 const temporary: string[] = []
@@ -63,6 +67,8 @@ const RUN_START = Date.parse('2026-09-23T10:00:00.000Z')
 const BEFORE_RUN = RUN_START - 3_600_000
 const DURING_RUN = RUN_START + 60_000
 const REAL_PROFILE = '/profiles/real'
+/** A test Host's profile: under the OS temporary directory, never created. */
+const TEMPORARY_PROFILE = join(tmpdir(), 'host-registry-isolation-orphan-profile')
 const hostCommand = (profile: string): string =>
   `/usr/local/bin/node /Applications/TaskWraith.app/Contents/Resources/host/host-runtime/cli.js serve --mode production --profile ${profile}`
 
@@ -78,7 +84,10 @@ interface FakeProcess {
  * 500 is this run, 600 and 700 run under it. 400 is a shell and 950 the app's
  * main process, both outside the run and older than it; 900 is the app's Host
  * and 910 a Host the app started mid-run. 920 is a Host started mid-run whose
- * parent is gone: an orphan adopted by init. 47878 is dead.
+ * parent is gone, serving a temporary profile: an orphaned test Host adopted
+ * by init. 960 is the app relaunched mid-run and 940 its Host, and 930 a Host
+ * whose `tw` exited before it published, adopted by init: both serve real
+ * profiles. 47878 is dead.
  */
 function processTable(): Map<number, FakeProcess> {
   const born = (pid: number) => `${pid}`.padStart(64, 'b')
@@ -93,7 +102,10 @@ function processTable(): Map<number, FakeProcess> {
     entry(950, 1, BEFORE_RUN, '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
     entry(900, 950, BEFORE_RUN, hostCommand(REAL_PROFILE)),
     entry(910, 950, DURING_RUN, hostCommand('/profiles/second')),
-    entry(920, 1, DURING_RUN, hostCommand('/profiles/orphan'))
+    entry(920, 1, DURING_RUN, hostCommand(TEMPORARY_PROFILE)),
+    entry(960, 1, DURING_RUN, '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
+    entry(940, 960, DURING_RUN, hostCommand('/profiles/relaunched')),
+    entry(930, 1, DURING_RUN, hostCommand('/profiles/tui'))
   ])
 }
 
@@ -136,6 +148,7 @@ function entry(
   options: {
     readonly profile?: string
     readonly birth?: string | null
+    readonly bootEpoch?: string | null
     readonly beatSeq?: number
   } = {}
 ): string {
@@ -147,6 +160,7 @@ function entry(
       schema: 'taskwraith.host-registry.v1',
       pid,
       birthIdentity: options.birth === undefined ? `${pid}`.padStart(64, 'b') : options.birth,
+      ...(options.bootEpoch === undefined ? {} : { bootEpoch: options.bootEpoch }),
       profilePath: options.profile ?? '/profiles/p',
       beatSeq: options.beatSeq ?? 0
     })}\n`
@@ -191,17 +205,28 @@ describe('attributeRegistryWriter', () => {
 })
 
 describe('readRegistrySnapshot', () => {
-  it('reads an absent root as null, skips publish temporaries, and hashes every file on every read', () => {
+  it('reads an absent root as null, reads only entry names, and hashes every file on every read', () => {
     const root = join(scratch('host-registry-isolation-'), 'hosts')
     expect(readRegistrySnapshot(root)).toBeNull()
-    const path = entry(root, 'a', 700)
-    writeFileSync(join(root, `.${'a'.repeat(16)}.json.700.uuid.tmp`), '{"pid":7')
+    const path = entry(root, 'a', 700, { bootEpoch: 'boot-1' })
+    // No Host reads any other name: a publish temporary, a Finder file, and
+    // near misses (upper case, one digit short, another extension).
+    for (const other of [
+      `.${'a'.repeat(16)}.json.700.uuid.tmp`,
+      '.DS_Store',
+      `${'B'.repeat(16)}.json`,
+      `${'c'.repeat(15)}.json`,
+      `${'d'.repeat(16)}.json.bak`
+    ]) {
+      writeFileSync(join(root, other), '{"pid":7')
+    }
     const name = `${'a'.repeat(16)}.json`
     const first = readRegistrySnapshot(root)
     expect([...(first?.keys() ?? [])]).toEqual([name])
     expect(first?.get(name)?.record).toEqual({
       pid: 700,
       birthIdentity: '700'.padStart(64, 'b'),
+      bootEpoch: 'boot-1',
       profilePath: '/profiles/p'
     })
     expect(first?.get(name)?.hash).toMatch(/^[0-9a-f]{64}$/)
@@ -211,20 +236,37 @@ describe('readRegistrySnapshot', () => {
     expect(second?.get(name)?.record).toEqual({
       pid: 900,
       birthIdentity: null,
+      bootEpoch: null,
       profilePath: '/profiles/q'
     })
   })
 })
 
+describe('temporaryRoots', () => {
+  it('holds the OS temporary directory, /tmp and /var/tmp, as spelled and as resolved', () => {
+    const roots = temporaryRoots()
+    for (const candidate of [tmpdir(), '/tmp', '/var/tmp']) {
+      expect(roots).toContain(resolve(candidate))
+      if (existsSync(candidate)) expect(roots).toContain(realpathSync(candidate))
+    }
+  })
+})
+
 describe('RegistryIsolationGuard', () => {
-  const guardFor = (root: string, table = processTable(), clock = { now: DURING_RUN }) =>
+  const guardFor = (
+    root: string,
+    table = processTable(),
+    clock = { now: DURING_RUN },
+    extra: Partial<RegistryIsolationGuardOptions> = {}
+  ) =>
     new RegistryIsolationGuard({
       realRoot: root,
       ancestorPid: RUN,
       ports: fakePorts(table),
       runStartedAtMs: RUN_START,
       removalGraceMs: 10_000,
-      now: () => clock.now
+      now: () => clock.now,
+      ...extra
     })
 
   it("leaves a real Host's own lifecycle alone: publish, refresh, removal as it exits, and an inert baseline entry", () => {
@@ -295,19 +337,84 @@ describe('RegistryIsolationGuard', () => {
     ])
   })
 
-  it('fails on a Host that started during the run with no ancestor outside it: an orphan (T5)', () => {
+  it('fails on a Host serving a temporary profile that started during the run with no ancestor outside it: an orphaned test Host (T5)', () => {
     const root = join(scratch('host-registry-isolation-'), 'hosts')
     mkdirSync(root)
     const guard = guardFor(root)
-    entry(root, 'o', 920, { profile: '/profiles/orphan' })
+    entry(root, '2', 920, { profile: TEMPORARY_PROFILE })
+    // The same profile spelled through another directory is judged resolved.
+    entry(root, '5', 920, { profile: `/profiles/..${TEMPORARY_PROFILE}` })
     guard.poll()
-    expect(guard.violations()).toEqual([
-      expect.objectContaining({
-        change: 'created',
-        pid: 920,
-        attribution: 'unverified',
-        detail: expect.stringContaining('started during this run and no ancestor outside it did')
-      })
+    expect(guard.violations()).toEqual(
+      ['2', '5'].map((id) =>
+        expect.objectContaining({
+          name: `${id.repeat(16)}.json`,
+          change: 'created',
+          pid: 920,
+          attribution: 'unverified',
+          detail: expect.stringContaining(
+            'serves a temporary profile, started during this run and no ancestor outside it did'
+          )
+        })
+      )
+    )
+  })
+
+  it('accepts a Host with no ancestor outside the run when it serves a real profile: an app relaunched mid-run, a TUI whose tw exited (C2)', () => {
+    const root = join(scratch('host-registry-isolation-'), 'hosts')
+    mkdirSync(root)
+    const table = processTable()
+    const guard = guardFor(root, table)
+    entry(root, '3', 940, { profile: '/profiles/relaunched' })
+    const tui = entry(root, '4', 930, { profile: '/profiles/tui' })
+    guard.poll()
+    entry(root, '3', 940, { profile: '/profiles/relaunched', beatSeq: 1 })
+    guard.poll()
+    // The TUI's Host removes its entry as it exits.
+    unlinkSync(tui)
+    table.get(930)!.alive = false
+    guard.poll()
+    expect(guard.pendingRemovals()).toBe(0)
+    expect(guard.violations()).toEqual([])
+
+    // The same Hosts and entries, were those profiles temporary: test Hosts.
+    const strictRoot = join(scratch('host-registry-isolation-'), 'hosts')
+    mkdirSync(strictRoot)
+    const strict = guardFor(strictRoot, processTable(), undefined, {
+      temporaryRoots: ['/profiles']
+    })
+    entry(strictRoot, '3', 940, { profile: '/profiles/relaunched' })
+    entry(strictRoot, '4', 930, { profile: '/profiles/tui' })
+    strict.poll()
+    expect(
+      strict.violations().map(({ change, pid, attribution }) => [change, pid, attribution])
+    ).toEqual([
+      ['created', 940, 'unverified'],
+      ['created', 930, 'unverified']
+    ])
+  })
+
+  it('never counts a name that is not an entry: a Finder .DS_Store or a stray file created, rewritten or removed (C3)', () => {
+    const root = join(scratch('host-registry-isolation-'), 'hosts')
+    mkdirSync(root)
+    writeFileSync(join(root, '.DS_Store'), 'finder-1')
+    writeFileSync(join(root, 'notes.txt'), 'x')
+    const guard = guardFor(root)
+    writeFileSync(join(root, '.DS_Store'), 'finder-2, longer')
+    unlinkSync(join(root, 'notes.txt'))
+    writeFileSync(join(root, `${'B'.repeat(16)}.json`), '{}')
+    writeFileSync(join(root, `${'c'.repeat(16)}.json.bak`), '{}')
+    // Watch events for them, and for a stray name already gone again.
+    guard.note('.DS_Store')
+    guard.note('notes.txt')
+    guard.note(`${'d'.repeat(16)}.json.bak`)
+    guard.poll()
+    expect(guard.violations()).toEqual([])
+    // The guard is live all the while: an entry naming a dead pid counts.
+    entry(root, '7', 47878)
+    guard.poll()
+    expect(guard.violations().map(({ name, change }) => [name, change])).toEqual([
+      [`${'7'.repeat(16)}.json`, 'created']
     ])
   })
 
@@ -317,15 +424,17 @@ describe('RegistryIsolationGuard', () => {
     const guard = guardFor(root)
     const seen = entry(root, 'e', 900, { profile: REAL_PROFILE })
     guard.poll()
-    // The watch reports a name that is gone by the poll, one the poll still
-    // reads, a late event for one a poll already saw, and a publish temporary.
-    guard.note(`${'t'.repeat(16)}.json`)
+    // The watch reports an entry that is gone by the poll, a late event for
+    // one a poll already saw (removed since), a publish temporary and a
+    // Finder file.
+    guard.note(`${'3'.repeat(16)}.json`)
     guard.note(`${'e'.repeat(16)}.json`)
     guard.note(`.${'e'.repeat(16)}.json.900.uuid.tmp`)
+    guard.note('.DS_Store')
     unlinkSync(seen)
     guard.poll()
     expect(guard.violations()).toEqual([
-      expect.objectContaining({ name: `${'t'.repeat(16)}.json`, change: 'transient' })
+      expect.objectContaining({ name: `${'3'.repeat(16)}.json`, change: 'transient' })
     ])
   })
 
@@ -333,7 +442,7 @@ describe('RegistryIsolationGuard', () => {
     const root = join(scratch('host-registry-isolation-'), 'hosts')
     const deleted = entry(root, 'e', 900, { profile: REAL_PROFILE })
     entry(root, 'f', 900, { profile: REAL_PROFILE })
-    entry(root, 'g', 900, { profile: REAL_PROFILE })
+    entry(root, 'b', 900, { profile: REAL_PROFILE })
     const clock = { now: DURING_RUN }
     const guard = guardFor(root, processTable(), clock)
     unlinkSync(deleted)
@@ -344,10 +453,10 @@ describe('RegistryIsolationGuard', () => {
     clock.now += 10_000
     guard.poll()
     expect(guard.pendingRemovals()).toBe(0)
-    // Rewritten to name init; replaced by another live Host's record while
-    // the first is still running.
+    // Replaced by another live Host's record while the first is still
+    // running; rewritten to name init.
+    entry(root, 'b', 910, { profile: '/profiles/second' })
     entry(root, 'f', 1, { birth: 'c'.repeat(64) })
-    entry(root, 'g', 910, { profile: '/profiles/second' })
     guard.poll()
     expect(
       guard
@@ -355,19 +464,70 @@ describe('RegistryIsolationGuard', () => {
         .map(({ name, change, pid, attribution }) => [name, change, pid, attribution])
     ).toEqual([
       [`${'e'.repeat(16)}.json`, 'removed', 900, 'outside-host'],
-      [`${'f'.repeat(16)}.json`, 'rewritten', 1, 'unverified'],
-      [`${'g'.repeat(16)}.json`, 'rewritten', 910, 'outside-host']
+      [`${'b'.repeat(16)}.json`, 'rewritten', 910, 'outside-host'],
+      [`${'f'.repeat(16)}.json`, 'rewritten', 1, 'unverified']
     ])
     expect(guard.violations()[0].detail).toContain('was deleted while that Host kept running')
   })
 
+  it("fails on a rewrite that changes only the boot epoch of a live outside Host's entry: that Host reads it as foreign (C4)", () => {
+    const root = join(scratch('host-registry-isolation-'), 'hosts')
+    entry(root, 'e', 900, { profile: REAL_PROFILE, bootEpoch: 'boot-1' })
+    const guard = guardFor(root)
+    // The Hosts' own refreshes keep their boot epoch: a baseline entry, and
+    // one published during the run.
+    entry(root, 'e', 900, { profile: REAL_PROFILE, bootEpoch: 'boot-1', beatSeq: 1 })
+    entry(root, 'f', 910, { profile: '/profiles/second', bootEpoch: 'boot-1' })
+    guard.poll()
+    entry(root, 'f', 910, { profile: '/profiles/second', bootEpoch: 'boot-1', beatSeq: 1 })
+    guard.poll()
+    expect(guard.violations()).toEqual([])
+    // The same pid and birth under another boot epoch, or none.
+    entry(root, 'e', 900, { profile: REAL_PROFILE, bootEpoch: 'boot-2', beatSeq: 2 })
+    entry(root, 'f', 910, { profile: '/profiles/second', bootEpoch: null, beatSeq: 2 })
+    guard.poll()
+    expect(
+      guard
+        .violations()
+        .map(({ name, change, pid, attribution }) => [name, change, pid, attribution])
+    ).toEqual([
+      [`${'e'.repeat(16)}.json`, 'rewritten', 900, 'outside-host'],
+      [`${'f'.repeat(16)}.json`, 'rewritten', 910, 'outside-host']
+    ])
+    expect(guard.violations()[0].detail).toContain(
+      'the entry of pid 900, still running, was rewritten with another boot epoch: that Host reads it as foreign and stops itself'
+    )
+  })
+
+  it('judges a rewrite by its bytes when inode, size, mtime and mode are all unchanged (C6)', () => {
+    const root = join(scratch('host-registry-isolation-'), 'hosts')
+    const name = `${'6'.repeat(16)}.json`
+    const mtime = 1_700_000_000
+    const path = entry(root, '6', 900, { profile: REAL_PROFILE })
+    utimesSync(path, mtime, mtime)
+    const guard = guardFor(root)
+    const before = readRegistrySnapshot(root)!.get(name)!
+    // The same file, the same length: another birth identity in place of 900's.
+    entry(root, '6', 900, { profile: REAL_PROFILE, birth: 'c'.repeat(64) })
+    utimesSync(path, mtime, mtime)
+    const after = readRegistrySnapshot(root)!.get(name)!
+    expect(after.stamp).toBe(before.stamp)
+    expect(after.hash).not.toBe(before.hash)
+    guard.poll()
+    expect(
+      guard
+        .violations()
+        .map(({ name: found, change, pid, attribution }) => [found, change, pid, attribution])
+    ).toEqual([[name, 'rewritten', 900, 'unverified']])
+  })
+
   it('lets a Host replace the entry of one that is gone', () => {
     const root = join(scratch('host-registry-isolation-'), 'hosts')
-    entry(root, 'g', 900, { profile: REAL_PROFILE })
+    entry(root, 'b', 900, { profile: REAL_PROFILE })
     const table = processTable()
     const guard = guardFor(root, table)
     table.get(900)!.alive = false
-    entry(root, 'g', 910, { profile: '/profiles/second' })
+    entry(root, 'b', 910, { profile: '/profiles/second' })
     guard.poll()
     expect(guard.violations()).toEqual([])
   })
@@ -378,6 +538,7 @@ describe('RegistryIsolationGuard', () => {
     const other = entry(root, 'c', 47879)
     const guard = guardFor(root)
     unlinkSync(stale)
+    // Moved aside under a name that is no entry, and its name rewritten.
     renameSync(other, `${other}.moved`)
     writeFileSync(other, 'not json\n')
     guard.poll()
@@ -385,7 +546,6 @@ describe('RegistryIsolationGuard', () => {
       guard.violations().map((violation) => [violation.change, violation.attribution])
     ).toEqual([
       ['rewritten', 'unknown'],
-      ['created', 'unknown'],
       ['removed', 'baseline-stale']
     ])
   })
@@ -509,47 +669,127 @@ describe('startHostRegistryIsolation', () => {
     }
   })
 
+  /** A guard over a scratch "real" root, watched through fs.watch, with every event recorded. */
+  function watchedIsolation(realRoot: string) {
+    const events: Array<string | null> = []
+    const reports: string[] = []
+    const verdict = { failed: 0 }
+    const teardown = startHostRegistryIsolation({
+      env: {},
+      realRoots: [realRoot],
+      temporaryDirectory: scratch('host-registry-isolation-tmp-'),
+      // No interval poll lands inside these tests: only the watch can see it.
+      pollIntervalMs: 60_000,
+      watch: (path, onChange) =>
+        watchRegistryDirectory(path, (name) => {
+          events.push(name)
+          onChange(name)
+        }),
+      report: (text) => reports.push(text),
+      fail: () => {
+        verdict.failed += 1
+      }
+    })
+    return { events, reports, verdict, teardown }
+  }
+
   it.skipIf(process.platform === 'win32')(
     'catches an entry written and removed between two polls through the directory watch (T4)',
     async () => {
       const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
       mkdirSync(realRoot)
-      const events: Array<string | null> = []
-      const reports: string[] = []
-      let failed = 0
-      const teardown = startHostRegistryIsolation({
-        env: {},
-        realRoots: [realRoot],
-        temporaryDirectory: scratch('host-registry-isolation-tmp-'),
-        // No interval poll lands inside this test: only the watch can see it.
-        pollIntervalMs: 60_000,
-        watch: (path, onChange) =>
-          watchRegistryDirectory(path, (name) => {
-            events.push(name)
-            onChange(name)
-          }),
-        report: (text) => reports.push(text),
-        fail: () => {
-          failed += 1
-        }
-      })
+      const { events, reports, verdict, teardown } = watchedIsolation(realRoot)
       // A directory watch starts asynchronously (FSEvents on darwin), and a
       // change made before it is live is never reported: write and remove the
       // entry until the watch reports it. The guard's own watch is armed at
       // the start of a run, long before any test writes.
       await vi.waitFor(
         () => {
-          unlinkSync(entry(realRoot, 'w', process.pid))
+          unlinkSync(entry(realRoot, '9', process.pid))
           expect(events.length).toBeGreaterThan(0)
         },
         { timeout: 15_000, interval: 250 }
       )
       await teardown()
-      expect(failed).toBe(1)
-      expect(reports[0]).toContain(`${'w'.repeat(16)}.json`)
+      expect(verdict.failed).toBe(1)
+      expect(reports[0]).toContain(`${'9'.repeat(16)}.json`)
     },
     30_000
   )
+
+  it.skipIf(process.platform === 'win32')(
+    "catches an entry written and removed as the run's last act: teardown drains the watch before its verdict (C5)",
+    async () => {
+      const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
+      mkdirSync(realRoot)
+      const { events, reports, verdict, teardown } = watchedIsolation(realRoot)
+      // Wait until the watch is live, through a name that is no entry.
+      await vi.waitFor(
+        () => {
+          writeFileSync(join(realRoot, '.DS_Store'), String(Date.now()))
+          expect(events).toContain('.DS_Store')
+        },
+        { timeout: 15_000, interval: 250 }
+      )
+      // The run's last act: teardown starts with no poll and no turn of the
+      // event loop in between, so only a drained watch event can report it.
+      unlinkSync(entry(realRoot, '5', process.pid))
+      await teardown()
+      expect(verdict.failed).toBe(1)
+      expect(reports[0]).toContain(`transient ${'5'.repeat(16)}.json (unknown)`)
+      expect(reports[0]).not.toContain('.DS_Store')
+    },
+    30_000
+  )
+
+  it('still delivers a watch event that fell due with the settle timer before the last poll (C5)', async () => {
+    const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
+    mkdirSync(realRoot)
+    // A watch whose events reach the loop the way FSEvents' do: signalled
+    // from outside JavaScript and delivered in the I/O phase (a MessagePort).
+    const channel = new MessageChannel()
+    let deliver: ((name: string | null) => void) | null = null
+    channel.port2.on('message', (name: string) => deliver?.(name))
+    const reports: string[] = []
+    let failed = 0
+    const teardown = startHostRegistryIsolation({
+      env: {},
+      realRoots: [realRoot],
+      temporaryDirectory: scratch('host-registry-isolation-tmp-'),
+      pollIntervalMs: 60_000,
+      teardownSettleMs: 20,
+      watch: (_path, onChange) => {
+        deliver = onChange
+        return { close: () => undefined }
+      },
+      report: (text) => reports.push(text),
+      fail: () => {
+        failed += 1
+      }
+    })
+    const name = `${'5'.repeat(16)}.json`
+    try {
+      // From the check phase: the entry comes and goes, teardown starts, its
+      // event is posted, and the loop is held past the settle. The settle
+      // timer and the event then fall due together, and timers run first.
+      await new Promise<void>((settled, reject) => {
+        setImmediate(() => {
+          unlinkSync(entry(realRoot, '5', process.pid))
+          const verdict = teardown()
+          channel.port1.postMessage(name)
+          const heldUntil = Date.now() + 100
+          while (Date.now() < heldUntil) {
+            // Hold the loop.
+          }
+          verdict.then(settled, reject)
+        })
+      })
+    } finally {
+      channel.port1.close()
+    }
+    expect(failed).toBe(1)
+    expect(reports[0]).toContain(`transient ${name} (unknown)`)
+  })
 
   it('watches ~/.taskwraith/hosts under HOME and the password database home, never the override', () => {
     const home = scratch('host-registry-isolation-home-')
@@ -571,9 +811,10 @@ describe('startHostRegistryIsolation', () => {
 
 /**
  * The guard against real processes: stand-in Hosts are children of this
- * worker (or orphans it started), each serving a temporary profile; the
- * guard's "run" is a pid that is none of their ancestors, so they read as
- * Hosts outside it. Every child is killed in teardown, by pid and birth.
+ * worker (or orphans it started), each serving a temporary profile unless a
+ * test says otherwise; the guard's "run" is a pid that is none of their
+ * ancestors, so they read as Hosts outside it. Every child is killed in
+ * teardown, by pid and birth.
  */
 describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
   'RegistryIsolationGuard against real processes',
@@ -612,6 +853,32 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
       }
     }
 
+    /**
+     * A stand-in started in the background by a shell that then exits:
+     * launchd adopts it, so no process of this run is its ancestor any more.
+     */
+    async function startOrphanedStandInHost(base: string, profile: string) {
+      const cli = standInCli(base)
+      const shell = spawn(
+        '/bin/sh',
+        [
+          '-c',
+          `"${process.execPath}" "${cli}" serve --mode production --profile "${profile}" >/dev/null 2>&1 & echo $!`
+        ],
+        { stdio: ['ignore', 'pipe', 'ignore'] }
+      )
+      let output = ''
+      shell.stdout!.on('data', (chunk) => (output += String(chunk)))
+      await new Promise((resolve) => shell.once('close', resolve))
+      const pid = Number(output.trim())
+      expect(Number.isSafeInteger(pid) && pid > 1).toBe(true)
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      const birth = await birthOf(pid)
+      children.push({ pid, birthIdentity: birth.birthIdentity })
+      expect(readProcessParents()?.get(pid)).toBe(1)
+      return { pid, birth }
+    }
+
     /** A pid that is nobody's ancestor: a child that has already exited. */
     async function outsideRunPid(): Promise<number> {
       const child = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
@@ -624,13 +891,16 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
       pid: number,
       birthIdentity: string,
       profile: string,
-      beatSeq = 0
+      {
+        beatSeq = 0,
+        bootEpoch = null
+      }: { readonly beatSeq?: number; readonly bootEpoch?: string | null } = {}
     ): string {
       mkdirSync(root, { recursive: true })
       const path = join(root, 'a'.repeat(16) + '.json')
       writeFileSync(
         path,
-        `${JSON.stringify({ schema: 'taskwraith.host-registry.v1', pid, birthIdentity, profilePath: profile, beatSeq })}\n`
+        `${JSON.stringify({ schema: 'taskwraith.host-registry.v1', pid, birthIdentity, bootEpoch, profilePath: profile, beatSeq })}\n`
       )
       return path
     }
@@ -652,7 +922,7 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
       const lifecycle = new RegistryIsolationGuard(guardOptions)
       const path = publish(root, host.pid, host.birth.birthIdentity, profile)
       lifecycle.poll()
-      publish(root, host.pid, host.birth.birthIdentity, profile, 1)
+      publish(root, host.pid, host.birth.birthIdentity, profile, { beatSeq: 1 })
       lifecycle.poll()
       process.kill(host.pid, 'SIGKILL')
       await host.exited
@@ -680,35 +950,46 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
       expect(await birthOf(live.pid)).toMatchObject({ birthIdentity: live.birth.birthIdentity })
     }, 30_000)
 
+    it("fails on a rewrite of a live outside Host's entry that changes only its boot epoch (C4)", async () => {
+      const base = scratch('host-registry-isolation-sub-')
+      const root = join(base, 'hosts')
+      const profile = scratch('host-registry-isolation-profile-')
+      const host = await startStandInHost(base, profile)
+      const own = { bootEpoch: 'boot-1' }
+      publish(root, host.pid, host.birth.birthIdentity, profile, own)
+      const guard = new RegistryIsolationGuard({
+        realRoot: root,
+        ancestorPid: await outsideRunPid(),
+        runStartedAtMs: Date.now() + 60_000
+      })
+      publish(root, host.pid, host.birth.birthIdentity, profile, { ...own, beatSeq: 1 })
+      guard.poll()
+      expect(guard.violations()).toEqual([])
+      publish(root, host.pid, host.birth.birthIdentity, profile, {
+        bootEpoch: 'boot-2',
+        beatSeq: 2
+      })
+      guard.poll()
+      expect(guard.violations()).toEqual([
+        expect.objectContaining({
+          change: 'rewritten',
+          pid: host.pid,
+          attribution: 'outside-host',
+          detail: expect.stringContaining('was rewritten with another boot epoch')
+        })
+      ])
+      expect(await birthOf(host.pid)).toMatchObject({ birthIdentity: host.birth.birthIdentity })
+    }, 30_000)
+
     // darwin only: every orphan goes to launchd there, while linux may hand
     // it to a subreaper older than the run (the guard's documented limit).
     it.skipIf(process.platform !== 'darwin')(
-      'fails on an orphaned Host started during the run, however genuine its entry (T5)',
+      'fails on an orphaned Host serving a temporary profile, started during the run, however genuine its entry (T5)',
       async () => {
         const base = scratch('host-registry-isolation-orphan-')
         const root = join(base, 'hosts')
         const profile = scratch('host-registry-isolation-profile-')
-        const cli = standInCli(base)
-        // The shell starts the stand-in in the background and exits: launchd or
-        // init adopts it, so no process of this run is its ancestor any more.
-        const shell = spawn(
-          '/bin/sh',
-          [
-            '-c',
-            `"${process.execPath}" "${cli}" serve --mode production --profile "${profile}" >/dev/null 2>&1 & echo $!`
-          ],
-          { stdio: ['ignore', 'pipe', 'ignore'] }
-        )
-        let output = ''
-        shell.stdout!.on('data', (chunk) => (output += String(chunk)))
-        await new Promise((resolve) => shell.once('exit', resolve))
-        const pid = Number(output.trim())
-        expect(Number.isSafeInteger(pid) && pid > 1).toBe(true)
-        await new Promise((resolve) => setTimeout(resolve, 150))
-        const birth = await birthOf(pid)
-        children.push({ pid, birthIdentity: birth.birthIdentity })
-        expect(readProcessParents()?.get(pid)).toBe(1)
-
+        const { pid, birth } = await startOrphanedStandInHost(base, profile)
         mkdirSync(root)
         const guard = new RegistryIsolationGuard({
           realRoot: root,
@@ -723,10 +1004,43 @@ describe.skipIf(process.platform !== 'darwin' && process.platform !== 'linux')(
             pid,
             attribution: 'unverified',
             detail: expect.stringContaining(
-              'started during this run and no ancestor outside it did'
+              'serves a temporary profile, started during this run and no ancestor outside it did'
             )
           })
         ])
+      },
+      30_000
+    )
+
+    it.skipIf(process.platform !== 'darwin')(
+      'accepts an orphaned Host started during the run when it serves a real profile: an app relaunched mid-run (C2)',
+      async () => {
+        const base = scratch('host-registry-isolation-orphan-')
+        const root = join(base, 'hosts')
+        // A real profile's spelling, space and all; nothing is ever created there.
+        const profile = join(
+          userInfo().homedir,
+          'Library',
+          'Application Support',
+          `taskwraith-registry-guard-test-${process.pid}-${Date.now()}`
+        )
+        expect(existsSync(profile)).toBe(false)
+        expect(
+          temporaryRoots().some((temporaryRoot) => profile.startsWith(`${temporaryRoot}/`))
+        ).toBe(false)
+        const { pid, birth } = await startOrphanedStandInHost(base, profile)
+        mkdirSync(root)
+        const guard = new RegistryIsolationGuard({
+          realRoot: root,
+          ancestorPid: process.pid,
+          runStartedAtMs: (birth.startedAtMs ?? Date.now()) - 1_000
+        })
+        publish(root, pid, birth.birthIdentity, profile)
+        guard.poll()
+        publish(root, pid, birth.birthIdentity, profile, { beatSeq: 1 })
+        guard.poll()
+        expect(guard.violations()).toEqual([])
+        expect(existsSync(profile)).toBe(false)
       },
       30_000
     )

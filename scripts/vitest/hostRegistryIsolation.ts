@@ -5,11 +5,12 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   rmSync,
   watch as watchDirectory
 } from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 
 import { isHostServeCommandFor } from '../../src/host-client/HostProcessTermination'
 import {
@@ -47,33 +48,50 @@ import {
  * - an entry is created or rewritten by a Host outside the run: the process
  *   it names is alive with exactly the birth identity it records, its command
  *   line is a Host serving the entry's profile, it does not run under this
- *   test run, and it either started before the run or has an ancestor (other
- *   than init) that did, as a Host the app starts mid-run does;
- * - a rewrite that changes whose entry it is replaces a Host that is gone;
+ *   test run, and either its profile lies outside the run's temporary roots
+ *   (a real profile: a test Host always serves a temporary one, so this is
+ *   what tells an app relaunched mid-run, whose only ancestor is launchd,
+ *   from an orphaned test Host), or it started before the run, or it has an
+ *   ancestor (other than init) that did, as a Host the app starts mid-run;
+ * - a rewrite that changes whose entry it is (pid, birth identity or boot
+ *   epoch: what the Host's own self-check compares) replaces a Host that is
+ *   gone;
  * - an entry disappears as its Host exits: removal is judged after a grace,
  *   and a Host still running with the same birth then means someone else
  *   deleted a live Host's entry — the kill switch that stops it.
  *
- * Anything else — an entry naming init or a dead pid, a malformed file, a
- * removed baseline entry, a name that came and went between polls, no process
- * table (Windows) — counts against the run: the guard would rather be loud
- * than let a test write into a user's registry. One limitation: on linux an
- * orphan is re-parented to a subreaper, which can predate the run, so an
- * orphaned Host that verifies as a real one is read as outside the run; on
- * darwin every orphan goes to launchd, which never counts.
+ * Only `<16 hex>.json` names are entries: nothing reads any other name in the
+ * root (a Finder `.DS_Store`, a publish temporary), so the guard ignores them
+ * too. Anything else — an entry naming init or a dead pid, a malformed entry,
+ * a removed baseline entry, an entry that came and went between polls, no
+ * process table (Windows) — counts against the run: the guard would rather be
+ * loud than let a test write into a user's registry. Teardown lets the watch
+ * deliver before its last poll (TEARDOWN_SETTLE_MS), so an entry written and
+ * removed in the run's final moments is still seen when the watch reports it
+ * in that time. One limitation: on linux an orphan is re-parented to a
+ * subreaper, which can predate the run, so an orphaned Host that verifies as
+ * a real one is read as outside the run; on darwin every orphan goes to
+ * launchd, which never counts.
  */
 
 const POLL_INTERVAL_MS = 250
 /** How long a verified outside Host may take to exit after its entry disappears. */
 const REMOVAL_GRACE_MS = 10_000
+/**
+ * How long teardown lets the watch deliver before its last poll: FSEvents and
+ * inotify report asynchronously (about 30-50 ms here), so an entry written
+ * and removed as a run's last act would otherwise land after the verdict.
+ */
+const TEARDOWN_SETTLE_MS = 250
 const RUN_ROOT_PREFIX = 'taskwraith-vitest-host-registry-'
-/** The publisher's rename-into-place temporaries: `.<entry>.<pid>.<uuid>.tmp`. */
-const PUBLISH_TEMPORARY = /^\..*\.tmp$/
+/** The only names a Host or `stop-all` reads in the root (HostRegistry.ts ENTRY_ID_PATTERN). */
+const ENTRY_NAME = /^[0-9a-f]{16}\.json$/
 
 /** What an entry file names, when it parses as a JSON object. */
 export interface RegistryEntryRecord {
   readonly pid: number | null
   readonly birthIdentity: string | null
+  readonly bootEpoch: string | null
   readonly profilePath: string | null
 }
 
@@ -144,20 +162,27 @@ function recordOf(bytes: Buffer | null): RegistryEntryRecord | null {
     return null
   }
   if (!parsed || typeof parsed !== 'object') return null
-  const value = parsed as { pid?: unknown; birthIdentity?: unknown; profilePath?: unknown }
+  const value = parsed as {
+    pid?: unknown
+    birthIdentity?: unknown
+    bootEpoch?: unknown
+    profilePath?: unknown
+  }
   return {
     pid:
       typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0
         ? value.pid
         : null,
     birthIdentity: typeof value.birthIdentity === 'string' ? value.birthIdentity : null,
+    bootEpoch: typeof value.bootEpoch === 'string' ? value.bootEpoch : null,
     profilePath: typeof value.profilePath === 'string' ? value.profilePath : null
   }
 }
 
 /**
- * Every file in the root except the publisher's short-lived temporaries,
- * each read and hashed afresh. A symbolic link is stamped, never followed.
+ * Every entry-named file in the root (`<16 hex>.json`), each read and hashed
+ * afresh; no other name is ever read by a Host. A symbolic link is stamped,
+ * never followed.
  */
 export function readRegistrySnapshot(root: string): Map<string, RegistryFileState> | null {
   let names: string[]
@@ -169,7 +194,7 @@ export function readRegistrySnapshot(root: string): Map<string, RegistryFileStat
   }
   const snapshot = new Map<string, RegistryFileState>()
   for (const name of names.sort()) {
-    if (PUBLISH_TEMPORARY.test(name)) continue
+    if (!ENTRY_NAME.test(name)) continue
     const path = join(root, name)
     let stamp: string
     let regular: boolean
@@ -291,14 +316,43 @@ export const watchRegistryDirectory: RegistryDirectoryWatch = (path, onChange) =
   }
 }
 
+/**
+ * The directories a test profile lives under: the OS temporary directory,
+ * /tmp and /var/tmp, each as spelled and as resolved (on darwin each resolves
+ * under /private, and a Host's entry records its profile resolved).
+ */
+export function temporaryRoots(): readonly string[] {
+  const roots = new Set<string>()
+  for (const candidate of [tmpdir(), '/tmp', '/var/tmp']) {
+    roots.add(resolve(candidate))
+    try {
+      roots.add(realpathSync(candidate))
+    } catch {
+      // Absent here: its spelling is still a temporary root.
+    }
+  }
+  return [...roots]
+}
+
+/** Whether `path`, normalised without following links, lies inside one of `roots`. */
+function isUnderAny(path: string, roots: readonly string[]): boolean {
+  const spelling = resolve(path)
+  return roots.some((root) => spelling.startsWith(`${root}${sep}`))
+}
+
 export interface RegistryIsolationGuardOptions {
   /** The registry a Host uses without the override. */
   readonly realRoot: string
   /** This vitest process: writers under it belong to the run. */
   readonly ancestorPid: number
   readonly ports?: Partial<RegistryGuardProcessPorts>
-  /** When the run began; a Host started after it needs an ancestor that did not. */
+  /**
+   * When the run began; a Host started after it, serving a temporary profile,
+   * needs an ancestor that did not.
+   */
   readonly runStartedAtMs?: number
+  /** Where test profiles live; temporaryRoots() by default. */
+  readonly temporaryRoots?: readonly string[]
   readonly removalGraceMs?: number
   readonly now?: () => number
   /** Watches the root (or its parent while the root is absent) between polls. */
@@ -307,13 +361,20 @@ export interface RegistryIsolationGuardOptions {
   readonly onWatchEvent?: () => void
 }
 
+/** Whose entry it is: the fields the Host's own self-check compares. */
+interface HostEntryIdentity {
+  readonly pid: number
+  readonly birthIdentity: string
+  readonly bootEpoch: string | null
+}
+
 type EntryOwner =
-  | { readonly kind: 'outside-host'; readonly pid: number; readonly birthIdentity: string }
+  | ({ readonly kind: 'outside-host' } & HostEntryIdentity)
   | { readonly kind: 'baseline-stale' }
   | { readonly kind: 'flagged' }
 
 type Verification =
-  | { readonly ok: true; readonly pid: number; readonly birthIdentity: string }
+  | ({ readonly ok: true } & HostEntryIdentity)
   | {
       readonly ok: false
       readonly attribution: RegistryIsolationAttribution
@@ -327,6 +388,18 @@ interface PendingRemoval {
   readonly deadline: number
 }
 
+function identityOf(identity: HostEntryIdentity): HostEntryIdentity {
+  return { pid: identity.pid, birthIdentity: identity.birthIdentity, bootEpoch: identity.bootEpoch }
+}
+
+function sameHostEntry(owner: HostEntryIdentity, record: RegistryEntryRecord): boolean {
+  return (
+    record.pid === owner.pid &&
+    record.birthIdentity === owner.birthIdentity &&
+    record.bootEpoch === owner.bootEpoch
+  )
+}
+
 /**
  * Tracks the real registry against a baseline. `poll()` runs on an interval
  * and on every watch event for the whole test run; `violations()` is the
@@ -337,6 +410,7 @@ export class RegistryIsolationGuard {
   private readonly ports: RegistryGuardProcessPorts
   private readonly now: () => number
   private readonly runStartedAtMs: number
+  private readonly temporaryRoots: readonly string[]
   private readonly rootExistedAtStart: boolean
   /** A root nobody here can list cannot be written by this run's Hosts either. */
   private readonly unlistableAtStart: boolean
@@ -356,6 +430,7 @@ export class RegistryIsolationGuard {
     this.ports = { ...DEFAULT_PROCESS_PORTS, ...options.ports }
     this.now = options.now ?? Date.now
     this.runStartedAtMs = options.runStartedAtMs ?? this.now()
+    this.temporaryRoots = options.temporaryRoots ?? temporaryRoots()
     let baseline: RegistrySnapshot = null
     let unlistable = false
     try {
@@ -377,7 +452,7 @@ export class RegistryIsolationGuard {
         this.owners.set(
           name,
           verified.ok
-            ? { kind: 'outside-host', pid: verified.pid, birthIdentity: verified.birthIdentity }
+            ? { ...identityOf(verified), kind: 'outside-host' }
             : { kind: 'baseline-stale' }
         )
       }
@@ -385,11 +460,9 @@ export class RegistryIsolationGuard {
     this.rearmWatch()
   }
 
-  /** A watch event: remember the name, so one that is gone by the next poll still counts. */
+  /** A watch event: remember an entry name, so one that is gone by the next poll still counts. */
   note(name: string | null): void {
-    if (name && !PUBLISH_TEMPORARY.test(name) && !name.includes('/') && !name.includes('\\')) {
-      this.noted.add(name)
-    }
+    if (name && ENTRY_NAME.test(name)) this.noted.add(name)
   }
 
   poll(): void {
@@ -474,11 +547,10 @@ export class RegistryIsolationGuard {
     const owner = this.owners.get(name)
     const record = state.record
     // A refresh by the Host already verified as this entry's owner keeps its
-    // standing even if the ancestor that anchored it has since exited.
+    // standing even if the ancestor that anchored it has since exited. Owner
+    // means what the Host's self-check compares: pid, birth and boot epoch.
     const sameOwner =
-      owner?.kind === 'outside-host' &&
-      record?.pid === owner.pid &&
-      record.birthIdentity === owner.birthIdentity
+      owner?.kind === 'outside-host' && record !== null && sameHostEntry(owner, record)
     const verified = this.verifyOutsideHost(record, table, !sameOwner)
     if (verified.ok) {
       if (
@@ -486,11 +558,7 @@ export class RegistryIsolationGuard {
         owner?.kind !== 'outside-host' ||
         this.gone(owner.pid, owner.birthIdentity)
       ) {
-        this.owners.set(name, {
-          kind: 'outside-host',
-          pid: verified.pid,
-          birthIdentity: verified.birthIdentity
-        })
+        this.owners.set(name, { ...identityOf(verified), kind: 'outside-host' })
         this.exemptWriterSeen = true
         return
       }
@@ -500,7 +568,10 @@ export class RegistryIsolationGuard {
         change: 'rewritten',
         pid: verified.pid,
         attribution: 'outside-host',
-        detail: `the entry of pid ${owner.pid}, still running, was replaced by one for pid ${verified.pid}`
+        detail:
+          verified.pid === owner.pid && verified.birthIdentity === owner.birthIdentity
+            ? `the entry of pid ${owner.pid}, still running, was rewritten with another boot epoch: that Host reads it as foreign and stops itself`
+            : `the entry of pid ${owner.pid}, still running, was replaced by one for pid ${verified.pid}`
       })
       return
     }
@@ -569,8 +640,9 @@ export class RegistryIsolationGuard {
   /**
    * Whether `record` is the live entry of a Host outside this run: the pid is
    * alive with exactly the recorded birth, runs a Host serving the recorded
-   * profile, is not under this run and — when `anchored` — started before
-   * the run or has a non-init ancestor that did.
+   * profile, is not under this run and — when `anchored` — serves a profile
+   * outside the temporary roots, or started before the run, or has a
+   * non-init ancestor that did.
    */
   private verifyOutsideHost(
     record: RegistryEntryRecord | null,
@@ -614,14 +686,22 @@ export class RegistryIsolationGuard {
         reason: `pid ${pid} is not a Host serving the entry's profile`
       }
     }
-    if (anchored && !this.predatesRun(birth) && !this.hasAncestorOutsideRun(pid, parents)) {
+    // A real profile (outside every temporary root) is never a test's: its
+    // Host is the user's, whatever its ancestry (an app relaunched from the
+    // Dock, or a TUI whose `tw` has exited, leaves only launchd above it).
+    if (
+      anchored &&
+      isUnderAny(record.profilePath, this.temporaryRoots) &&
+      !this.predatesRun(birth) &&
+      !this.hasAncestorOutsideRun(pid, parents)
+    ) {
       return {
         ok: false,
         attribution: 'unverified',
-        reason: `pid ${pid} started during this run and no ancestor outside it did`
+        reason: `pid ${pid} serves a temporary profile, started during this run and no ancestor outside it did`
       }
     }
-    return { ok: true, pid, birthIdentity: birth.birthIdentity }
+    return { ok: true, pid, birthIdentity: birth.birthIdentity, bootEpoch: record.bootEpoch }
   }
 
   private predatesRun(birth: ProcessBirthObservation): boolean {
@@ -745,6 +825,8 @@ export interface HostRegistryIsolationOptions {
   readonly removalGraceMs?: number
   /** fs.watch by default; null polls only. */
   readonly watch?: RegistryDirectoryWatch | null
+  /** How long teardown lets the watch deliver before its last poll (TEARDOWN_SETTLE_MS). */
+  readonly teardownSettleMs?: number
   readonly report?: (text: string) => void
   /** Marks the run failed; the summary has already printed by then. */
   readonly fail?: () => void
@@ -790,8 +872,18 @@ export function startHostRegistryIsolation(
   }
   const timer = setInterval(pollAll, pollIntervalMs)
   timer.unref()
+  const teardownSettleMs = options.teardownSettleMs ?? TEARDOWN_SETTLE_MS
   return async () => {
     clearInterval(timer)
+    if (watch) {
+      // Drain the watch: its events arrive asynchronously, so an entry written
+      // and removed as the run's last act is only noted after a moment. The
+      // settle ends in a setImmediate, which runs only once the loop has
+      // handled pending I/O: an event that fell due with the settle timer
+      // (timers run first) is still delivered before the last poll.
+      await new Promise((resolve) => setTimeout(resolve, teardownSettleMs))
+      await new Promise((resolve) => setImmediate(resolve))
+    }
     pollAll()
     // A removal is judged only once its Host has had its grace to exit.
     const settleBy = Date.now() + removalGraceMs + pollIntervalMs
