@@ -6140,9 +6140,7 @@ export class AppStore {
             miss.size === stat.size &&
             miss.revision === shadowRevision &&
             miss.messageCount === shadowMessageCount
-          const onDiskRaw = unchangedSinceMiss
-            ? null
-            : readJson<ChatRecord | null>(chatPath, null)
+          const onDiskRaw = unchangedSinceMiss ? null : readJson<ChatRecord | null>(chatPath, null)
           if (!unchangedSinceMiss) {
             hostShadowReconcileMissByChatId.set(chatId, {
               mtimeMs: stat.mtimeMs,

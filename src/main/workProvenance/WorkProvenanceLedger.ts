@@ -598,7 +598,7 @@ export async function readWorkProvenanceEvents(
   try {
     names = (await fs.readdir(directory)).filter((name) => name.endsWith('.json')).sort()
     throwIfWorkProvenanceAborted(signal)
-  } catch (error) {
+  } catch {
     throwIfWorkProvenanceAborted(signal)
     return []
   }
@@ -620,7 +620,7 @@ export async function readWorkProvenanceEvents(
       ) {
         events.push(parsed as WorkProvenanceEvent)
       }
-    } catch (error) {
+    } catch {
       throwIfWorkProvenanceAborted(signal)
       // One corrupt local receipt must not hide the remaining immutable events.
     }
