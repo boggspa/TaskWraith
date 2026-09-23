@@ -308,13 +308,23 @@ describe('AntiGravity S3 runtime integration', () => {
     }
 
     // In order: the launch fence (Stop, setup abort, history, persistence),
-    // the provider's refusal read, the refusal branch, then the try that spawns.
+    // the provider's refusal read inside a try whose catch turns a throw into a
+    // refusal, the refusal branch, then the try that spawns.
     const readAt = statements.findIndex(
       (statement) =>
-        ts.isVariableStatement(statement) && probe.callsTo(statement, 'launchRefusal').length === 1
+        ts.isTryStatement(statement) &&
+        probe.callsTo(statement.tryBlock, 'launchRefusal').length === 1
     )
-    expect(readAt).toBeGreaterThan(0)
-    const fence = statements[readAt - 1]
+    expect(readAt).toBeGreaterThan(1)
+    const read = statements[readAt]
+    if (!ts.isTryStatement(read) || !read.catchClause) throw new Error('the read has no catch')
+    expect(probe.assignmentsTo(read.catchClause.block, 'launchRefusal')).toHaveLength(1)
+    const declaration = statements[readAt - 1]
+    expect(
+      ts.isVariableStatement(declaration) &&
+        declaration.declarationList.declarations.map((entry) => probe.text(entry.name))
+    ).toEqual(['launchRefusal'])
+    const fence = statements[readAt - 2]
     expect(ts.isIfStatement(fence) && probe.text(fence.expression).replace(/\s+/g, ' ')).toBe(
       '!providerTransportLaunchAuthorized(provider, payload, route)'
     )

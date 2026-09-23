@@ -21140,7 +21140,8 @@ async function runCliProviderProcess(
      * The provider's own last word before its child starts. It runs after the
      * launch fence, with nothing awaited between it and the spawn, so it sees
      * anything that changed while the provider's setup waited. A returned
-     * message refuses the launch as a visible setup failure.
+     * message refuses the launch as a visible setup failure, and so does a
+     * throw: a check that cannot answer never lets the child start.
      */
     launchRefusal?: () => string | null
   } & (
@@ -21408,7 +21409,21 @@ async function runCliProviderProcess(
     await releaseWorkspaceLockSetupGuardian()
     return transportOperation
   }
-  const launchRefusal = options.launchRefusal?.() ?? null
+  let launchRefusal: string | null
+  try {
+    launchRefusal = options.launchRefusal?.() ?? null
+  } catch (error) {
+    // Settled like every other pre-spawn failure above, never left to reject
+    // with the run registered, its transport open and its setup guard held.
+    try {
+      console.error(`[${provider}] launch refusal check failed:`, error)
+    } catch {
+      // The refusal below still settles the run.
+    }
+    launchRefusal = `${providerDisplayName(provider)} could not confirm that it may start, so it was not started: ${
+      error instanceof Error ? error.message : String(error)
+    }`
+  }
   if (launchRefusal) {
     try {
       settleVisibleProviderSetupFailure({
