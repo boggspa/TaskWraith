@@ -12,7 +12,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, delimiter, join } from 'node:path'
 import { afterAll, beforeAll, afterEach, expect, it, vi } from 'vitest'
 import { spawnSync } from 'node:child_process'
 
@@ -40,6 +40,91 @@ import {
 } from '../shared/taskWraithHostPaths.node'
 
 import { createHostNodeProductionServer } from './HostNodeProductionFactory'
+import { resolveHostNodeProviderBinary } from './HostNodeProviderResources'
+
+/**
+ * Every server below composes the real provider factories, which resolve
+ * provider CLIs through this process's PATH (then common directories under
+ * HOME) and run them with this process's environment. Unguarded, every run
+ * executes the installed `claude auth status` and `cursor-agent status`,
+ * which write ~/.claude.json, ~/.claude/, ~/.cursor/cli-config.json and
+ * ~/Library/Caches. So the whole file is hermetic: a failing stub for every
+ * provider CLI comes first on PATH, so no installed CLI runs at all, and
+ * HOME with the XDG and tool config roots points into a temporary directory,
+ * so nothing else a spawned process writes under HOME reaches the
+ * developer's real home. Registered before any other hook, restored after
+ * all of them.
+ */
+const PROVIDER_CLI_STUBS = [
+  'agy',
+  'claude',
+  'codex',
+  'cursor-agent',
+  'devin',
+  'grok',
+  'kimi',
+  'muse',
+  'ollama',
+  'pi',
+  'vibe-acp'
+] as const
+const HERMETIC_VARIABLES = [
+  'PATH',
+  'HOME',
+  'USERPROFILE',
+  'XDG_CONFIG_HOME',
+  'XDG_CACHE_HOME',
+  'XDG_DATA_HOME',
+  'XDG_STATE_HOME',
+  'CLAUDE_CONFIG_DIR',
+  'CODEX_HOME'
+] as const
+const realEnvironment = new Map<string, string | undefined>()
+let hermeticHome = ''
+let providerStubs = ''
+beforeAll(() => {
+  hermeticHome = realpathSync(mkdtempSync(join(tmpdir(), 'host-factory-home-')))
+  providerStubs = join(hermeticHome, 'provider-stubs')
+  mkdirSync(providerStubs)
+  for (const name of PROVIDER_CLI_STUBS) {
+    // @portability-ok: a POSIX stub that only has to be found; on win32 it
+    // cannot run, which fails the probe the same way.
+    writeFileSync(join(providerStubs, name), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+  }
+  const values: Record<(typeof HERMETIC_VARIABLES)[number], string> = {
+    PATH: [providerStubs, process.env.PATH].filter(Boolean).join(delimiter),
+    HOME: hermeticHome,
+    USERPROFILE: hermeticHome,
+    XDG_CONFIG_HOME: join(hermeticHome, '.config'),
+    XDG_CACHE_HOME: join(hermeticHome, '.cache'),
+    XDG_DATA_HOME: join(hermeticHome, '.local', 'share'),
+    XDG_STATE_HOME: join(hermeticHome, '.local', 'state'),
+    CLAUDE_CONFIG_DIR: join(hermeticHome, '.claude'),
+    CODEX_HOME: join(hermeticHome, '.codex')
+  }
+  for (const name of HERMETIC_VARIABLES) {
+    realEnvironment.set(name, process.env[name])
+    process.env[name] = values[name]
+  }
+})
+afterAll(() => {
+  for (const [name, value] of realEnvironment) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
+  rmSync(hermeticHome, { recursive: true, force: true })
+})
+
+it('resolves no installed provider CLI: each one this Host composes finds its stub or nothing', () => {
+  for (const providerId of hostStandaloneComposedProviderIds()) {
+    const resolved = resolveHostNodeProviderBinary(providerId)
+    if (resolved.binaryPath !== null) {
+      expect(resolved.binaryPath, providerId).toBe(
+        join(providerStubs, basename(resolved.binaryPath))
+      )
+    }
+  }
+})
 
 const historyWorkers = vi.hoisted(() => ({ directory: '' }))
 vi.mock('./ThreadCatalogueHostClient', async () => {
