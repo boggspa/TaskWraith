@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
-  existsSync,
+  chmodSync,
   lstatSync,
   mkdirSync,
   readdirSync,
@@ -29,6 +29,12 @@ import {
   observeProcessBirthIdentity,
   type ProcessBirthObservation
 } from './ProcessBirthIdentity'
+import type {
+  HostRegistryCheckResult,
+  HostRegistryEntryInput,
+  HostRegistryEntryRefresh,
+  HostRegistryPublisherPort
+} from './HostRegistryPort'
 
 /**
  * Machine-wide Host registry: one entry per running production Host under
@@ -43,12 +49,22 @@ import {
  * after a crash is harmless: liveness is always decided by pid + birth
  * identity, never by file age.
  *
+ * The publisher implements HostRegistryPort's contract; the production CLI
+ * builds it (`createHostRegistryPublisherFromEnvironment`) and the production
+ * server drives it.
+ *
  * Tests and smoke scripts MUST point TASKWRAITH_HOST_REGISTRY_ROOT at a
- * temporary directory; the subprocess suites spawn real Hosts.
+ * temporary directory; the subprocess suites spawn real Hosts. The vitest
+ * global setup (`scripts/vitest/hostRegistryIsolation.ts`) sets a per-run root
+ * for every test and fails the run if anything is written under the real one.
  */
 
 export const HOST_REGISTRY_SCHEMA = 'taskwraith.host-registry.v1'
 export const HOST_REGISTRY_ROOT_ENV = 'TASKWRAITH_HOST_REGISTRY_ROOT'
+/**
+ * Awake-time cadence of the Host's registry refresh and self-check. This
+ * module owns it; the production server imports it for its lease tick.
+ */
 export const HOST_REGISTRY_REFRESH_MS = 60_000
 export const HOST_REGISTRY_MAX_ENTRY_BYTES = 16 * 1024
 /** Same connect deadline as HostLocalServer's own stale-socket probe. */
@@ -67,8 +83,6 @@ const ENTRY_ID_PATTERN = /^[0-9a-f]{16}$/
 const SOCKET_DIRECTORY_PATTERN = /^twh2-([^-]+)-([0-9a-f]{16})$/
 const LIFETIME_PHASE_PATTERN = /^[a-z][a-z-]{0,31}$/
 const PAYLOAD_VERSION_PATTERN = /^sha256:[a-f0-9]{64}$/
-
-export type HostRegistryLifetimePhase = 'held' | 'grace' | 'draining' | 'stopping'
 
 export interface HostRegistryEntry {
   readonly schema: typeof HOST_REGISTRY_SCHEMA
@@ -89,47 +103,11 @@ export interface HostRegistryEntry {
   readonly beatSeq: number
   readonly holders: number
   readonly implicitHolders: number
+  /**
+   * A reader accepts any lower-case phase so a newer Host's entry still
+   * decodes; this release's Hosts write a HostLifetimePhase.
+   */
   readonly lifetimePhase: string
-}
-
-/**
- * What the Host supplies on publish (the S1a/S1b contract shape from
- * HostRegistryPort.ts, restated structurally here so either slice can land
- * first); the publisher derives the birth identity, the CLI and executable
- * paths and the `writtenAt`/`beatSeq` stamps itself.
- */
-export interface HostRegistryEntryInput {
-  readonly profilePath: string
-  readonly pid: number
-  /** Listener start, ISO-8601 — the same instant the discovery file carries. */
-  readonly startedAt: string
-  readonly hostId: string
-  readonly bootEpoch?: string
-  readonly payloadVersion?: string | null
-  readonly socketPath?: string
-  readonly discoveryPath?: string
-  /** `TASKWRAITH_HOST_PERSIST=1`, so a lingering Host explains itself. */
-  readonly persist: boolean
-  readonly leaseMode: 'lease'
-  readonly holders: number
-  readonly implicitHolders: number
-  readonly lifetimePhase: HostRegistryLifetimePhase | string
-}
-
-/** The counters refreshed on every registry tick. */
-export interface HostRegistryEntryRefresh {
-  readonly holders: number
-  readonly implicitHolders: number
-  readonly lifetimePhase: HostRegistryLifetimePhase | string
-}
-
-export type HostRegistryCheck = 'present' | 'missing' | 'foreign' | 'unreadable'
-
-export interface HostRegistryPublisherPort {
-  publish(entry: HostRegistryEntryInput): void
-  refresh(patch: HostRegistryEntryRefresh): void
-  check(): HostRegistryCheck
-  remove(): void
 }
 
 export interface HostRegistryPublisherOptions {
@@ -208,14 +186,28 @@ function describe(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-/** `TASKWRAITH_HOST_REGISTRY_ROOT` when set and absolute, else `~/.taskwraith/hosts`. */
+/** `~/.taskwraith/hosts`: the root a Host uses when nothing overrides it. */
+export function hostRegistryDefaultRoot(home: string = homedir()): string {
+  return join(home, '.taskwraith', 'hosts')
+}
+
+function configuredRoot(env: Readonly<NodeJS.ProcessEnv>): string | null {
+  const configured = env[HOST_REGISTRY_ROOT_ENV]?.trim()
+  return configured && isAbsolute(configured) ? configured : null
+}
+
+/**
+ * `TASKWRAITH_HOST_REGISTRY_ROOT` from `env` when set and absolute, else from
+ * `fallback` (this process's own environment), else `~/.taskwraith/hosts`. A
+ * hand-built environment that omits the variable therefore still inherits the
+ * process's override, which is how a test run's per-run root reaches it.
+ */
 export function resolveHostRegistryRoot(
   env: Readonly<NodeJS.ProcessEnv> = process.env,
-  home: string = homedir()
+  home: string = homedir(),
+  fallback: Readonly<NodeJS.ProcessEnv> = process.env
 ): string {
-  const configured = env[HOST_REGISTRY_ROOT_ENV]?.trim()
-  if (configured && isAbsolute(configured)) return configured
-  return join(home, '.taskwraith', 'hosts')
+  return configuredRoot(env) ?? configuredRoot(fallback) ?? hostRegistryDefaultRoot(home)
 }
 
 /** The socket-directory suffix: first 16 hex chars of sha256(profilePath). */
@@ -303,7 +295,9 @@ function readEntryFile(path: string): HostRegistryEntryRead {
   try {
     raw = readPrivateLocalControlArtifact(path, HOST_REGISTRY_MAX_ENTRY_BYTES)
   } catch (error) {
-    if (isErrno(error, ['ENOENT', 'ENOTDIR'])) return { kind: 'missing', path }
+    // Only ENOENT is `missing`, the one read the self-check may stop on. A root
+    // replaced by a file (ENOTDIR) or any other error is `unreadable`.
+    if (isErrno(error, ['ENOENT'])) return { kind: 'missing', path }
     return { kind: 'unreadable', path, error: describe(error) }
   }
   let parsed: unknown
@@ -329,7 +323,7 @@ export function readHostRegistry(root: string): HostRegistryListing {
   try {
     names = readdirSync(root)
   } catch (error) {
-    if (isErrno(error, ['ENOENT', 'ENOTDIR'])) return { root, entries: [], unreadable: [] }
+    if (isErrno(error, ['ENOENT'])) return { root, entries: [], unreadable: [] }
     return { root, entries: [], unreadable: [{ path: root, error: describe(error) }] }
   }
   const entries: HostRegistryEntry[] = []
@@ -353,7 +347,7 @@ function sameStatIdentity(left: Stats, right: Stats): boolean {
  * before the unlink, so a successor Host that atomically replaced the entry
  * in between (rename over the path) keeps its entry.
  */
-function removeEntryIfStill(
+export function removeHostRegistryEntryIfStill(
   path: string,
   judge: (entry: HostRegistryEntry) => boolean,
   unlink: (path: string) => void = unlinkSync
@@ -386,7 +380,7 @@ export function removeHostRegistryEntryForPid(
   profilePath: string,
   pid: number
 ): boolean {
-  return removeEntryIfStill(
+  return removeHostRegistryEntryIfStill(
     hostRegistryEntryPath(root, canonicalHostProfilePath(profilePath)),
     (entry) => entry.pid === pid
   )
@@ -476,8 +470,18 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
     this.write(entry, 'publish')
   }
 
+  /**
+   * Rewrites the entry with fresh counters only while the file at the path is
+   * still this Host's, or could not be read (a rewrite repairs that). A
+   * `missing` or `foreign` entry is left exactly as found: the server's
+   * self-check runs right after the refresh, and a refresh that recreated a
+   * deleted entry, or overwrote a successor's, would make "stop after two
+   * missing checks" unreachable.
+   */
   refresh(patch: HostRegistryEntryRefresh): void {
     if (!this.entry) return
+    const verdict = this.check()
+    if (verdict === 'missing' || verdict === 'foreign') return
     const now = (this.options.now ?? (() => new Date()))().toISOString()
     const entry: HostRegistryEntry = {
       ...this.entry,
@@ -496,7 +500,7 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
    * bootEpoch differ) are the self-check signals; `unreadable` (EIO, EACCES,
    * malformed, or an entry this publisher never managed to write) never is.
    */
-  check(): HostRegistryCheck {
+  check(): HostRegistryCheckResult {
     if (!this.entry || !this.path || !this.published) return 'unreadable'
     const read = readEntryFile(this.path)
     if (read.kind === 'missing') return 'missing'
@@ -537,7 +541,7 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
   private write(entry: HostRegistryEntry, stage: 'publish' | 'refresh'): void {
     if (!this.path) return
     try {
-      mkdirSync(this.root, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
+      this.ensurePrivateRoot()
       this.ownership = publishPrivateLocalControlArtifact(
         this.path,
         `${JSON.stringify(entry)}\n`,
@@ -548,6 +552,24 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
       this.published = false
       this.ownership = null
       this.options.log?.(`[host-registry] ${stage} failed: ${describe(error)}`)
+    }
+  }
+
+  /**
+   * `mkdir` applies its mode only to a directory it creates; a root that
+   * already exists group- or world-readable is tightened to owner-only. A
+   * root this process cannot tighten (another owner, a symlink) is left as
+   * found and logged: entries are owner-only files either way.
+   */
+  private ensurePrivateRoot(): void {
+    mkdirSync(this.root, { recursive: true, mode: PRIVATE_DIRECTORY_MODE })
+    if (process.platform === 'win32') return
+    const stat = lstatSync(this.root)
+    if (!stat.isDirectory() || (stat.mode & 0o077) === 0) return
+    try {
+      chmodSync(this.root, PRIVATE_DIRECTORY_MODE)
+    } catch (error) {
+      this.options.log?.(`[host-registry] could not make the root owner-only: ${describe(error)}`)
     }
   }
 }
@@ -603,6 +625,25 @@ function newestChange(stat: Stats): number {
   return Math.max(stat.mtimeMs, stat.ctimeMs)
 }
 
+function lstatOrNull(path: string): Stats | null {
+  try {
+    return lstatSync(path)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * True while the socket path is exactly what was probed: still absent, or the
+ * same inode with no change since. A Host that re-bound the path between the
+ * probe and now owns a new inode, so its socket is never unlinked.
+ */
+function socketUnchangedSinceProbe(socketPath: string, probed: Stats | null): boolean {
+  const current = lstatOrNull(socketPath)
+  if (probed === null || current === null) return probed === current
+  return sameStatIdentity(probed, current) && newestChange(probed) === newestChange(current)
+}
+
 /**
  * Removes registry entries whose pid is dead or born at another time, and
  * `twh2-<uid>-*` socket directories whose socket does not answer and whose
@@ -637,7 +678,7 @@ export async function sweepHostRegistry(
         observation.birthIdentity !== entry.birthIdentity)
     if (gone) {
       try {
-        const removed = removeEntryIfStill(
+        const removed = removeHostRegistryEntryIfStill(
           hostRegistryEntryPath(options.root, entry.profilePath),
           (current) =>
             current.pid === entry.pid &&
@@ -704,8 +745,12 @@ export async function sweepHostRegistry(
         keptSocketDirectories.push(name)
         continue
       }
+      if (!socketUnchangedSinceProbe(socketPath, socketStat)) {
+        keptSocketDirectories.push(name)
+        continue
+      }
       try {
-        if (existsSync(socketPath)) unlink(socketPath)
+        if (socketStat) unlink(socketPath)
         rmdir(directory)
         removedSocketDirectories.push(name)
       } catch (error) {

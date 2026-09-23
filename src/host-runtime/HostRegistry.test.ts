@@ -5,8 +5,10 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   statSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
@@ -26,14 +28,16 @@ import {
   decodeHostRegistryEntry,
   hostRegistryEntryId,
   hostRegistryEntryPath,
+  hostRegistryDefaultRoot,
   readHostRegistry,
   readHostRegistryEntry,
   removeHostRegistryEntryForPid,
+  removeHostRegistryEntryIfStill,
   resolveHostRegistryRoot,
   sweepHostRegistry,
-  type HostRegistryEntry,
-  type HostRegistryEntryInput
+  type HostRegistryEntry
 } from './HostRegistry'
+import type { HostRegistryEntryInput, HostRegistryPublisherPort } from './HostRegistryPort'
 import type { ProcessBirthObservation } from './ProcessBirthIdentity'
 
 const temporary: string[] = []
@@ -126,13 +130,34 @@ function entryFor(
 
 describe('HostRegistry root and naming', () => {
   it('resolves the root from the env override or ~/.taskwraith/hosts', () => {
-    expect(resolveHostRegistryRoot({}, '/home/tw')).toBe(join('/home/tw', '.taskwraith', 'hosts'))
+    const home = join('/home/tw', '.taskwraith', 'hosts')
+    expect(hostRegistryDefaultRoot('/home/tw')).toBe(home)
+    expect(resolveHostRegistryRoot({}, '/home/tw', {})).toBe(home)
     expect(
-      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: '/tmp/registry ' }, '/home/tw')
+      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: '/tmp/registry ' }, '/home/tw', {})
     ).toBe('/tmp/registry')
-    expect(resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: 'relative' }, '/home/tw')).toBe(
-      join('/home/tw', '.taskwraith', 'hosts')
-    )
+    expect(
+      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: 'relative' }, '/home/tw', {})
+    ).toBe(home)
+  })
+
+  it("falls back to this process's override when a hand-built env names none, never to HOME", () => {
+    const fallback = { [HOST_REGISTRY_ROOT_ENV]: '/run/registry' }
+    expect(resolveHostRegistryRoot({ PATH: '' }, '/home/tw', fallback)).toBe('/run/registry')
+    expect(
+      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: 'relative' }, '/home/tw', fallback)
+    ).toBe('/run/registry')
+    expect(
+      resolveHostRegistryRoot({ [HOST_REGISTRY_ROOT_ENV]: '/own/registry' }, '/home/tw', fallback)
+    ).toBe('/own/registry')
+    // The default fallback is process.env: a test's `{ PATH: '' }` inherits
+    // the run's root instead of resolving the real home.
+    vi.stubEnv(HOST_REGISTRY_ROOT_ENV, '/stubbed/registry')
+    try {
+      expect(resolveHostRegistryRoot({ PATH: '' }, '/home/tw')).toBe('/stubbed/registry')
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('builds the production publisher on the env override root, never on HOME when it is set', () => {
@@ -276,6 +301,61 @@ describe('HostRegistryPublisher', () => {
     expect(registry.check()).toBe('present')
   })
 
+  it('never recreates a deleted entry or overwrites a foreign one on refresh, so the self-check sees them', () => {
+    const root = join(scratch('host-registry-'), 'hosts')
+    const profile = scratch('host-registry-profile-')
+    // Typed as the production server holds it.
+    const registry: HostRegistryPublisherPort = publisher(root, profile)
+    registry.publish(input(profile, 4242))
+    const path = hostRegistryEntryPath(root, profile)
+    rmSync(path)
+    registry.refresh({ holders: 2, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(existsSync(path)).toBe(false)
+    expect(registry.check()).toBe('missing')
+    // The whole root removed (an uninstall): still missing, still not recreated.
+    rmSync(root, { recursive: true, force: true })
+    registry.refresh({ holders: 2, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(existsSync(root)).toBe(false)
+    expect(registry.check()).toBe('missing')
+    const successor = writeEntry(root, entryFor(profile, 5151, BORN))
+    const successorBytes = readFileSync(successor, 'utf8')
+    registry.refresh({ holders: 2, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(readFileSync(successor, 'utf8')).toBe(successorBytes)
+    expect(registry.check()).toBe('foreign')
+  })
+
+  it('repairs an unreadable entry on refresh, and publishes on refresh after a failed publish', () => {
+    const root = join(scratch('host-registry-'), 'hosts')
+    const profile = scratch('host-registry-profile-')
+    const registry = publisher(root, profile)
+    registry.publish(input(profile, 4242))
+    const path = hostRegistryEntryPath(root, profile)
+    writeFileSync(path, '{not json\n', { mode: 0o600 })
+    expect(registry.check()).toBe('unreadable')
+    registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(registry.check()).toBe('present')
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({ entry: { beatSeq: 1 } })
+
+    // A path that is a directory can be neither read nor replaced: unreadable,
+    // never missing, until the refresh after it clears.
+    rmSync(path)
+    mkdirSync(path)
+    registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(registry.check()).toBe('unreadable')
+    rmSync(path, { recursive: true })
+    registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(registry.check()).toBe('present')
+
+    const late = join(scratch('host-registry-'), 'hosts')
+    writeFileSync(late, 'a file where the root should be\n')
+    const retry = publisher(late, profile)
+    retry.publish(input(profile, 4242))
+    expect(retry.check()).toBe('unreadable')
+    rmSync(late)
+    retry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+    expect(retry.check()).toBe('present')
+  })
+
   it('checks missing after the entry is deleted and foreign when another Host wrote it', () => {
     const root = join(scratch('host-registry-'), 'hosts')
     const profile = scratch('host-registry-profile-')
@@ -367,6 +447,62 @@ describe('HostRegistryPublisher', () => {
     expect(existsSync(hostRegistryEntryPath(root, profile))).toBe(false)
     expect(removeHostRegistryEntryForPid(root, profile, 5151)).toBe(false)
   })
+
+  it('removeHostRegistryEntryIfStill keeps an entry replaced between the judged read and the unlink', () => {
+    const root = join(scratch('host-registry-'), 'hosts')
+    const profile = scratch('host-registry-profile-')
+    const path = writeEntry(root, entryFor(profile, 5151, BORN))
+    const successor = `${JSON.stringify(entryFor(profile, 6262, 'c'.repeat(64)))}\n`
+    let judged = 0
+    const removed = removeHostRegistryEntryIfStill(path, (entry) => {
+      judged += 1
+      // The dead Host's content passes the judge, and a successor renames its
+      // entry over the path before the unlink runs.
+      const temporary = join(root, '.successor.tmp')
+      writeFileSync(temporary, successor, { mode: 0o600 })
+      renameSync(temporary, path)
+      return entry.pid === 5151
+    })
+    expect(judged).toBe(1)
+    expect(removed).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(successor)
+    expect(removeHostRegistryEntryIfStill(path, (entry) => entry.pid === 6262)).toBe(true)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  it('reads a registry root replaced by a file as unreadable, never missing', () => {
+    const root = join(scratch('host-registry-'), 'hosts')
+    const profile = scratch('host-registry-profile-')
+    const registry = publisher(root, profile)
+    registry.publish(input(profile, 4242))
+    rmSync(root, { recursive: true })
+    writeFileSync(root, 'a file where the root was\n')
+    // ENOTDIR: the self-check may stop a Host on `missing` only.
+    expect(registry.check()).toBe('unreadable')
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({ kind: 'unreadable' })
+    expect(readHostRegistry(root)).toEqual({
+      root,
+      entries: [],
+      unreadable: [{ path: root, error: expect.stringMatching(/ENOTDIR/) }]
+    })
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'tightens an existing group- or world-readable root to owner-only when it publishes',
+    () => {
+      const root = join(scratch('host-registry-'), 'hosts')
+      mkdirSync(root, { mode: 0o755 })
+      chmodSync(root, 0o755)
+      const profile = scratch('host-registry-profile-')
+      const registry = publisher(root, profile)
+      registry.publish(input(profile, 4242))
+      expect(statSync(root).mode & 0o777).toBe(0o700)
+      chmodSync(root, 0o750)
+      registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+      expect(statSync(root).mode & 0o777).toBe(0o700)
+      expect(registry.check()).toBe('present')
+    }
+  )
 })
 
 describe('HostRegistry reader and decoder', () => {
@@ -582,6 +718,35 @@ describe('sweepHostRegistry', () => {
     expect(socketIsLive).toHaveBeenCalledWith(
       join(directory(profileLive), TASKWRAITH_HOST_SOCKET_FILE)
     )
+  })
+
+  it('never unlinks a socket re-bound while the dead one was being probed', async () => {
+    const parent = scratch('host-registry-')
+    const root = join(parent, 'hosts')
+    const temporaryDirectory = join(parent, 'tmp')
+    mkdirSync(temporaryDirectory)
+    const name = `twh2-501-${'c'.repeat(16)}`
+    const socketPath = join(temporaryDirectory, name, TASKWRAITH_HOST_SOCKET_FILE)
+    mkdirSync(join(temporaryDirectory, name))
+    writeFileSync(socketPath, 'dead socket\n')
+    const rebound = 'a starting Host bound here\n'
+    const report = await sweepHostRegistry({
+      root,
+      platform: 'darwin',
+      temporaryDirectory,
+      uid: 501,
+      observe: async () => ({ state: 'dead' }),
+      socketIsLive: async (probed) => {
+        // The probe saw the dead socket; a starting Host then replaced it.
+        unlinkSync(probed)
+        writeFileSync(probed, rebound)
+        return false
+      },
+      now: anHourLater
+    })
+    expect(report.keptSocketDirectories).toEqual([name])
+    expect(report.removedSocketDirectories).toEqual([])
+    expect(readFileSync(socketPath, 'utf8')).toBe(rebound)
   })
 
   it('leaves a non-empty socket directory in place and reports it kept', async () => {
