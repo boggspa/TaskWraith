@@ -1,0 +1,23 @@
+{
+  "family": "TaskWraith companions",
+  "scope": "studio-only",
+  "sourceCommit": "63603c538d66c862f64440126a8452b98242471c",
+  "ghost": {
+    "path": "ghost/ghost-guy-mark-monoline-white.svg",
+    "sha256": "5c6055d5a9037344d50a3bf84f08fca9979de741fd1a4fed50e7172b8732fa60"
+  },
+  "products": [
+    {
+      "id": "studio",
+      "name": "TaskWraith Studio",
+      "accent": "#C6ADFF",
+      "catalogueGlyph": "agent-pool-icons/icons/glyph-timeline.svg",
+      "catalogueGlyphSha256": "91cb7fbecb159242c80ac74bef6189357b1bddfee2db06a55b73d8dd810180a2",
+      "outputs": {
+        "app-icon.icns": "6d85a016351175308eec41c722772ef56270ebcc521f6d0bb58c4740575a37e8",
+        "app-icon.png": "ec449b00b8f77ddc2ff7ea68ada022de081300f9209e05ef7987c63cb3702609",
+        "app-icon.svg": "f2ba26113ed3c72e4627b3e8dfbe0d3b0117b7a2181e93068c05b6997976436d"
+      }
+    }
+  ]
+}

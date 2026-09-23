@@ -174,7 +174,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
     '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01'
 })
 const STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS = Object.freeze([
-  'build/icon.icns',
+  'design-assets/suite-app-icons/studio/app-icon.icns',
   'electron.vite.config.ts',
   'package-lock.json',
   'package.json',
@@ -235,7 +235,7 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
   'TASKWRAITH_STUDIO_ARCH'
 ])
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '110f2138165e4b2b3dba649e0783c71e7cc4e1ad706f800db4e82c5a5c1b107b',
+  sourceDigest: '2debc73cbb715e8b1c6d5d65458eb4fb6f4fcffcc537248bceaf8cffb73c39cb',
   sourceCount: 2284,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
