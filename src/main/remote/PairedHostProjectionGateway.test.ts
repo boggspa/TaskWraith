@@ -239,6 +239,76 @@ describe('PairedHostProjectionGateway', () => {
     expect(reseeded.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 4 })
   })
 
+  it('restores a missing welcome with a complete seed before returning a requested snapshot', async () => {
+    const h = harness()
+    await h.attach()
+    // The phone missed the initial welcome; the local Host socket stayed live.
+    h.sent.length = 0
+
+    const response = await h.gateway.request(DEVICE_KEY, { kind: 'snapshot.get', params: {} })
+
+    expect(h.sent).toEqual([
+      { method: PAIRED_HOST_PROJECTION_METHODS.welcome, params: welcome() },
+      { method: PAIRED_HOST_PROJECTION_METHODS.snapshot, params: snapshotFrame() },
+      {
+        method: PAIRED_HOST_PROJECTION_METHODS.state,
+        params: { phase: 'live', generation: 3, cursor: 4 }
+      }
+    ])
+    expect(response).toEqual({ kind: 'snapshot.get', frame: snapshotFrame() })
+    expect(h.fake.connect).toHaveBeenCalledOnce()
+    expect(h.fake.declineHostLease).toHaveBeenCalledOnce()
+  })
+
+  it('includes the welcome when pushing a replay-gap resnapshot', async () => {
+    const h = harness()
+    await h.attach()
+    h.sent.length = 0
+
+    expect(await h.gateway.resync(DEVICE_KEY)).toBe(true)
+
+    expect(h.sent).toEqual([
+      { method: PAIRED_HOST_PROJECTION_METHODS.welcome, params: welcome() },
+      { method: PAIRED_HOST_PROJECTION_METHODS.snapshot, params: snapshotFrame() },
+      {
+        method: PAIRED_HOST_PROJECTION_METHODS.state,
+        params: { phase: 'live', generation: 3, cursor: 4 }
+      }
+    ])
+    expect(h.fake.connect).toHaveBeenCalledOnce()
+  })
+
+  it('seeds a replacement delivery while the first snapshot read is still pending', async () => {
+    const h = harness()
+    let completeSnapshot!: (frame: HostSnapshotFrame) => void
+    h.fake.getSnapshot.mockImplementationOnce(
+      () => new Promise<HostSnapshotFrame>((resolve) => (completeSnapshot = resolve))
+    )
+    const firstAttach = h.attach()
+    await vi.waitFor(() => expect(h.fake.getSnapshot).toHaveBeenCalledOnce())
+
+    const replacement: Array<{ method: string; params: unknown }> = []
+    const secondAttach = h.gateway.attach({
+      deviceKey: DEVICE_KEY,
+      clientId: CLIENT_ID,
+      displayName: 'My iPhone',
+      send: (method, params) => replacement.push({ method, params })
+    })
+    completeSnapshot(snapshotFrame(5))
+    await Promise.all([firstAttach, secondAttach])
+
+    expect(replacement.map((entry) => entry.method)).toEqual([
+      PAIRED_HOST_PROJECTION_METHODS.state,
+      PAIRED_HOST_PROJECTION_METHODS.welcome,
+      PAIRED_HOST_PROJECTION_METHODS.snapshot,
+      PAIRED_HOST_PROJECTION_METHODS.state
+    ])
+    expect(replacement.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 5 })
+    expect(h.fake.connect).toHaveBeenCalledOnce()
+    expect(h.fake.getSnapshot).toHaveBeenCalledOnce()
+    expect(h.fake.declineHostLease).toHaveBeenCalledOnce()
+  })
+
   it('forwards Host delta and health events only through the attached device callback', async () => {
     const h = harness()
     await h.attach()
@@ -408,8 +478,8 @@ describe('PairedHostProjectionGateway', () => {
       `send:${PAIRED_HOST_PROJECTION_METHODS.state}`,
       'connect',
       'decline',
-      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`,
       'snapshot',
+      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`,
       `send:${PAIRED_HOST_PROJECTION_METHODS.snapshot}`,
       `send:${PAIRED_HOST_PROJECTION_METHODS.state}`
     ])
@@ -430,8 +500,8 @@ describe('PairedHostProjectionGateway', () => {
     expect(h.fake.order.slice(0, 4)).toEqual([
       'connect',
       'decline',
-      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`,
-      'snapshot'
+      'snapshot',
+      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`
     ])
   })
 

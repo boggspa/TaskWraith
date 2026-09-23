@@ -141,6 +141,48 @@ struct PairedHostSessionControllerTests {
     #expect(!store.contains("mac-b"))
   }
 
+  @Test("reconnect replaces an offline cache when the Host generation resets")
+  func reconnectAfterHostGenerationReset() throws {
+    let store = MemoryHostSnapshotStore()
+    store.seed(
+      createEmptyHostSnapshot(
+        generation: 8,
+        cursor: 30,
+        freshness: .live,
+        generatedAt: "2026-08-09T20:00:00Z"),
+      hostIdentity: "mac-a")
+    let controller = PairedHostSessionController(snapshotStore: store)
+    let identity = try #require(makeIdentity())
+
+    controller.prepareOffline(hostIdentity: "mac-a", phoneIdentity: identity)
+    #expect(controller.snapshot?.generation == 8)
+    #expect(controller.snapshot?.freshness == .stale)
+    controller.activate(
+      hostIdentity: "mac-a",
+      phoneIdentity: identity,
+      transport: FakePairedHostTransport())
+
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.welcome,
+        params: try JSONEncoder().encode(welcome(identity: identity))) == .updated)
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.snapshot,
+        params: try JSONEncoder().encode(snapshotFrame())) == .updated)
+    #expect(
+      controller.receive(
+        method: PairedHostProjectionMethods.state,
+        params: try JSONEncoder().encode(
+          PairedHostProjectionStateMessage(
+            phase: .live, generation: 7, cursor: 0))) == .updated)
+    #expect(controller.phase == .live)
+    #expect(controller.snapshot?.generation == 7)
+    #expect(controller.snapshot?.cursor == 0)
+    #expect(controller.snapshot?.freshness == .live)
+    #expect(store.saveCount == 1)
+  }
+
   @Test("a cursor gap pulls one full snapshot and converges atomically")
   func gapTriggersResnapshot() async throws {
     let full = SnapshotResponseFixture(kind: .snapshotGet, frame: snapshotFrame(cursor: 3))

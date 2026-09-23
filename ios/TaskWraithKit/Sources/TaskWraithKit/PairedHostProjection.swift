@@ -296,7 +296,13 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
     guard required.isSubset(of: capabilities) else {
       return reject("welcome is missing required projection capabilities")
     }
-    if let snapshot, snapshot.generation > value.generation {
+    // Offline bytes describe a previous Host epoch. The newly authenticated
+    // welcome is authoritative even if that Host rebuilt its projection at a
+    // lower generation after local state recovery. Delta-advanced snapshots
+    // are .cached while still current, so only .stale bytes bypass this fence.
+    if let snapshot, snapshot.freshness != .stale,
+      snapshot.generation > value.generation
+    {
       return .ignored
     }
     welcome = value
@@ -315,7 +321,10 @@ public struct PairedHostProjectionReplica: Sendable, Equatable {
     guard frame.snapshot.generation == welcome.generation else {
       return requireSnapshot("snapshot_generation_mismatch")
     }
-    if let current = snapshot {
+    // A stale cache must never fence a fresh seed. The Host may have reset its
+    // projection cursor while the phone was offline; comparing those cursors
+    // left the phone permanently reconnecting despite a valid new snapshot.
+    if let current = snapshot, current.freshness != .stale {
       if frame.snapshot.generation < current.generation { return .ignored }
       if frame.snapshot.generation == current.generation,
         frame.snapshot.cursor < current.cursor

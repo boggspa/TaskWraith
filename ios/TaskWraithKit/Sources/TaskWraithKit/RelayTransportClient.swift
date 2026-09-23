@@ -94,10 +94,11 @@ public actor RelayTransportClient {
     private let urlSession: URLSession
 
     private var established = false
+    private var establishmentError: Error?
     /// Every WebSocket frame received on the live socket, authenticated or not —
     /// proof the relay socket itself is up.
     private var inboundFrameCount: UInt64 = 0
-    private var establishedWaiters: [CheckedContinuation<Void, Never>] = []
+    private var establishedWaiters: [UUID: CheckedContinuation<Void, Error>] = [:]
     private var ackWaiters: [String: CheckedContinuation<AckResult, Never>] = [:]
     private var requestCounter = 0
 
@@ -120,6 +121,8 @@ public actor RelayTransportClient {
 
     public var isEstablished: Bool { established }
     public var currentSessionId: String? { bootstrap?.sessionId }
+    var establishedWaiterCount: Int { establishedWaiters.count }
+    var receivedFrameCount: UInt64 { inboundFrameCount }
     public nonisolated var identityPublicKeyBase64: String { identityPubKeyB64 }
 
     // ── Pairing entry points ──────────────────────────────────────────────────
@@ -177,20 +180,28 @@ public actor RelayTransportClient {
         }
         let message: URLSessionWebSocketTask.Message
         do {
-            message = try await withThrowingTaskGroup(
-                of: URLSessionWebSocketTask.Message.self
-            ) { group in
-                group.addTask {
-                    try await task.send(.string(requestText))
-                    return try await task.receive()
+            message = try await withTaskCancellationHandler {
+                try await withThrowingTaskGroup(
+                    of: URLSessionWebSocketTask.Message.self
+                ) { group in
+                    group.addTask {
+                        try await task.send(.string(requestText))
+                        return try await task.receive()
+                    }
+                    group.addTask {
+                        try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
+                        // A cancelled task group still waits for its receive child.
+                        // Close the socket here so an unroutable door cannot hold
+                        // the whole candidate walk past this deadline.
+                        task.cancel(with: .goingAway, reason: nil)
+                        throw TransportError.timeout("resolve")
+                    }
+                    let first = try await group.next()!
+                    group.cancelAll()
+                    return first
                 }
-                group.addTask {
-                    try await Task.sleep(nanoseconds: UInt64(timeoutMs) * 1_000_000)
-                    throw TransportError.timeout("resolve")
-                }
-                let first = try await group.next()!
-                group.cancelAll()
-                return first
+            } onCancel: {
+                task.cancel(with: .goingAway, reason: nil)
             }
         } catch {
             task.cancel(with: .goingAway, reason: nil)
@@ -231,12 +242,15 @@ public actor RelayTransportClient {
 
     public func connect() throws {
         guard let bootstrap, let session else { throw TransportError.notScanned }
-        established = false
         let base = bootstrap.relayUrl.hasSuffix("/")
             ? String(bootstrap.relayUrl.dropLast()) : bootstrap.relayUrl
         guard let sessionUrl = URL(string: "\(base)/v1/session/\(bootstrap.sessionId)") else {
             throw TransportError.invalidRelayUrl
         }
+        dropConnection()
+        // A rehandshake must not send output queued for the previous socket.
+        _ = session.drainOutbox()
+        _ = session.takeEstablishedEdge()
         var request = URLRequest(url: sessionUrl)
         request.setValue("iphone", forHTTPHeaderField: "x-taskwraith-role")
         request.setValue(TWProtocol.id, forHTTPHeaderField: "x-taskwraith-protocol")
@@ -254,42 +268,59 @@ public actor RelayTransportClient {
     }
 
     public func waitForEstablished(timeoutMs: Int = 8000) async throws {
+        try Task.checkCancellation()
         if established { return }
-        await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-            establishedWaiters.append(c)
-            scheduleEstablishedTimeout(after: timeoutMs)
+        if let establishmentError { throw establishmentError }
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (c: CheckedContinuation<Void, Error>) in
+                if Task.isCancelled {
+                    c.resume(throwing: CancellationError())
+                    return
+                }
+                establishedWaiters[id] = c
+                scheduleEstablishedTimeout(id: id, after: timeoutMs)
+            }
+        } onCancel: {
+            Task { await self.failEstablishedWaiter(id, error: CancellationError()) }
         }
-        if !established { throw TransportError.timeout("established") }
     }
 
-    private func scheduleEstablishedTimeout(after ms: Int) {
+    private func scheduleEstablishedTimeout(id: UUID, after ms: Int) {
         Task {
             try? await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
-            self.fireEstablishedTimeout()
+            self.failEstablishedWaiter(id, error: TransportError.timeout("established"))
         }
     }
 
-    private func fireEstablishedTimeout() {
-        guard !established else { return }
+    private func failEstablishedWaiter(_ id: UUID, error: Error) {
+        establishedWaiters.removeValue(forKey: id)?.resume(throwing: error)
+    }
+
+    private func failEstablishedWaiters(_ error: Error) {
         let waiters = establishedWaiters
         establishedWaiters.removeAll()
-        for waiter in waiters { waiter.resume() }
+        for waiter in waiters.values { waiter.resume(throwing: error) }
     }
 
     /// Hard drop (no close handshake), like losing coverage. Session app state
     /// survives; reconnect() re-handshakes on the same session.
     public func dropConnection() {
         established = false
+        establishmentError = nil
         wsTask?.cancel(with: .goingAway, reason: nil)
         wsTask = nil
+        failEstablishedWaiters(TransportError.hostUnavailable)
     }
 
     public func reconnect() throws { try connect() }
 
     public func close() {
         established = false
+        establishmentError = nil
         wsTask?.cancel(with: .normalClosure, reason: nil)
         wsTask = nil
+        failEstablishedWaiters(TransportError.hostUnavailable)
         eventContinuation.yield(.closed)
     }
 
@@ -307,6 +338,7 @@ public actor RelayTransportClient {
         let pollMs = 100
         var waitedMs = 0
         while waitedMs < timeoutMs {
+            guard wsTask === task else { return false }
             if inboundFrameCount > baseline { return true }
             if let ponged = outcome.value { return ponged }
             guard !Task.isCancelled else { return false }
@@ -314,7 +346,7 @@ public actor RelayTransportClient {
             try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
             waitedMs += sleepMs
         }
-        return inboundFrameCount > baseline
+        return wsTask === task && inboundFrameCount > baseline
     }
 
     /// Prove the authenticated computer endpoint is awake, not merely the
@@ -328,7 +360,7 @@ public actor RelayTransportClient {
     /// that its pong queues behind it past this deadline. Counting those frames
     /// is what stops a busy-but-healthy Mac from being declared unreachable.
     public func checkPeerAlive(timeoutMs: Int = 6_000) async -> Bool {
-        guard established, let session, wsTask != nil else { return false }
+        guard established, let session, let task = wsTask else { return false }
         let baseline = session.peerPongCount
         let frameBaseline = session.peerAuthenticatedFrameCount
         let pollMs = 100
@@ -337,7 +369,7 @@ public actor RelayTransportClient {
         var nextPingAtMs = 0
 
         while waitedMs < timeoutMs {
-            guard established, self.session === session, wsTask != nil else { return false }
+            guard established, self.session === session, wsTask === task else { return false }
             if session.peerPongCount > baseline
                 || session.peerAuthenticatedFrameCount > frameBaseline
             {
@@ -353,7 +385,7 @@ public actor RelayTransportClient {
             try? await Task.sleep(nanoseconds: UInt64(sleepMs) * 1_000_000)
             waitedMs += sleepMs
         }
-        return established
+        return established && wsTask === task
             && (session.peerPongCount > baseline
                 || session.peerAuthenticatedFrameCount > frameBaseline)
     }
@@ -433,35 +465,46 @@ public actor RelayTransportClient {
         while wsTask === task {
             do {
                 let message = try await task.receive()
-                // The relay forwards frames verbatim; the `ws` library re-sends a
-                // received text frame as a Buffer → a BINARY WS frame. So accept
-                // BOTH .string and .data and decode the UTF-8 JSON either way.
-                let data: Data?
-                switch message {
-                case .string(let text): data = text.data(using: .utf8)
-                case .data(let raw): data = raw
-                @unknown default: data = nil
-                }
-                inboundFrameCount &+= 1
-                if let data {
-                    dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
-                    if let frame = try? TWCoders.decoder.decode(E2eeFrame.self, from: data) {
-                        session?.handleFrame(frame)
-                        await drainAndTransmit()
-                    } else {
-                        dbg("recv DECODE-FAIL")
-                    }
-                }
+                await processReceivedMessage(message, from: task)
             } catch {
                 dbg("recv error \(error)")
                 if wsTask === task {
                     established = false
                     wsTask = nil
+                    failEstablishedWaiters(TransportError.hostUnavailable)
                     eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
+                        .error(TransportErrorCopy.friendlyMessage(
+                            for: error, relayUrl: bootstrap?.relayUrl)))
                     eventContinuation.yield(.closed)
                 }
                 return
+            }
+        }
+    }
+
+    /// The actor may be reentered while `receive()` is suspended. A frame from
+    /// the socket we just replaced must not advance the new handshake.
+    func processReceivedMessage(
+        _ message: URLSessionWebSocketTask.Message, from task: URLSessionWebSocketTask
+    ) async {
+        guard wsTask === task else { return }
+        // The relay forwards frames verbatim; the `ws` library re-sends a
+        // received text frame as a Buffer → a BINARY WS frame. So accept
+        // BOTH .string and .data and decode the UTF-8 JSON either way.
+        let data: Data?
+        switch message {
+        case .string(let text): data = text.data(using: .utf8)
+        case .data(let raw): data = raw
+        @unknown default: data = nil
+        }
+        inboundFrameCount &+= 1
+        if let data {
+            dbg("recv \(String(data: data, encoding: .utf8)?.prefix(80) ?? "<binary>")")
+            if let frame = try? TWCoders.decoder.decode(E2eeFrame.self, from: data) {
+                session?.handleFrame(frame)
+                await drainAndTransmit()
+            } else {
+                dbg("recv DECODE-FAIL")
             }
         }
     }
@@ -470,31 +513,37 @@ public actor RelayTransportClient {
     /// frames in order, dispatch delivered messages (+ resolve ack waiters),
     /// surface the confirm code, fulfill establishment, surface errors.
     private func drainAndTransmit() async {
-        guard let session else { return }
+        guard let session, let task = wsTask else { return }
         for frame in session.drainOutbox() {
             if let data = try? TWCoders.encoder.encode(frame),
                 let text = String(data: data, encoding: .utf8)
             {
                 dbg("send \(text.prefix(80))")
                 do {
-                    try await wsTask?.send(.string(text))
+                    try await task.send(.string(text))
                 } catch {
                     dbg("send error \(error)")
-                    established = false
-                    wsTask = nil
-                    eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
-                    eventContinuation.yield(.closed)
+                    if wsTask === task {
+                        established = false
+                        wsTask = nil
+                        failEstablishedWaiters(TransportError.hostUnavailable)
+                        eventContinuation.yield(
+                            .error(TransportErrorCopy.friendlyMessage(
+                                for: error, relayUrl: bootstrap?.relayUrl)))
+                        eventContinuation.yield(.closed)
+                    }
                     return
                 }
+                guard wsTask === task, self.session === session else { return }
             }
         }
+        guard wsTask === task, self.session === session else { return }
         if let code = session.takeConfirmCode() { eventContinuation.yield(.confirmCode(code)) }
         if session.takeEstablishedEdge() {
             established = true
             let waiters = establishedWaiters
             establishedWaiters.removeAll()
-            for waiter in waiters { waiter.resume() }
+            for waiter in waiters.values { waiter.resume() }
             eventContinuation.yield(.established)
         }
         for message in session.drainMessages() {
@@ -515,10 +564,18 @@ public actor RelayTransportClient {
             }
             eventContinuation.yield(.message(method: message.method, params: message.params))
         }
-        if let error = session.takeError() {
-            eventContinuation.yield(
-                .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
+        if let error = session.takeError() { reportSessionError(error) }
+    }
+
+    /// Preserve authentication failures for both event consumers and the dial
+    /// awaiting establishment, including a waiter registered after the error.
+    func reportSessionError(_ error: Error) {
+        if !established {
+            establishmentError = error
+            failEstablishedWaiters(error)
         }
+        eventContinuation.yield(
+            .error(TransportErrorCopy.friendlyMessage(for: error, relayUrl: bootstrap?.relayUrl)))
     }
 
     private nonisolated static let debugEnabled =

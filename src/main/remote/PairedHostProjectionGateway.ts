@@ -293,6 +293,12 @@ export class PairedHostProjectionGateway {
     switch (request.kind) {
       case 'snapshot.get': {
         const frame = await session.client.getSnapshot()
+        const welcome = session.client.welcome
+        if (!welcome) throw new PairedHostProjectionRequestError('host_unavailable')
+        // A phone recovering a lost welcome cannot apply even a valid snapshot.
+        // Ack continuations and push handlers can resume independently on iOS,
+        // so the ordered push stream must carry a complete seed of its own.
+        this.sendSeed(session, welcome, frame)
         session.seeded = true
         return { kind: 'snapshot.get', frame }
       }
@@ -354,8 +360,10 @@ export class PairedHostProjectionGateway {
       await this.connectAndSeed(session)
       const frame = await session.client.getSnapshot()
       if (!this.isCurrent(session)) return false
+      const welcome = session.client.welcome
+      if (!welcome) return false
       session.seeded = true
-      this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
+      this.sendSeed(session, welcome, frame)
       return true
     } catch {
       return false
@@ -403,17 +411,13 @@ export class PairedHostProjectionGateway {
         }
         if (!this.isCurrent(session)) return
         if (!welcome) throw new PairedHostProjectionRequestError('host_unavailable')
-        this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.welcome, welcome)
         const frame: HostSnapshotFrame = await session.client.getSnapshot()
         if (!this.isCurrent(session)) return
         session.seeded = true
         session.retryAttempt = 0
-        this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
-        this.sendState(session, {
-          phase: 'live',
-          generation: frame.snapshot.generation,
-          cursor: frame.snapshot.cursor
-        })
+        // `attach` can replace the phone delivery while getSnapshot is pending.
+        // Send the complete seed to the current delivery without an await gap.
+        this.sendSeed(session, welcome, frame)
       } catch (error) {
         if (this.isCurrent(session)) {
           this.sendState(session, { phase: 'unavailable' })
@@ -466,6 +470,20 @@ export class PairedHostProjectionGateway {
 
   private isCurrent(session: PairedHostProjectionSession): boolean {
     return this.sessions.get(session.deviceKey) === session
+  }
+
+  private sendSeed(
+    session: PairedHostProjectionSession,
+    welcome: HostBootstrapWelcome,
+    frame: HostSnapshotFrame
+  ): void {
+    this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.welcome, welcome)
+    this.safeSend(session, PAIRED_HOST_PROJECTION_METHODS.snapshot, frame)
+    this.sendState(session, {
+      phase: 'live',
+      generation: frame.snapshot.generation,
+      cursor: frame.snapshot.cursor
+    })
   }
 
   private safeSend(session: PairedHostProjectionSession, method: string, params?: unknown): void {

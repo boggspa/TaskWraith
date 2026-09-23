@@ -106,6 +106,72 @@ struct PairedHostProjectionTests {
     #expect(replica.snapshot?.cursor == 1)
   }
 
+  @Test("a delta-advanced replica keeps its monotonic fences while connected")
+  func deltaAdvancedReplicaRejectsOlderSeed() throws {
+    let identity = try #require(makeIdentity())
+    var replica = try seededReplica(identity: identity)
+    let deltas = HostDeltasFrame(
+      result: .deltas(
+        .init(
+          generation: 7, fromCursor: 0, toCursor: 1,
+          deltas: [warningDelta(cursor: 1, previousCursor: 0)])))
+    #expect(
+      replica.receive(
+        method: PairedHostProjectionMethods.deltas,
+        params: try JSONEncoder().encode(deltas)) == .updated)
+    #expect(replica.snapshot?.freshness == .cached)
+
+    #expect(
+      replica.receive(
+        method: PairedHostProjectionMethods.snapshot,
+        params: try JSONEncoder().encode(snapshotFrame(cursor: 0))) == .ignored)
+    #expect(replica.snapshot?.cursor == 1)
+    #expect(replica.snapshot?.warnings.map(\.warningId) == ["warning-1"])
+
+    var olderWelcome = welcome(identity: identity)
+    olderWelcome.generation = 6
+    #expect(
+      replica.receive(
+        method: PairedHostProjectionMethods.welcome,
+        params: try JSONEncoder().encode(olderWelcome)) == .ignored)
+    #expect(replica.welcome?.generation == 7)
+    #expect(replica.snapshot?.generation == 7)
+    #expect(replica.snapshot?.cursor == 1)
+  }
+
+  @Test("a new authenticated Host seed replaces an older offline cursor or generation")
+  func reconnectSeedReplacesOfflineCache() throws {
+    let identity = try #require(makeIdentity())
+    for (generation, cursor) in [(7, 30), (8, 30)] {
+      let cached = createEmptyHostSnapshot(
+        generation: generation,
+        cursor: cursor,
+        freshness: .live,
+        generatedAt: "2026-08-09T20:00:00Z")
+      var replica = PairedHostProjectionReplica(identity: identity, cachedSnapshot: cached)
+      #expect(replica.snapshot?.freshness == .stale)
+
+      #expect(
+        replica.receive(
+          method: PairedHostProjectionMethods.welcome,
+          params: try JSONEncoder().encode(welcome(identity: identity))) == .updated)
+      #expect(
+        replica.receive(
+          method: PairedHostProjectionMethods.snapshot,
+          params: try JSONEncoder().encode(snapshotFrame())) == .updated)
+      #expect(
+        replica.receive(
+          method: PairedHostProjectionMethods.state,
+          params: try JSONEncoder().encode(
+            PairedHostProjectionStateMessage(
+              phase: .live, generation: 7, cursor: 0))) == .updated)
+      #expect(replica.phase == .live)
+      #expect(replica.snapshot?.generation == 7)
+      #expect(replica.snapshot?.cursor == 0)
+      #expect(replica.snapshot?.freshness == .live)
+    }
+  }
+
   @Test("gaps and explicit resets request a full authoritative snapshot")
   func gapsRequireSnapshot() throws {
     let identity = try #require(makeIdentity())
