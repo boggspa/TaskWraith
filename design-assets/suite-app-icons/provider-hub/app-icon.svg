@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title desc">
+  <title id="title">Provider Hub</title>
+  <desc id="desc">TaskWraith monoline ghost with the glyph fanout routes catalogue glyph.</desc>
+
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0.85" y2="1">
+      <stop stop-color="#30333B"/>
+      <stop offset="0.54" stop-color="#20232A"/>
+      <stop offset="1" stop-color="#14171E"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0.8" y2="1">
+      <stop stop-color="#89919F" stop-opacity="0.7"/>
+      <stop offset="0.42" stop-color="#667081" stop-opacity="0.15"/>
+      <stop offset="1" stop-color="#798396" stop-opacity="0.38"/>
+    </linearGradient>
+    <radialGradient id="wash" cx="0.35" cy="0.1" r="0.95">
+      <stop stop-color="#FFB276" stop-opacity="0.09"/>
+      <stop offset="1" stop-color="#FFB276" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="badge" x1="0" y1="0" x2="0.8" y2="1">
+      <stop stop-color="#493323"/>
+      <stop offset="1" stop-color="#20232B"/>
+    </linearGradient>
+  </defs>
+  <rect x="88" y="94" width="848" height="848" rx="198" fill="#000000" opacity="0.2"/>
+  <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#tile)"/>
+  <rect x="88" y="88" width="848" height="848" rx="198" fill="url(#wash)"/>
+  <rect x="90" y="90" width="844" height="844" rx="196" fill="none" stroke="url(#edge)" stroke-width="3"/>
+
+  <defs>
+    <mask id="symbol-clearance" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#FFFFFF"/>
+      <circle cx="726" cy="716" r="169" fill="#000000"/>
+    </mask>
+  </defs>
+  <g mask="url(#symbol-clearance)">
+    <g transform="translate(-18 -8) scale(7.45)" fill="none" stroke="#EDF3FA" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round">
+      <path xmlns="http://www.w3.org/2000/svg" d="M56 30H80L92 36L98 48V84H92L86 90L80 84L74 96L68 84L56 96L50 84H38V48L44 36Z" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M50 84V104" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M68 84V104" />
+    <path xmlns="http://www.w3.org/2000/svg" d="M86 90V104" />
+    <rect xmlns="http://www.w3.org/2000/svg" x="51" y="54" width="10" height="14" />
+    <rect xmlns="http://www.w3.org/2000/svg" x="75" y="54" width="10" height="14" />
+
+    </g>
+  </g>
+
+  <circle cx="726" cy="716" r="158" fill="url(#badge)"/>
+  <circle cx="726" cy="716" r="156.5" fill="none" stroke="#FFB276" stroke-opacity="0.28" stroke-width="2"/>
+
+  <g transform="translate(551 541) scale(0.5833333333)">
+    <circle xmlns="http://www.w3.org/2000/svg" cx="300" cy="300" r="54" fill="none" stroke="#FFB276" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M300 246V138M346 272l94-54M346 328l94 54M300 354v108M254 328l-94 54M254 272l-94-54" fill="none" stroke="#FFB276" stroke-width="29" stroke-linecap="round" stroke-linejoin="round" />
+  <circle xmlns="http://www.w3.org/2000/svg" cx="300" cy="104" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" /><circle xmlns="http://www.w3.org/2000/svg" cx="476" cy="198" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" /><circle xmlns="http://www.w3.org/2000/svg" cx="476" cy="402" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" /><circle xmlns="http://www.w3.org/2000/svg" cx="300" cy="496" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" /><circle xmlns="http://www.w3.org/2000/svg" cx="124" cy="402" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" /><circle xmlns="http://www.w3.org/2000/svg" cx="124" cy="198" r="34" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+  <path xmlns="http://www.w3.org/2000/svg" d="M214 214c48-48 124-48 172 0" fill="none" stroke="#FFB276" stroke-width="24" stroke-linecap="round" stroke-linejoin="round" />
+
+  </g>
+</svg>
