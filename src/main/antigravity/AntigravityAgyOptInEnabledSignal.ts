@@ -19,6 +19,10 @@
  * stored key envelope admitted agy models that have nothing to do with it.
  * Presence of a key is not evidence about the agy lane, in either direction.
  *
+ * Main's background agy work reads it too, immediately before a spawn or a
+ * token-bearing request that follows an await (Chris, 2026-09-23): a settings
+ * snapshot taken before the wait would miss consent withdrawn during it.
+ *
  * Reports ONLY a boolean, never settings or their contents, and defaults to
  * `false` (fail closed) until `index.ts` wires the real probe. It never
  * gates, reads, or affects the Gemini API-key lane, which keeps its own

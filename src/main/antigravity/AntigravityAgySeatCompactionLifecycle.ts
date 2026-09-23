@@ -3,8 +3,9 @@
  *
  * Each chunk runs in a fresh temporary agy project in read-only plan mode. It
  * never resumes or mutates the live seat conversation, never receives API-key
- * credentials, and joins cancellation/timeout before returning to the durable
- * compaction controller.
+ * credentials, reads AntiGravity consent live immediately before it spawns, and
+ * joins cancellation/timeout before returning to the durable compaction
+ * controller.
  */
 
 import { spawn, type ChildProcess } from 'child_process'
@@ -12,11 +13,14 @@ import { promises as fs } from 'fs'
 import os from 'os'
 import { join } from 'path'
 import { buildAgyReadOnlyPrintArgs, createAgyCliEnv } from './AntigravityCli'
+import { isAntigravityAgyOptInEnabled } from './AntigravityAgyOptInEnabledSignal'
 
 const STDOUT_MAX_CHARS = 64_000
 const STDERR_MAX_CHARS = 8_000
 const FORCE_KILL_AFTER_MS = 5_000
 const CANCELLED_ERROR = 'Compaction was cancelled for history deletion.'
+const CONSENT_WITHDRAWN_ERROR =
+  'AntiGravity is disabled until the user enables it and records informed risk acceptance in Settings → Providers. This summary step was not started.'
 const ANSI_ESCAPE_RE = new RegExp(String.raw`\u001b\[[0-?]*[ -/]*[@-~]`, 'g')
 
 export interface AntigravityAgySeatSummaryResult {
@@ -79,6 +83,14 @@ export async function runAntigravityAgySeatSummary(
       reasoningEffort: input.reasoningEffort,
       newProject: true
     })
+
+    // Read live before EVERY summary spawn (Chris, 2026-09-23). A seat
+    // compaction runs up to ten of these in sequence and its caller read consent
+    // once, before all of them: a withdrawal stops the next step here, while a
+    // step already running is left to finish. Nothing awaits before the spawn.
+    if (!isAntigravityAgyOptInEnabled()) {
+      return { ok: false, text: '', error: CONSENT_WITHDRAWN_ERROR }
+    }
 
     let child: ChildProcess
     try {
