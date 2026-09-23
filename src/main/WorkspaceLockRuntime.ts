@@ -1,6 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { waitForWorkspaceLockStateChange } from './WorkspaceLockAvailability'
-import { promises as fs } from 'node:fs'
+import {
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  openSync,
+  promises as fs,
+  readdirSync,
+  readFileSync
+} from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 
 import {
@@ -28,6 +37,9 @@ import {
   type WorkspaceLockRecoveryResult
 } from './workLocks/WorkspaceLockAuthority'
 import {
+  WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY,
+  WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME,
+  WORKSPACE_MUTATION_COMMIT_RECLAIM_GUARD_FILENAME,
   WorkspaceMutationCommitFence,
   WorkspaceMutationCommitFenceBusyError,
   type WorkspaceMutationCommitFenceOwner
@@ -249,8 +261,6 @@ interface WorkspaceLockAuthorityLike {
 interface WorkspaceMutationCommitFenceLike {
   acquire(owner: WorkspaceLockOwner, partitionKey?: string): Promise<WorkspaceMutationCommitFenceOwner>
   release(owner: WorkspaceMutationCommitFenceOwner): boolean
-  /** Read-only; the periodic reclaim consults it and never takes or drops it. */
-  readFence(partitionKey?: string): WorkspaceMutationCommitFenceOwner | null
 }
 
 export interface WorkspaceMutationCommitFenceAcquisition {
@@ -314,10 +324,6 @@ export class WorkspaceLockRuntime {
     }
     const validateHunkBaseline = (claim: CanonicalWorkspaceLockClaim): Promise<boolean> =>
       validateCurrentHunkBaseline(claim)
-    const mutationFence = new WorkspaceMutationCommitFence({
-      userDataRoot: options.userDataRoot,
-      observeProcess
-    })
     const authority = await WorkspaceLockAuthority.open({
       persistence,
       dependencies: {
@@ -329,13 +335,17 @@ export class WorkspaceLockRuntime {
           resolveCanonicalWorkspaceLockPath({ rootPath, targetPath }),
         verifyTargetPath: (expected) => verifyCanonicalWorkspaceLockPath(expected),
         validateHunkBaseline,
-        readCommitFenceOwner: (claim) => readCommitFenceOwnerForClaim(mutationFence, claim),
+        readCommitFenceOwners: () => listCommitFenceOwners(options.userDataRoot),
         instance: {
           instanceId: options.instanceId,
           pid: process.pid,
           processBirthIdentity: mainProcessBirthIdentity
         }
       }
+    })
+    const mutationFence = new WorkspaceMutationCommitFence({
+      userDataRoot: options.userDataRoot,
+      observeProcess
     })
     return new WorkspaceLockRuntime(authority, mutationFence, options.processIdentity, process.pid)
   }
@@ -1442,24 +1452,111 @@ export function mutationFencePartitionKeys(
   return Object.freeze([...keys].sort())
 }
 
+const COMMIT_FENCE_PARTITION_RECORD = /^fence-[0-9a-f]{64}\.json$/
+const COMMIT_FENCE_PARTITION_GUARD = /^reclaim-guard-[0-9a-f]{64}\.json$/
+const COMMIT_FENCE_RECORD_MAX_BYTES = 64 * 1024
+
 /**
- * The one seam through which the periodic reclaim sees the commit fence: a
- * plain read of the partition a claim would commit under. It takes nothing,
- * releases nothing, and reclaims nothing; a claim with no exact partition has
- * no fence to defer on.
+ * The one seam through which the periodic reclaim sees the commit fence:
+ * every process identity named by any fence record under this authority
+ * root, each partition's owner, the unpartitioned owner, and each reclaim
+ * guard's contender. It runs inside the lock authority's transition mutex and
+ * is strictly read-only: a directory listing and O_RDONLY reads, never the
+ * fence's own `readFence` (which creates and chmods the directory), never a
+ * write. What it cannot read or does not recognise throws, and the caller
+ * defers; a record released between the listing and its read is simply gone.
  */
-export function readCommitFenceOwnerForClaim(
-  fence: Pick<WorkspaceMutationCommitFenceLike, 'readFence'>,
-  claim: CanonicalWorkspaceLockClaim
-): WorkspaceLockCommitFenceOwnerIdentity | null {
-  let partitionKey: string
+export function listCommitFenceOwners(
+  userDataRoot: string
+): WorkspaceLockCommitFenceOwnerIdentity[] {
+  const directory = join(resolve(userDataRoot), WORKSPACE_MUTATION_COMMIT_FENCE_DIRECTORY)
+  let names: string[]
   try {
-    partitionKey = mutationFencePartitionKeys([claim])[0]
-  } catch {
+    const stat = lstatSync(directory)
+    if (!stat.isDirectory() || stat.isSymbolicLink()) {
+      throw new Error(`Commit-fence authority is not a real directory: ${directory}`)
+    }
+    names = readdirSync(directory)
+  } catch (error) {
+    if (errnoCode(error) === 'ENOENT') return []
+    throw error
+  }
+  const owners: WorkspaceLockCommitFenceOwnerIdentity[] = []
+  for (const name of [...names].sort()) {
+    // Unpublished temporaries and quarantined guards all start with a dot.
+    if (name.startsWith('.')) continue
+    const guard =
+      name === WORKSPACE_MUTATION_COMMIT_RECLAIM_GUARD_FILENAME ||
+      COMMIT_FENCE_PARTITION_GUARD.test(name)
+    if (
+      !guard &&
+      name !== WORKSPACE_MUTATION_COMMIT_FENCE_FILENAME &&
+      !COMMIT_FENCE_PARTITION_RECORD.test(name)
+    ) {
+      throw new Error(`Unrecognised commit-fence entry: ${name}`)
+    }
+    const raw = readCommitFenceRecord(join(directory, name))
+    if (raw === null) continue
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      throw new Error(`Commit-fence entry is not valid JSON: ${name}`)
+    }
+    const identity = commitFenceOwnerIdentity(
+      guard && parsed && typeof parsed === 'object'
+        ? (parsed as { contender?: unknown }).contender
+        : parsed
+    )
+    if (!identity) throw new Error(`Commit-fence entry names no exact owner: ${name}`)
+    owners.push(identity)
+  }
+  return owners
+}
+
+function readCommitFenceRecord(path: string): string | null {
+  let fd: number | null = null
+  try {
+    const before = lstatSync(path)
+    if (!before.isFile() || before.isSymbolicLink()) {
+      throw new Error(`Commit-fence entry is not a regular file: ${path}`)
+    }
+    fd = openSync(
+      path,
+      fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW || 0) | (fsConstants.O_NONBLOCK || 0)
+    )
+    const opened = fstatSync(fd)
+    if (!opened.isFile() || opened.size > COMMIT_FENCE_RECORD_MAX_BYTES) {
+      throw new Error(`Commit-fence entry is not a small regular file: ${path}`)
+    }
+    return readFileSync(fd, 'utf8')
+  } catch (error) {
+    if (errnoCode(error) === 'ENOENT') return null
+    throw error
+  } finally {
+    if (fd !== null) closeSync(fd)
+  }
+}
+
+function commitFenceOwnerIdentity(value: unknown): WorkspaceLockCommitFenceOwnerIdentity | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  if (typeof record.pid !== 'number' || !Number.isSafeInteger(record.pid) || record.pid <= 0) {
     return null
   }
-  const owner = fence.readFence(partitionKey)
-  return owner ? { pid: owner.pid, processBirthIdentity: owner.processBirthIdentity } : null
+  if (typeof record.processBirthIdentity !== 'string' || !record.processBirthIdentity) return null
+  if (record.partitionKey !== undefined && typeof record.partitionKey !== 'string') return null
+  return {
+    pid: record.pid,
+    processBirthIdentity: record.processBirthIdentity,
+    ...(typeof record.partitionKey === 'string' ? { partitionKey: record.partitionKey } : {})
+  }
+}
+
+function errnoCode(error: unknown): string | undefined {
+  return error && typeof error === 'object' && 'code' in error
+    ? String((error as { code?: unknown }).code)
+    : undefined
 }
 
 function exactMutationClaimFailure(

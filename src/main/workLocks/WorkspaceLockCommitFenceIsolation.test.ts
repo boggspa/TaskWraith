@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
+
 import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
@@ -107,6 +111,41 @@ const FENCE_MUTATORS = [
   'linkSync'
 ]
 
+/**
+ * Everything the reclaim's fence port must never call: the fence's own API
+ * (its `readFence` creates and chmods the directory) and every filesystem
+ * write, create, mode change or sync.
+ */
+const PORT_FORBIDDEN = [
+  ...FENCE_MUTATORS,
+  'readFence',
+  'mkdirSync',
+  'chmodSync',
+  'writeFileSync',
+  'appendFileSync',
+  'writeSync',
+  'rmSync',
+  'ftruncateSync',
+  'fsyncSync',
+  'copyFileSync',
+  'symlinkSync'
+]
+
+/**
+ * Git blob id of WorkspaceMutationCommitFence.ts. The fence is the only
+ * in-run mutation serializer and this programme keeps it byte-for-byte
+ * unchanged; a same-shape edit (a comment, a reordered branch) must fail here
+ * too. `.gitattributes` checks every text file out with LF, so the working
+ * tree bytes are the blob bytes on every platform.
+ */
+const COMMIT_FENCE_BLOB = '14780df9c991743c1f5707585d9e15835740915b'
+
+function gitBlobId(bytes: Buffer): string {
+  return createHash('sha1')
+    .update(Buffer.concat([Buffer.from(`blob ${bytes.byteLength}\0`, 'utf8'), bytes]))
+    .digest('hex')
+}
+
 describe('workspace-lock commit fence isolation', () => {
   const authority = new MainSourceProbe(
     'WorkspaceLockAuthority.ts',
@@ -133,7 +172,7 @@ describe('workspace-lock commit fence isolation', () => {
     const guard = method(authority, 'WorkspaceLockAuthority', 'holderOwnsCommitFence')
     const sweep = method(authority, 'WorkspaceLockAuthority', 'sweepDeadHolderHeartbeats')
     const audit = method(authority, 'WorkspaceLockAuthority', 'recordReclaimAudit')
-    expect(authority.callsTo(guard, 'readCommitFenceOwner')).toHaveLength(1)
+    expect(authority.callsTo(guard, 'readCommitFenceOwners')).toHaveLength(1)
     expect(authority.callsTo(pass, 'holderOwnsCommitFence')).toHaveLength(1)
     expect(authority.callsTo(pass, 'sweepDeadHolderHeartbeats')).toHaveLength(1)
     expect(authority.callsTo(pass, 'recordReclaimAudit').length).toBeGreaterThanOrEqual(1)
@@ -163,26 +202,40 @@ describe('workspace-lock commit fence isolation', () => {
     expect(authority.callsTo(pass, 'periodicRecoveryDecision')).toHaveLength(1)
   })
 
-  it('the runtime port is a plain readFence over the claim partition, wired into open()', () => {
-    const port = runtime.fn('readCommitFenceOwnerForClaim')
-    expect(runtime.callsTo(port, 'readFence')).toHaveLength(1)
-    expect(runtime.callsTo(port, 'mutationFencePartitionKeys')).toHaveLength(1)
-    for (const forbidden of FENCE_MUTATORS) {
-      expect(runtime.callsTo(port, forbidden), forbidden).toHaveLength(0)
+  it('the runtime port lists fence records strictly read-only and is wired into open()', () => {
+    const port = runtime.fn('listCommitFenceOwners')
+    const read = runtime.fn('readCommitFenceRecord')
+    // Positive control for the scans: the port really lists and really reads.
+    expect(runtime.callsTo(port, 'readdirSync')).toHaveLength(1)
+    expect(runtime.callsTo(port, 'readCommitFenceRecord')).toHaveLength(1)
+    expect(runtime.callsTo(read, 'readFileSync')).toHaveLength(1)
+    for (const scope of [port, read]) {
+      for (const forbidden of PORT_FORBIDDEN) {
+        expect(runtime.callsTo(scope, forbidden), forbidden).toHaveLength(0)
+      }
     }
-    expect(runtime.typeMembers('WorkspaceMutationCommitFenceLike')).toEqual([
-      'acquire',
-      'release',
-      'readFence'
-    ])
+    const opens = runtime.callsTo(read, 'openSync')
+    expect(opens).toHaveLength(1)
+    const flags = runtime.argText(opens[0], 1)
+    expect(flags).toContain('O_RDONLY')
+    expect(flags).not.toMatch(/O_WRONLY|O_RDWR|O_CREAT|O_TRUNC|O_APPEND/)
+    // The fence the runtime drives is only ever taken and released by the executor.
+    expect(runtime.typeMembers('WorkspaceMutationCommitFenceLike')).toEqual(['acquire', 'release'])
     const open = method(runtime, 'WorkspaceLockRuntime', 'open')
     const authorityOpen = runtime
       .callsTo(open, 'open')
       .find((call) => runtime.text(call.expression) === 'WorkspaceLockAuthority.open')
     if (!authorityOpen) throw new Error('WorkspaceLockRuntime.open no longer opens the authority')
     expect(runtime.propText(authorityOpen, 0, 'dependencies')).toContain(
-      'readCommitFenceOwner: (claim) => readCommitFenceOwnerForClaim(mutationFence, claim)'
+      'readCommitFenceOwners: () => listCommitFenceOwners(options.userDataRoot)'
     )
+  })
+
+  it('the commit fence file is byte-for-byte the pinned blob', () => {
+    const bytes = readFileSync(
+      fileURLToPath(new URL('./WorkspaceMutationCommitFence.ts', import.meta.url))
+    )
+    expect(gitBlobId(bytes)).toBe(COMMIT_FENCE_BLOB)
   })
 
   it('the commit fence serializer keeps its over-strict live-only shape', () => {

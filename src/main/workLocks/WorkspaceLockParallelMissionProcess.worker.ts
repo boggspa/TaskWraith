@@ -14,8 +14,12 @@
  *   --identityRegistry=...  shared JSON map pid → processBirthIdentity (registry only)
  *   --heartbeatIntervalMs, --heartbeatTtlMs, --reclaimGraceMs, --scanIntervalMs,
  *   --suspendGapMs        (lease-holder and reclaimer: holder-lease timings)
- *   --holdCommitFence=1   (lease-holder only: also take the claim's commit-fence
- *                          partition, as an executor mid-commit would)
+ *   --holdCommitFence=1   (lease-holder only: stop the way an executor mid-commit
+ *                          does: fence the ADMISSION claim's partition, create
+ *                          the target if it is absent, then replace the lease
+ *                          with fresh claims. A target absent at admission moves
+ *                          from its planned identity to dev:ino, so the lease
+ *                          names another partition than the one held.)
  *
  * `holder`/`contender` use production WorkspaceLockAuthority +
  * NodeWorkspaceLockPersistence with a registry stand-in for process-birth
@@ -26,8 +30,8 @@
  * WorkspaceLockProcessIdentityService (the Swift bridge's proc_bsdinfo on
  * darwin, boot id + /proc start ticks on linux), so a holder the parent
  * SIGKILLs or SIGSTOPs is dead or lapsed by the operating system's account,
- * not by an injected observation. Both read the real commit fence through the
- * runtime's own port. The reclaimer boots first and never reopens: the
+ * not by an injected observation. Both read the real commit-fence records
+ * through the runtime's own port. The reclaimer boots first and never reopens: the
  * holder's lease is then `held` by the holder's own incarnation (no boot
  * relabel ever touches it), and only the periodic reclaim-only pass can free it.
  *
@@ -45,7 +49,7 @@ import {
   verifyCanonicalWorkspaceLockPath
 } from './CanonicalWorkspaceLockPath'
 import { WorkspaceLockProcessIdentityService } from '../WorkspaceLockProcessIdentity'
-import { mutationFencePartitionKeys, readCommitFenceOwnerForClaim } from '../WorkspaceLockRuntime'
+import { listCommitFenceOwners, mutationFencePartitionKeys } from '../WorkspaceLockRuntime'
 import { NodeWorkspaceLockPersistence } from './NodeWorkspaceLockPersistence'
 import {
   WorkspaceLockAuthority,
@@ -101,6 +105,10 @@ interface WorkerMessage {
   instanceId?: string
   leaseId?: string
   fenceHeld?: boolean
+  /** Partition the holder's commit fence was taken on (the admission claim's). */
+  fencePartition?: string
+  /** Partition the holder's current lease claim maps to, after any replace. */
+  leasePartition?: string
   /** Worker wall clock when the reported event happened. */
   atMs?: number
   /** One periodic pass run on request (the timer runs the same pass). */
@@ -299,16 +307,16 @@ function createProcessDependencies(
  * port, over the same root the authority uses: no registry, no injected verdict.
  */
 function createProductionDependencies(
+  args: WorkerArgs,
   instanceId: string,
   processBirthIdentity: string,
-  identity: WorkspaceLockProcessIdentityService,
-  fence: WorkspaceMutationCommitFence
+  identity: WorkspaceLockProcessIdentityService
 ): WorkspaceLockAuthorityDependencies {
   return {
     // The registry path is never read: observeProcess is replaced below.
     ...createProcessDependencies(instanceId, processBirthIdentity, ''),
     observeProcess: (pid) => identity.observe(pid),
-    readCommitFenceOwner: (claim) => readCommitFenceOwnerForClaim(fence, claim)
+    readCommitFenceOwners: () => listCommitFenceOwners(args.userDataRoot)
   }
 }
 
@@ -585,39 +593,55 @@ async function runLeaseHolder(
 ): Promise<void> {
   const persistence = new NodeWorkspaceLockPersistence({ userDataRoot: args.userDataRoot })
   const instanceId = `lease-holder-instance-${process.pid}`
-  const fence = createCommitFence(args, identity)
   const authority = await WorkspaceLockAuthority.open({
     persistence,
-    dependencies: createProductionDependencies(instanceId, processBirthIdentity, identity, fence),
+    dependencies: createProductionDependencies(args, instanceId, processBirthIdentity, identity),
     holderLease: args.holderLease
   })
   disposers.push(() => authority.dispose())
   const owner = ownerFromArgs(args, processBirthIdentity)
-  const acquired = await authority.acquire(
-    owner,
-    { workspacePath: args.workspacePath, kind: 'file', targetPath: args.targetPath },
-    { transitionId: `lease-holder-acquire-${args.runId}` }
-  )
-  if (!acquired.ok) {
-    throw new Error(`lease-holder acquire failed: ${acquired.reason} ${acquired.message}`)
+  const request = {
+    workspacePath: args.workspacePath,
+    kind: 'file' as const,
+    targetPath: args.targetPath
   }
+  const admitted = await authority.acquire(owner, request, {
+    transitionId: `lease-holder-acquire-${args.runId}`
+  })
+  if (!admitted.ok) {
+    throw new Error(`lease-holder acquire failed: ${admitted.reason} ${admitted.message}`)
+  }
+  let current = admitted
+  let fencePartition: string | undefined
   if (args.holdCommitFence) {
-    // The executor's order: lease first, then the partition of the exact
-    // claim it is about to commit, held across the whole mutation.
-    await fence.acquire(
+    // The executor's order (WorkspaceLockMcpExecutionCoordinator): fence the
+    // ADMISSION claims' partitions, then replace the lease with fresh claims,
+    // then commit. A target that appears in between keeps the fence on its
+    // planned partition while the replaced lease names the dev:ino one.
+    fencePartition = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))[0]
+    await createCommitFence(args, identity).acquire(
       {
         lockOwnerId: owner.lockOwnerId,
         runId: owner.runId,
         pid: owner.pid,
         processBirthIdentity
       },
-      mutationFencePartitionKeys([acquired.leases[0].claim])[0]
+      fencePartition
     )
+    if (!fs.existsSync(args.targetPath)) fs.writeFileSync(args.targetPath, 'written mid-commit\n')
+    const replaced = await authority.replaceAcquisition(owner, admitted.transitionId, [request], {
+      transitionId: `lease-holder-replace-${args.runId}`
+    })
+    if (!replaced.ok) {
+      throw new Error(`lease-holder replace failed: ${replaced.reason} ${replaced.message}`)
+    }
+    current = replaced
   }
+  const held = current
   process.on('message', (raw: unknown) => {
     const message = raw as { type?: string }
     if (message?.type === 'verify') {
-      void authority.verifyAcquisitionForMutation(owner, acquired.transitionId).then(
+      void authority.verifyAcquisitionForMutation(owner, held.transitionId).then(
         (verified) => {
           send({
             type: 'verified',
@@ -642,10 +666,12 @@ async function runLeaseHolder(
     runId: args.runId,
     pid: process.pid,
     ok: true,
-    transitionId: acquired.transitionId,
+    transitionId: held.transitionId,
     instanceId,
-    leaseId: acquired.leases[0].leaseId,
+    leaseId: held.leases[0].leaseId,
     fenceHeld: args.holdCommitFence,
+    ...(fencePartition ? { fencePartition } : {}),
+    leasePartition: mutationFencePartitionKeys(held.leases.map((lease) => lease.claim))[0],
     atMs: Date.now()
   })
 }
@@ -665,12 +691,7 @@ async function runReclaimer(
   const instanceId = `reclaimer-instance-${process.pid}`
   const authority = await WorkspaceLockAuthority.open({
     persistence,
-    dependencies: createProductionDependencies(
-      instanceId,
-      processBirthIdentity,
-      identity,
-      createCommitFence(args, identity)
-    ),
+    dependencies: createProductionDependencies(args, instanceId, processBirthIdentity, identity),
     holderLease: args.holderLease
   })
   disposers.push(() => authority.dispose())

@@ -1962,15 +1962,18 @@ function readAuditLines(userData: string): Record<string, unknown>[] {
  */
 async function lapseFixture(
   options: {
-    fenceOwner?: WorkspaceLockCommitFenceOwnerIdentity | null
+    /** The one record the port names; an Error makes the port throw it. */
+    fenceOwner?: WorkspaceLockCommitFenceOwnerIdentity | Error | null
     /** False opens the reclaimer with no commit-fence port at all. */
     fencePort?: boolean
+    /** Observation of the holder's pid while the reclaimer boots (live by default). */
+    observationAtBoot?: WorkspaceLockProcessObservation
     holderLease?: WorkspaceLockHolderLeaseOptions
   } = {}
 ) {
   const h = harness('instance-b')
   let monotonicMs = 0
-  let fenceOwner: WorkspaceLockCommitFenceOwnerIdentity | null = options.fenceOwner ?? null
+  let fenceOwner: WorkspaceLockCommitFenceOwnerIdentity | Error | null = options.fenceOwner ?? null
   const holderInstance = {
     instanceId: 'instance-a',
     pid: 201,
@@ -1989,12 +1992,21 @@ async function lapseFixture(
   }
   const acquired = await holder.acquire(holderOwner, request)
   if (!acquired.ok) throw new Error('fixture acquisition failed')
+  const liveAtScan = h.observations.get(201)!
+  if (options.observationAtBoot) h.observations.set(201, options.observationAtBoot)
   const reclaimer = await WorkspaceLockAuthority.open({
     persistence: h.persistence,
     dependencies: {
       ...h.dependencies,
       monotonicNowMs: () => monotonicMs,
-      ...(options.fencePort === false ? {} : { readCommitFenceOwner: () => fenceOwner })
+      ...(options.fencePort === false
+        ? {}
+        : {
+            readCommitFenceOwners: () => {
+              if (fenceOwner instanceof Error) throw fenceOwner
+              return fenceOwner ? [fenceOwner] : []
+            }
+          })
     },
     holderLease: {
       heartbeatIntervalMs: 60_000,
@@ -2005,6 +2017,7 @@ async function lapseFixture(
       ...options.holderLease
     }
   })
+  h.observations.set(201, liveAtScan)
   let beatSeq = 0
   return {
     h,
@@ -2032,7 +2045,7 @@ async function lapseFixture(
     advanceMonotonic: (ms: number): void => {
       monotonicMs += ms
     },
-    setFenceOwner: (next: WorkspaceLockCommitFenceOwnerIdentity | null): void => {
+    setFenceOwner: (next: WorkspaceLockCommitFenceOwnerIdentity | Error | null): void => {
       fenceOwner = next
     },
     leaseStatus: () =>
@@ -2096,6 +2109,88 @@ describe('WorkspaceLockAuthority holder leases', () => {
 
     authority.dispose()
     expect(fs.existsSync(sidecar)).toBe(false)
+  })
+
+  it('never retires its own live leases, however long its own beats fail to land', async () => {
+    const h = harness('instance-a')
+    let monotonicMs = 0
+    const authority = await WorkspaceLockAuthority.open({
+      persistence: h.persistence,
+      dependencies: {
+        ...h.dependencies,
+        monotonicNowMs: () => monotonicMs,
+        readCommitFenceOwners: () => []
+      },
+      // One beat at open, then none: a stalled disk holds every later write.
+      holderLease: { heartbeatIntervalMs: 3_600_000, scanIntervalMs: 3_600_000 }
+    })
+    const self = owner({
+      lockOwnerId: 'owner-self',
+      runId: 'run-self',
+      pid: 100,
+      processBirthIdentity: 'authority-birth'
+    })
+    const acquired = await authority.acquire(self, {
+      workspacePath: h.workspace,
+      kind: 'file',
+      targetPath: path.join(h.workspace, 'src', 'a.ts')
+    })
+    if (!acquired.ok) throw new Error('fixture acquisition failed')
+    for (let scan = 0; scan < 12; scan += 1) {
+      globalTime += 60_000
+      monotonicMs += 60_000
+      // This process is alive by construction: its own leases are never candidates.
+      expect(await authority.runPeriodicRecovery()).toEqual({
+        skipped: true,
+        reason: 'no_active_leases'
+      })
+    }
+    expect(authority.snapshot().leases.map((lease) => lease.status)).toEqual(['held'])
+    expect(walEvents(h.persistence).filter((event) => event.kind === 'recover')).toEqual([])
+    expect(await authority.verifyAcquisitionForMutation(self, acquired.transitionId)).toMatchObject(
+      {
+        ok: true
+      }
+    )
+    authority.dispose()
+  })
+
+  it('never retires a recovery_blocked lease by lapse, however long its live owner stays silent', async () => {
+    // Boot could not observe the holder, so its lease is blocked for a human;
+    // the holder is observable and silent afterwards. Lapse only ever retires
+    // held or orphan_live, so the lease stays blocked (and still conflicts).
+    const f = await lapseFixture({ observationAtBoot: { state: 'identity_unavailable' } })
+    expect(f.leaseStatus()).toBe('recovery_blocked')
+    await f.beat()
+    f.advanceWall(10 * 60_000)
+    expect(await f.scan()).toEqual({ skipped: true, reason: 'no_candidates' })
+    for (let scan = 0; scan < 4; scan += 1) {
+      f.advanceMonotonic(181_000)
+      expect(await f.scan()).toEqual({ skipped: true, reason: 'no_candidates' })
+    }
+    expect(f.leaseStatus()).toBe('recovery_blocked')
+    expect(
+      walEvents(f.h.persistence)
+        .filter((event) => event.kind === 'recover')
+        .flatMap((event) => event.payload.decisions.map((decision) => decision.status))
+    ).toEqual(['recovery_blocked'])
+    // Positive control: the verdict is lapsed, so only the status rule held it.
+    expect(f.reclaimer.snapshot().holderLiveness?.[f.leaseId]).toMatchObject({
+      instanceScope: 'other',
+      liveness: 'lapsed'
+    })
+    expect(
+      await f.reclaimer.acquire(
+        owner({
+          lockOwnerId: 'owner-b',
+          runId: 'run-b',
+          pid: 202,
+          processBirthIdentity: 'owner-b-birth'
+        }),
+        f.request
+      )
+    ).toMatchObject({ ok: false, reason: 'conflict' })
+    f.dispose()
   })
 
   it('keeps its heartbeat cadence after a beat throws instead of going silent', async () => {
@@ -2442,6 +2537,37 @@ describe('WorkspaceLockAuthority holder leases', () => {
 
     // Another process on the partition is not this holder: no deferral.
     f.setFenceOwner({ pid: 202, processBirthIdentity: 'owner-b-birth' })
+    f.advanceMonotonic(1_000)
+    expect(await f.scan()).toMatchObject({
+      skipped: false,
+      decisions: [{ leaseId: f.leaseId, status: 'recovered', reason: 'owner_dead' }],
+      deferred: []
+    })
+    expect(f.leaseStatus()).toBe('recovered')
+    f.dispose()
+  })
+
+  it('defers a lapsed live holder while its commit fence cannot be read, says why, and reclaims after a clean read', async () => {
+    const f = await lapseFixture({
+      fenceOwner: new Error('Unrecognised commit-fence entry: fence-v2-layout.json')
+    })
+    await f.beat()
+    f.advanceWall(10 * 60_000)
+    await f.scan()
+    f.advanceMonotonic(181_000)
+    expect(await f.scan()).toMatchObject({
+      skipped: false,
+      decisions: [],
+      deferred: [f.leaseId],
+      reclaimed: []
+    })
+    expect(f.leaseStatus()).toBe('orphan_live')
+    expect(f.reclaimer.snapshot().projectionErrors).toContain(
+      'commit fence read: Unrecognised commit-fence entry: fence-v2-layout.json'
+    )
+
+    // A clean read that names no one ends the deferral.
+    f.setFenceOwner(null)
     f.advanceMonotonic(1_000)
     expect(await f.scan()).toMatchObject({
       skipped: false,

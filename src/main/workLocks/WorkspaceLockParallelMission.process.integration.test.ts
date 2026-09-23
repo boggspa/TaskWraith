@@ -73,6 +73,8 @@ interface WorkerIpcMessage {
   instanceId?: string
   leaseId?: string
   fenceHeld?: boolean
+  fencePartition?: string
+  leasePartition?: string
   atMs?: number
   outcome?: WorkspaceLockPeriodicRecoveryOutcome
   holderLiveness?: Record<string, WorkspaceLockHolderLiveness>
@@ -324,19 +326,29 @@ function productionIdentityUnavailable(): string | null {
   return `no SIGSTOP or production process identity on ${process.platform}`
 }
 
+/**
+ * Linux CI runs this suite on small, shared runners. There every timing and
+ * every allowance scales together, so a holder starved of CPU is not misread
+ * as lapsed during its live window and a slow scan does not break an upper
+ * bound. The ORDER of events and the exact lower bounds never depend on speed.
+ */
+const TIMING_SCALE = process.env.CI ? 3 : 1
 /** The design's 10 s / 90 s / 180 s / 30 s, shortened so one test takes seconds. */
 const HOLDER_LEASE = {
-  heartbeatIntervalMs: 100,
-  heartbeatTtlMs: 1_000,
-  reclaimGraceMs: 1_500,
-  scanIntervalMs: 250,
-  suspendGapMs: 5_000
+  heartbeatIntervalMs: 100 * TIMING_SCALE,
+  heartbeatTtlMs: 1_000 * TIMING_SCALE,
+  reclaimGraceMs: 1_500 * TIMING_SCALE,
+  scanIntervalMs: 250 * TIMING_SCALE,
+  suspendGapMs: 5_000 * TIMING_SCALE
 }
 /** The designed worst case: stale at most one scan late, lapsed one scan after that. */
 const DESIGNED_RECLAIM_BOUND_MS =
   HOLDER_LEASE.heartbeatTtlMs + HOLDER_LEASE.reclaimGraceMs + 2 * HOLDER_LEASE.scanIntervalMs
 /** Scheduling allowance for a loaded machine. Lower bounds get none. */
-const LOAD_SLACK_MS = 2_500
+const LOAD_SLACK_MS = 2_500 * TIMING_SCALE
+/** Worker handshakes: each worker transpiles its imports and starts its identity service. */
+const HANDSHAKE_MS = 20_000 * TIMING_SCALE
+const HOLDER_LEASE_TEST_TIMEOUT_MS = 60_000 * TIMING_SCALE
 /** Integer-millisecond monotonic reads against ISO wall times. */
 const CLOCK_TOLERANCE_MS = 5
 
@@ -408,12 +420,12 @@ async function waitForReclaimAudit(
  */
 async function startLeaseHolderAndReclaimer(
   h: ReturnType<typeof makeHarness>,
-  options: { holdCommitFence?: boolean } = {}
+  options: { holdCommitFence?: boolean; targetPath?: string } = {}
 ) {
   const common = {
     userDataRoot: h.userData,
     workspacePath: h.workspace,
-    targetPath: h.targetPath,
+    targetPath: options.targetPath ?? h.targetPath,
     identity: 'production' as const,
     holderLease: HOLDER_LEASE
   }
@@ -422,9 +434,9 @@ async function startLeaseHolderAndReclaimer(
     role: 'reclaimer',
     runId: 'run-reclaimer',
     lockOwnerId: 'process-reclaimer',
-    retryTimeoutMs: 30_000
+    retryTimeoutMs: 30_000 * TIMING_SCALE
   })
-  const opened = await reclaimer.waitFor('opened', 20_000)
+  const opened = await reclaimer.waitFor('opened', HANDSHAKE_MS)
   const holder = forkWorker({
     ...common,
     role: 'lease-holder',
@@ -432,7 +444,7 @@ async function startLeaseHolderAndReclaimer(
     lockOwnerId: 'process-lease-holder',
     holdCommitFence: options.holdCommitFence
   })
-  const acquired = await holder.waitFor('acquired', 20_000)
+  const acquired = await holder.waitFor('acquired', HANDSHAKE_MS)
   expect(acquired.fenceHeld).toBe(Boolean(options.holdCommitFence))
   expect(await ask(holder, { type: 'verify' }, 'verified')).toMatchObject({ ok: true })
   reclaimer.child.send({ type: 'contend' })
@@ -444,7 +456,9 @@ async function startLeaseHolderAndReclaimer(
     reclaimerInstanceId: opened.instanceId!,
     holderInstanceId: acquired.instanceId!,
     holderPid: acquired.pid!,
-    leaseId: acquired.leaseId!
+    leaseId: acquired.leaseId!,
+    fencePartition: acquired.fencePartition,
+    leasePartition: acquired.leasePartition
   }
 }
 
@@ -525,6 +539,8 @@ const HOLDER_LEASE_SKIP = productionIdentityUnavailable()
 
 describe.skipIf(HOLDER_LEASE_SKIP !== null)(
   `WorkspaceLockAuthority holder leases across processes${HOLDER_LEASE_SKIP ? ` (skipped: ${HOLDER_LEASE_SKIP})` : ''}`,
+  // Every test in this suite inherits it.
+  { timeout: HOLDER_LEASE_TEST_TIMEOUT_MS },
   () => {
     it('frees a SIGKILLed holder at the next scan, without the reclaimer reopening, labelled owner_dead', async () => {
       const h = makeHarness()
@@ -533,7 +549,7 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
 
       const killedAt = Date.now()
       s.holder.child.kill('SIGKILL')
-      const acquired = await s.reclaimer.waitFor('acquired', 20_000)
+      const acquired = await s.reclaimer.waitFor('acquired', HANDSHAKE_MS)
       const reclaimMs = acquired.atMs! - killedAt
       reportTiming('holder-crash', { reclaimMs })
       expect(reclaimMs).toBeLessThan(DESIGNED_RECLAIM_BOUND_MS + LOAD_SLACK_MS)
@@ -564,7 +580,7 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
       ])
       // A dead holder's sidecar goes with its lease.
       expect(holderBeat(h.persistence, s.holderInstanceId)).toBeUndefined()
-    }, 60_000)
+    })
 
     it('frees a SIGSTOPped holder only after the TTL and the grace, and the resumed holder learns it lost the lease', async () => {
       const h = makeHarness()
@@ -587,7 +603,7 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
 
       const stoppedAt = Date.now()
       s.holder.child.kill('SIGSTOP')
-      const acquired = await s.reclaimer.waitFor('acquired', 20_000)
+      const acquired = await s.reclaimer.waitFor('acquired', HANDSHAKE_MS)
       const lastBeat = holderBeat(h.persistence, s.holderInstanceId)!
       const sinceLastBeatMs = acquired.atMs! - Date.parse(lastBeat.beatAt)
       reportTiming('holder-stopped', {
@@ -633,11 +649,19 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
         ok: false,
         reason: 'stale_acquisition'
       })
-    }, 60_000)
+    })
 
-    it('never frees a SIGSTOPped holder that still owns its commit-fence partition', async () => {
+    it('never frees a SIGSTOPped holder inside its commit fence, even after a replace moved its lease to another partition', async () => {
       const h = makeHarness()
-      const s = await startLeaseHolderAndReclaimer(h, { holdCommitFence: true })
+      // Absent at admission, so its planned identity becomes dev:ino once the
+      // holder creates it: the executor's same-run sibling case. The holder
+      // keeps the fence on the planned partition while its replaced lease
+      // names the dev:ino one, which no fence record names.
+      const targetPath = path.join(h.workspace, 'src', 'created-mid-commit.ts')
+      const s = await startLeaseHolderAndReclaimer(h, { holdCommitFence: true, targetPath })
+      expect(s.fencePartition).toMatch(/^mutation-target:[0-9a-f]{64}$/)
+      expect(s.leasePartition).toMatch(/^mutation-target:[0-9a-f]{64}$/)
+      expect(s.leasePartition).not.toBe(s.fencePartition)
 
       s.holder.child.kill('SIGSTOP')
       await sleep(DESIGNED_RECLAIM_BOUND_MS)
@@ -646,8 +670,9 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
       // machine can delay the scan that starts the grace.
       const deferredLease = (message: WorkerIpcMessage): boolean =>
         message.outcome?.skipped === false && message.outcome.deferred.includes(s.leaseId)
+      const deadline = Date.now() + DESIGNED_RECLAIM_BOUND_MS + LOAD_SLACK_MS
       let scanned = await ask(s.reclaimer, { type: 'scan' }, 'scanned')
-      for (let attempt = 0; !deferredLease(scanned) && attempt < 40; attempt += 1) {
+      while (!deferredLease(scanned) && Date.now() < deadline) {
         await sleep(HOLDER_LEASE.scanIntervalMs)
         scanned = await ask(s.reclaimer, { type: 'scan' }, 'scanned')
       }
@@ -666,6 +691,6 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
 
       s.holder.child.kill('SIGCONT')
       expect(await ask(s.holder, { type: 'verify' }, 'verified')).toMatchObject({ ok: true })
-    }, 60_000)
+    })
   }
 )

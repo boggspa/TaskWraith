@@ -235,10 +235,12 @@ export type WorkspaceLockProcessObservation =
   | { state: 'live'; processBirthIdentity: string }
   | { state: 'identity_unavailable' }
 
-/** Exact incarnation currently holding a mutation commit-fence partition. */
+/** Exact incarnation named by one commit-fence record: a partition's owner or a reclaim contender. */
 export interface WorkspaceLockCommitFenceOwnerIdentity {
   pid: number
   processBirthIdentity: string
+  /** Absent for the unpartitioned fence. Diagnostic only: deferral matches any partition. */
+  partitionKey?: string
 }
 
 /**
@@ -274,14 +276,16 @@ export interface WorkspaceLockAuthorityDependencies {
   /** Monotonic milliseconds for lapse grace; defaults to process.hrtime. */
   monotonicNowMs?: () => number
   /**
-   * Current owner of the commit-fence partition guarding one claim, read
-   * without taking, releasing, or reclaiming it. The periodic reclaim defers
-   * while a lapsed holder still owns the partition. Absent, a lapsed but
-   * live holder is never reclaimed: nothing shows it has left the fence.
+   * Every process identity named by any commit-fence record, read without
+   * taking, releasing, reclaiming or creating anything. The periodic reclaim
+   * defers a lapsed holder named in ANY partition, not only the partition of
+   * its lease's current claim: the executor holds the partitions of its
+   * admission claims, and a replace can move the claim's object identity
+   * (planned -> dev:ino) while the holder still sits in the old partition.
+   * Absent, or throwing, a lapsed but live holder is never reclaimed: nothing
+   * shows it has left the fence.
    */
-  readCommitFenceOwner?: (
-    claim: CanonicalWorkspaceLockClaim
-  ) => WorkspaceLockCommitFenceOwnerIdentity | null
+  readCommitFenceOwners?: () => readonly WorkspaceLockCommitFenceOwnerIdentity[]
   instance: {
     instanceId: string
     pid: number

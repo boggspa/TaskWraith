@@ -1552,9 +1552,11 @@ export class WorkspaceLockAuthority {
    * leases at the next scan. A holder alive by exact birth identity loses a
    * `held`/`orphan_live` lease only when its heartbeat has been wall-stale for
    * the TTL, this reclaimer has observed that same `beatSeq` for the monotonic
-   * grace, and the holder does not own the claim's commit-fence partition. A
+   * grace, and no commit-fence record names the holder in ANY partition. A
    * holder this reclaimer cannot observe, and one that never wrote a heartbeat
    * (every build that predates the sidecar), is never reclaimed by lapse.
+   * Neither is this process: it is alive by construction, and its own beats
+   * not landing (a stalled or full disk) is never evidence against it.
    *
    * The transition mutex is taken only when the fence-free pre-check found a
    * candidate; idle instances never contend.
@@ -1786,10 +1788,18 @@ export class WorkspaceLockAuthority {
     ) {
       await this.sweepDeadHolderHeartbeats()
     }
-    // Child lifecycles are never candidates: their liveness is a launching or
-    // spawned process the human recovery path owns, not a heartbeating main.
+    // Never candidates: child lifecycles, whose liveness is a launching or
+    // spawned process the human recovery path owns, not a heartbeating main;
+    // and this process's own leases, whatever became of its own beats.
+    const self = this.dependencies.instance
     const eligible = this.readWal(false).state.activeLeases.filter(
-      (lease) => lease.owner.lifecycle !== 'launching-child' && lease.owner.lifecycle !== 'child'
+      (lease) =>
+        lease.owner.lifecycle !== 'launching-child' &&
+        lease.owner.lifecycle !== 'child' &&
+        !(
+          lease.owner.pid === self.pid &&
+          lease.owner.processBirthIdentity === self.processBirthIdentity
+        )
     )
     if (!eligible.length) {
       this.lapseTracker.reset()
@@ -1911,17 +1921,27 @@ export class WorkspaceLockAuthority {
     return { skipped: false, ...committed.value, deferred, reclaimed }
   }
 
+  /**
+   * True while any commit-fence record names the holder's exact incarnation.
+   * ANY partition, not the one the lease's current claim maps to: the
+   * executor takes its partitions from the admission claims and replaces the
+   * lease with fresh ones before it commits, so a target created in between
+   * leaves the holder inside the planned partition while its lease names the
+   * dev:ino one. Read under the transition mutex, which replace also needs, so
+   * a holder that entered a fence before this read is always seen.
+   */
   private holderOwnsCommitFence(lease: WorkspaceLockLease): boolean {
     // Without the fence port nothing shows the holder is outside its commit
     // critical section, so a lapsed but live holder keeps its lease.
-    if (!this.dependencies.readCommitFenceOwner) return true
+    if (!this.dependencies.readCommitFenceOwners) return true
     try {
-      const owner = this.dependencies.readCommitFenceOwner(lease.claim)
-      return Boolean(
-        owner &&
-        owner.pid === lease.owner.pid &&
-        owner.processBirthIdentity === lease.owner.processBirthIdentity
-      )
+      return this.dependencies
+        .readCommitFenceOwners()
+        .some(
+          (owner) =>
+            owner.pid === lease.owner.pid &&
+            owner.processBirthIdentity === lease.owner.processBirthIdentity
+        )
     } catch (error) {
       // An unreadable fence is not evidence the holder left it. Defer.
       this.recordSidecarError(`commit fence read: ${errorMessage(error)}`)
@@ -2931,8 +2951,10 @@ function recoveryDecision(
 }
 
 /**
- * Periodic-mode truth table. Conclusive death or PID reuse retires the lease
- * exactly as boot does. A live owner with a matching birth loses only a
+ * Periodic-mode truth table over an ELIGIBLE lease (the pass has already left
+ * out child lifecycles and this process's own leases; that one filter is the
+ * only place either rule lives). Conclusive death or PID reuse retires the
+ * lease exactly as boot does. A live owner with a matching birth loses only a
  * `held`/`orphan_live` lease, and only on lapse evidence. Everything else,
  * including an owner this reclaimer cannot observe, is left exactly as it is.
  * The decision type admits no status but `recovered`, so neither boot's
@@ -2943,7 +2965,6 @@ function periodicRecoveryDecision(
   observation: WorkspaceLockProcessObservation,
   verdict: WorkspaceLockHolderLapseVerdict | undefined
 ): PeriodicRecoveryCandidate | null {
-  if (lease.owner.lifecycle === 'launching-child' || lease.owner.lifecycle === 'child') return null
   if (lease.status === 'recovered') return null
   if (observation.state === 'identity_unavailable') return null
   if (observation.state === 'dead') {
