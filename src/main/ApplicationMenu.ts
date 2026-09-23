@@ -26,6 +26,11 @@ interface ApplicationMenuActions {
   newWindow: () => void
   command: (command: ApplicationMenuCommand, focusedWindowId?: number) => void
   checkForUpdates: () => void
+  /**
+   * A main-side action like checkForUpdates, not a renderer command: restart
+   * the Host (confirmed first when runs are live). Absent, the item is too.
+   */
+  restartHost?: () => void
 }
 
 export function buildApplicationMenuTemplate(
@@ -51,6 +56,9 @@ export function buildApplicationMenuTemplate(
     label: 'Check for Updates…',
     click: () => actions.checkForUpdates()
   }
+  const restartHost: MenuItemConstructorOptions[] = actions.restartHost
+    ? [{ label: 'Restart Host', click: () => actions.restartHost?.() }]
+    : []
   return [
     ...(isMac
       ? [
@@ -61,6 +69,7 @@ export function buildApplicationMenuTemplate(
               { type: 'separator' },
               settings,
               updates,
+              ...restartHost,
               { type: 'separator' },
               { role: 'services' },
               { type: 'separator' },
@@ -102,7 +111,7 @@ export function buildApplicationMenuTemplate(
     { role: 'editMenu' },
     { role: 'viewMenu' },
     { role: 'windowMenu' },
-    { role: 'help', submenu: isMac ? [] : [updates] }
+    { role: 'help', submenu: isMac ? [] : [updates, ...restartHost] }
   ]
 }
 
@@ -110,6 +119,7 @@ export function installApplicationMenu(deps: {
   windows: DesktopWindowRegistry
   createWindow: () => BrowserWindow
   openUpdates: () => void
+  restartHost?: () => void
   getKeyBindings?: () => AppSettings['keyCommandBindings']
 }): () => void {
   ipcMain.on(APPLICATION_MENU_READY, (event) => deps.windows.markReady(event.sender.id))
@@ -121,7 +131,8 @@ export function installApplicationMenu(deps: {
             {
               newWindow: deps.createWindow,
               command: (command, id) => deps.windows.dispatch(command, deps.createWindow, id),
-              checkForUpdates: deps.openUpdates
+              checkForUpdates: deps.openUpdates,
+              ...(deps.restartHost ? { restartHost: deps.restartHost } : {})
             },
             process.platform,
             deps.getKeyBindings?.()
