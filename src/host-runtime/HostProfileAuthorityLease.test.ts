@@ -3,20 +3,27 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  BIRTH_IDENTITY_VERDICT_MEMO_MS,
   HOST_PROFILE_AUTHORITY_LEASE_FILENAME,
   HOST_PROFILE_AUTHORITY_MAX_RECORD_BYTES,
   HOST_PROFILE_AUTHORITY_RECLAIM_GUARD_FILENAME,
   HostProfileAuthorityLease,
   HostProfileAuthorityLeaseBlockedError,
   HostProfileAuthorityLeaseBusyError,
+  createBirthIdentityProcessPort,
   type HostProfileAuthorityLeaseFs,
   type HostProfileAuthorityLeaseOptions,
   type HostProfileAuthorityOwnerLiveness,
   type HostProfileAuthorityProcessIdentity
 } from './HostProfileAuthorityLease'
+import {
+  PROCESS_BIRTH_IDENTITY_PATTERN,
+  observeProcessBirthIdentitySync,
+  type ProcessBirthObservation
+} from './ProcessBirthIdentity'
 
 const OWNER_PURPOSE = 'taskwraith:host-profile-authority-owner:v1'
 const NOW = new Date('2026-08-24T01:00:00.000Z')
@@ -401,6 +408,270 @@ describe('HostProfileAuthorityLease', () => {
     expect(nodeFs.existsSync(ownerPath(profile))).toBe(false)
   })
 })
+
+describe('HostProfileAuthorityLease birth identity', () => {
+  // Golden captured from the pre-birth-identity implementation (HEAD 2a71f9580)
+  // with the same injected clock, token and process port: the record bytes and
+  // key order are unchanged by the default-port change.
+  const GOLDEN_RECORD =
+    '{"schemaVersion":1,"purpose":"taskwraith:host-profile-authority-owner:v1","pid":515,' +
+    '"processStartIdentity":"process-start-515-v1","processStartedAt":"2026-08-24T00:59:00.000Z",' +
+    '"acquiredAt":"2026-08-24T01:00:00.000Z",' +
+    '"token":"0000000000000000000000000000000000000000000000000000000000000515"}\n'
+  const GOLDEN_KEYS = [
+    'schemaVersion',
+    'purpose',
+    'pid',
+    'processStartIdentity',
+    'processStartedAt',
+    'acquiredAt',
+    'token'
+  ]
+
+  it('writes byte-identical canonical records for injected inputs', () => {
+    const profile = createProfile()
+    const lease = HostProfileAuthorityLease.acquire(
+      hostOptions(profile, { pid: 515, tokens: [opaqueToken(0x515)] })
+    )
+    expect(readFileSync(ownerPath(profile), 'utf8')).toBe(GOLDEN_RECORD)
+    expect(lease.release()).toBe(true)
+  })
+
+  it('publishes a re-derivable birth-identity digest through the default process port', () => {
+    const profile = createProfile()
+    const lease = HostProfileAuthorityLease.acquire({ profilePath: profile })
+    const raw = JSON.parse(readFileSync(ownerPath(profile), 'utf8')) as Record<string, unknown>
+    expect(Object.keys(raw)).toEqual(GOLDEN_KEYS)
+    expect(raw.pid).toBe(process.pid)
+    const self = observeProcessBirthIdentitySync(process.pid)
+    if (self.state === 'live') {
+      expect(raw.processStartIdentity).toMatch(PROCESS_BIRTH_IDENTITY_PATTERN)
+      expect(raw.processStartIdentity).toBe(self.birthIdentity)
+    } else {
+      expect(raw.processStartIdentity).toMatch(/^node:\d+:[0-9a-f]+$/)
+    }
+    expect(HostProfileAuthorityLease.peek({ profilePath: profile })).toMatchObject({
+      kind: 'live',
+      owner: { pid: process.pid }
+    })
+    expect(lease.release()).toBe(true)
+  })
+
+  it('computes the current identity lazily on first use, not when the port is created', () => {
+    const observeSelf = vi.fn((): ProcessBirthObservation => live('c'.repeat(64)))
+    const port = createBirthIdentityProcessPort({ pid: 777, observeSelf })
+    expect(observeSelf).not.toHaveBeenCalled()
+    expect(port.current).toMatchObject({ pid: 777, processStartIdentity: 'c'.repeat(64) })
+    expect(port.current).toBe(port.current)
+    expect(observeSelf).toHaveBeenCalledOnce()
+  })
+
+  it('falls back to a legacy nonce identity when its own birth cannot be observed', () => {
+    const port = createBirthIdentityProcessPort({
+      pid: 778,
+      observeSelf: () => ({ state: 'identity_unavailable' })
+    })
+    expect(port.current.processStartIdentity).toMatch(/^node:778:[0-9a-f]+$/)
+  })
+
+  it('reclaims a lease whose pid was reused', () => {
+    const profile = createProfile()
+    const bornFirst = 'a'.repeat(64)
+    const bornLater = 'b'.repeat(64)
+    const stale = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({ pid: 101, observeSelf: () => live(bornFirst) })
+    })
+    expect(stale.owner.processStartIdentity).toBe(bornFirst)
+    const observe = vi.fn(
+      (pid: number): ProcessBirthObservation =>
+        pid === 101 ? live(bornLater) : { state: 'identity_unavailable' }
+    )
+    const successor = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({
+        pid: 202,
+        observeSelf: () => live('d'.repeat(64)),
+        observe
+      })
+    })
+    expect(observe).toHaveBeenCalledWith(101)
+    expect(JSON.parse(readFileSync(ownerPath(profile), 'utf8'))).toMatchObject({
+      pid: 202,
+      processStartIdentity: 'd'.repeat(64)
+    })
+    expect(stale.release()).toBe(false)
+    expect(successor.release()).toBe(true)
+  })
+
+  it('keeps a live owner whose birth identity matches', () => {
+    const profile = createProfile()
+    const born = 'a'.repeat(64)
+    const incumbent = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({ pid: 101, observeSelf: () => live(born) })
+    })
+    let thrown: unknown
+    try {
+      HostProfileAuthorityLease.acquire({
+        profilePath: profile,
+        processPort: createBirthIdentityProcessPort({
+          pid: 202,
+          observeSelf: () => live('d'.repeat(64)),
+          observe: () => live(born)
+        })
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(HostProfileAuthorityLeaseBusyError)
+    expect((thrown as HostProfileAuthorityLeaseBusyError).liveness).toBe('live')
+    expect(incumbent.release()).toBe(true)
+  })
+
+  it('never reclaims an owner whose birth identity is unavailable', () => {
+    const profile = createProfile()
+    const incumbent = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({
+        pid: 101,
+        observeSelf: () => live('a'.repeat(64))
+      })
+    })
+    const raw = readFileSync(ownerPath(profile), 'utf8')
+    let thrown: unknown
+    try {
+      HostProfileAuthorityLease.acquire({
+        profilePath: profile,
+        processPort: createBirthIdentityProcessPort({
+          pid: 202,
+          observeSelf: () => live('d'.repeat(64)),
+          observe: () => ({ state: 'identity_unavailable' })
+        })
+      })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(HostProfileAuthorityLeaseBusyError)
+    expect((thrown as HostProfileAuthorityLeaseBusyError).liveness).toBe('unknown')
+    expect(readFileSync(ownerPath(profile), 'utf8')).toBe(raw)
+    expect(incumbent.release()).toBe(true)
+  })
+
+  it('reads a dead owner as stale and reclaims it', () => {
+    const profile = createProfile()
+    const dead = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({
+        pid: 101,
+        observeSelf: () => live('a'.repeat(64))
+      })
+    })
+    const successor = HostProfileAuthorityLease.acquire({
+      profilePath: profile,
+      processPort: createBirthIdentityProcessPort({
+        pid: 202,
+        observeSelf: () => live('d'.repeat(64)),
+        observe: () => ({ state: 'dead' })
+      })
+    })
+    expect(dead.release()).toBe(false)
+    expect(successor.release()).toBe(true)
+  })
+
+  it('judges a legacy nonce owner by pid existence only and never observes its birth', () => {
+    const legacyRecord = {
+      ...ownerRecord(101, opaqueToken(1)),
+      processStartIdentity: 'node:101:172d23b8aef73'
+    }
+    for (const [error, expected] of [
+      [null, 'live'],
+      ['ESRCH', 'stale'],
+      ['EPERM', 'unknown']
+    ] as const) {
+      const observe = vi.fn()
+      const port = createBirthIdentityProcessPort({
+        pid: 202,
+        observeSelf: () => live('d'.repeat(64)),
+        observe,
+        processKill: () => {
+          if (error) throw Object.assign(new Error(error), { code: error })
+        }
+      })
+      expect(port.inspectOwner(legacyRecord as HostProfileAuthorityProcessIdentity)).toBe(expected)
+      expect(observe).not.toHaveBeenCalled()
+    }
+  })
+
+  it('judges a record naming its own pid by the cached self birth, never by a fresh observation', () => {
+    const observe = vi.fn((): ProcessBirthObservation => live('f'.repeat(64)))
+    const port = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => live('d'.repeat(64)),
+      observe
+    })
+    expect(
+      port.inspectOwner({
+        pid: 202,
+        processStartIdentity: 'd'.repeat(64),
+        processStartedAt: STARTED_AT
+      })
+    ).toBe('live')
+    // Same pid, other birth: an earlier process that held our pid wrote it.
+    expect(
+      port.inspectOwner({
+        pid: 202,
+        processStartIdentity: 'e'.repeat(64),
+        processStartedAt: STARTED_AT
+      })
+    ).toBe('stale')
+    expect(observe).not.toHaveBeenCalled()
+    // Without a self observation the port falls back to observing the pid.
+    const blind = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => ({ state: 'identity_unavailable' }),
+      observe
+    })
+    expect(
+      blind.inspectOwner({
+        pid: 202,
+        processStartIdentity: 'f'.repeat(64),
+        processStartedAt: STARTED_AT
+      })
+    ).toBe('live')
+    expect(observe).toHaveBeenCalledWith(202)
+  })
+
+  it('memoizes a positive digest verdict for the memo window only', () => {
+    let clock = 1_000_000
+    const born = 'a'.repeat(64)
+    const observe = vi.fn((): ProcessBirthObservation => live(born))
+    const port = createBirthIdentityProcessPort({
+      pid: 202,
+      observeSelf: () => live('d'.repeat(64)),
+      observe,
+      now: () => clock
+    })
+    const owner = { pid: 101, processStartIdentity: born, processStartedAt: STARTED_AT }
+    expect(port.inspectOwner(owner)).toBe('live')
+    clock += BIRTH_IDENTITY_VERDICT_MEMO_MS - 1
+    expect(port.inspectOwner(owner)).toBe('live')
+    expect(observe).toHaveBeenCalledTimes(1)
+    clock += 1
+    expect(port.inspectOwner(owner)).toBe('live')
+    expect(observe).toHaveBeenCalledTimes(2)
+    // A negative verdict is never memoized: the next call observes again.
+    observe.mockImplementationOnce(() => ({ state: 'identity_unavailable' }))
+    clock += BIRTH_IDENTITY_VERDICT_MEMO_MS
+    expect(port.inspectOwner(owner)).toBe('unknown')
+    expect(port.inspectOwner(owner)).toBe('live')
+    expect(observe).toHaveBeenCalledTimes(4)
+  })
+})
+
+function live(birthIdentity: string): ProcessBirthObservation {
+  return { state: 'live', birthIdentity, startedAtMs: null }
+}
 
 function createProfile(): string {
   const profile = mkdtempSync(join(tmpdir(), 'taskwraith-host-profile-authority-'))
