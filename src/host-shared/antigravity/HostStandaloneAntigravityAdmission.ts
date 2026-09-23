@@ -154,10 +154,21 @@ export interface DiscoverHostStandaloneAntigravityInput {
   readonly capture: (
     command: string,
     args: readonly string[],
-    options: { readonly env: Record<string, string>; readonly timeoutMs: number }
+    options: HostStandaloneAgyCaptureOptions
   ) => HostStandaloneAgyCaptureResult | Promise<HostStandaloneAgyCaptureResult>
   readonly env?: Readonly<Record<string, string | undefined>>
   readonly timeoutMs?: number
+}
+
+export interface HostStandaloneAgyCaptureOptions {
+  readonly env: Record<string, string>
+  readonly timeoutMs: number
+  /**
+   * Reads consent from its own source now. A capture must call it with
+   * nothing awaited between the call and starting `agy models`, and must not
+   * start it when this returns false.
+   */
+  readonly consentHeld: () => boolean
 }
 
 function canonicalProfilePath(value: unknown): value is string {
@@ -430,22 +441,31 @@ function canonicalBinaryPath(value: unknown): value is string {
   )
 }
 
+function consentRequired(): HostStandaloneAntigravityProbe {
+  return {
+    status: 'consent_required',
+    admission: null,
+    detail: HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL
+  }
+}
+
 /**
  * Resolve conditional standalone admission. Consent is checked before any
  * process action, and only a current successful nonempty `agy models` probe
- * produces an admission object.
+ * produces an admission object. The binary lookup and the capture both wait,
+ * so consent is read again before the capture and after it, and the capture
+ * reads it once more immediately before it starts `agy models`. A withdrawal
+ * at any point in the probe reports `consent_required`, never `unknown`.
  */
 export async function discoverHostStandaloneAntigravity(
   input: DiscoverHostStandaloneAntigravityInput
 ): Promise<HostStandaloneAntigravityProbe> {
-  const consent = readHostStandaloneAntigravityConsent(input.profilePath)
-  if (!consent.accepted || consent.acceptedAt === null) {
-    return {
-      status: 'consent_required',
-      admission: null,
-      detail: HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL
-    }
+  const consentHeld = (): boolean => {
+    const current = readHostStandaloneAntigravityConsent(input.profilePath)
+    return current.accepted && current.acceptedAt !== null
   }
+  const consent = readHostStandaloneAntigravityConsent(input.profilePath)
+  if (!consent.accepted || consent.acceptedAt === null) return consentRequired()
   let binary: HostStandaloneAgyResolvedBinary
   try {
     binary = await input.resolveBinary()
@@ -463,13 +483,22 @@ export async function discoverHostStandaloneAntigravity(
       detail: 'The official agy CLI is not installed or its path is invalid.'
     }
   }
-  let captured: HostStandaloneAgyCaptureResult
+  // Consent can be withdrawn while the binary resolves.
+  if (!consentHeld()) return consentRequired()
+  let captured: HostStandaloneAgyCaptureResult | null
   try {
     captured = await input.capture(binary.binaryPath, HOST_AGY_MODEL_DISCOVERY_ARGS, {
       env: hostStandaloneAgyProbeEnvironment(input.env),
-      timeoutMs: input.timeoutMs ?? 8_000
+      timeoutMs: input.timeoutMs ?? 8_000,
+      consentHeld
     })
   } catch {
+    captured = null
+  }
+  // A capture that saw consent withdrawn did not start agy, and an answer
+  // given after a withdrawal is not one to admit.
+  if (!consentHeld()) return consentRequired()
+  if (!captured) {
     return {
       status: 'unknown',
       admission: null,

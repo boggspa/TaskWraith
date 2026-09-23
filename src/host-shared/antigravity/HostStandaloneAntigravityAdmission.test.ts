@@ -42,6 +42,20 @@ function acceptedSettings() {
   }
 }
 
+function withdrawConsent(path: string): void {
+  writeFileSync(
+    join(path, 'settings.json'),
+    JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
+    { mode: 0o600 }
+  )
+}
+
+const CONSENT_REQUIRED = {
+  status: 'consent_required',
+  admission: null,
+  detail: 'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
+}
+
 describe('readHostStandaloneAntigravityConsent', () => {
   it('reads only the existing two-part profile consent', () => {
     expect(readHostStandaloneAntigravityConsent(profile(acceptedSettings()))).toEqual({
@@ -319,6 +333,88 @@ describe('discoverHostStandaloneAntigravity', () => {
       detail: 'agy returned no live authenticated models; sign in and retry.'
     })
   })
+
+  // Resolving the binary and running `agy models` both wait, and consent can
+  // be withdrawn during either. The probe then reports the withdrawal.
+  it('reads consent again after the binary resolves, and calls no agy models once it is withdrawn', async () => {
+    const path = profile(acceptedSettings())
+    const capture = vi.fn<DiscoverHostStandaloneAntigravityInput['capture']>(async () => ({
+      stdout: 'gemini-3.7-flash-high\n',
+      stderr: '',
+      code: 0
+    }))
+
+    await expect(
+      discoverHostStandaloneAntigravity({
+        profilePath: path,
+        resolveBinary: async () => {
+          withdrawConsent(path)
+          return { binaryPath: AGY_BINARY }
+        },
+        capture
+      })
+    ).resolves.toEqual(CONSENT_REQUIRED)
+    expect(capture).not.toHaveBeenCalled()
+  })
+
+  it('hands the capture a check that reads consent from its own source each time', async () => {
+    const path = profile(acceptedSettings())
+    const seen: boolean[] = []
+
+    await discoverHostStandaloneAntigravity({
+      profilePath: path,
+      resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+      capture: async (_command, _args, options) => {
+        seen.push(options.consentHeld())
+        withdrawConsent(path)
+        seen.push(options.consentHeld())
+        return { stdout: '', stderr: '', code: null, error: 'agy models was not started.' }
+      }
+    })
+    expect(seen).toEqual([true, false])
+  })
+
+  it.each([
+    [
+      'does not start agy',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async (_command, _args, options) => {
+          withdrawConsent(path)
+          return options.consentHeld()
+            ? { stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 0 }
+            : { stdout: '', stderr: '', code: null, error: 'agy models was not started.' }
+        }
+    ],
+    [
+      'lets agy answer',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async () => {
+          withdrawConsent(path)
+          return { stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 0 }
+        }
+    ],
+    [
+      'throws',
+      (path: string): DiscoverHostStandaloneAntigravityInput['capture'] =>
+        async () => {
+          withdrawConsent(path)
+          throw new Error('the PTY could not start')
+        }
+    ]
+  ])(
+    'reports consent withdrawn during agy models as consent_required when the capture then %s',
+    async (_label, capture) => {
+      const path = profile(acceptedSettings())
+
+      await expect(
+        discoverHostStandaloneAntigravity({
+          profilePath: path,
+          resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+          capture: capture(path)
+        })
+      ).resolves.toEqual(CONSENT_REQUIRED)
+    }
+  )
 })
 
 describe('parseHostStandaloneAgyModels', () => {

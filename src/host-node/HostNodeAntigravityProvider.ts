@@ -9,6 +9,7 @@ import {
   hostStandaloneAgyProbeEnvironment,
   hostStandaloneAntigravityOffers,
   readHostStandaloneAntigravityConsent,
+  type HostStandaloneAgyCaptureOptions,
   type HostStandaloneAgyCaptureResult,
   type HostStandaloneAntigravityAdmission,
   type HostStandaloneAntigravityProbe
@@ -102,7 +103,7 @@ export interface HostNodeAntigravityProviderOptions {
   readonly captureModels: (
     command: string,
     args: readonly string[],
-    options: { readonly env: Record<string, string>; readonly timeoutMs: number }
+    options: HostStandaloneAgyCaptureOptions
   ) => HostStandaloneAgyCaptureResult | Promise<HostStandaloneAgyCaptureResult>
   readonly environment?: Readonly<Record<string, string | undefined>>
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher

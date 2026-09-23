@@ -2,6 +2,7 @@ import { isAbsolute, parse, resolve } from 'node:path'
 
 import {
   HOST_AGY_MODEL_DISCOVERY_ARGS,
+  type HostStandaloneAgyCaptureOptions,
   type HostStandaloneAgyCaptureResult
 } from '../host-shared/antigravity/HostStandaloneAntigravityAdmission'
 
@@ -65,12 +66,13 @@ function exactDiscoveryArgs(value: readonly string[]): boolean {
 /**
  * Bounded PTY capture for the one allowed standalone AntiGravity probe. agy
  * does not reliably emit `models` through ordinary pipes, hence this exact
- * PTY seam rather than a shell or generic command runner.
+ * PTY seam rather than a shell or generic command runner. Loading node-pty
+ * waits, so consent is read after it loads, immediately before the spawn.
  */
 export function captureHostStandaloneAgyModels(
   command: string,
   args: readonly string[],
-  options: { readonly env: Record<string, string>; readonly timeoutMs: number },
+  options: HostStandaloneAgyCaptureOptions,
   dependencies: HostNodeAgyPtyCaptureDependencies = {}
 ): Promise<HostStandaloneAgyCaptureResult> {
   if (
@@ -118,7 +120,7 @@ export function captureHostStandaloneAgyModels(
 function captureWithSpawn(
   command: string,
   args: readonly string[],
-  options: { readonly env: Record<string, string>; readonly timeoutMs: number },
+  options: HostStandaloneAgyCaptureOptions,
   dependencies: HostNodeAgyPtyCaptureDependencies,
   spawnPty: NonNullable<HostNodeAgyPtyCaptureDependencies['spawnPty']>
 ): Promise<HostStandaloneAgyCaptureResult> {
@@ -141,6 +143,16 @@ function captureWithSpawn(
         // The PTY has already exited.
       }
       resolveCapture(result)
+    }
+    // Nothing is awaited between this read and the spawn.
+    if (typeof options.consentHeld !== 'function' || !options.consentHeld()) {
+      finish({
+        stdout: '',
+        stderr: '',
+        code: null,
+        error: 'agy models was not started because AntiGravity consent was withdrawn.'
+      })
+      return
     }
     try {
       terminal = spawnPty(command, args, { env: options.env })

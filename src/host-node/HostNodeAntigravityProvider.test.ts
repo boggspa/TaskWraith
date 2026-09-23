@@ -20,6 +20,7 @@ import {
   type HostNodeAntigravitySpawnHandle,
   type HostNodeAntigravitySpawnInput
 } from './HostNodeAntigravityProvider'
+import { captureHostStandaloneAgyModels } from './HostNodeAgyPtyCapture'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import type { HostNodeProviderTerminalLauncher } from './HostNodeTerminalLauncher'
 
@@ -416,7 +417,8 @@ type Harness = ReturnType<typeof harness>
  * A provider whose `agy models` answers, binary lookups and spawns the test
  * steers. While `hold` is set, `agy models` waits until `answerProbe()` and
  * then answers as `probe` says at that moment; `holdBinary` and
- * `releaseBinary()` do the same for the binary lookup.
+ * `releaseBinary()` do the same for the binary lookup. `captures` counts the
+ * `agy models` calls.
  */
 function harness() {
   const profilePath = profile()
@@ -428,7 +430,15 @@ function harness() {
     release?: () => void
     holdBinary: boolean
     releaseBinary?: () => void
-  } = { probe: 'answers', models: MODELS, binary: AGY_BINARY, hold: false, holdBinary: false }
+    captures: number
+  } = {
+    probe: 'answers',
+    models: MODELS,
+    binary: AGY_BINARY,
+    hold: false,
+    holdBinary: false,
+    captures: 0
+  }
   const runPort = new RunPort()
   const kill = vi.fn()
   const spawn = vi.fn((input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
@@ -460,6 +470,7 @@ function harness() {
       }
     },
     captureModels: async () => {
+      state.captures += 1
       if (state.hold) {
         await new Promise<void>((resolve) => {
           state.release = resolve
@@ -672,10 +683,59 @@ describe('HostNodeAntigravityProvider after a probe that could not read agy', ()
   })
 })
 
-// The run's forced re-probe reads consent before its `agy models` call, which
-// can take seconds. Consent and Stop are read again immediately before agy is
-// spawned, and the sign-in terminal reads consent again after resolving the
-// binary, so nothing that lands during those waits launches agy.
+/** A node-pty terminal whose agy answers `models` with MODELS and exits 0. */
+function answeringTerminal() {
+  const data: Array<(chunk: string) => void> = []
+  const exits: Array<(event: { exitCode: number }) => void> = []
+  setImmediate(() => {
+    data.forEach((listener) => listener(JSON.stringify({ models: MODELS })))
+    exits.forEach((listener) => listener({ exitCode: 0 }))
+  })
+  return {
+    onData: (listener: (chunk: string) => void) => {
+      data.push(listener)
+    },
+    onExit: (listener: (event: { exitCode: number }) => void) => {
+      exits.push(listener)
+    },
+    kill: () => undefined
+  }
+}
+
+/**
+ * A provider on the production `agy models` capture, with node-pty replaced by
+ * `ptySpawn`. `withdrawWhileLoading` withdraws consent while node-pty loads.
+ */
+function realCaptureProvider() {
+  const profilePath = profile()
+  const runPort = new RunPort()
+  const ptySpawn = vi.fn(() => answeringTerminal())
+  const spawn = vi.fn()
+  const state = { withdrawWhileLoading: false }
+  const provider = new HostNodeAntigravityProvider({
+    profilePath,
+    runPort,
+    offers: hostStandaloneAntigravityOffers([]),
+    resources: resources(),
+    captureModels: (command, args, options) =>
+      captureHostStandaloneAgyModels(command, args, options, {
+        loadPty: async () => {
+          if (state.withdrawWhileLoading) withdrawConsent(profilePath)
+          return { spawn: ptySpawn }
+        }
+      }),
+    spawn,
+    readConversationReceipt: async () => null
+  })
+  return { runPort, ptySpawn, spawn, state, provider }
+}
+
+// Every wait before agy starts is followed by a consent read. The account
+// probe reads it after resolving the binary, after node-pty loads (immediately
+// before `agy models` is spawned) and after the capture. A run reads consent
+// and Stop once more immediately before agy is spawned, and the sign-in
+// terminal reads consent after resolving the binary. Nothing that lands during
+// those waits launches agy, the `agy models` account check included.
 describe('HostNodeAntigravityProvider at the moment agy launches', () => {
   it.each([
     [
@@ -788,5 +848,67 @@ describe('HostNodeAntigravityProvider at the moment agy launches', () => {
 
     await expect(begin).rejects.toThrow('AntiGravity consent is required before sign-in.')
     expect(h.launchForProvider).not.toHaveBeenCalled()
+  })
+
+  // The run reads its thread again once the forced re-probe returns, after the
+  // probe's own last consent read. A withdrawal landing there is still seen.
+  it('reads consent once more after the forced re-probe returns, immediately before the spawn', async () => {
+    const h = harness()
+    await h.refresh()
+    const getThread = h.runPort.getThread.bind(h.runPort)
+    let reads = 0
+    h.runPort.getThread = () => {
+      reads += 1
+      if (reads === 2) withdrawConsent(h.profilePath)
+      return getThread()
+    }
+
+    await expect(h.send()).resolves.toMatchObject({ status: 'failed' })
+    expect(h.runPort.finish?.warningSummaries).toEqual([CONSENT_DETAIL])
+    expect(h.spawn).not.toHaveBeenCalled()
+  })
+
+  it('calls no agy models when consent is withdrawn while a refresh resolves the binary', async () => {
+    const h = harness()
+    await h.refresh()
+    const captures = h.state.captures
+    h.state.holdBinary = true
+    const refreshed = h.refresh()
+    await vi.waitFor(() => expect(h.state.releaseBinary).toBeTypeOf('function'))
+    withdrawConsent(h.profilePath)
+    h.state.releaseBinary?.()
+
+    await expect(refreshed).resolves.toEqual(hostStandaloneAntigravityOffers([]))
+    expect(h.state.captures).toBe(captures)
+    await expect(h.provider.getStatus()).resolves.toMatchObject({
+      status: 'auth_required',
+      detail: CONSENT_DETAIL
+    })
+  })
+
+  it('calls no agy models when consent is withdrawn while node-pty loads for a refresh', async () => {
+    const { state, ptySpawn, provider } = realCaptureProvider()
+    state.withdrawWhileLoading = true
+
+    await expect(provider.getOffers()).resolves.toEqual(hostStandaloneAntigravityOffers([]))
+    expect(ptySpawn).not.toHaveBeenCalled()
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      status: 'auth_required',
+      detail: CONSENT_DETAIL
+    })
+  })
+
+  it('starts no agy process for a send when consent is withdrawn while its forced re-probe loads node-pty', async () => {
+    const { state, runPort, ptySpawn, spawn, provider } = realCaptureProvider()
+    await provider.getOffers()
+    expect(ptySpawn).toHaveBeenCalledTimes(1)
+    state.withdrawWhileLoading = true
+
+    await expect(
+      provider.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'inspect', target: TARGET })
+    ).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.finish?.warningSummaries).toEqual([CONSENT_DETAIL])
+    expect(ptySpawn).toHaveBeenCalledTimes(1)
+    expect(spawn).not.toHaveBeenCalled()
   })
 })
