@@ -144,6 +144,7 @@ public enum PiBrandTable {
         "openrouter/stealth/union-alpha": "Union Alpha",
         "openrouter/unbiased/pareto": "Pareto",
         "openrouter/typesafe/jev-1.13": "Jev 1.13",
+        "openrouter/stealth/space-bunny-alpha": "Space Bunny Alpha",
     ]
 
     /// Split a Pi wire id on the FIRST slash: upstream vs pi model id.

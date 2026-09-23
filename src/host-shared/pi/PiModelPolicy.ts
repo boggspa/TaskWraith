@@ -145,7 +145,11 @@ export const PI_OPENROUTER_ALLOWED_MODEL_IDS = [
   // on OpenRouter: admitted now so the row is ready at launch, knowing the
   // route 404s until then.
   'unbiased/pareto',
-  'typesafe/jev-1.13'
+  'typesafe/jev-1.13',
+  // Released 2026-09-23. The next stealth preview after Union Alpha: the same
+  // single anonymous provider behind OpenRouter, which is not its developer or
+  // owner, so there is no first-party seat this route could duplicate.
+  'stealth/space-bunny-alpha'
 ] as const
 
 /**

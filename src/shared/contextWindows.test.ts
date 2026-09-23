@@ -160,4 +160,11 @@ describe('resolveContextWindow provider-specific Grok windows', () => {
     expect(resolveContextWindow('claude', 'claude-opus-5-5')).toBe(1_000_000)
     expect(knownModelContextWindow('claude-opus-5-5-1m')).toBeUndefined()
   })
+
+  it('carries the 1M window for Pi Space Bunny Alpha on the table itself', () => {
+    // The Pi provider fallback is also 1_000_000, so `resolve` alone cannot
+    // tell a dropped row from a present one — pin the table entry directly.
+    expect(knownModelContextWindow('openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
+    expect(resolveContextWindow('pi', 'openrouter/stealth/space-bunny-alpha')).toBe(1_000_000)
+  })
 })

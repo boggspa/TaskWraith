@@ -71,6 +71,14 @@ describe('derived reasoning offers', () => {
     expect(efforts('pi', 'openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
     // GPT-OSS cannot be switched off on either host.
     expect(efforts('pi', 'groq/openai/gpt-oss-120b')).toEqual(['low', 'medium', 'high'])
+    // Space Bunny Alpha's reasoning is mandatory on OpenRouter: five stops, no Off.
+    expect(efforts('pi', 'openrouter/stealth/space-bunny-alpha')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
   })
 
   it('gives GPT-OSS the level ladder Ollama documents for it', () => {

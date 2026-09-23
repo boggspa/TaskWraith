@@ -54,7 +54,11 @@ describe('resolvePiReasoningSupport', () => {
     // unlisted fallback: dropping either row here silently adds `xhigh`, a
     // stop OpenRouter does not spell for these routes.
     ['openrouter/sakana/fugu-max', ['off', 'minimal', 'low', 'medium', 'high', 'max']],
-    ['openrouter/sakana/fugu-ultra-v2', ['off', 'minimal', 'low', 'medium', 'high', 'max']]
+    ['openrouter/sakana/fugu-ultra-v2', ['off', 'minimal', 'low', 'medium', 'high', 'max']],
+    // Space Bunny Alpha enumerates its efforts and marks reasoning mandatory:
+    // no Off, no Minimal, and both Extra High and Max. Dropping the row would
+    // hand it the 7-stop fallback — an Off the route cannot honour.
+    ['openrouter/stealth/space-bunny-alpha', ['low', 'medium', 'high', 'xhigh', 'max']]
   ]
 
   it.each(CASES)('gives %s exactly %j', (wireId, efforts) => {
@@ -99,6 +103,8 @@ describe('resolvePiReasoningSupport', () => {
       expect(support.canDisable, wireId).toBe(false)
       expect(support.efforts, wireId).toEqual(['low', 'medium', 'high'])
     }
+    // OpenRouter reports Space Bunny Alpha's reasoning as `mandatory: true`.
+    expect(resolvePiReasoningSupport('openrouter/stealth/space-bunny-alpha').canDisable).toBe(false)
   })
 
   it('keeps the full ladder for an unlisted or unset model', () => {
@@ -162,6 +168,9 @@ describe('defaultPiReasoningEffort', () => {
     expect(defaultPiReasoningEffort('openrouter/minimax/minimax-m3:free')).toBe('high')
     expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling:free')).toBe('high')
     expect(defaultPiReasoningEffort('openrouter/thinkingmachines/inkling-small:free')).toBe('high')
+    // OpenRouter's own default_effort for this route, so a fresh seat runs at
+    // what the gateway would pick with no effort sent at all.
+    expect(defaultPiReasoningEffort('openrouter/stealth/space-bunny-alpha')).toBe('max')
     // No reasoning axis at all, so there is nothing to start on.
     expect(defaultPiReasoningEffort('mistral/mistral-large-2512')).toBe('')
     // Unset (seat-level) and unresearched both keep the historical default.
@@ -218,5 +227,19 @@ describe('normalizePiReasoningEffortForModel', () => {
   it('rounds a persisted Low up on V4 Pro while V4 Flash keeps it', () => {
     expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-pro', 'low')).toBe('high')
     expect(normalizePiReasoningEffortForModel('deepseek/deepseek-v4-flash', 'low')).toBe('low')
+  })
+
+  // The first OpenRouter route offering BOTH Extra High and Max, so each must
+  // reach argv as itself rather than collapsing onto its neighbour. Off and
+  // Minimal are real Pi words the route does not have: they fold onto the
+  // route default like any other stale stop, never into a `--thinking off`.
+  it('passes every Space Bunny Alpha stop through and folds Off onto its Max default', () => {
+    const model = 'openrouter/stealth/space-bunny-alpha'
+    for (const effort of ['low', 'medium', 'high', 'xhigh', 'max'] as const) {
+      expect(normalizePiReasoningEffortForModel(model, effort)).toBe(effort)
+    }
+    expect(normalizePiReasoningEffortForModel(model, 'off')).toBe('max')
+    expect(normalizePiReasoningEffortForModel(model, 'minimal')).toBe('max')
+    expect(normalizePiReasoningEffortForModel(model, 'ultracode')).toBe('max')
   })
 })

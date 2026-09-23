@@ -63,7 +63,8 @@ describe('piModelPolicyVerdict', () => {
       'sakana/fugu-ultra-v2',
       'stealth/union-alpha',
       'unbiased/pareto',
-      'typesafe/jev-1.13'
+      'typesafe/jev-1.13',
+      'stealth/space-bunny-alpha'
     ])
   })
 
@@ -187,7 +188,8 @@ describe('catalog/policy lockstep', () => {
       'openrouter/sakana/fugu-ultra-v2',
       'openrouter/stealth/union-alpha',
       'openrouter/unbiased/pareto',
-      'openrouter/typesafe/jev-1.13'
+      'openrouter/typesafe/jev-1.13',
+      'openrouter/stealth/space-bunny-alpha'
     ])
   })
 

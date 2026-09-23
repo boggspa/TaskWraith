@@ -565,7 +565,8 @@ const PI_MODEL_ROWS: CombinedModelPickerModelOption[] = [
   // date before the retirement.
   { id: 'openrouter/stealth/union-alpha', label: 'Union Alpha' },
   { id: 'openrouter/unbiased/pareto', label: 'Pareto' },
-  { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' }
+  { id: 'openrouter/typesafe/jev-1.13', label: 'Jev 1.13' },
+  { id: 'openrouter/stealth/space-bunny-alpha', label: 'Space Bunny Alpha' }
 ]
 const PI_MODELS = withCuratedUltraTaskSupport(PI_MODEL_ROWS)
 

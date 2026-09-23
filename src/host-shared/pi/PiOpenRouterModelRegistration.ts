@@ -39,8 +39,8 @@ export interface PiOpenRouterCustomModelRegistration {
  * OpenRouter withdrew `stealth/ox-alpha` on 2026-08-28. Its historical
  * metadata remains in PiModels, PiBrandTable, and context-window lookups so
  * saved chats and ensemble seats still render, but no new Pi home registers it.
- * `stealth/union-alpha` is the current stealth preview and carries its own
- * dated sunset for the same reason.
+ * `stealth/union-alpha` carries its own dated sunset for the same reason, and
+ * `stealth/space-bunny-alpha` is the current stealth preview.
  */
 export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegistration[] = [
   {
@@ -336,6 +336,38 @@ export const PI_OPENROUTER_CUSTOM_MODELS: readonly PiOpenRouterCustomModelRegist
     input: ['text'],
     contextWindow: 32_000,
     maxTokens: 8_192,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+  },
+  {
+    // Space Bunny Alpha — free stealth preview released 2026-09-23. The
+    // opposite shape from Union Alpha: OpenRouter's reasoning block is
+    // `mandatory: true`, supported_efforts low/medium/high/xhigh/max, default
+    // Max. The map is spelled out in full because two of its entries are
+    // load-bearing: `off: null` stops Pi sending `effort: "none"` to a route
+    // that cannot stop reasoning, and `xhigh`/`max` must be mapped or Pi's
+    // `getSupportedThinkingLevels` drops them as opt-in stops. `minimal` is
+    // not a supported effort, so it is null too.
+    //
+    // Video input is advertised upstream but not here — the Pi RPC transport
+    // carries text and image only. The endpoint accepts only `auto`
+    // tool_choice, which is all Pi ever sends (it never sets the field).
+    //
+    // Sources: OpenRouter Models API + /endpoints, verified 2026-09-23.
+    modelId: 'stealth/space-bunny-alpha',
+    label: 'Space Bunny Alpha',
+    reasoning: true,
+    thinkingLevelMap: {
+      off: null,
+      minimal: null,
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      xhigh: 'xhigh',
+      max: 'max'
+    },
+    input: ['text', 'image'],
+    contextWindow: 1_000_000,
+    maxTokens: 524_288,
     cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
   }
 ]

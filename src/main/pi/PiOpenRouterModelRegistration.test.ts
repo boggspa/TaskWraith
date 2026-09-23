@@ -9,6 +9,7 @@ import {
 import { PI_OPENROUTER_ALLOWED_MODEL_IDS } from './PiModelPolicy'
 import { findPiStaticModel } from './PiModels'
 import { resolvePiUpstreamBrand } from '../../shared/piBrandTable'
+import { PI_FULL_LADDER, resolvePiReasoningSupport } from '../../shared/piReasoning'
 
 const temporaryHomes: string[] = []
 
@@ -420,6 +421,72 @@ describe('writePiOpenRouterModelRegistration', () => {
       maxTokens: 8_192
     })
     expect(config.providers.openrouter.models[0]).not.toHaveProperty('thinkingLevelMap')
+  })
+
+  it('registers Space Bunny Alpha as a mandatory-reasoning route mapped Low to Max', () => {
+    const entry = PI_OPENROUTER_CUSTOM_MODELS.find(
+      (model) => model.modelId === 'stealth/space-bunny-alpha'
+    )
+    const lowToMax = {
+      // OpenRouter marks reasoning `mandatory: true`, so there is no `none`
+      // effort to send; a null here is what stops Pi sending one anyway.
+      off: null,
+      // Not in supported_efforts (low, medium, high, xhigh, max).
+      minimal: null,
+      low: 'low',
+      medium: 'medium',
+      high: 'high',
+      xhigh: 'xhigh',
+      max: 'max'
+    }
+    expect(entry).toEqual({
+      modelId: 'stealth/space-bunny-alpha',
+      label: 'Space Bunny Alpha',
+      reasoning: true,
+      thinkingLevelMap: lowToMax,
+      // The route also takes video; the Pi RPC transport carries text and
+      // image only, so video is deliberately not advertised.
+      input: ['text', 'image'],
+      contextWindow: 1_000_000,
+      maxTokens: 524_288,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+    })
+    expect(entry).not.toHaveProperty('reasoningControl')
+
+    // Pi's own rule (pi-ai `getSupportedThinkingLevels`, 0.84.2): a null entry
+    // removes a level, and xhigh/max exist only when mapped. The stops Pi
+    // accepts must be exactly the stops TaskWraith offers — otherwise an
+    // offered stop is clamped to a neighbour before it reaches OpenRouter.
+    const piAccepts = PI_FULL_LADDER.filter((level) => {
+      const mapped = entry?.thinkingLevelMap?.[level]
+      if (mapped === null) return false
+      if (level === 'xhigh' || level === 'max') return mapped !== undefined
+      return true
+    })
+    expect(piAccepts).toEqual(
+      resolvePiReasoningSupport('openrouter/stealth/space-bunny-alpha').efforts
+    )
+
+    const home = isolatedHome()
+    expect(
+      writePiOpenRouterModelRegistration({
+        isolatedHomeDir: home,
+        modelId: 'stealth/space-bunny-alpha'
+      })
+    ).toBe(true)
+    const config = JSON.parse(readFileSync(join(home, 'models.json'), 'utf8'))
+    expect(config.providers.openrouter.models[0]).toMatchObject({
+      id: 'stealth/space-bunny-alpha',
+      name: 'Space Bunny Alpha',
+      api: 'openai-completions',
+      reasoning: true,
+      thinkingLevelMap: lowToMax,
+      input: ['text', 'image'],
+      contextWindow: 1_000_000,
+      maxTokens: 524_288,
+      // A named effort selector, not the on/off `together` toggle.
+      compat: { supportsDeveloperRole: false, thinkingFormat: 'openrouter' }
+    })
   })
 
   it('leaves Pi’s home untouched for every model outside the curated exception', () => {

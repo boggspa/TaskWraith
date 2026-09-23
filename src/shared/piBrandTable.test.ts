@@ -68,6 +68,10 @@ describe('resolvePiUpstreamBrand', () => {
     expect(resolvePiUpstreamBrand('openrouter/stealth/ox-alpha')?.hueClass).toBe('stealth')
     expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.label).toBe('Stealth')
     expect(resolvePiUpstreamBrand('openrouter/stealth/union-alpha')?.hueClass).toBe('stealth')
+    // Space Bunny Alpha (2026-09-23) is the next preview through the same
+    // anonymous namespace, so it wears the stealth gold with no new override.
+    expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.label).toBe('Stealth')
+    expect(resolvePiUpstreamBrand('openrouter/stealth/space-bunny-alpha')?.hueClass).toBe('stealth')
     // Unbiased and TypeSafe (2026-09-17) each get their own override rather
     // than the generic OpenRouter red — both vendor reds live in the
     // palette's most crowded band, so they wear design tokens instead.
@@ -128,6 +132,7 @@ describe('resolvePiModelLabel', () => {
     expect(resolvePiModelLabel('openrouter/stealth/union-alpha')).toBe('Union Alpha')
     expect(resolvePiModelLabel('openrouter/unbiased/pareto')).toBe('Pareto')
     expect(resolvePiModelLabel('openrouter/typesafe/jev-1.13')).toBe('Jev 1.13')
+    expect(resolvePiModelLabel('openrouter/stealth/space-bunny-alpha')).toBe('Space Bunny Alpha')
   })
 
   it('humanises the new OpenRouter free-model wire ids', () => {

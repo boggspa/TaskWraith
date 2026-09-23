@@ -67,6 +67,7 @@ public enum ContextWindows {
         "openrouter/stealth/union-alpha": 262_144,
         "openrouter/unbiased/pareto": 262_144,
         "openrouter/typesafe/jev-1.13": 32_000,
+        "openrouter/stealth/space-bunny-alpha": 1_000_000,
         "openrouter/sakana/fugu-max": 1_000_000,
         "openrouter/sakana/fugu-ultra-v2": 1_000_000,
         "deepseek/deepseek-v4-pro": 1_000_000,

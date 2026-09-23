@@ -722,6 +722,23 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
     maxOutputTokens: 8_192,
     thinking: false,
     images: false
+  },
+  {
+    // Space Bunny Alpha — a free stealth preview from an anonymous lab,
+    // released 2026-09-23. Unlike Union Alpha it DOES reason, and cannot stop:
+    // OpenRouter's reasoning block is `mandatory: true` with supported_efforts
+    // low/medium/high/xhigh/max and a Max default. Text + image + video in;
+    // video is not advertised because the Pi RPC transport carries text and
+    // image only. Verified against the OpenRouter Models API + /endpoints on
+    // 2026-09-23.
+    wireId: 'openrouter/stealth/space-bunny-alpha',
+    upstream: 'openrouter',
+    modelId: 'stealth/space-bunny-alpha',
+    label: 'Space Bunny Alpha',
+    contextWindow: 1_000_000,
+    maxOutputTokens: 524_288,
+    thinking: true,
+    images: true
   }
 ]
 

@@ -1775,6 +1775,16 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         lastVerified: RATE_TABLE_VERSION,
         notes:
           'Route listed 2026-09-17 but "coming soon" — OpenRouter publishes no pricing yet. Zero is a neutral placeholder, NOT a free-route claim: re-verify against the Models API at launch before it prices a run.'
+      },
+      {
+        modelId: 'openrouter/stealth/space-bunny-alpha',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        freeModel: true,
+        sourceUrl: 'https://openrouter.ai/stealth/space-bunny-alpha',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Free stealth preview (verified 2026-09-23); mirrors cost 0/0 in PiOpenRouterModelRegistration. Free for the duration of the preview only — if the route is ever relisted at a price this row must be re-verified before it prices another run.'
       }
     ]
   },

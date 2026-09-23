@@ -221,7 +221,17 @@ const PI_MODEL_REASONING: Readonly<Record<string, PiReasoningSupport>> = {
   // prose — so a reasoning ladder is meaningless on it even once the route
   // launches (OpenRouter model page + FAQ, 2026-09-18; parameters are not
   // yet published while the route is "coming soon").
-  'openrouter/typesafe/jev-1.13': UNSUPPORTED
+  'openrouter/typesafe/jev-1.13': UNSUPPORTED,
+  // Space Bunny Alpha reasons on every turn: OpenRouter's reasoning block is
+  // `mandatory: true` with supported_efforts low, medium, high, xhigh and max,
+  // defaulting to max (Models API + /endpoints, 2026-09-23). So no Off and no
+  // Minimal, and — alone among the OpenRouter routes here — both Extra High
+  // and Max. Starting on Max matches what the gateway runs with no effort set.
+  'openrouter/stealth/space-bunny-alpha': ladder(
+    ['low', 'medium', 'high', 'xhigh', 'max'],
+    'max',
+    false
+  )
 }
 
 const FULL: PiReasoningSupport = Object.freeze({

@@ -1355,6 +1355,15 @@ describe('mistral configurable reasoning support', () => {
     expect(values('qwen-token-plan/qwen3.8-max')).toEqual(['off', 'high'])
     // OpenRouter's GLM copy advertises a DIFFERENT pair from Z.ai's own.
     expect(values('openrouter/z-ai/glm-5.2')).toEqual(['off', 'high', 'xhigh'])
+    // Space Bunny Alpha's reasoning is mandatory: its five enumerated efforts
+    // and no Off, which the gateway has no `none` for.
+    expect(values('openrouter/stealth/space-bunny-alpha')).toEqual([
+      'low',
+      'medium',
+      'high',
+      'xhigh',
+      'max'
+    ])
     // Non-reasoning models get no control rather than a ladder that does
     // nothing.
     expect(values('mistral/mistral-large-2512')).toEqual([])
@@ -1372,6 +1381,7 @@ describe('mistral configurable reasoning support', () => {
     expect(seat('zai/glm-5.2')).toBe('max')
     expect(seat('deepseek/deepseek-v4-pro')).toBe('high')
     expect(seat('openrouter/z-ai/glm-5.2')).toBe('high')
+    expect(seat('openrouter/stealth/space-bunny-alpha')).toBe('max')
     // Only where Off is the honest answer: a model with no reasoning axis
     // resolves to no effort at all.
     expect(seat('mistral/mistral-large-2512')).toBeUndefined()

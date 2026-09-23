@@ -140,6 +140,7 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'openrouter/stealth/union-alpha': 262_144,
   'openrouter/unbiased/pareto': 262_144,
   'openrouter/typesafe/jev-1.13': 32_000,
+  'openrouter/stealth/space-bunny-alpha': 1_000_000,
   // Codex
   'gpt-6-astra': 1_050_000,
   // GPT-6 Sol and Luna (2026-09-22): 1,050,000 raw API window on both official
