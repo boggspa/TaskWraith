@@ -44,6 +44,16 @@ function profile(consented = true): string {
   return path
 }
 
+const CONSENT_DETAIL = 'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
+
+function withdrawConsent(profilePath: string): void {
+  writeFileSync(
+    join(profilePath, 'settings.json'),
+    JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
+    { mode: 0o600 }
+  )
+}
+
 const MODELS = [
   { id: 'gemini-3.7-flash-high', label: 'gemini-3.7-flash-high' },
   { id: 'gemini-3.7-flash-medium', label: 'gemini-3.7-flash-medium' },
@@ -217,16 +227,20 @@ describe('HostNodeAntigravityProvider run path', () => {
   it('revalidates consent immediately before spawn', async () => {
     const profilePath = profile()
     const spawn = vi.fn()
-    const provider = instance({ profilePath, spawn })
+    const runPort = new RunPort()
+    const captureModels = capture()
+    const provider = instance({ profilePath, runPort, captureModels, spawn })
     await provider.getOffers()
-    writeFileSync(
-      join(profilePath, 'settings.json'),
-      JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
-      { mode: 0o600 }
-    )
+    // The run's forced re-probe reads consent before it calls `agy models`.
+    // Consent is withdrawn during that call, and agy then answers.
+    captureModels.mockImplementationOnce(async () => {
+      withdrawConsent(profilePath)
+      return { stdout: JSON.stringify({ models: MODELS }), stderr: '', code: 0 }
+    })
     await expect(
       provider.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'inspect', target: TARGET })
     ).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.finish?.warningSummaries).toEqual([CONSENT_DETAIL])
     expect(spawn).not.toHaveBeenCalled()
   })
 
@@ -396,75 +410,107 @@ describe('createHostNodeAntigravityProviderFactory', () => {
   })
 })
 
+type Harness = ReturnType<typeof harness>
+
+/**
+ * A provider whose `agy models` answers, binary lookups and spawns the test
+ * steers. While `hold` is set, `agy models` waits until `answerProbe()` and
+ * then answers as `probe` says at that moment; `holdBinary` and
+ * `releaseBinary()` do the same for the binary lookup.
+ */
+function harness() {
+  const profilePath = profile()
+  const state: {
+    probe: 'answers' | 'times-out' | 'no-models'
+    models: typeof MODELS
+    binary: string | null
+    hold: boolean
+    release?: () => void
+    holdBinary: boolean
+    releaseBinary?: () => void
+  } = { probe: 'answers', models: MODELS, binary: AGY_BINARY, hold: false, holdBinary: false }
+  const runPort = new RunPort()
+  const kill = vi.fn()
+  const spawn = vi.fn((input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
+    input.onStdout('Plan complete.')
+    return { kill, exit: Promise.resolve({ code: 0, signal: null }) }
+  })
+  const launchForProvider = vi.fn(
+    async (
+      _providerId: string,
+      _input: { readonly argv: readonly string[]; readonly env?: Record<string, string> }
+    ) => ({ providerId: 'antigravity', spawned: true as const })
+  )
+  const timedOut = { stdout: '', stderr: '', code: null, timedOut: true }
+  const provider = new HostNodeAntigravityProvider({
+    profilePath,
+    runPort,
+    offers: hostStandaloneAntigravityOffers([]),
+    resources: {
+      ...resources(),
+      resolveBinary: async () => {
+        if (state.holdBinary) {
+          await new Promise<void>((resolve) => {
+            state.releaseBinary = resolve
+          })
+        }
+        return state.binary
+          ? { binaryPath: state.binary, source: 'path' }
+          : { binaryPath: null, source: 'missing' }
+      }
+    },
+    captureModels: async () => {
+      if (state.hold) {
+        await new Promise<void>((resolve) => {
+          state.release = resolve
+        })
+      }
+      if (state.probe === 'times-out') return timedOut
+      if (state.probe === 'no-models') {
+        return { stdout: 'Not logged in. Please sign in.', stderr: '', code: 0 }
+      }
+      return { stdout: JSON.stringify({ models: state.models }), stderr: '', code: 0 }
+    },
+    spawn,
+    terminalLauncher: { launchForProvider },
+    readConversationReceipt: async () => null
+  })
+  // Each refresh is a fresh probe, as the next one a second later would be.
+  const refresh = async () => {
+    provider['probeCache'] = null
+    return provider.getOffers()
+  }
+  const send = (runId = 'run-1') =>
+    provider.run({ runId, threadId: 'thread-1', prompt: 'inspect', target: TARGET })
+  const probeHeld = () => vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
+  const answerProbe = () => {
+    state.hold = false
+    state.release?.()
+  }
+  return {
+    profilePath,
+    state,
+    runPort,
+    spawn,
+    kill,
+    launchForProvider,
+    provider,
+    refresh,
+    send,
+    probeHeld,
+    answerProbe
+  }
+}
+
 // An `agy models` call that timed out, crashed, exited non-zero or overflowed
 // says nothing about the account. A send is then validated against the offers
 // of the last probe that got an answer, as the Ollama adapter does after a
 // failed catalog read, while the published offers and status stay honest. An
-// answer that says no still refuses up front, and no path spawns agy without
-// consent: the run's forced re-probe reads it again before any spawn.
+// answer that says no still refuses up front. Consent is read from its own
+// source before a send is admitted against kept offers, and again immediately
+// before agy is spawned (see 'at the moment agy launches' below).
 describe('HostNodeAntigravityProvider after a probe that could not read agy', () => {
-  const CONSENT_DETAIL =
-    'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
   const UNVERIFIED_DETAIL = 'A live agy account could not be verified; sign in and retry.'
-
-  function harness() {
-    const profilePath = profile()
-    const state: {
-      probe: 'answers' | 'times-out' | 'no-models' | 'held'
-      models: typeof MODELS
-      binary: string | null
-      release?: () => void
-    } = { probe: 'answers', models: MODELS, binary: AGY_BINARY }
-    const runPort = new RunPort()
-    const spawn = vi.fn((input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
-      input.onStdout('Plan complete.')
-      return { kill: vi.fn(), exit: Promise.resolve({ code: 0, signal: null }) }
-    })
-    const timedOut = { stdout: '', stderr: '', code: null, timedOut: true }
-    const provider = new HostNodeAntigravityProvider({
-      profilePath,
-      runPort,
-      offers: hostStandaloneAntigravityOffers([]),
-      resources: {
-        ...resources(),
-        resolveBinary: async () =>
-          state.binary
-            ? { binaryPath: state.binary, source: 'path' }
-            : { binaryPath: null, source: 'missing' }
-      },
-      captureModels: async () => {
-        if (state.probe === 'held') {
-          await new Promise<void>((resolve) => {
-            state.release = resolve
-          })
-          return timedOut
-        }
-        if (state.probe === 'times-out') return timedOut
-        if (state.probe === 'no-models') {
-          return { stdout: 'Not logged in. Please sign in.', stderr: '', code: 0 }
-        }
-        return { stdout: JSON.stringify({ models: state.models }), stderr: '', code: 0 }
-      },
-      spawn,
-      readConversationReceipt: async () => null
-    })
-    // Each refresh is a fresh probe, as the next one a second later would be.
-    const refresh = async () => {
-      provider['probeCache'] = null
-      return provider.getOffers()
-    }
-    const send = () =>
-      provider.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'inspect', target: TARGET })
-    return { profilePath, state, runPort, spawn, provider, refresh, send }
-  }
-
-  function withdrawConsent(profilePath: string): void {
-    writeFileSync(
-      join(profilePath, 'settings.json'),
-      JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
-      { mode: 0o600 }
-    )
-  }
 
   it('runs a send after one agy models call timed out, as the last ready probe offered it', async () => {
     const { state, runPort, spawn, refresh, send } = harness()
@@ -581,17 +627,166 @@ describe('HostNodeAntigravityProvider after a probe that could not read agy', ()
     await expect(send()).rejects.toThrow('AntiGravity model selection is not currently offered.')
   })
 
-  it('gives a run cancelled during the forced re-probe no failure reason', async () => {
-    const { state, runPort, spawn, provider, refresh, send } = harness()
+  it('launches only a model the forced re-probe still offers, not one the kept offers had', async () => {
+    const { state, runPort, spawn, refresh, send } = harness()
     await refresh()
-    state.probe = 'held'
-    const run = send()
-    await vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
-    expect(provider.cancel('run-1')).toBe(true)
-    state.release?.()
+    state.probe = 'times-out'
+    await refresh()
+    state.probe = 'answers'
+    state.models = [{ id: 'claude-opus-4-6', label: 'claude-opus-4-6' }]
 
-    await expect(run).resolves.toMatchObject({ status: 'cancelled' })
-    expect(runPort.finish).toMatchObject({ status: 'cancelled', warningSummaries: [] })
+    await expect(send()).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.finish?.warningSummaries).toEqual([
+      'AntiGravity model selection is not currently offered.'
+    ])
     expect(spawn).not.toHaveBeenCalled()
+  })
+
+  // A run's forced re-probe that answers puts sends back on the ordinary path:
+  // a later withdrawal is reported on the next run by its own forced re-probe,
+  // as after a ready refresh, rather than refused against kept offers.
+  it('treats the offers as current again once a forced re-probe answers', async () => {
+    const { profilePath, state, runPort, spawn, refresh, send } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+    state.probe = 'answers'
+    await expect(send('run-1')).resolves.toMatchObject({ status: 'completed' })
+    withdrawConsent(profilePath)
+
+    await expect(send('run-2')).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.begins).toHaveLength(2)
+    expect(runPort.finish?.warningSummaries).toEqual([CONSENT_DETAIL])
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('offers the agy sign-in flow while agy cannot be read', async () => {
+    const { state, provider, refresh } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+
+    await expect(provider.getAuthFlows()).resolves.toEqual([
+      expect.objectContaining({ flowId: 'antigravity:login', available: true })
+    ])
+  })
+})
+
+// The run's forced re-probe reads consent before its `agy models` call, which
+// can take seconds. Consent and Stop are read again immediately before agy is
+// spawned, and the sign-in terminal reads consent again after resolving the
+// binary, so nothing that lands during those waits launches agy.
+describe('HostNodeAntigravityProvider at the moment agy launches', () => {
+  it.each([
+    [
+      'a send after a ready refresh',
+      async (h: Harness) => {
+        await h.refresh()
+      }
+    ],
+    [
+      'a send admitted against kept offers',
+      async (h: Harness) => {
+        await h.refresh()
+        h.state.probe = 'times-out'
+        await h.refresh()
+        h.state.probe = 'answers'
+      }
+    ]
+  ])(
+    'never launches agy for %s when consent is withdrawn while its forced re-probe waits on agy',
+    async (_label, setUp) => {
+      const h = harness()
+      await setUp(h)
+      h.state.hold = true
+      const run = h.send()
+      await h.probeHeld()
+      withdrawConsent(h.profilePath)
+      h.answerProbe()
+
+      await expect(run).resolves.toMatchObject({ status: 'failed' })
+      expect(h.runPort.finish).toMatchObject({
+        status: 'failed',
+        errorCode: 'provider_launch_failed',
+        warningSummaries: [CONSENT_DETAIL]
+      })
+      expect(h.spawn).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    [
+      'a Stop',
+      (h: Harness) => {
+        expect(h.provider.cancel('run-1')).toBe(true)
+      }
+    ],
+    ['a Host shutdown', (h: Harness) => h.provider.shutdown()]
+  ])(
+    'never launches agy for a run ended by %s during its forced re-probe, and gives it no failure reason',
+    async (_label, end) => {
+      const h = harness()
+      await h.refresh()
+      h.state.hold = true
+      const run = h.send()
+      await h.probeHeld()
+      await end(h)
+      h.answerProbe()
+
+      await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+      expect(h.runPort.finish).toMatchObject({ status: 'cancelled', warningSummaries: [] })
+      expect(h.spawn).not.toHaveBeenCalled()
+    }
+  )
+
+  it('stops agy when a Stop lands while agy is being launched', async () => {
+    const h = harness()
+    await h.refresh()
+    let stopped = false
+    h.spawn.mockImplementationOnce(() => {
+      // The Stop arrives before the launch has handed back agy's handle.
+      stopped = h.provider.cancel('run-1')
+      return { kill: h.kill, exit: Promise.resolve({ code: null, signal: 'SIGTERM' }) }
+    })
+
+    await expect(h.send()).resolves.toMatchObject({ status: 'cancelled' })
+    expect(stopped).toBe(true)
+    expect(h.kill).toHaveBeenCalledTimes(1)
+    expect(h.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('reads the thread again after the forced re-probe, and launches nothing for one switched to Ask', async () => {
+    const h = harness()
+    await h.refresh()
+    h.state.hold = true
+    const run = h.send()
+    await h.probeHeld()
+    h.runPort.thread = thread({
+      posture: {
+        postureId: 'read_only',
+        approvalMode: 'plan',
+        requiresExplicitConsent: false,
+        explicitConsentAcknowledged: false
+      }
+    })
+    h.answerProbe()
+
+    await expect(run).resolves.toMatchObject({ status: 'failed' })
+    expect(h.runPort.finish?.warningSummaries).toEqual([
+      'Standalone AntiGravity currently permits only Plan.'
+    ])
+    expect(h.spawn).not.toHaveBeenCalled()
+  })
+
+  it('reads consent again before the sign-in terminal launches agy', async () => {
+    const h = harness()
+    h.state.holdBinary = true
+    const begin = h.provider.beginAuth('auth-1')
+    await vi.waitFor(() => expect(h.state.releaseBinary).toBeTypeOf('function'))
+    withdrawConsent(h.profilePath)
+    h.state.releaseBinary?.()
+
+    await expect(begin).rejects.toThrow('AntiGravity consent is required before sign-in.')
+    expect(h.launchForProvider).not.toHaveBeenCalled()
   })
 })

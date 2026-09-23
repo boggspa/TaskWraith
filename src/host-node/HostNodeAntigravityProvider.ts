@@ -276,6 +276,11 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
     if (!consent.accepted) throw new Error('AntiGravity consent is required before sign-in.')
     const binary = await this.options.resources.resolveBinary()
     if (!binary.binaryPath) throw new Error('The official agy CLI is unavailable.')
+    // Consent can be withdrawn while the binary resolves, and the terminal
+    // launches agy with nothing awaited in between, so read it again here.
+    if (!readHostStandaloneAntigravityConsent(this.options.profilePath).accepted) {
+      throw new Error('AntiGravity consent is required before sign-in.')
+    }
     this.probeCache = null
     await this.options.terminalLauncher.launchForProvider(ANTIGRAVITY_PROVIDER_ID, {
       argv: [binary.binaryPath],
@@ -383,16 +388,28 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         at: startedAt
       })
       // Persisting the run start above gives the Host an immediate durable
-      // acknowledgement. Consent/auth are still re-probed before the first
-      // provider process can spawn, so withdrawal wins without a launch.
+      // acknowledgement. The account is re-probed before agy can spawn. The
+      // probe reads consent before its `agy models` call, which can take
+      // seconds, so consent and Stop are read again just before the spawn.
       const probe = await this.probe(true)
       if (probe.status !== 'ready') throw new Error(probe.detail)
+      // A ready answer makes these the current offers again, so validateThread
+      // skips its kept-offers consent read. Consent is read below instead,
+      // after the last await.
       this.validationOffers = probe.admission.offers
       this.validationOffersStale = false
       const current = this.options.runPort.getThread(request.threadId)
       if (!current) throw new Error('AntiGravity thread was removed before launch.')
       thread = this.validateThread(current)
       const selectedModel = wireModel(probe.admission, thread.modelId, thread.reasoningId)
+      // Nothing is awaited from here to the spawn. A Stop, a Host shutdown or
+      // a consent withdrawal that landed while the probe waited on agy is
+      // seen here, and agy is not launched.
+      if (active.cancelled) throw new Error('AntiGravity run was cancelled before launch.')
+      const launchConsent = readHostStandaloneAntigravityConsent(this.options.profilePath)
+      if (!launchConsent.accepted || launchConsent.acceptedAt === null) {
+        throw new Error(HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL)
+      }
       const handle = this.spawnProcess({
         binaryPath: probe.admission.binaryPath,
         args: buildPlanArgs(
@@ -416,6 +433,8 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         }
       })
       active.handle = handle
+      // A Stop that landed while agy was being launched, before its handle
+      // was recorded for cancel() to kill.
       if (active.cancelled) handle.kill('SIGTERM')
       const exit = await handle.exit
       exitCode = exit.code
@@ -477,8 +496,8 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         exitCode
       }
     } catch (error) {
-      // The reason is what the user reads: withdrawn consent, a signed-out or
-      // unreachable agy from the forced re-probe above. A cancel needs none.
+      // The reason is what the user reads, such as withdrawn consent or a
+      // signed-out or unreachable agy. A cancel needs none.
       const reason = active.cancelled
         ? null
         : normalizeHostProviderRunPresentationText(
