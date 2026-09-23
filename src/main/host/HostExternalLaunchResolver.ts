@@ -1,6 +1,7 @@
 import { access } from 'node:fs/promises'
 import { posix, win32, type PlatformPath } from 'node:path'
 import { resolveHostPayloadVersion } from '../../host-runtime/HostPayloadIdentity'
+import { withoutHostLeaseTestKnobs } from '../../host-runtime/HostLeaseRegistry'
 
 export interface HostExternalLaunchCommand {
   readonly executable: string
@@ -33,7 +34,9 @@ function hostArgs(cli: string, profile: string): string[] {
 }
 
 function cleanEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result = { ...env }
+  // The lease test knobs never reach a production Host from a stray shell
+  // export; TASKWRAITH_HOST_PERSIST, the user's escape hatch, does.
+  const result = withoutHostLeaseTestKnobs(env)
   delete result.ELECTRON_RUN_AS_NODE
   return result
 }

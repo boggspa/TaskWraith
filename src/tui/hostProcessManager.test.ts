@@ -117,6 +117,29 @@ describe('TUI Host process manager', () => {
     })
   })
 
+  it('never hands a production Host the test-only lease knobs, and keeps the persist escape hatch', async () => {
+    for (const profile of ['production', 'development', 'node-package'] as const) {
+      const result = await resolveTuiHostLaunchCommand({
+        profile,
+        platform: 'darwin',
+        architecture: 'arm64',
+        moduleDir: '/repo/out/tui/tui',
+        workingDirectory: '/repo',
+        userDataPath: '/profiles/a',
+        nodeExecutable: '/usr/local/bin/node',
+        isOrdinaryNode: () => true,
+        env: {
+          PATH: '/usr/bin',
+          TASKWRAITH_HOST_LEASE_TIMING: 'heartbeat:100,ttl:200,grace:500',
+          TASKWRAITH_HOST_LEASE_DISABLED: '1',
+          TASKWRAITH_HOST_PERSIST: '1'
+        },
+        pathExists: async () => true
+      })
+      expect(result?.env, profile).toEqual({ PATH: '/usr/bin', TASKWRAITH_HOST_PERSIST: '1' })
+    }
+  })
+
   it('resolves a built development Host through an injected ordinary Node executable', async () => {
     const executable = '/usr/local/bin/node'
     const cli = '/repo/out/host/host-runtime/cli.js'

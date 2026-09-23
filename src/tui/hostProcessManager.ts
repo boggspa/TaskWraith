@@ -16,6 +16,7 @@ import {
   hostFullAccessBootstrapFrame
 } from '../host-runtime/HostFullAccessBootstrap'
 import { resolveHostPayloadVersion } from '../host-runtime/HostPayloadIdentity'
+import { withoutHostLeaseTestKnobs } from '../host-runtime/HostLeaseRegistry'
 import type { HostBootstrapWelcome, HostCapability } from '../shared/hostProtocol'
 import {
   createTuiFullAccessPresence,
@@ -151,7 +152,9 @@ function uniquePaths(paths: readonly string[], platform: NodeJS.Platform): strin
 }
 
 function hostEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const result = { ...env }
+  // The lease test knobs never reach a production Host from a stray shell
+  // export; TASKWRAITH_HOST_PERSIST, the user's escape hatch, does.
+  const result = withoutHostLeaseTestKnobs(env)
   delete result.ELECTRON_RUN_AS_NODE
   return result
 }

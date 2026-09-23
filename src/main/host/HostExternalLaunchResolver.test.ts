@@ -97,6 +97,32 @@ describe('HostExternalLaunchResolver', () => {
     })
   })
 
+  it('never hands a production Host the test-only lease knobs, and keeps the persist escape hatch', async () => {
+    for (const packaged of [true, false]) {
+      const command = await resolveHostExternalLaunch({
+        packaged,
+        profilePath: '/profiles/a',
+        ...(packaged ? { resourcesPath: '/App/Resources' } : { repoRoot: '/repo' }),
+        platform: 'darwin',
+        architecture: 'arm64',
+        nodeExecutable: '/usr/local/bin/node',
+        isOrdinaryNode: () => true,
+        env: {
+          PATH: '/usr/bin',
+          TASKWRAITH_HOST_LEASE_TIMING: 'heartbeat:100,ttl:200,grace:500',
+          TASKWRAITH_HOST_LEASE_DISABLED: '1',
+          TASKWRAITH_HOST_PERSIST: '1'
+        },
+        resolvePayloadVersion: () => payloadVersion,
+        pathExists: async () => true
+      })
+      expect(command?.env, `packaged=${packaged}`).toEqual({
+        PATH: '/usr/bin',
+        TASKWRAITH_HOST_PERSIST: '1'
+      })
+    }
+  })
+
   it('keeps the detached Host cwd valid when an installed payload is replaced', async () => {
     const temporaryRoot = realpathSync(mkdtempSync(join(tmpdir(), 'host-launch-cwd-')))
     const profile = join(temporaryRoot, 'profile')
