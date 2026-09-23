@@ -1,7 +1,11 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { mkdtemp, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import {
+  resetAntigravityAgyOptInEnabledProbeForTests,
+  setAntigravityAgyOptInEnabledProbe
+} from './AntigravityAgyOptInEnabledSignal'
 import {
   fetchAntigravityCliQuotaSummary,
   parseAntigravityOAuthSession,
@@ -105,6 +109,16 @@ describe('parseAntigravityQuotaSummary', () => {
 })
 
 describe('fetchAntigravityCliQuotaSummary', () => {
+  // The live consent read main wires from persisted settings.
+  let consentHeld = true
+  beforeEach(() => {
+    consentHeld = true
+    setAntigravityAgyOptInEnabledProbe(() => consentHeld)
+  })
+  afterEach(() => {
+    resetAntigravityAgyOptInEnabledProbeForTests()
+  })
+
   it('uses the official CLI session entirely in main and returns only normalized quota', async () => {
     const root = await mkdtemp(join(tmpdir(), 'taskwraith-agy-quota-'))
     const tokenFilePath = join(root, 'antigravity-oauth-token')
@@ -169,5 +183,116 @@ describe('fetchAntigravityCliQuotaSummary', () => {
     })
     expect(JSON.stringify(snapshot)).not.toContain('private')
     expect(JSON.stringify(snapshot)).not.toContain(tokenFilePath)
+  })
+
+  async function tokenFile(expiry: string): Promise<string> {
+    const root = await mkdtemp(join(tmpdir(), 'taskwraith-agy-quota-'))
+    const tokenFilePath = join(root, 'antigravity-oauth-token')
+    await writeFile(
+      tokenFilePath,
+      JSON.stringify({
+        token: {
+          access_token: 'private-access-token',
+          refresh_token: 'private-refresh-token',
+          expiry
+        }
+      })
+    )
+    return tokenFilePath
+  }
+
+  function json(value: unknown): Response {
+    return new Response(JSON.stringify(value), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+
+  const loadCodeAssist = () => json({ cloudaicompanionProject: 'quota-project' })
+  const quotaSummary = () =>
+    json({ groups: [{ buckets: [{ bucketId: 'gemini-5h', remainingFraction: 1 }] }] })
+
+  it('sends no token-bearing request once consent is withdrawn', async () => {
+    const tokenFilePath = await tokenFile('2026-08-26T20:00:00Z')
+    const requests: string[] = []
+    consentHeld = false
+
+    const snapshot = await fetchAntigravityCliQuotaSummary({
+      tokenFilePath,
+      fetchImpl: async (url) => {
+        requests.push(url)
+        return url.includes('loadCodeAssist') ? loadCodeAssist() : quotaSummary()
+      },
+      now: () => Date.parse('2026-08-25T20:00:00Z')
+    })
+
+    expect(snapshot).toBeNull()
+    expect(requests).toEqual([])
+  })
+
+  it('a withdrawal while loadCodeAssist is in flight lets it finish and sends nothing after it', async () => {
+    const tokenFilePath = await tokenFile('2026-08-26T20:00:00Z')
+    const requests: string[] = []
+    let releaseLoad!: () => void
+    let loadSignal: AbortSignal | undefined
+
+    const snapshot = fetchAntigravityCliQuotaSummary({
+      tokenFilePath,
+      fetchImpl: async (url, init) => {
+        requests.push(url)
+        if (!url.includes('loadCodeAssist')) return quotaSummary()
+        loadSignal = init?.signal ?? undefined
+        await new Promise<void>((resolve) => {
+          releaseLoad = resolve
+        })
+        return loadCodeAssist()
+      },
+      now: () => Date.parse('2026-08-25T20:00:00Z')
+    })
+    for (let attempt = 0; attempt < 50 && !releaseLoad; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    expect(requests).toEqual([expect.stringContaining('loadCodeAssist')])
+
+    consentHeld = false
+    releaseLoad()
+
+    await expect(snapshot).resolves.toBeNull()
+    // The request already sent is not aborted for the withdrawal; the next one
+    // is never sent.
+    expect(loadSignal?.aborted).toBe(false)
+    expect(requests).toEqual([expect.stringContaining('loadCodeAssist')])
+  })
+
+  it('a withdrawal while the token refresh is in flight sends no bearer request after it', async () => {
+    // Expires inside the refresh leeway, so the refresh token is used first.
+    const tokenFilePath = await tokenFile('2026-08-25T20:01:00Z')
+    const requests: string[] = []
+    let releaseRefresh!: () => void
+
+    const snapshot = fetchAntigravityCliQuotaSummary({
+      tokenFilePath,
+      fetchImpl: async (url) => {
+        requests.push(url)
+        if (url.includes('oauth2')) {
+          await new Promise<void>((resolve) => {
+            releaseRefresh = resolve
+          })
+          return json({ access_token: 'refreshed-access-token' })
+        }
+        return url.includes('loadCodeAssist') ? loadCodeAssist() : quotaSummary()
+      },
+      now: () => Date.parse('2026-08-25T20:00:00Z')
+    })
+    for (let attempt = 0; attempt < 50 && !releaseRefresh; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1))
+    }
+    expect(requests).toEqual([expect.stringContaining('oauth2')])
+
+    consentHeld = false
+    releaseRefresh()
+
+    await expect(snapshot).resolves.toBeNull()
+    expect(requests).toEqual([expect.stringContaining('oauth2')])
   })
 })

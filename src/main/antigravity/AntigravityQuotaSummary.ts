@@ -4,6 +4,7 @@ import type {
   NormalizedProviderUsageSnapshot,
   NormalizedProviderUsageWindow
 } from '../ProviderQuotaSnapshots'
+import { isAntigravityAgyOptInEnabled } from './AntigravityAgyOptInEnabledSignal'
 import { agyCliRootPath } from './AntigravityConversationReceipt'
 
 const TOKEN_FILE_NAME = 'antigravity-oauth-token'
@@ -273,7 +274,8 @@ function agyHeaders(accessToken: string): Record<string, string> {
 
 /**
  * Read the official CLI session locally and request its quota summary. No
- * token, raw response, or credential path is returned to the renderer.
+ * token, raw response, or credential path is returned to the renderer, and no
+ * request carrying the session's tokens is sent without live consent.
  */
 export async function fetchAntigravityCliQuotaSummary(
   dependencies: AntigravityQuotaSummaryDependencies = {}
@@ -295,8 +297,16 @@ export async function fetchAntigravityCliQuotaSummary(
     return null
   }
   const session = parseAntigravityOAuthSession(tokenEnvelope)
-  const fetchImpl = dependencies.fetchImpl ?? globalThis.fetch
-  if (!session || typeof fetchImpl !== 'function') return null
+  const sendFetch = dependencies.fetchImpl ?? globalThis.fetch
+  if (!session || typeof sendFetch !== 'function') return null
+  // Every request below carries agy's OAuth material (the refresh token or the
+  // bearer access token), so each reads consent live as it is sent (Chris,
+  // 2026-09-23): a withdrawal during any earlier wait stops the next request,
+  // and requestJson reports the refusal as an unavailable reading.
+  const fetchImpl: FetchLike = (input, init) =>
+    isAntigravityAgyOptInEnabled()
+      ? sendFetch(input, init)
+      : Promise.reject(new Error('AntiGravity consent is not recorded.'))
   const now = dependencies.now?.() ?? Date.now()
   const accessToken = await usableAccessToken(session, fetchImpl, now)
   if (!accessToken) return null
