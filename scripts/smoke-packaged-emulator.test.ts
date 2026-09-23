@@ -1,5 +1,10 @@
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
+
+import { HOST_REGISTRY_ROOT_ENV as PRODUCT_HOST_REGISTRY_ROOT_ENV } from '../src/host-runtime/HostRegistry'
 
 const require = createRequire(import.meta.url)
 const {
@@ -8,6 +13,9 @@ const {
   PACKAGE_EMULATOR_SMOKE_RESULT_FILE,
   EXIT_STALE_BUNDLE,
   EXIT_UNSAFE_TO_LAUNCH,
+  HOST_REGISTRY_ROOT_ENV,
+  launchPackagedApp,
+  packagedAppEnvironment,
   smokeExitCode,
   validatePackagedEmulatorSmokeResult
 }: {
@@ -16,6 +24,18 @@ const {
   PACKAGE_EMULATOR_SMOKE_RESULT_FILE: string
   EXIT_STALE_BUNDLE: number
   EXIT_UNSAFE_TO_LAUNCH: number
+  HOST_REGISTRY_ROOT_ENV: string
+  launchPackagedApp: (
+    packageRoot: string,
+    launchArgs: readonly string[],
+    registryRoot: string,
+    spawnProcess: (
+      file: string,
+      args: readonly string[],
+      options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv }
+    ) => unknown
+  ) => unknown
+  packagedAppEnvironment: (registryRoot: unknown, env?: NodeJS.ProcessEnv) => NodeJS.ProcessEnv
   smokeExitCode: (error: unknown) => number
   validatePackagedEmulatorSmokeResult: (value: unknown, output?: string) => unknown
 } = require('./smoke-packaged-emulator.cjs')
@@ -65,6 +85,55 @@ function result() {
 }
 
 describe('packaged emulator runtime smoke launcher', () => {
+  it("gives the packaged app the smoke's own Host registry root, over any inherited one", () => {
+    expect(HOST_REGISTRY_ROOT_ENV).toBe(PRODUCT_HOST_REGISTRY_ROOT_ENV)
+    const registryRoot = join(tmpdir(), 'taskwraith-emulator-smoke-registry-x')
+    const env = packagedAppEnvironment(registryRoot, {
+      PATH: '/usr/bin',
+      TASKWRAITH_AUTO_UPDATE: 'on',
+      [HOST_REGISTRY_ROOT_ENV]: '/somewhere/else'
+    })
+    expect(env).toEqual({
+      PATH: '/usr/bin',
+      TASKWRAITH_AUTO_UPDATE: 'off',
+      [HOST_REGISTRY_ROOT_ENV]: registryRoot
+    })
+    for (const bad of [undefined, '', 'relative/hosts']) {
+      expect(() => packagedAppEnvironment(bad, {})).toThrow(/registry root must be absolute/)
+    }
+  })
+
+  it('launches the packaged executable with that environment (a recorded spawn, nothing runs)', () => {
+    const packageRoot = realpathSync(mkdtempSync(join(tmpdir(), 'emulator-smoke-package-')))
+    try {
+      // The executable names each platform's resolver looks for first; a
+      // package root that is not an .app bundle takes the linux shape on darwin.
+      writeFileSync(join(packageRoot, 'taskwraith'), '')
+      writeFileSync(join(packageRoot, 'TaskWraith.exe'), '')
+      const registryRoot = join(packageRoot, 'registry')
+      const calls: Array<{
+        file: string
+        args: readonly string[]
+        options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv }
+      }> = []
+      launchPackagedApp(packageRoot, ['--smoke'], registryRoot, (file, args, options) => {
+        calls.push({ file, args, options })
+        return {}
+      })
+      expect(calls).toHaveLength(1)
+      expect(calls[0].file.startsWith(packageRoot)).toBe(true)
+      expect(calls[0].args).toContain('--smoke')
+      expect(calls[0].options.cwd).toBe(packageRoot)
+      expect(calls[0].options.env[HOST_REGISTRY_ROOT_ENV]).toBe(registryRoot)
+      expect(calls[0].options.env.TASKWRAITH_AUTO_UPDATE).toBe('off')
+      expect(() => launchPackagedApp(packageRoot, [], 'relative', () => ({}))).toThrow(
+        /registry root must be absolute/
+      )
+    } finally {
+      rmSync(packageRoot, { recursive: true, force: true })
+    }
+  })
+
   it('uses a dedicated argv and fixed private receipt filename', () => {
     expect(PACKAGE_EMULATOR_SMOKE_ARG).toBe('--taskwraith-package-emulator-smoke')
     expect(PACKAGE_EMULATOR_SMOKE_RESULT_ARG).toBe('--taskwraith-package-emulator-smoke-result=')

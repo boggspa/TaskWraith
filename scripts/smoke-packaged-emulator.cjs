@@ -29,6 +29,8 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const EXIT_STALE_BUNDLE = 20
 const EXIT_UNSAFE_TO_LAUNCH = 21
 const MAX_FAILURE_OUTPUT_CHARS = 4000
+/** HostRegistry.ts HOST_REGISTRY_ROOT_ENV; the test pins the two together. */
+const HOST_REGISTRY_ROOT_ENV = 'TASKWRAITH_HOST_REGISTRY_ROOT'
 
 if (require.main === module) {
   main().catch((error) => {
@@ -78,9 +80,12 @@ async function main() {
   }
 
   fs.mkdirSync(smokeUserDataPath, { recursive: true })
+  let registryRoot = null
   let child = null
   try {
-    child = launchPackagedApp(packageRoot, launchArgs)
+    // The app's Host publishes here, never into the caller's ~/.taskwraith/hosts.
+    registryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-emulator-smoke-registry-'))
+    child = launchPackagedApp(packageRoot, launchArgs, registryRoot)
     const { result: rawResult, output } = await waitForResult(
       resultPath,
       child,
@@ -96,6 +101,7 @@ async function main() {
   } finally {
     await stopSmokeChild(child)
     fs.rmSync(smokeUserDataPath, { recursive: true, force: true })
+    if (registryRoot) fs.rmSync(registryRoot, { recursive: true, force: true })
   }
 }
 
@@ -195,22 +201,39 @@ function resolveLinuxExecutablePath(packageRoot) {
   return executable
 }
 
-function launchPackagedApp(packageRoot, launchArgs) {
+/**
+ * The packaged app's environment: auto-update off, and the smoke's own Host
+ * registry root. The app's external Host inherits the app's environment (its
+ * launcher spreads process.env), so without the root that Host would publish
+ * into the caller's machine-wide ~/.taskwraith/hosts for the smoke's duration.
+ */
+function packagedAppEnvironment(registryRoot, env = process.env) {
+  if (typeof registryRoot !== 'string' || !path.isAbsolute(registryRoot)) {
+    throw new Error('smoke Host registry root must be absolute')
+  }
+  return { ...env, TASKWRAITH_AUTO_UPDATE: 'off', [HOST_REGISTRY_ROOT_ENV]: registryRoot }
+}
+
+function launchPackagedApp(packageRoot, launchArgs, registryRoot, spawnProcess = spawn) {
   const options = {
     cwd: packageRoot,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
-    env: { ...process.env, TASKWRAITH_AUTO_UPDATE: 'off' }
+    env: packagedAppEnvironment(registryRoot)
   }
   if (process.platform === 'darwin' && packageRoot.endsWith('.app')) {
     // Directly own the spawned app process so a failed private smoke can be
     // terminated without routing a GUI quit through the user's real instance.
-    return spawn(resolveMacExecutablePath(packageRoot), launchArgs, options)
+    return spawnProcess(resolveMacExecutablePath(packageRoot), launchArgs, options)
   }
   if (process.platform === 'win32') {
-    return spawn(resolveWindowsExecutablePath(packageRoot), launchArgs, options)
+    return spawnProcess(resolveWindowsExecutablePath(packageRoot), launchArgs, options)
   }
-  return spawn(resolveLinuxExecutablePath(packageRoot), ['--no-sandbox', ...launchArgs], options)
+  return spawnProcess(
+    resolveLinuxExecutablePath(packageRoot),
+    ['--no-sandbox', ...launchArgs],
+    options
+  )
 }
 
 async function waitForResult(resultPath, child, timeoutMs) {
@@ -403,6 +426,9 @@ module.exports = {
   PACKAGE_EMULATOR_SMOKE_RESULT_FILE,
   EXIT_STALE_BUNDLE,
   EXIT_UNSAFE_TO_LAUNCH,
+  HOST_REGISTRY_ROOT_ENV,
+  launchPackagedApp,
+  packagedAppEnvironment,
   smokeExitCode,
   validateEmulatorPackageLayout,
   validatePackagedEmulatorSmokeResult,
