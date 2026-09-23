@@ -15,9 +15,7 @@ import { isAbsolute, join } from 'node:path'
 
 import {
   publishPrivateLocalControlArtifact,
-  readPrivateLocalControlArtifact,
-  removeOwnedPrivateLocalControlArtifact,
-  type HostLocalControlArtifactOwnership
+  readPrivateLocalControlArtifact
 } from '../shared/hostLocalControlArtifacts.node'
 import {
   TASKWRAITH_HOST_SOCKET_FILE,
@@ -416,16 +414,27 @@ export function createHostRegistryPublisherFromEnvironment(input: {
 
 /**
  * The Host's own publisher. `publish` and `refresh` never throw: a registry
- * that cannot be written must not take a Host down, and `check()` then answers
- * `unreadable`, which never stops anything.
+ * that cannot be written must not take a Host down. Until an entry has been
+ * written, `check()` answers `unreadable`, which never stops anything.
+ *
+ * Once written, a failed write changes nothing the self-check sees: a write
+ * that fails before its rename leaves the previous entry in place, and one
+ * that fails after it keeps the complete new entry (never the helper's
+ * rollback unlink, which would read as a deletion). So `check()` always reads
+ * the file, and a deletion made while writes fail is still counted.
  */
 export class HostRegistryPublisher implements HostRegistryPublisherPort {
   private readonly root: string
   private readonly options: HostRegistryPublisherOptions
   private entry: HostRegistryEntry | null = null
   private path: string | null = null
-  private ownership: HostLocalControlArtifactOwnership | null = null
-  private published = false
+  /** An entry reached the path at least once (a rename happened). */
+  private written = false
+  /**
+   * The self-check saw the entry deleted or taken over, or the Host removed
+   * it: `refresh` never writes it again. Only a new `publish` clears it.
+   */
+  private relinquished = false
 
   constructor(options: HostRegistryPublisherOptions) {
     if (!isAbsolute(options.root)) throw new TypeError('Host registry root must be absolute.')
@@ -478,19 +487,22 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
     }
     this.entry = entry
     this.path = hostRegistryEntryPath(this.root, profilePath)
+    this.written = false
+    this.relinquished = false
     this.write(entry, 'publish')
   }
 
   /**
    * Rewrites the entry with fresh counters only while the file at the path is
    * still this Host's, or could not be read (a rewrite repairs that). A
-   * `missing` or `foreign` entry is left exactly as found: the server's
-   * self-check runs right after the refresh, and a refresh that recreated a
-   * deleted entry, or overwrote a successor's, would make "stop after two
-   * missing checks" unreachable.
+   * `missing` or `foreign` entry is left exactly as found, and so is anything
+   * at the path once a check has seen either: the server's self-check runs
+   * right after the refresh, and a refresh that recreated a deleted entry, or
+   * overwrote a successor's, would make "stop after two missing checks"
+   * unreachable.
    */
   refresh(patch: HostRegistryEntryRefresh): void {
-    if (!this.entry) return
+    if (!this.entry || this.relinquished) return
     const verdict = this.check()
     if (verdict === 'missing' || verdict === 'foreign') return
     const now = (this.options.now ?? (() => new Date()))().toISOString()
@@ -510,58 +522,67 @@ export class HostRegistryPublisher implements HostRegistryPublisherPort {
    * `missing` (ENOENT) or `foreign` (readable, but pid / birthIdentity /
    * bootEpoch differ) are the self-check signals; `unreadable` (EIO, EACCES,
    * malformed, or an entry this publisher never managed to write) never is.
+   * Either signal relinquishes the path: `refresh` never writes it again.
    */
   check(): HostRegistryCheckResult {
-    if (!this.entry || !this.path || !this.published) return 'unreadable'
+    if (!this.entry || !this.path || !this.written) return 'unreadable'
     const read = readEntryFile(this.path)
-    if (read.kind === 'missing') return 'missing'
     if (read.kind === 'unreadable') return 'unreadable'
-    const found = read.entry
-    return found.pid === this.entry.pid &&
-      found.bootEpoch === this.entry.bootEpoch &&
-      found.birthIdentity === this.entry.birthIdentity
-      ? 'present'
-      : 'foreign'
+    const verdict: HostRegistryCheckResult =
+      read.kind === 'missing' ? 'missing' : this.isOwn(read.entry) ? 'present' : 'foreign'
+    if (verdict !== 'present') this.relinquished = true
+    return verdict
   }
 
   /**
-   * Removes the entry only while it is still this Host's: the content must
-   * still name this pid, birth identity and boot epoch (a foreign Host may
-   * have overwritten the file in place, keeping the inode) and the inode must
-   * be the one this publisher last wrote (a foreign Host may have renamed a
-   * new file over it). Anything else stays.
+   * Removes the entry only while it still names this Host (pid, birth
+   * identity and boot epoch), judged by content rather than by the inode of
+   * the last successful write: a write that failed after its rename leaves
+   * this Host's entry with an inode it never learned. The inode is re-checked
+   * between the judged read and the unlink, so a successor that renamed its
+   * entry over the path keeps it.
    */
   remove(): void {
-    const ownership = this.ownership
-    if (!ownership) return
-    const verdict = this.check()
-    this.ownership = null
-    this.published = false
-    if (verdict !== 'present') {
-      if (verdict === 'foreign')
-        this.options.log?.('[host-registry] entry is foreign; left in place')
-      return
-    }
+    const path = this.path
+    if (!path || !this.written) return
+    this.relinquished = true
     try {
-      removeOwnedPrivateLocalControlArtifact(ownership)
+      if (removeHostRegistryEntryIfStill(path, (found) => this.isOwn(found))) return
+      if (readEntryFile(path).kind === 'present')
+        this.options.log?.('[host-registry] entry is foreign; left in place')
     } catch (error) {
       this.options.log?.(`[host-registry] entry removal failed: ${describe(error)}`)
     }
+  }
+
+  private isOwn(found: HostRegistryEntry): boolean {
+    const own = this.entry
+    return (
+      own !== null &&
+      found.pid === own.pid &&
+      found.bootEpoch === own.bootEpoch &&
+      found.birthIdentity === own.birthIdentity
+    )
   }
 
   private write(entry: HostRegistryEntry, stage: 'publish' | 'refresh'): void {
     if (!this.path) return
     try {
       this.ensurePrivateRoot()
-      this.ownership = publishPrivateLocalControlArtifact(
+      publishPrivateLocalControlArtifact(
         this.path,
         `${JSON.stringify(entry)}\n`,
-        HOST_REGISTRY_MAX_ENTRY_BYTES
+        HOST_REGISTRY_MAX_ENTRY_BYTES,
+        {
+          afterRename: () => {
+            this.written = true
+          },
+          // A failure after the rename keeps the complete entry: unlinking it
+          // would read as a deletion and strike this Host's own self-check.
+          unlink: () => undefined
+        }
       )
-      this.published = true
     } catch (error) {
-      this.published = false
-      this.ownership = null
       this.options.log?.(`[host-registry] ${stage} failed: ${describe(error)}`)
     }
   }

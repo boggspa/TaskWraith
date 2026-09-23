@@ -15,6 +15,34 @@ import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import type { HostLocalControlArtifactPublishOptions } from '../shared/hostLocalControlArtifacts.node'
+
+/**
+ * The real atomic publisher, with a fault that can be armed to fire right
+ * after its rename: the one step of a registry write whose failure leaves a
+ * complete new entry at the path.
+ */
+const artifactFaults = vi.hoisted(() => ({ afterRename: null as (() => void) | null }))
+vi.mock('../shared/hostLocalControlArtifacts.node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../shared/hostLocalControlArtifacts.node')>()
+  return {
+    ...actual,
+    publishPrivateLocalControlArtifact: (
+      path: string,
+      contents: string,
+      maxBytes: number,
+      options: HostLocalControlArtifactPublishOptions = {}
+    ) =>
+      actual.publishPrivateLocalControlArtifact(path, contents, maxBytes, {
+        ...options,
+        afterRename: () => {
+          options.afterRename?.()
+          artifactFaults.afterRename?.()
+        }
+      })
+  }
+})
+
 import {
   TASKWRAITH_HOST_SOCKET_FILE,
   taskWraithHostSocketPath
@@ -337,12 +365,15 @@ describe('HostRegistryPublisher', () => {
     expect(readHostRegistryEntry(root, profile)).toMatchObject({ entry: { beatSeq: 1 } })
 
     // A path that is a directory can be neither read nor replaced: unreadable,
-    // never missing, until the refresh after it clears.
-    rmSync(path)
+    // never missing, until the entry behind it is back and the refresh after
+    // that rewrites it.
+    const aside = `${path}.aside`
+    renameSync(path, aside)
     mkdirSync(path)
     registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
     expect(registry.check()).toBe('unreadable')
     rmSync(path, { recursive: true })
+    renameSync(aside, path)
     registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
     expect(registry.check()).toBe('present')
 
@@ -354,6 +385,103 @@ describe('HostRegistryPublisher', () => {
     rmSync(late)
     retry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
     expect(retry.check()).toBe('present')
+  })
+
+  it.skipIf(process.platform === 'win32' || process.getuid?.() === 0)(
+    'keeps reading its entry while writes fail, so a deletion then still counts and is never recreated (g3r)',
+    () => {
+      const root = join(scratch('host-registry-'), 'hosts')
+      const profile = scratch('host-registry-profile-')
+      const log = vi.fn()
+      const registry = publisher(root, profile, 4242, { log })
+      registry.publish(input(profile, 4242))
+      const path = hostRegistryEntryPath(root, profile)
+      const published = readFileSync(path, 'utf8')
+      // One server tick: the refresh, then the self-check.
+      const tick = () => {
+        registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+        return registry.check()
+      }
+      // Two ticks whose writes fail (a root that takes no new file; a full disk
+      // fails the same step): the entry written before is still this Host's.
+      chmodSync(root, 0o500)
+      let whileWritesFail: string[] = []
+      try {
+        whileWritesFail = [tick(), tick()]
+      } finally {
+        chmodSync(root, 0o700)
+      }
+      expect(whileWritesFail).toEqual(['present', 'present'])
+      expect(log).toHaveBeenCalledWith(expect.stringMatching(/^\[host-registry\] refresh failed: /))
+      expect(readFileSync(path, 'utf8')).toBe(published)
+      // Then the entry is deleted: every check counts it, and no refresh
+      // brings it back.
+      rmSync(path)
+      expect([tick(), tick(), tick()]).toEqual(['missing', 'missing', 'missing'])
+      expect(existsSync(path)).toBe(false)
+    }
+  )
+
+  it('never writes the path again once a check saw it deleted or taken over, even when it later reads unreadable', () => {
+    for (const takeover of ['deleted', 'foreign'] as const) {
+      const root = join(scratch('host-registry-'), 'hosts')
+      const profile = scratch('host-registry-profile-')
+      const registry = publisher(root, profile)
+      registry.publish(input(profile, 4242))
+      const path = hostRegistryEntryPath(root, profile)
+      if (takeover === 'deleted') rmSync(path)
+      else writeEntry(root, entryFor(profile, 5151, BORN))
+      expect(registry.check()).toBe(takeover === 'deleted' ? 'missing' : 'foreign')
+      // Whatever is written there next (here a successor's half-written
+      // entry) is not this Host's to repair.
+      writeFileSync(path, '{"schema":\n', { mode: 0o600 })
+      registry.refresh({ holders: 1, implicitHolders: 0, lifetimePhase: 'held' })
+      expect(readFileSync(path, 'utf8')).toBe('{"schema":\n')
+      expect(registry.check()).toBe('unreadable')
+      // A new publication is the only way back.
+      registry.publish(input(profile, 4242))
+      expect(registry.check()).toBe('present')
+    }
+  })
+
+  it('keeps the complete entry when a write fails after its rename, reads it present, and removes it at exit', () => {
+    const root = join(scratch('host-registry-'), 'hosts')
+    const profile = scratch('host-registry-profile-')
+    const log = vi.fn()
+    const registry = publisher(root, profile, 4242, { log })
+    const path = hostRegistryEntryPath(root, profile)
+    const failAfterRename = (write: () => void) => {
+      artifactFaults.afterRename = () => {
+        throw new Error('fsync of the registry root failed')
+      }
+      try {
+        write()
+      } finally {
+        artifactFaults.afterRename = null
+      }
+    }
+    failAfterRename(() => registry.publish(input(profile, 4242)))
+    expect(log).toHaveBeenLastCalledWith(
+      '[host-registry] publish failed: fsync of the registry root failed'
+    )
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: 4242, beatSeq: 0 }
+    })
+    expect(registry.check()).toBe('present')
+    failAfterRename(() =>
+      registry.refresh({ holders: 2, implicitHolders: 0, lifetimePhase: 'held' })
+    )
+    expect(log).toHaveBeenLastCalledWith(
+      '[host-registry] refresh failed: fsync of the registry root failed'
+    )
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: 4242, beatSeq: 1, holders: 2 }
+    })
+    expect(registry.check()).toBe('present')
+    registry.remove()
+    expect(existsSync(path)).toBe(false)
   })
 
   it('checks missing after the entry is deleted and foreign when another Host wrote it', () => {
@@ -419,7 +547,7 @@ describe('HostRegistryPublisher', () => {
     expect(() => registry.remove()).not.toThrow()
   })
 
-  it('removes only the file it last wrote and leaves a foreign successor entry alone', () => {
+  it('removes only an entry that still names it and leaves a foreign successor entry alone', () => {
     const root = join(scratch('host-registry-'), 'hosts')
     const profile = scratch('host-registry-profile-')
     const registry = publisher(root, profile)

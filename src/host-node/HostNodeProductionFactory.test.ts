@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   realpathSync,
+  renameSync,
   rmSync,
   unlinkSync,
   writeFileSync
@@ -781,7 +782,7 @@ function registryHost(prefix: string) {
   return { server, clock, profile, root, entryPath: hostRegistryEntryPath(root, profile) }
 }
 
-it('publishes through the real registry publisher, never stops on an unreadable entry, and stops after two missing checks', async () => {
+it('publishes through the real registry publisher, keeps serving while its entry is unreadable or cannot be rewritten, and stops after two missing checks', async () => {
   const { server, clock, profile, root, entryPath } = registryHost('host-node-factory-registry-')
   try {
     await server.start()
@@ -805,20 +806,38 @@ it('publishes through the real registry publisher, never stops on an unreadable 
       }
     })
 
-    // A path that can be neither read nor rewritten: three unreadable checks
-    // in a row, and the Host keeps serving.
-    unlinkSync(entryPath)
+    // A path that can be neither read nor rewritten (the entry set aside
+    // behind a directory): three unreadable checks in a row, and the Host
+    // keeps serving. With the entry back, the next refresh rewrites it.
+    const aside = `${entryPath}.aside`
+    renameSync(entryPath, aside)
     mkdirSync(entryPath)
     clock.advance(3 * HOST_REGISTRY_REFRESH_MS)
     expect(server.phase).toBe('running')
     rmSync(entryPath, { recursive: true })
+    renameSync(aside, entryPath)
     clock.advance(HOST_REGISTRY_REFRESH_MS)
     expect(readHostRegistryEntry(root, profile)).toMatchObject({
       kind: 'present',
       entry: { pid: process.pid }
     })
 
-    // Missing once is a strike, not a stop, and the refresh never recreates it.
+    // Two ticks whose writes fail (a root that takes no new file): the entry
+    // written before is still this Host's, and the Host keeps serving.
+    if (process.platform !== 'win32' && process.getuid?.() !== 0) {
+      const written = readFileSync(entryPath, 'utf8')
+      chmodSync(root, 0o500)
+      try {
+        clock.advance(2 * HOST_REGISTRY_REFRESH_MS)
+      } finally {
+        chmodSync(root, 0o700)
+      }
+      expect(server.phase).toBe('running')
+      expect(readFileSync(entryPath, 'utf8')).toBe(written)
+    }
+
+    // Missing once is a strike, not a stop, and the refresh never recreates
+    // it, even straight after writes that failed.
     unlinkSync(entryPath)
     clock.advance(HOST_REGISTRY_REFRESH_MS)
     expect(server.phase).toBe('running')
