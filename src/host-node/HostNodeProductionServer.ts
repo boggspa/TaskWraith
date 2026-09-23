@@ -21,16 +21,33 @@ import type {
 /**
  * Production pure-Node Host lifecycle.
  *
- * This server is deliberately independent of a parent PID, Electron, and
- * connection lifetime. It acquires profile authority before identity/store/
- * runtime/listener work; stop releases that authority only after every owned
- * resource has cleaned up successfully.
+ * This server is deliberately independent of any parent PID and of Electron.
+ * Its lifetime is bounded by client leases (`HostLeaseRegistry`): while any
+ * authenticated client holds the Host it runs; once the last lease lapses or
+ * is released it finishes live work and stops after a grace period, and the
+ * machine-wide registry self-check (`HostRegistryPort`) stops it when its own
+ * entry disappears. SIGINT/SIGTERM handling is unchanged. It acquires profile
+ * authority before identity/store/runtime/listener work; stop releases that
+ * authority only after every owned resource has cleaned up successfully.
  */
 
 import type { HostCapability, HostHealthProjection } from '../shared/hostProtocol'
 import { isAbsolute, join } from 'node:path'
 import type { HostLocalServerOptions } from '../host-runtime/HostLocalServer'
 import { HostLocalServer } from '../host-runtime/HostLocalServer'
+import {
+  HOST_LEASE_DISABLED_ENV,
+  HOST_LEASE_TIMING_ENV,
+  HOST_PERSIST_ENV,
+  HostLeaseRegistry,
+  isHostLeaseProtocolDisabled,
+  isHostPersistEnabled,
+  resolveHostLeaseTiming,
+  type HostLeaseExitReason,
+  type HostLeaseRegistryPorts,
+  type HostLeaseTickInfo
+} from '../host-runtime/HostLeaseRegistry'
+import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
 import {
@@ -78,7 +95,17 @@ export interface HostNodeProductionLease {
 export interface HostNodeProductionListener {
   start(): Promise<void>
   stop(): Promise<void>
+  /** Published in the machine-wide registry entry when the listener has them. */
+  readonly socketPath?: string
+  readonly discoveryPath?: string
+  /** The discovery record's `startedAt`, once listening. */
+  readonly startedAt?: string | null
 }
+
+/** Awake-time cadence of the registry refresh and self-check. */
+export const HOST_REGISTRY_REFRESH_MS = 60_000
+/** Consecutive `missing`/`foreign` self-checks before a graceful stop. */
+export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 
 export interface HostNodePermissionConsentAuthority extends HostPermissionConsentAuthorityPort {
   dispose(): void
@@ -131,6 +158,13 @@ export interface HostNodeProductionServerOptions {
   readonly createDomain?: (options: HostNodeDomainPortsOptions) => HostNodeDomainPorts
   readonly createComposition?: (input: HostStandaloneCompositionInput) => HostStandaloneComposition
   readonly createListener?: (options: HostLocalServerOptions) => HostNodeProductionListener
+  /**
+   * Machine-wide registry publisher (S1b). Absent means nothing is published
+   * and the self-check never runs; the lease lifetime is unaffected.
+   */
+  readonly registry?: HostRegistryPublisherPort
+  /** Lease registry clock/scheduler seam for tests; production uses the defaults. */
+  readonly leasePorts?: HostLeaseRegistryPorts
 }
 
 function deferred(): {
@@ -248,7 +282,13 @@ function resolveHostPerfSnapshotFile(
   return { path: isAbsolute(configured) ? configured : join(profilePath, configured) }
 }
 
-/** Signal-supervised standalone production Host. No parent-death behavior exists here. */
+/**
+ * Signal-supervised, lease-bounded standalone production Host. No parent-death
+ * behaviour exists here: it exits on SIGINT/SIGTERM, on an authenticated
+ * `host.shutdown`, when its last client lease has been gone for the grace
+ * period (finishing live runs first), or when the registry self-check finds
+ * its own entry gone.
+ */
 export class HostNodeProductionServer {
   private readonly options: Required<Pick<HostNodeProductionServerOptions, 'signalTarget'>> &
     Omit<HostNodeProductionServerOptions, 'signalTarget'>
@@ -259,6 +299,11 @@ export class HostNodeProductionServer {
   private phaseValue: HostNodeProductionPhase = 'idle'
   private stopRequested = false
   private reconcileQueued = false
+  private leases: HostLeaseRegistry | null = null
+  private leaseTickUnsubscribe: (() => void) | null = null
+  private registryPublished = false
+  private registryLastRefreshAwakeMs = 0
+  private registrySelfCheckStrikes = 0
   private lease: HostNodeProductionLease | null = null
   private domain: HostNodeDomainPorts | null = null
   private composition: HostStandaloneComposition | null = null
@@ -628,6 +673,17 @@ export class HostNodeProductionServer {
       }
       await this.composition.startProjectionReconciliation()
       if (this.stopRequested) return
+      const leaseProtocolDisabled = isHostLeaseProtocolDisabled(
+        this.options.environment ?? process.env
+      )
+      if (leaseProtocolDisabled) {
+        // Test-only legacy simulation: no lease kinds, no lease lifetime, no
+        // registry entry — what a Host from before this programme looks like.
+        process.stderr.write(
+          `taskwraith-host: [host-lease] ${HOST_LEASE_DISABLED_ENV}=1 under ${HOST_LEASE_TIMING_ENV}: answering host.lease and host.status as a pre-lease Host\n`
+        )
+      }
+      this.leases = leaseProtocolDisabled ? null : this.createLeaseRegistry()
       this.listener = (this.options.createListener ?? ((input) => new HostLocalServer(input)))({
         userDataPath: this.lease.path,
         hostId: this.identity.hostId,
@@ -648,10 +704,12 @@ export class HostNodeProductionServer {
             : execute(),
         onAuthenticatedShutdown: () => this.stop(),
         subscribeDeltas: (listener) =>
-          this.composition!.subscribeDeltas((event) => listener(event.record.envelope))
+          this.composition!.subscribeDeltas((event) => listener(event.record.envelope)),
+        ...(this.leases ? { leases: this.leases } : { leaseProtocol: 'disabled' as const })
       })
       await this.listener.start()
       if (this.stopRequested) return
+      this.publishRegistryEntry()
       this.phaseValue = 'running'
     } catch (error) {
       this.clearSignals()
@@ -696,6 +754,9 @@ export class HostNodeProductionServer {
 
   private async cleanup(): Promise<void> {
     let listenerFailure: Error | null = null
+    this.leaseTickUnsubscribe?.()
+    this.leaseTickUnsubscribe = null
+    this.leases?.stop()
     if (this.listener) {
       try {
         await this.listener.stop()
@@ -746,6 +807,7 @@ export class HostNodeProductionServer {
     this.threadCatalogue = null
     this.threadCataloguePublisher = null
     this.threadRecovery = null
+    this.removeRegistryEntry()
     if (this.lease && this.lease.release() !== true) {
       throw new Error('Production Host could not prove profile authority release.')
     }
@@ -755,6 +817,134 @@ export class HostNodeProductionServer {
     this.disposeResources = null
     this.permissionConsentAuthority = null
     this.lease = null
+    this.leases = null
+  }
+
+  // ---------------------------------------------------------------------------
+  // Lease lifetime and the machine-wide registry
+  // ---------------------------------------------------------------------------
+
+  private createLeaseRegistry(): HostLeaseRegistry {
+    const environment = this.options.environment ?? process.env
+    const timing = resolveHostLeaseTiming(environment)
+    const persist = isHostPersistEnabled(environment)
+    const log = (line: string) => process.stderr.write(`taskwraith-host: ${line}\n`)
+    if (timing.source === 'rejected') {
+      log(`[host-lease] ${HOST_LEASE_TIMING_ENV}=${timing.raw} ignored: ${timing.reason}`)
+    } else if (timing.source === 'environment') {
+      log(
+        `[host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat ${timing.timing.heartbeatMs}ms, ttl ${timing.timing.ttlMs}ms, grace ${timing.timing.graceMs}ms`
+      )
+    }
+    if (persist) log(`[host-lease] ${HOST_PERSIST_ENV}=1: the last-lease grace exit is disabled`)
+    const leases = new HostLeaseRegistry({
+      timing: timing.timing,
+      persist,
+      liveWork: () => this.liveRunCount(),
+      onExit: (reason) => this.onLeaseExit(reason),
+      log,
+      ...(this.options.leasePorts ? { ports: this.options.leasePorts } : {})
+    })
+    this.leaseTickUnsubscribe = leases.subscribeTick((info) => this.onLeaseTick(info))
+    return leases
+  }
+
+  /**
+   * Live work the last-lease grace must not cut off: every provider run this
+   * process is executing or has queued. The Host-wide run gate holds an
+   * admission from `composer.send` (the only command that starts a provider
+   * run) until the run's completion settles, so its occupancy is exactly the
+   * in-process work — a superset of `hasRuntimeWorkForThread` over every
+   * thread. A persisted run still projected `running` with no admission here
+   * is a stale record, not work: nothing in this process would be lost by the
+   * exit, and counting it would pin every such Host to the busy cap.
+   */
+  private liveRunCount(): number {
+    const domain = this.domain
+    if (!domain || typeof domain.runAdmissionOccupancy !== 'function') return 0
+    const occupancy = domain.runAdmissionOccupancy()
+    return occupancy.inflight + occupancy.queued
+  }
+
+  private onLeaseExit(reason: HostLeaseExitReason): void {
+    process.stderr.write(`taskwraith-host: stopping after the last client lease (${reason})\n`)
+    void this.stop().catch(() => undefined)
+  }
+
+  private onLeaseTick(info: HostLeaseTickInfo): void {
+    const registry = this.options.registry
+    if (!registry || !this.registryPublished || !this.leases) return
+    if (info.awakeMs - this.registryLastRefreshAwakeMs < HOST_REGISTRY_REFRESH_MS) return
+    this.registryLastRefreshAwakeMs = info.awakeMs
+    const summary = this.leases.summary()
+    try {
+      registry.refresh({
+        holders: summary.holders,
+        implicitHolders: summary.implicitHolders,
+        lifetimePhase: summary.phase
+      })
+    } catch (error) {
+      process.stderr.write(`taskwraith-host: registry refresh failed: ${String(error)}\n`)
+    }
+    let verdict: ReturnType<HostRegistryPublisherPort['check']>
+    try {
+      verdict = registry.check()
+    } catch (error) {
+      process.stderr.write(`taskwraith-host: registry self-check failed: ${String(error)}\n`)
+      verdict = 'unreadable'
+    }
+    if (verdict === 'missing' || verdict === 'foreign') {
+      this.registrySelfCheckStrikes += 1
+      if (this.registrySelfCheckStrikes >= HOST_REGISTRY_SELF_CHECK_STRIKES) {
+        process.stderr.write(
+          `taskwraith-host: registry entry ${verdict} on ${this.registrySelfCheckStrikes} consecutive checks; stopping\n`
+        )
+        void this.stop().catch(() => undefined)
+      }
+      return
+    }
+    // `present` clears the streak; `unreadable` breaks it too — a flaky disk
+    // or a rename race must never take a healthy Host down.
+    this.registrySelfCheckStrikes = 0
+  }
+
+  private publishRegistryEntry(): void {
+    const registry = this.options.registry
+    if (!registry || !this.lease || !this.identity || !this.leases) return
+    const summary = this.leases.summary()
+    try {
+      registry.publish({
+        profilePath: this.lease.path,
+        pid: process.pid,
+        // The discovery record's instant, so the two artefacts agree.
+        startedAt: this.listener?.startedAt ?? new Date().toISOString(),
+        hostId: this.identity.hostId,
+        ...(this.composition?.perf.identity.bootEpoch
+          ? { bootEpoch: this.composition.perf.identity.bootEpoch }
+          : {}),
+        ...(this.options.payloadVersion ? { payloadVersion: this.options.payloadVersion } : {}),
+        ...(this.listener?.socketPath ? { socketPath: this.listener.socketPath } : {}),
+        ...(this.listener?.discoveryPath ? { discoveryPath: this.listener.discoveryPath } : {}),
+        persist: summary.persist,
+        leaseMode: 'lease',
+        holders: summary.holders,
+        implicitHolders: summary.implicitHolders,
+        lifetimePhase: summary.phase
+      })
+      this.registryPublished = true
+    } catch (error) {
+      process.stderr.write(`taskwraith-host: registry publish failed: ${String(error)}\n`)
+    }
+  }
+
+  private removeRegistryEntry(): void {
+    if (!this.registryPublished) return
+    this.registryPublished = false
+    try {
+      this.options.registry?.remove()
+    } catch (error) {
+      process.stderr.write(`taskwraith-host: registry remove failed: ${String(error)}\n`)
+    }
   }
 
   private installSignals(): void {

@@ -49,17 +49,23 @@ import {
   type HostLocalTransportClientFrame,
   type HostLocalTransportError,
   type HostLocalTransportHostFrame,
+  type HostLocalTransportLeaseParams,
   type HostLocalTransportReceiptLookupParams,
   type HostLocalTransportSuccessResult,
   type HostWorkspaceGitReadParams
 } from '../shared/hostProtocolTransport'
 import {
   HOST_PROTOCOL_VERSION,
+  HOST_STATUS_MAX_CLIENTS,
+  decodeHostStatusProjection,
   isBootEpoch,
   type HostCommand,
   type HostCursorPosition,
-  type HostDeltaEnvelope
+  type HostDeltaEnvelope,
+  type HostStatusClientProjection,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
+import { HostLeaseRegistry, type HostLeaseSummary } from './HostLeaseRegistry'
 import type {
   HostHistorySinceRequest,
   HostThreadHistoryRequest
@@ -86,8 +92,16 @@ const REQUIRED_READ_CAPABILITY: Partial<Record<HostLocalTransportRequestKind, Ho
   'thread.catalogue': 'history',
   'thread.catalogue.maintenance': 'commands',
   'workspace.git.read': 'workspace-git',
-  'history.since': 'history'
+  'history.since': 'history',
+  'host.status': 'health'
 }
+
+/**
+ * Commands a draining Host refuses with `shutting_down`. Only work that starts
+ * a provider run: cancels, answers and decisions must keep flowing so the
+ * in-flight runs the drain exists for can actually finish.
+ */
+const RUN_STARTING_COMMAND_NAMES: ReadonlySet<string> = new Set(['composer.send'])
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -195,6 +209,21 @@ export interface HostLocalServerOptions {
    */
   subscribeDeltas?: (listener: (delta: HostDeltaEnvelope) => void) => () => void
   onAuthenticatedShutdown?: () => Promise<void> | void
+  /**
+   * Client lease registry (Host-lifetime programme). The production Host
+   * injects one wired to its own stop; a server built without one still
+   * answers `host.lease` and `host.status` from a registry that never asks
+   * anyone to exit, so an in-process or diagnostic Host keeps its lifetime.
+   * Leases are per socket: a lease is released the instant its socket drops.
+   */
+  leases?: HostLeaseRegistry
+  /**
+   * Test-only legacy-Host simulation (`TASKWRAITH_HOST_LEASE_DISABLED`):
+   * `disabled` answers `host.lease` and `host.status` exactly as a pre-lease
+   * Host's decoder does — `unknown_request_kind` on an authenticated
+   * connection it keeps, a destroyed socket before authentication.
+   */
+  leaseProtocol?: 'enabled' | 'disabled'
 }
 
 // ---------------------------------------------------------------------------
@@ -209,6 +238,10 @@ interface ClientState {
   handshakeTimer: ReturnType<typeof setTimeout>
   /** Deadlines already forgiven as Host stalls rather than client silence. */
   handshakeStallExtensions: number
+  /** Lease registry key — one per socket, never reused within a listener. */
+  connectionId: number
+  /** Host monotonic ms at accept, for `host.status` `connectedForMs`. */
+  connectedAtMs: number
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +380,10 @@ export class HostLocalServer {
     >
   private readonly token: string
   private readonly clients = new Set<ClientState>()
+  private readonly leases: HostLeaseRegistry
+  private readonly canonicalUserDataPath: string
+  private connectionSequence = 0
+  private listenerStartedAt: string | null = null
   private server: Server | null = null
   private ownsSocket = false
   private stopPromise: Promise<void> | null = null
@@ -393,7 +430,9 @@ export class HostLocalServer {
       throw new Error('Host local boot epoch is invalid.')
     }
     this.token = randomBytes(32).toString('hex')
+    this.leases = options.leases ?? new HostLeaseRegistry()
     const canonicalUserDataPath = realpathSync(options.userDataPath)
+    this.canonicalUserDataPath = canonicalUserDataPath
     this.socketPath = taskWraithHostSocketPath(canonicalUserDataPath, this.options.platform)
     this.tokenPath = taskWraithHostTokenPath(canonicalUserDataPath)
     this.discoveryPath = taskWraithHostDiscoveryPath(canonicalUserDataPath)
@@ -481,6 +520,10 @@ export class HostLocalServer {
       }
 
       this.started = true
+      this.listenerStartedAt = discovery.startedAt
+      // Ticking begins with zero holders, so a Host nobody attaches to is on
+      // its grace clock from the moment it is reachable.
+      this.leases.start()
       this.options.log?.(`[host-local-server] listening at ${this.socketPath}`)
     } catch (error) {
       this.server = null
@@ -537,6 +580,7 @@ export class HostLocalServer {
     // ordering matters for Windows named pipes, where closing the last
     // connection can otherwise race the close callback and leave stop() pending.
     this.clearDeltaSubscription()
+    this.leases.stop()
     await this.drainInFlightDispatches()
     await this.disconnectClients()
     await closePromise
@@ -569,6 +613,7 @@ export class HostLocalServer {
   stopSync(): void {
     this.shutdownState = 'stopping'
     this.clearDeltaSubscription()
+    this.leases.stop()
     this.disconnectClientsSync()
     const server = this.server
     this.server = null
@@ -611,9 +656,19 @@ export class HostLocalServer {
     return this.started
   }
 
+  /** The discovery record's `startedAt` (listener start), once listening. */
+  get startedAt(): string | null {
+    return this.listenerStartedAt
+  }
+
   /** Number of live connections (test / diagnostics only). */
   clientCount(): number {
     return this.clients.size
+  }
+
+  /** Holder counts and lifetime phase from the lease registry (test / diagnostics only). */
+  leaseSummary(): HostLeaseSummary {
+    return this.leases.summary()
   }
 
   // -----------------------------------------------------------------------
@@ -761,13 +816,16 @@ export class HostLocalServer {
     }
     socket.setEncoding('utf8')
     socket.setNoDelay(true)
+    this.connectionSequence += 1
     const state: ClientState = {
       socket,
       authenticated: false,
       binding: null,
       buffer: '',
       handshakeTimer: setTimeout(() => undefined, 0),
-      handshakeStallExtensions: 0
+      handshakeStallExtensions: 0,
+      connectionId: this.connectionSequence,
+      connectedAtMs: this.leases.nowMs()
     }
     clearTimeout(state.handshakeTimer)
     this.armHandshakeDeadline(state)
@@ -780,6 +838,9 @@ export class HostLocalServer {
   private drop(state: ClientState): void {
     clearTimeout(state.handshakeTimer)
     this.clients.delete(state)
+    // A crashed peer is a kernel close; its lease goes with the socket, so
+    // the heartbeat only has to cover the wedged-but-alive client.
+    this.leases.closed(state.connectionId)
   }
 
   private onData(state: ClientState, chunk: string): void {
@@ -813,6 +874,20 @@ export class HostLocalServer {
           state.socket,
           errorFrame(String((raw as { id?: unknown }).id ?? ''), decoded.error)
         )
+      } else {
+        state.socket.destroy()
+      }
+      return
+    }
+
+    if (
+      this.options.leaseProtocol === 'disabled' &&
+      decoded.value.type === 'request' &&
+      (decoded.value.kind === 'host.lease' || decoded.value.kind === 'host.status')
+    ) {
+      // The branch above, as a decoder that predates both kinds takes it.
+      if (state.authenticated) {
+        socketWrite(state.socket, errorFrame(decoded.value.id, { code: 'unknown_request_kind' }))
       } else {
         state.socket.destroy()
       }
@@ -933,6 +1008,9 @@ export class HostLocalServer {
     }
 
     state.binding = bindResult.value
+    // Authenticated and silent about leases is an implicit holder (an older
+    // client build); its first `host.lease` frame converts it.
+    this.leases.authenticated(state.connectionId)
 
     // The epoch is attached here rather than inside the binding because the
     // session owns capability negotiation, not process identity. `binding`
@@ -988,9 +1066,19 @@ export class HostLocalServer {
       socketWrite(state.socket, errorFrame(frame.id, { code: 'unauthorized' }))
       return
     }
+    if (
+      frame.kind === 'command.submit' &&
+      RUN_STARTING_COMMAND_NAMES.has(frame.params.name) &&
+      this.leases.lifetimePhase === 'draining'
+    ) {
+      // Past its last-lease grace with runs still live: those finish, nothing
+      // new starts. Reads and run-continuing commands keep flowing.
+      socketWrite(state.socket, errorFrame(frame.id, { code: 'shutting_down' }))
+      return
+    }
 
     try {
-      const result = await this.executeRequest(context, frame)
+      const result = await this.executeRequest(state, context, frame)
       if (result === null) {
         socketWrite(state.socket, errorFrame(frame.id, { code: 'unknown_request_kind' }))
         return
@@ -1002,10 +1090,15 @@ export class HostLocalServer {
   }
 
   private async executeRequest(
+    state: ClientState,
     context: HostAuthorityCallContext,
     frame: Extract<HostLocalTransportClientFrame, { type: 'request' }>
   ): Promise<HostLocalTransportHostFrame | null> {
     switch (frame.kind) {
+      case 'host.lease':
+        return this.handleLease(state, frame.id, frame.params)
+      case 'host.status':
+        return this.handleStatus(frame.id)
       case 'snapshot.get':
         return this.handleSnapshot(context, frame.id)
       case 'deltas.since':
@@ -1299,6 +1392,108 @@ export class HostLocalServer {
       ok: true,
       result
     }
+  }
+
+  /**
+   * `host.lease` needs authentication only. Leases are keyed by the socket, so
+   * a foreign or stale lease id is `invalid_payload`; a registry that is no
+   * longer ticking answers `shutting_down`.
+   */
+  private handleLease(
+    state: ClientState,
+    id: string,
+    params: HostLocalTransportLeaseParams
+  ): HostLocalTransportHostFrame {
+    switch (params.action) {
+      case 'acquire': {
+        const acquired = this.leases.acquire(state.connectionId)
+        if (!acquired) return errorFrame(id, { code: 'shutting_down' })
+        // Field by field: the result shape is a closed wire union, not
+        // whatever the registry's return type grows into.
+        return this.success(id, {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: acquired.leaseId,
+          heartbeatMs: acquired.heartbeatMs,
+          ttlMs: acquired.ttlMs,
+          hostNowMs: acquired.hostNowMs
+        })
+      }
+      case 'renew': {
+        const renewed = this.leases.renew(state.connectionId, params.leaseId)
+        if (!renewed) return errorFrame(id, { code: 'invalid_payload' })
+        return this.success(id, {
+          kind: 'host.lease',
+          action: 'renew',
+          leaseId: renewed.leaseId,
+          expiresInMs: renewed.expiresInMs,
+          hostNowMs: renewed.hostNowMs
+        })
+      }
+      case 'release':
+        if (!this.leases.release(state.connectionId, params.leaseId)) {
+          return errorFrame(id, { code: 'invalid_payload' })
+        }
+        return this.success(id, { kind: 'host.lease', action: 'release', released: true })
+      case 'decline':
+        if (!this.leases.decline(state.connectionId)) {
+          return errorFrame(id, { code: 'shutting_down' })
+        }
+        return this.success(id, { kind: 'host.lease', action: 'decline', declined: true })
+    }
+  }
+
+  private handleStatus(id: string): HostLocalTransportHostFrame {
+    const summary = this.leases.summary()
+    const nowMs = this.leases.nowMs()
+    const clients: HostStatusClientProjection[] = []
+    for (const client of this.clients) {
+      if (!client.authenticated || !client.binding) continue
+      if (clients.length >= HOST_STATUS_MAX_CLIENTS) break
+      const identity = client.binding.authenticatedClient
+      clients.push({
+        clientClass: identity.clientClass,
+        // A paired phone's clientId is its pair id and its subjectId its
+        // device key; neither is for the other clients to see.
+        ...(identity.clientClass === 'ios' ? {} : { clientId: identity.clientId }),
+        ...(identity.displayName !== undefined ? { displayName: identity.displayName } : {}),
+        connectedForMs: Math.max(0, nowMs - client.connectedAtMs),
+        lease: this.leases.stateOf(client.connectionId),
+        capabilities: [...client.binding.welcome.capabilities]
+      })
+    }
+    const status: HostStatusProjection = {
+      pid: process.pid,
+      startedAt: this.listenerStartedAt ?? new Date(this.options.now()).toISOString(),
+      // The Host's own monotonic clock, never a client's Date.now() arithmetic.
+      uptimeMs: Math.round(process.uptime() * 1000),
+      hostId: this.options.hostId,
+      ...(this.options.bootEpoch === undefined ? {} : { bootEpoch: this.options.bootEpoch }),
+      ...(this.options.payloadVersion === undefined
+        ? {}
+        : { payloadVersion: this.options.payloadVersion }),
+      profilePath: this.canonicalUserDataPath,
+      persist: summary.persist,
+      lifetime: {
+        phase: summary.phase,
+        ...(summary.graceRemainingMs === undefined
+          ? {}
+          : { graceRemainingMs: summary.graceRemainingMs }),
+        holders: summary.holders,
+        implicitHolders: summary.implicitHolders,
+        declined: summary.declined
+      },
+      liveWork: { runs: this.leases.liveRuns() },
+      clients
+    }
+    // Assembled from free-form identity fields, so it is decoded before it
+    // goes out: a status this Host would refuse to read is not sent.
+    const decoded = decodeHostStatusProjection(status)
+    if (!decoded.ok) {
+      this.options.log?.(`[host-local-server] status projection is invalid: ${decoded.error}`)
+      return errorFrame(id, { code: 'host_unavailable' })
+    }
+    return this.success(id, { kind: 'host.status', status: decoded.value })
   }
 
   private async handleCommand(

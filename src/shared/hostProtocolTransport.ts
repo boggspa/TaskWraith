@@ -32,7 +32,8 @@ import type {
   HostCursorPosition,
   HostDeltasFrame,
   HostHealthFrame,
-  HostSnapshotFrame
+  HostSnapshotFrame,
+  HostStatusProjection
 } from './hostProtocol'
 import { PROVIDER_MODEL_CATALOG_MAX_MODELS_PER_PROVIDER } from './providerModelCatalogLimits'
 import type { TaskWraithControlThreadOffers } from './taskWraithControlProtocol'
@@ -173,10 +174,23 @@ export const HOST_LOCAL_TRANSPORT_REQUEST_KINDS = [
   'health.get',
   'host.shutdown',
   'command.submit',
-  'twmission.export'
+  'twmission.export',
+  // Host-lifetime programme: request kinds only. An old Host answers both with
+  // `unknown_request_kind` on a connection it keeps, the one additive change
+  // this wire tolerates in both directions; a new capability name would break
+  // every old client's welcome decode, and a new event would just be skipped.
+  'host.lease',
+  'host.status'
 ] as const
 
 export type HostLocalTransportRequestKind = (typeof HOST_LOCAL_TRANSPORT_REQUEST_KINDS)[number]
+
+/** Closed `host.lease` params; anything else is `invalid_payload`. */
+export type HostLocalTransportLeaseParams =
+  | { action: 'acquire' }
+  | { action: 'renew'; leaseId: string }
+  | { action: 'release'; leaseId: string }
+  | { action: 'decline' }
 
 export const HOST_LOCAL_TRANSPORT_EVENT_KINDS = [
   'deltas',
@@ -311,6 +325,20 @@ export type HostLocalTransportRequest =
       kind: 'twmission.export'
       params: Record<string, never>
     }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'host.lease'
+      params: HostLocalTransportLeaseParams
+    }
+  | {
+      type: 'request'
+      transportVersion: HostLocalTransportVersion
+      id: string
+      kind: 'host.status'
+      params: Record<string, never>
+    }
 
 export type HostLocalTransportClientFrame = HostLocalTransportHello | HostLocalTransportRequest
 
@@ -339,6 +367,24 @@ export type HostLocalTransportSuccessResult =
   | { kind: 'host.shutdown'; state: 'stopping' | 'already_stopping' }
   | { kind: 'command.submit'; receipt: HostCommandReceipt }
   | { kind: 'twmission.export'; result: Record<string, unknown> }
+  | {
+      kind: 'host.lease'
+      action: 'acquire'
+      leaseId: string
+      heartbeatMs: number
+      ttlMs: number
+      /** Host monotonic ms, display only — never compared with a client clock. */
+      hostNowMs: number
+    }
+  | { kind: 'host.lease'; action: 'renew'; leaseId: string; expiresInMs: number; hostNowMs: number }
+  | { kind: 'host.lease'; action: 'release'; released: true }
+  | { kind: 'host.lease'; action: 'decline'; declined: true }
+  /**
+   * Shape-checked here; the consumer applies hostProtocol's strict
+   * `decodeHostStatusProjection`, exactly as snapshot and health frames are
+   * deep-decoded past this layer.
+   */
+  | { kind: 'host.status'; status: HostStatusProjection }
 
 export type HostLocalTransportResponse =
   | {
@@ -686,6 +732,30 @@ function decodeProviderIdParams(
   return { ok: true, value: { providerId: value.providerId } }
 }
 
+function isPositiveInt(value: unknown): value is number {
+  return isNonNegativeInt(value) && value > 0
+}
+
+function decodeLeaseParams(
+  value: unknown
+): HostLocalTransportDecodeResult<HostLocalTransportLeaseParams> {
+  if (!isRecord(value)) return fail('invalid_payload')
+  switch (value.action) {
+    case 'acquire':
+    case 'decline':
+      if (Object.keys(value).length !== 1) return fail('invalid_payload')
+      return { ok: true, value: { action: value.action } }
+    case 'renew':
+    case 'release':
+      if (Object.keys(value).length !== 2 || !isBoundedId(value.leaseId)) {
+        return fail('invalid_payload')
+      }
+      return { ok: true, value: { action: value.action, leaseId: value.leaseId } }
+    default:
+      return fail('invalid_payload')
+  }
+}
+
 export function decodeHostWorkspaceGitReadParams(
   value: unknown
 ): HostLocalTransportDecodeResult<HostWorkspaceGitReadParams> {
@@ -932,6 +1002,69 @@ function decodeSuccessResult(
     case 'twmission.export':
       if (!isRecord(value.result)) return fail('invalid_payload')
       return { ok: true, value: { kind: 'twmission.export', result: value.result } }
+    case 'host.lease':
+      switch (value.action) {
+        case 'acquire':
+          if (
+            Object.keys(value).length !== 6 ||
+            !isBoundedId(value.leaseId) ||
+            !isPositiveInt(value.heartbeatMs) ||
+            !isPositiveInt(value.ttlMs) ||
+            !isNonNegativeInt(value.hostNowMs)
+          ) {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: {
+              kind: 'host.lease',
+              action: 'acquire',
+              leaseId: value.leaseId,
+              heartbeatMs: value.heartbeatMs,
+              ttlMs: value.ttlMs,
+              hostNowMs: value.hostNowMs
+            }
+          }
+        case 'renew':
+          if (
+            Object.keys(value).length !== 5 ||
+            !isBoundedId(value.leaseId) ||
+            !isNonNegativeInt(value.expiresInMs) ||
+            !isNonNegativeInt(value.hostNowMs)
+          ) {
+            return fail('invalid_payload')
+          }
+          return {
+            ok: true,
+            value: {
+              kind: 'host.lease',
+              action: 'renew',
+              leaseId: value.leaseId,
+              expiresInMs: value.expiresInMs,
+              hostNowMs: value.hostNowMs
+            }
+          }
+        case 'release':
+          if (Object.keys(value).length !== 3 || value.released !== true) {
+            return fail('invalid_payload')
+          }
+          return { ok: true, value: { kind: 'host.lease', action: 'release', released: true } }
+        case 'decline':
+          if (Object.keys(value).length !== 3 || value.declined !== true) {
+            return fail('invalid_payload')
+          }
+          return { ok: true, value: { kind: 'host.lease', action: 'decline', declined: true } }
+        default:
+          return fail('invalid_payload')
+      }
+    case 'host.status':
+      if (Object.keys(value).length !== 2 || !isRecord(value.status)) {
+        return fail('invalid_payload')
+      }
+      return {
+        ok: true,
+        value: { kind: 'host.status', status: value.status as unknown as HostStatusProjection }
+      }
     default:
       return fail('invalid_payload')
   }
@@ -1181,6 +1314,33 @@ export function decodeHostLocalTransportClientFrame(
             transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
             id: id.value,
             kind: 'twmission.export',
+            params: {}
+          }
+        }
+      }
+      case 'host.lease': {
+        const params = decodeLeaseParams(value.params)
+        if (!params.ok) return params
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.lease',
+            params: params.value
+          }
+        }
+      }
+      case 'host.status': {
+        if (!isEmptyParams(value.params)) return fail('invalid_payload')
+        return {
+          ok: true,
+          value: {
+            type: 'request',
+            transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+            id: id.value,
+            kind: 'host.status',
             params: {}
           }
         }

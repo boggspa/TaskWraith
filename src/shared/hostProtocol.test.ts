@@ -28,6 +28,8 @@ import {
   decodeHostDeltasSinceResult,
   decodeHostHealthFrame,
   decodeHostHealthProjection,
+  decodeHostStatusProjection,
+  HOST_STATUS_MAX_CLIENTS,
   decodeHostSnapshot,
   decodeHostSnapshotFrame,
   evaluateHostIdempotencyFingerprints,
@@ -40,7 +42,8 @@ import {
   type HostCommand,
   type HostCommandReceipt,
   type HostCapability,
-  type HostDeltaEnvelope
+  type HostDeltaEnvelope,
+  type HostStatusProjection
 } from './hostProtocol'
 
 const client = {
@@ -1715,5 +1718,121 @@ describe('Host protocol Wave 2D-1 read frames', () => {
       })
       expect(decodeHostSnapshot(JSON.parse(JSON.stringify(snapshot))).ok).toBe(false)
     })
+  })
+})
+
+describe('decodeHostStatusProjection (Host-lifetime programme)', () => {
+  const EPOCH = 'e'.repeat(64)
+  const valid = (): HostStatusProjection => ({
+    pid: 4242,
+    startedAt: '2026-09-23T00:00:00.000Z',
+    uptimeMs: 123_456,
+    hostId: 'host-1',
+    bootEpoch: EPOCH,
+    payloadVersion: `sha256:${'a'.repeat(64)}`,
+    profilePath: '/profiles/one',
+    persist: false,
+    lifetime: {
+      phase: 'grace',
+      graceRemainingMs: 30_000,
+      holders: 0,
+      implicitHolders: 0,
+      declined: 1
+    },
+    liveWork: { runs: 0 },
+    clients: [
+      {
+        clientClass: 'tui',
+        clientId: 'tui-1',
+        displayName: 'Terminal',
+        connectedForMs: 1_000,
+        lease: 'explicit',
+        capabilities: ['bootstrap', 'health']
+      },
+      { clientClass: 'ios', connectedForMs: 5, lease: 'declined', capabilities: ['bootstrap'] }
+    ]
+  })
+
+  it('decodes a full projection and drops unknown keys at every level', () => {
+    const padded = {
+      ...valid(),
+      secret: 'nope',
+      lifetime: { ...valid().lifetime, token: 'nope' },
+      liveWork: { runs: 2, threads: ['t'] },
+      clients: [{ ...valid().clients[0], subjectId: 'device-key' }]
+    }
+    const decoded = decodeHostStatusProjection(padded)
+    expect(decoded).toEqual({
+      ok: true,
+      value: { ...valid(), liveWork: { runs: 2 }, clients: [valid().clients[0]] }
+    })
+    expect(JSON.stringify(decoded)).not.toContain('nope')
+    expect(JSON.stringify(decoded)).not.toContain('device-key')
+  })
+
+  it('keeps optional fields absent, not undefined, when the wire omits them', () => {
+    const minimal = valid()
+    delete minimal.bootEpoch
+    delete minimal.payloadVersion
+    minimal.lifetime = { phase: 'held', holders: 1, implicitHolders: 1, declined: 0 }
+    const decoded = decodeHostStatusProjection(minimal)
+    expect(decoded.ok).toBe(true)
+    if (!decoded.ok) return
+    for (const key of ['bootEpoch', 'payloadVersion']) {
+      expect(Object.prototype.hasOwnProperty.call(decoded.value, key)).toBe(false)
+    }
+    expect(Object.prototype.hasOwnProperty.call(decoded.value.lifetime, 'graceRemainingMs')).toBe(
+      false
+    )
+    expect(Object.prototype.hasOwnProperty.call(decoded.value.clients[1], 'clientId')).toBe(false)
+  })
+
+  it('fails closed on every out-of-bounds field', () => {
+    const cases: Array<[string, (value: ReturnType<typeof valid>) => unknown]> = [
+      ['pid zero', (v) => ({ ...v, pid: 0 })],
+      ['pid fractional', (v) => ({ ...v, pid: 1.5 })],
+      ['startedAt not a date', (v) => ({ ...v, startedAt: 'yesterday' })],
+      ['uptime negative', (v) => ({ ...v, uptimeMs: -1 })],
+      ['hostId empty', (v) => ({ ...v, hostId: '' })],
+      ['bootEpoch uppercase', (v) => ({ ...v, bootEpoch: 'E'.repeat(64) })],
+      ['payloadVersion unprefixed', (v) => ({ ...v, payloadVersion: 'a'.repeat(64) })],
+      ['profilePath empty', (v) => ({ ...v, profilePath: '' })],
+      ['profilePath oversized', (v) => ({ ...v, profilePath: `/${'p'.repeat(4_096)}` })],
+      ['startedAt oversized', (v) => ({ ...v, startedAt: `${v.startedAt}${' '.repeat(64)}` })],
+      ['persist string', (v) => ({ ...v, persist: 'yes' })],
+      ['phase unknown', (v) => ({ ...v, lifetime: { ...v.lifetime, phase: 'zombie' } })],
+      ['holders negative', (v) => ({ ...v, lifetime: { ...v.lifetime, holders: -1 } })],
+      ['grace fractional', (v) => ({ ...v, lifetime: { ...v.lifetime, graceRemainingMs: 0.5 } })],
+      ['liveWork missing', (v) => ({ ...v, liveWork: {} })],
+      ['client lease unknown', (v) => ({ ...v, clients: [{ ...v.clients[0], lease: 'maybe' }] })],
+      [
+        'client class unknown',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], clientClass: 'web' }] })
+      ],
+      [
+        'client id oversized',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], clientId: 'c'.repeat(513) }] })
+      ],
+      [
+        'client capability unknown',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], capabilities: ['teleport'] }] })
+      ],
+      [
+        'client displayName oversized',
+        (v) => ({ ...v, clients: [{ ...v.clients[0], displayName: 'x'.repeat(201) }] })
+      ],
+      [
+        'too many clients',
+        (v) => ({
+          ...v,
+          clients: Array.from({ length: HOST_STATUS_MAX_CLIENTS + 1 }, () => v.clients[1])
+        })
+      ]
+    ]
+    for (const [label, mutate] of cases) {
+      const decoded = decodeHostStatusProjection(mutate(valid()))
+      expect(decoded.ok, label).toBe(false)
+    }
+    expect(decodeHostStatusProjection(null).ok).toBe(false)
   })
 })

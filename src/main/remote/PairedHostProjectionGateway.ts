@@ -309,6 +309,10 @@ export class PairedHostProjectionGateway {
       case 'workspace.git.read':
       case 'history.since':
       case 'host.shutdown':
+      case 'host.lease':
+      case 'host.status':
+        // The lease kinds included: a phone never holds or inspects the Host
+        // itself; its keep-alive, when it has one, is a reason on main's lease.
         throw new PairedHostProjectionRequestError('unauthorized')
       case 'receipt.lookup':
         return {

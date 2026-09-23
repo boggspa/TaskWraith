@@ -15,7 +15,7 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -43,8 +43,9 @@ import type {
   HostAuthorityCallContext,
   HostAuthorityReceiptResult
 } from './HostAuthority'
-import type { HostSession, HostSessionBinding } from './HostSession'
+import { HostSession, type HostSessionBinding } from './HostSession'
 import { HostLocalServer } from './HostLocalServer'
+import { HOST_LEASE_DEFAULT_TIMING, HostLeaseRegistry } from './HostLeaseRegistry'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -2284,5 +2285,604 @@ describe('HostLocalServer', () => {
       expect(token).toMatch(/^[0-9a-f]{64}$/)
       expect(JSON.stringify(frame)).not.toContain(token)
     })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Host-lifetime programme: leases on the socket, host.status, draining
+// ---------------------------------------------------------------------------
+
+/**
+ * Wire goldens recorded from a pristine worktree at 2a71f9580 (the last commit
+ * before the lease slice; HostLocalServer, HostSession and both protocol
+ * modules are byte-identical there and at the slice's base) against a REAL
+ * HostSession with a fixed session id. The welcome, the health response, the
+ * shutdown walk and clientCount() must not move by a byte when leases land,
+ * and a pre-lease Host's answers to the two new kinds are what the legacy
+ * simulation has to reproduce.
+ */
+const GOLDEN_SESSION_ID = '0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f'
+const GOLDEN_EPOCH = 'd4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8'
+const PRE_LEASE_SERVER_GOLDENS = {
+  'welcome:plain':
+    '{"type":"welcome","transportVersion":1,"welcome":{"type":"host.welcome","protocolVersion":2,"controlProtocolCompat":1,"projectionVersion":2,"hostId":"golden-host","hostVersion":"node-host-v1","sessionId":"0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f","generation":3,"cursor":10,"authenticatedClient":{"clientId":"test-client","clientClass":"test","clientVersion":"1.0.0"},"capabilities":["bootstrap","snapshot","health"],"freshness":"live"}}',
+  'welcome:epoch':
+    '{"type":"welcome","transportVersion":1,"welcome":{"type":"host.welcome","protocolVersion":2,"controlProtocolCompat":1,"projectionVersion":2,"hostId":"golden-host","hostVersion":"node-host-v1","sessionId":"0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f","generation":3,"cursor":10,"authenticatedClient":{"clientId":"test-client","clientClass":"test","clientVersion":"1.0.0"},"capabilities":["bootstrap","snapshot","health"],"freshness":"live","bootEpoch":"d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8d4f6a1b8"}}',
+  'welcome:host-cli':
+    '{"type":"welcome","transportVersion":1,"welcome":{"type":"host.welcome","protocolVersion":2,"controlProtocolCompat":1,"projectionVersion":2,"hostId":"golden-host","hostVersion":"node-host-v1","sessionId":"0f0f0f0f-0f0f-4f0f-8f0f-0f0f0f0f0f0f","generation":3,"cursor":10,"authenticatedClient":{"clientId":"taskwraith-host-cli","clientClass":"host-cli","clientVersion":"1.0.0"},"capabilities":["bootstrap","host-lifecycle"],"freshness":"live"}}',
+  'response:health.get':
+    '{"type":"response","transportVersion":1,"id":"g-health","ok":true,"result":{"kind":"health.get","frame":{"type":"host.health","protocolVersion":2,"health":{"hostStatus":"ok","connectionPhase":"live","supervised":false,"freshness":"live"}}}}',
+  'shutdown:response':
+    '{"type":"response","transportVersion":1,"id":"shutdown-1","ok":true,"result":{"kind":"host.shutdown","state":"stopping"}}',
+  'shutdown:closingEvent':
+    '{"type":"event","transportVersion":1,"event":"host.closing","sequence":1}',
+  'legacy:host.lease':
+    '{"type":"response","transportVersion":1,"id":"lease-acquire","ok":false,"error":{"code":"unknown_request_kind"}}',
+  'legacy:host.status':
+    '{"type":"response","transportVersion":1,"id":"status-1","ok":false,"error":{"code":"unknown_request_kind"}}',
+  'legacy:health.get-after':
+    '{"type":"response","transportVersion":1,"id":"health-after","ok":true,"result":{"kind":"health.get","frame":{"type":"host.health","protocolVersion":2,"health":{"hostStatus":"ok","connectionPhase":"live","supervised":false,"freshness":"live"}}}}'
+} as const
+
+const LEASE_TEST_CAPABILITY_OFFER: HostCapability[] = [
+  'bootstrap',
+  'snapshot',
+  'deltas',
+  'health',
+  'host-lifecycle',
+  'commands'
+]
+
+function goldenSession(): HostSession {
+  return new HostSession({
+    host: { hostId: 'golden-host', hostVersion: 'node-host-v1' },
+    runtime: { getPosition: () => ({ generation: 3, cursor: 10 }) },
+    hostCapabilityOffer: LEASE_TEST_CAPABILITY_OFFER,
+    sessionIdFactory: () => GOLDEN_SESSION_ID
+  })
+}
+
+/** A real session that can bind more than one client (fresh ids per binding). */
+function leaseSession(): HostSession {
+  return new HostSession({
+    host: { hostId: 'golden-host', hostVersion: 'node-host-v1' },
+    runtime: { getPosition: () => ({ generation: 3, cursor: 10 }) },
+    hostCapabilityOffer: LEASE_TEST_CAPABILITY_OFFER
+  })
+}
+
+/** Raw line reader: goldens are compared as the bytes on the wire, not as parsed objects. */
+function connectRawClient(socketPath: string): Promise<{
+  writeLine: (line: string) => void
+  readLine: () => Promise<string>
+  closed: Promise<void>
+  close: () => void
+}> {
+  const net = require('node:net') as typeof import('node:net')
+  return new Promise((resolve, reject) => {
+    const socket = net.createConnection(socketPath)
+    socket.setEncoding('utf8')
+    let buffer = ''
+    const lines: string[] = []
+    const waiters: Array<(line: string) => void> = []
+    const closed = new Promise<void>((done) => socket.once('close', () => done()))
+    socket.on('data', (chunk: string) => {
+      buffer += chunk
+      let newline = buffer.indexOf('\n')
+      while (newline >= 0) {
+        const line = buffer.slice(0, newline)
+        buffer = buffer.slice(newline + 1)
+        const waiter = waiters.shift()
+        if (waiter) waiter(line)
+        else lines.push(line)
+        newline = buffer.indexOf('\n')
+      }
+    })
+    socket.once('connect', () =>
+      resolve({
+        writeLine: (line) => socket.write(`${line}\n`),
+        readLine: () =>
+          new Promise((res) => {
+            const queued = lines.shift()
+            if (queued !== undefined) res(queued)
+            else waiters.push(res)
+          }),
+        closed,
+        close: () => socket.destroy()
+      })
+    )
+    socket.once('error', reject)
+  })
+}
+
+function leaseRequest(id: string, params: Record<string, unknown>): string {
+  return JSON.stringify({
+    type: 'request',
+    transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+    id,
+    kind: 'host.lease',
+    params
+  })
+}
+
+function leaseIdOf(frame: HostLocalTransportHostFrame): string {
+  if (
+    frame.type !== 'response' ||
+    !frame.ok ||
+    frame.result.kind !== 'host.lease' ||
+    frame.result.action !== 'acquire'
+  ) {
+    throw new Error(`expected an acquired lease, got ${JSON.stringify(frame)}`)
+  }
+  return frame.result.leaseId
+}
+
+async function settleClientCount(target: HostLocalServer, expected: number): Promise<void> {
+  for (let i = 0; i < 100 && target.clientCount() !== expected; i++) {
+    await new Promise((r) => setTimeout(r, 10))
+  }
+}
+
+/** A bounded registry on a stepped clock: `advance(ms)` moves time and ticks once. */
+function steppedLeases(options: { graceMs?: number; liveWork?: () => number; exits?: string[] }) {
+  let monoNs = 0n
+  const leases = new HostLeaseRegistry({
+    timing: { ...HOST_LEASE_DEFAULT_TIMING, graceMs: options.graceMs ?? 2_000 },
+    ...(options.liveWork ? { liveWork: options.liveWork } : {}),
+    onExit: (reason) => options.exits?.push(reason),
+    ports: {
+      monotonicNowNs: () => monoNs,
+      wallNowMs: () => Number(monoNs / 1_000_000n),
+      schedule: () => () => {}
+    }
+  })
+  const advance = (ms: number) => {
+    for (let elapsed = 0; elapsed < ms; elapsed += HOST_LEASE_DEFAULT_TIMING.tickMs) {
+      monoNs += BigInt(HOST_LEASE_DEFAULT_TIMING.tickMs) * 1_000_000n
+      leases.tick()
+    }
+  }
+  return { leases, advance }
+}
+
+describe('HostLocalServer leases (Host-lifetime programme)', () => {
+  const servers: HostLocalServer[] = []
+
+  afterEach(async () => {
+    for (const server of servers.splice(0)) {
+      try {
+        await server.stop()
+      } catch {
+        // already stopped
+      }
+    }
+  })
+
+  function startServer(
+    overrides: Partial<ConstructorParameters<typeof HostLocalServer>[0]> = {}
+  ): HostLocalServer {
+    const server = new HostLocalServer({
+      userDataPath: tmpUserDataPath(),
+      hostId: 'golden-host',
+      hostVersion: 'node-host-v1',
+      session: leaseSession(),
+      authority: mockHostAuthority() as unknown as HostAuthority,
+      now: () => 1754300000000,
+      ...overrides
+    })
+    servers.push(server)
+    return server
+  }
+
+  async function token(server: HostLocalServer): Promise<string> {
+    return readFileSync(server.tokenPath, 'utf8').trim()
+  }
+
+  async function authenticated(
+    server: HostLocalServer,
+    capabilities: readonly HostCapability[] = ['bootstrap', 'snapshot', 'health'],
+    client: {
+      clientId: string
+      clientClass: HostClientClass
+      clientVersion: string
+      displayName?: string
+    } = { clientId: 'test-client', clientClass: 'test', clientVersion: '1.0.0' }
+  ) {
+    const connection = await connectClient(server.socketPath)
+    connection.writeLine(JSON.stringify(makeClientHello(await token(server), capabilities, client)))
+    const welcome = await connection.readFrame()
+    expect(welcome.type).toBe('welcome')
+    return connection
+  }
+
+  it('leaves the welcome, health, shutdown walk and clientCount byte-identical to the pre-lease goldens', async () => {
+    const plain = startServer({
+      session: goldenSession(),
+      payloadVersion: `sha256:${'c'.repeat(64)}`
+    })
+    await plain.start()
+    const c1 = await connectRawClient(plain.socketPath)
+    c1.writeLine(JSON.stringify(makeClientHello(await token(plain))))
+    expect(await c1.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['welcome:plain'])
+    expect(plain.clientCount()).toBe(1)
+    c1.writeLine(JSON.stringify(makeRequest('health.get', 'g-health')))
+    expect(await c1.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['response:health.get'])
+    c1.close()
+    await settleClientCount(plain, 0)
+    expect(plain.clientCount()).toBe(0)
+    await plain.stop()
+
+    const epoch = startServer({ session: goldenSession(), bootEpoch: GOLDEN_EPOCH })
+    await epoch.start()
+    const c2 = await connectRawClient(epoch.socketPath)
+    c2.writeLine(JSON.stringify(makeClientHello(await token(epoch))))
+    expect(await c2.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['welcome:epoch'])
+    c2.close()
+    await epoch.stop()
+
+    const shutdownServer: HostLocalServer = startServer({
+      session: goldenSession(),
+      onAuthenticatedShutdown: () => shutdownServer.stop(),
+      shutdownDrainTimeoutMs: 50
+    })
+    await shutdownServer.start()
+    const c3 = await connectRawClient(shutdownServer.socketPath)
+    c3.writeLine(
+      JSON.stringify(
+        makeClientHello(await token(shutdownServer), ['bootstrap', 'host-lifecycle'], {
+          clientId: 'taskwraith-host-cli',
+          clientClass: 'host-cli',
+          clientVersion: '1.0.0'
+        })
+      )
+    )
+    expect(await c3.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['welcome:host-cli'])
+    c3.writeLine(JSON.stringify(makeRequest('host.shutdown', 'shutdown-1', {})))
+    expect(await c3.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['shutdown:response'])
+    expect(await c3.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['shutdown:closingEvent'])
+    await vi.waitFor(() => expect(shutdownServer.isStarted).toBe(false))
+    c3.close()
+  })
+
+  it('answers the lease kinds exactly as a pre-lease Host when the lease protocol is disabled', async () => {
+    const legacy = startServer({ leaseProtocol: 'disabled' })
+    await legacy.start()
+    const c = await connectRawClient(legacy.socketPath)
+    c.writeLine(JSON.stringify(makeClientHello(await token(legacy))))
+    expect(JSON.parse(await c.readLine())).toMatchObject({ type: 'welcome' })
+    c.writeLine(leaseRequest('lease-acquire', { action: 'acquire' }))
+    expect(await c.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['legacy:host.lease'])
+    c.writeLine(JSON.stringify(makeRequest('host.status', 'status-1')))
+    expect(await c.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['legacy:host.status'])
+    // The connection is kept, exactly like the old decoder's error path.
+    c.writeLine(JSON.stringify(makeRequest('health.get', 'health-after')))
+    expect(await c.readLine()).toBe(PRE_LEASE_SERVER_GOLDENS['legacy:health.get-after'])
+    expect(legacy.clientCount()).toBe(1)
+    c.close()
+    for (const kind of ['host.lease', 'host.status'] as const) {
+      const unauthenticated = await connectRawClient(legacy.socketPath)
+      unauthenticated.writeLine(
+        kind === 'host.lease'
+          ? leaseRequest('no-auth', { action: 'acquire' })
+          : JSON.stringify(makeRequest('host.status', 'no-auth'))
+      )
+      await unauthenticated.closed
+    }
+  })
+
+  it('never arms a grace for a listener built without a registry: its embedder owns the lifetime', async () => {
+    const server = startServer()
+    await server.start()
+    expect(server.leaseSummary()).toMatchObject({ phase: 'held', holders: 0 })
+    const client = await authenticated(server)
+    client.close()
+    await vi.waitFor(() => expect(server.leaseSummary().holders).toBe(0))
+    expect(server.leaseSummary().phase).toBe('held')
+  })
+
+  it('counts a lease-less authenticated socket as a holder and releases it on close', async () => {
+    const { leases } = steppedLeases({})
+    const server = startServer({ leases })
+    await server.start()
+    expect(server.leaseSummary()).toMatchObject({ phase: 'grace', holders: 0 })
+    const client = await authenticated(server)
+    expect(server.leaseSummary()).toMatchObject({
+      phase: 'held',
+      holders: 1,
+      implicitHolders: 1,
+      explicitHolders: 0
+    })
+    client.close()
+    await vi.waitFor(() => expect(server.leaseSummary().holders).toBe(0))
+    expect(server.leaseSummary()).toMatchObject({ phase: 'grace', implicitHolders: 0 })
+  })
+
+  it("releases a socket's explicit lease the instant the socket closes", async () => {
+    const { leases } = steppedLeases({})
+    const server = startServer({ leases })
+    await server.start()
+    const holder = await authenticated(server)
+    holder.writeLine(leaseRequest('l-acquire', { action: 'acquire' }))
+    leaseIdOf(await holder.readFrame())
+    expect(server.leaseSummary()).toMatchObject({ phase: 'held', explicitHolders: 1, holders: 1 })
+    holder.close()
+    await vi.waitFor(() => expect(server.leaseSummary().explicitHolders).toBe(0))
+    expect(server.leaseSummary()).toMatchObject({ phase: 'grace', holders: 0 })
+  })
+
+  it('acquires, renews and releases a lease on the socket, and refuses a foreign lease id', async () => {
+    const { leases } = steppedLeases({})
+    const server = startServer({ leases })
+    await server.start()
+    const holder = await authenticated(server)
+    holder.writeLine(leaseRequest('l-acquire', { action: 'acquire' }))
+    const acquired = await holder.readFrame()
+    expect(acquired).toMatchObject({
+      type: 'response',
+      id: 'l-acquire',
+      ok: true,
+      result: {
+        kind: 'host.lease',
+        action: 'acquire',
+        heartbeatMs: HOST_LEASE_DEFAULT_TIMING.heartbeatMs,
+        ttlMs: HOST_LEASE_DEFAULT_TIMING.ttlMs,
+        hostNowMs: 0
+      }
+    })
+    const leaseId = leaseIdOf(acquired)
+    expect(server.leaseSummary()).toMatchObject({ explicitHolders: 1, implicitHolders: 0 })
+
+    const other = await authenticated(server, ['bootstrap'], {
+      clientId: 'other-client',
+      clientClass: 'test',
+      clientVersion: '1.0.0'
+    })
+    other.writeLine(leaseRequest('l-foreign', { action: 'renew', leaseId }))
+    expect(await other.readFrame()).toMatchObject({
+      id: 'l-foreign',
+      ok: false,
+      error: { code: 'invalid_payload' }
+    })
+    other.writeLine(leaseRequest('l-foreign-release', { action: 'release', leaseId }))
+    expect(await other.readFrame()).toMatchObject({ ok: false, error: { code: 'invalid_payload' } })
+    expect(server.leaseSummary()).toMatchObject({ explicitHolders: 1, implicitHolders: 1 })
+
+    holder.writeLine(leaseRequest('l-renew', { action: 'renew', leaseId }))
+    expect(await holder.readFrame()).toMatchObject({
+      ok: true,
+      result: {
+        kind: 'host.lease',
+        action: 'renew',
+        leaseId,
+        expiresInMs: HOST_LEASE_DEFAULT_TIMING.ttlMs
+      }
+    })
+    holder.writeLine(leaseRequest('l-release', { action: 'release', leaseId }))
+    expect(await holder.readFrame()).toMatchObject({
+      ok: true,
+      result: { kind: 'host.lease', action: 'release', released: true }
+    })
+    expect(server.leaseSummary()).toMatchObject({ explicitHolders: 0, declined: 1, holders: 1 })
+    other.writeLine(leaseRequest('l-decline', { action: 'decline' }))
+    expect(await other.readFrame()).toMatchObject({
+      ok: true,
+      result: { kind: 'host.lease', action: 'decline', declined: true }
+    })
+    expect(server.leaseSummary()).toMatchObject({ holders: 0, declined: 2, phase: 'grace' })
+    holder.close()
+    other.close()
+  })
+
+  it('answers a renewal of a lapsed lease with invalid_payload and re-grants on the same socket', async () => {
+    const { leases, advance } = steppedLeases({ graceMs: 45_000 })
+    const server = startServer({ leases })
+    await server.start()
+    const holder = await authenticated(server)
+    holder.writeLine(leaseRequest('l-acquire', { action: 'acquire' }))
+    const first = leaseIdOf(await holder.readFrame())
+    advance(HOST_LEASE_DEFAULT_TIMING.ttlMs)
+    expect(server.leaseSummary()).toMatchObject({ explicitHolders: 0, phase: 'grace' })
+    holder.writeLine(leaseRequest('l-late', { action: 'renew', leaseId: first }))
+    expect(await holder.readFrame()).toMatchObject({
+      ok: false,
+      error: { code: 'invalid_payload' }
+    })
+    holder.writeLine(leaseRequest('l-again', { action: 'acquire' }))
+    const second = leaseIdOf(await holder.readFrame())
+    expect(second).not.toBe(first)
+    expect(server.leaseSummary()).toMatchObject({ explicitHolders: 1, phase: 'held' })
+    holder.close()
+  })
+
+  it('destroys an unauthenticated socket that sends host.lease, like any request', async () => {
+    const server = startServer()
+    await server.start()
+    const client = await connectRawClient(server.socketPath)
+    client.writeLine(leaseRequest('no-auth', { action: 'acquire' }))
+    await client.closed
+    await vi.waitFor(() => expect(server.clientCount()).toBe(0))
+    expect(server.leaseSummary().holders).toBe(0)
+  })
+
+  it('host.status refuses a client without health and describes clients, leases and lifetime for one with it', async () => {
+    const { leases } = steppedLeases({})
+    const server = startServer({
+      leases,
+      payloadVersion: `sha256:${'d'.repeat(64)}`,
+      bootEpoch: GOLDEN_EPOCH
+    })
+    await server.start()
+    const denied = await authenticated(server, ['bootstrap'])
+    denied.writeLine(JSON.stringify(makeRequest('host.status', 'status-denied')))
+    expect(await denied.readFrame()).toMatchObject({
+      id: 'status-denied',
+      ok: false,
+      error: { code: 'unauthorized' }
+    })
+
+    const phone = await authenticated(server, ['bootstrap', 'health'], {
+      clientId: 'pair-secret-id',
+      clientClass: 'ios',
+      clientVersion: '1.0.0',
+      displayName: 'Paired phone'
+    })
+    phone.writeLine(leaseRequest('phone-decline', { action: 'decline' }))
+    expect(await phone.readFrame()).toMatchObject({ ok: true })
+
+    const desktop = await authenticated(server, ['bootstrap'], {
+      clientId: 'taskwraith-desktop-lease',
+      clientClass: 'desktop',
+      clientVersion: '1.0.0'
+    })
+    desktop.writeLine(leaseRequest('desktop-acquire', { action: 'acquire' }))
+    leaseIdOf(await desktop.readFrame())
+
+    const holder = await authenticated(server, ['bootstrap', 'health', 'snapshot'], {
+      clientId: 'tui-1',
+      clientClass: 'tui',
+      clientVersion: '1.0.0'
+    })
+    holder.writeLine(leaseRequest('holder-acquire', { action: 'acquire' }))
+    leaseIdOf(await holder.readFrame())
+    holder.writeLine(JSON.stringify(makeRequest('host.status', 'status-1')))
+    const frame = await holder.readFrame()
+    expect(frame).toMatchObject({
+      type: 'response',
+      id: 'status-1',
+      ok: true,
+      result: {
+        kind: 'host.status',
+        status: {
+          pid: process.pid,
+          startedAt: new Date(1754300000000).toISOString(),
+          hostId: 'golden-host',
+          bootEpoch: GOLDEN_EPOCH,
+          payloadVersion: `sha256:${'d'.repeat(64)}`,
+          persist: false,
+          lifetime: { phase: 'held', holders: 3, implicitHolders: 1, declined: 1 },
+          liveWork: { runs: 0 }
+        }
+      }
+    })
+    if (frame.type !== 'response' || !frame.ok || frame.result.kind !== 'host.status') {
+      throw new Error('expected a host.status result')
+    }
+    const status = frame.result.status
+    expect(status.startedAt).toBe(server.startedAt)
+    expect(status.uptimeMs).toBeGreaterThanOrEqual(0)
+    expect(status.profilePath).toBe(dirname(server.discoveryPath))
+    expect(status.clients).toHaveLength(4)
+    expect(status.clients).toEqual([
+      expect.objectContaining({ clientClass: 'test', clientId: 'test-client', lease: 'implicit' }),
+      expect.objectContaining({
+        clientClass: 'ios',
+        displayName: 'Paired phone',
+        lease: 'declined'
+      }),
+      expect.objectContaining({
+        clientClass: 'desktop',
+        clientId: 'taskwraith-desktop-lease',
+        lease: 'explicit',
+        capabilities: ['bootstrap']
+      }),
+      expect.objectContaining({
+        clientClass: 'tui',
+        clientId: 'tui-1',
+        lease: 'explicit',
+        capabilities: ['bootstrap', 'snapshot', 'health']
+      })
+    ])
+    // Redaction: the phone's pair id never reaches another client.
+    expect(status.clients[1]).not.toHaveProperty('clientId')
+    expect(JSON.stringify(status)).not.toContain('pair-secret-id')
+    for (const client of status.clients) expect(client.connectedForMs).toBeGreaterThanOrEqual(0)
+    denied.close()
+    phone.close()
+    desktop.close()
+    holder.close()
+  })
+
+  it('refuses composer.send while draining, and still admits cancels and reads', async () => {
+    let live = 1
+    const { leases, advance } = steppedLeases({ liveWork: () => live })
+    const authority = mockHostAuthority()
+    const server = startServer({ leases, authority: authority as unknown as HostAuthority })
+    await server.start()
+    const client = await authenticated(server, ['bootstrap', 'commands', 'health'])
+    client.writeLine(leaseRequest('decline', { action: 'decline' }))
+    expect(await client.readFrame()).toMatchObject({ ok: true })
+    expect(server.leaseSummary().phase).toBe('grace')
+    advance(2_000)
+    expect(server.leaseSummary().phase).toBe('draining')
+
+    const command = (name: string, commandId: string) => ({
+      type: 'host.command',
+      protocolVersion: HOST_PROTOCOL_VERSION,
+      commandId,
+      idempotencyKey: `key-${commandId}`,
+      actor: { actorId: 'test-client', clientId: 'test-client', clientClass: 'test' },
+      name,
+      target: { threadId: 'thread-1' },
+      arguments: {},
+      issuedAt: '2026-09-23T00:00:00.000Z'
+    })
+    client.writeLine(
+      JSON.stringify(
+        makeRequest('command.submit', 'send-while-draining', command('composer.send', 'c-send'))
+      )
+    )
+    expect(await client.readFrame()).toMatchObject({
+      id: 'send-while-draining',
+      ok: false,
+      error: { code: 'shutting_down' }
+    })
+    expect(authority.command).not.toHaveBeenCalled()
+    client.writeLine(
+      JSON.stringify(
+        makeRequest('command.submit', 'cancel-while-draining', command('run.cancel', 'c-cancel'))
+      )
+    )
+    expect(await client.readFrame()).toMatchObject({ id: 'cancel-while-draining', ok: true })
+    expect(authority.command).toHaveBeenCalledOnce()
+    client.writeLine(JSON.stringify(makeRequest('health.get', 'health-while-draining')))
+    expect(await client.readFrame()).toMatchObject({ id: 'health-while-draining', ok: true })
+    client.writeLine(JSON.stringify(makeRequest('host.status', 'status-while-draining')))
+    expect(await client.readFrame()).toMatchObject({
+      ok: true,
+      result: {
+        kind: 'host.status',
+        status: { lifetime: { phase: 'draining' }, liveWork: { runs: 1 } }
+      }
+    })
+
+    // A holder returning ends the drain and re-admits sends.
+    client.writeLine(leaseRequest('acquire', { action: 'acquire' }))
+    expect(await client.readFrame()).toMatchObject({ ok: true })
+    expect(server.leaseSummary().phase).toBe('held')
+    live = 0
+    client.writeLine(
+      JSON.stringify(
+        makeRequest('command.submit', 'send-after-drain', command('composer.send', 'c-send-2'))
+      )
+    )
+    expect(await client.readFrame()).toMatchObject({ id: 'send-after-drain', ok: true })
+    client.close()
+  })
+
+  it('stops the lease clock with the listener', async () => {
+    let cancelled = 0
+    const leases = new HostLeaseRegistry({
+      ports: {
+        schedule: () => () => {
+          cancelled += 1
+        }
+      }
+    })
+    const server = startServer({ leases })
+    await server.start()
+    expect(cancelled).toBe(0)
+    await server.stop()
+    expect(cancelled).toBe(1)
+    expect(leases.lifetimePhase).toBe('stopping')
   })
 })

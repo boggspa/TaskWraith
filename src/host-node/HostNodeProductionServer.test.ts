@@ -26,6 +26,23 @@ import {
   type HostNodeQueuedStartExecutionClaimStore
 } from './HostNodeQueuedStartExecutionClaimStore'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
+import {
+  HOST_LAST_LEASE_GRACE_MS,
+  HOST_LEASE_BUSY_CAP_MS,
+  HOST_LEASE_DEFAULT_TIMING,
+  HOST_LEASE_DISABLED_ENV,
+  HOST_LEASE_TIMING_ENV,
+  HOST_LEASE_TTL_MS,
+  HOST_PERSIST_ENV,
+  HostLeaseRegistry,
+  type HostLeaseRegistryPorts
+} from '../host-runtime/HostLeaseRegistry'
+import type {
+  HostRegistryCheckResult,
+  HostRegistryEntryInput,
+  HostRegistryEntryRefresh,
+  HostRegistryPublisherPort
+} from '../host-runtime/HostRegistryPort'
 
 const profiles: string[] = []
 
@@ -38,6 +55,36 @@ function profile(): string {
 afterEach(() => {
   while (profiles.length > 0) rmSync(profiles.pop()!, { recursive: true, force: true })
 })
+
+/**
+ * A lease clock the test steps by hand: `advance(registry, ms)` moves the
+ * monotonic and wall clocks together one tick at a time, so every tick is an
+ * awake tick and nothing runs on a real timer.
+ */
+function steppedLeaseClock() {
+  let monoNs = 0n
+  const ports: HostLeaseRegistryPorts = {
+    monotonicNowNs: () => monoNs,
+    wallNowMs: () => Number(monoNs / 1_000_000n),
+    schedule: () => () => {}
+  }
+  return {
+    ports,
+    advance(registry: HostLeaseRegistry, ms: number) {
+      const tickMs = registry.timing.tickMs
+      for (let elapsed = 0; elapsed < ms; elapsed += tickMs) {
+        monoNs += BigInt(tickMs) * 1_000_000n
+        registry.tick()
+      }
+    }
+  }
+}
+
+function leasesOf(h: { listenerInput(): Record<string, unknown> | undefined }): HostLeaseRegistry {
+  const leases = h.listenerInput()?.leases
+  if (!(leases instanceof HostLeaseRegistry)) throw new Error('listener received no lease registry')
+  return leases
+}
 
 function harness(
   overrides: Record<string, unknown> = {},
@@ -79,11 +126,17 @@ function harness(
     })
   }
   const listener = {
+    socketPath: '/tmp/twh2-501-test/taskwraith-host-v2.sock',
+    discoveryPath: '/profile/taskwraith-host-v2.json',
+    startedAt: '2026-09-23T00:00:00.000Z',
     start: vi.fn(async () => {
       order.push('listener.start')
+      // HostLocalServer starts the lease clock once it is listening.
+      ;(listenerInput?.leases as HostLeaseRegistry | undefined)?.start()
     }),
     stop: vi.fn(async () => {
       order.push('listener.stop')
+      ;(listenerInput?.leases as HostLeaseRegistry | undefined)?.stop()
     })
   }
   const composition = {
@@ -147,6 +200,7 @@ function harness(
       refreshOffers: vi.fn(async () => undefined)
     },
     interactions: new HostNodeInteractionRegistry(),
+    runAdmissionOccupancy: vi.fn(() => ({ inflight: 0, queued: 0 })),
     shutdown: vi.fn(async () => {
       order.push('domain.shutdown')
     })
@@ -439,12 +493,19 @@ describe('HostNodeProductionServer', () => {
     expect(unsafe.lease.release).not.toHaveBeenCalled()
   })
 
-  it('handles SIGTERM without parent-death behavior and coalesces domain event reconciliation', async () => {
-    const h = harness()
+  it('handles SIGTERM, has no parent-death behaviour, and exits by lease lapse only after grace', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: {}, leasePorts: clock.ports })
     await h.server.start()
     expect(h.signalListeners.has('SIGTERM')).toBe(true)
     expect(h.signalListeners.has('SIGINT')).toBe(true)
     expect(h.signalListeners.has('SIGHUP')).toBe(false)
+    // Nothing parent-shaped: besides signals and the authenticated shutdown,
+    // the only lifetime input is the lease registry handed to the listener.
+    const leases = leasesOf(h)
+    expect(leases.summary()).toMatchObject({ phase: 'grace', holders: 0, persist: false })
+    clock.advance(leases, HOST_LAST_LEASE_GRACE_MS - HOST_LEASE_DEFAULT_TIMING.tickMs)
+    expect(h.server.phase).toBe('running')
     h.eventPublish()
     h.eventPublish()
     await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
@@ -1133,5 +1194,293 @@ describe('HostNodeProductionServer', () => {
     expect(shutdown.indexOf('runtime.flush()')).toBeLessThan(
       shutdown.indexOf('await input.queuedStartClaimCompaction')
     )
+  })
+})
+
+describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', () => {
+  /** A registry port that records into the harness's own order once `bind` is called. */
+  function fakeRegistryPort(verdicts: HostRegistryCheckResult[] = []) {
+    let order: string[] = []
+    const published: HostRegistryEntryInput[] = []
+    const refreshed: HostRegistryEntryRefresh[] = []
+    const port = {
+      publish: vi.fn((entry: HostRegistryEntryInput) => {
+        order.push('registry.publish')
+        published.push(entry)
+      }),
+      refresh: vi.fn((patch: HostRegistryEntryRefresh) => {
+        order.push('registry.refresh')
+        refreshed.push(patch)
+      }),
+      check: vi.fn((): HostRegistryCheckResult => {
+        order.push('registry.check')
+        return verdicts.shift() ?? 'present'
+      }),
+      remove: vi.fn(() => {
+        order.push('registry.remove')
+      })
+    } satisfies HostRegistryPublisherPort
+    return {
+      port,
+      published,
+      refreshed,
+      bind(target: string[]) {
+        order = target
+      }
+    }
+  }
+
+  it('exits after the last lease lapses, and only once the grace has passed on awake ticks', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: {}, leasePorts: clock.ports })
+    await h.server.start()
+    const leases = leasesOf(h)
+    leases.authenticated(1)
+    expect(leases.acquire(1)).not.toBeNull()
+    // Three beats missed while the Host ticked: the lease lapses at the TTL.
+    clock.advance(leases, HOST_LEASE_TTL_MS)
+    expect(leases.summary()).toMatchObject({ phase: 'grace', holders: 0 })
+    clock.advance(leases, HOST_LAST_LEASE_GRACE_MS - HOST_LEASE_DEFAULT_TIMING.tickMs)
+    expect(h.server.phase).toBe('running')
+    expect(h.lease.release).not.toHaveBeenCalled()
+    clock.advance(leases, HOST_LEASE_DEFAULT_TIMING.tickMs)
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+    expect(h.order.slice(-4)).toEqual([
+      'listener.stop',
+      'domain.shutdown',
+      'composition.shutdown',
+      'lease.release'
+    ])
+  })
+
+  it('never exits at grace while a run is live: it drains, then stops within one tick of idle', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: {}, leasePorts: clock.ports })
+    let inflight = 1
+    h.domain.runAdmissionOccupancy.mockImplementation(() => ({ inflight, queued: 0 }))
+    await h.server.start()
+    const leases = leasesOf(h)
+    clock.advance(leases, HOST_LAST_LEASE_GRACE_MS + 10 * 60_000)
+    expect(leases.summary()).toMatchObject({ phase: 'draining', holders: 0 })
+    expect(h.server.phase).toBe('running')
+    expect(h.domain.shutdown).not.toHaveBeenCalled()
+    inflight = 0
+    clock.advance(leases, HOST_LEASE_DEFAULT_TIMING.tickMs)
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+  })
+
+  it('counts queued starts as live work too', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: {}, leasePorts: clock.ports })
+    h.domain.runAdmissionOccupancy.mockImplementation(() => ({ inflight: 0, queued: 1 }))
+    await h.server.start()
+    const leases = leasesOf(h)
+    clock.advance(leases, HOST_LAST_LEASE_GRACE_MS)
+    expect(leases.summary().phase).toBe('draining')
+    expect(leases.liveRuns()).toBe(1)
+    await h.server.stop()
+  })
+
+  it('forces the stop at the busy cap, cancelling provider work through the domain shutdown', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: {}, leasePorts: clock.ports })
+    h.domain.runAdmissionOccupancy.mockImplementation(() => ({ inflight: 2, queued: 0 }))
+    await h.server.start()
+    const leases = leasesOf(h)
+    clock.advance(leases, HOST_LAST_LEASE_GRACE_MS)
+    expect(leases.summary().phase).toBe('draining')
+    clock.advance(leases, HOST_LEASE_BUSY_CAP_MS - HOST_LEASE_DEFAULT_TIMING.tickMs)
+    expect(h.server.phase).toBe('running')
+    clock.advance(leases, HOST_LEASE_DEFAULT_TIMING.tickMs)
+    await h.server.waitForShutdown()
+    expect(h.domain.shutdown).toHaveBeenCalledOnce()
+    expect(h.lease.release).toHaveBeenCalledOnce()
+  })
+
+  it('TASKWRAITH_HOST_PERSIST=1 disables the grace exit only: signals still stop it', async () => {
+    const clock = steppedLeaseClock()
+    const h = harness({ environment: { [HOST_PERSIST_ENV]: '1' }, leasePorts: clock.ports })
+    await h.server.start()
+    const leases = leasesOf(h)
+    expect(leases.summary()).toMatchObject({ phase: 'held', holders: 0, persist: true })
+    clock.advance(leases, 10 * HOST_LAST_LEASE_GRACE_MS)
+    expect(h.server.phase).toBe('running')
+    h.signalListeners.get('SIGTERM')?.()
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+  })
+
+  it('shortens the lease timing from TASKWRAITH_HOST_LEASE_TIMING and ignores an extension', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const shortened = harness({
+        environment: { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:800,grace:1500' }
+      })
+      await shortened.server.start()
+      expect(leasesOf(shortened).timing).toMatchObject({
+        heartbeatMs: 200,
+        ttlMs: 800,
+        graceMs: 1500,
+        tickMs: 200
+      })
+      await shortened.server.stop()
+
+      const extended = harness({
+        environment: { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:800,grace:90000' }
+      })
+      await extended.server.start()
+      expect(leasesOf(extended).timing).toEqual(HOST_LEASE_DEFAULT_TIMING)
+      await extended.server.stop()
+      const logged = write.mock.calls.map(([chunk]) => String(chunk)).join('')
+      expect(logged).toContain('shortened timing to heartbeat 200ms, ttl 800ms, grace 1500ms')
+      expect(logged).toMatch(
+        /TASKWRAITH_HOST_LEASE_TIMING=heartbeat:200,ttl:800,grace:90000 ignored/
+      )
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('stands up a pre-lease Host only for TASKWRAITH_HOST_LEASE_DISABLED under a timing override', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const disabled = harness({
+        environment: {
+          [HOST_LEASE_DISABLED_ENV]: '1',
+          [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:800,grace:1500'
+        }
+      })
+      await disabled.server.start()
+      expect(disabled.listenerInput()?.leaseProtocol).toBe('disabled')
+      expect(disabled.listenerInput()?.leases).toBeUndefined()
+      await disabled.server.stop()
+
+      // Without the timing override the switch is inert: production launchers
+      // never set it, so no environment can turn the protocol off by accident.
+      const ignored = harness({ environment: { [HOST_LEASE_DISABLED_ENV]: '1' } })
+      await ignored.server.start()
+      expect(ignored.listenerInput()?.leaseProtocol).toBeUndefined()
+      expect(ignored.listenerInput()?.leases).toBeInstanceOf(HostLeaseRegistry)
+      await ignored.server.stop()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('publishes, refreshes, self-checks and removes its registry entry in order', async () => {
+    const clock = steppedLeaseClock()
+    const registry = fakeRegistryPort()
+    const h = harness(
+      { environment: {}, leasePorts: clock.ports, registry: registry.port },
+      { compositionBootEpoch: 'e'.repeat(64) }
+    )
+    registry.bind(h.order)
+    await h.server.start()
+    // After discovery (the listener's start), never before it.
+    expect(h.order.slice(-3)).toEqual(['listener', 'listener.start', 'registry.publish'])
+    expect(registry.published).toEqual([
+      {
+        profilePath: '/profile',
+        pid: process.pid,
+        startedAt: '2026-09-23T00:00:00.000Z',
+        hostId: 'host',
+        bootEpoch: 'e'.repeat(64),
+        payloadVersion: `sha256:${'d'.repeat(64)}`,
+        socketPath: '/tmp/twh2-501-test/taskwraith-host-v2.sock',
+        discoveryPath: '/profile/taskwraith-host-v2.json',
+        persist: false,
+        leaseMode: 'lease',
+        holders: 0,
+        implicitHolders: 0,
+        lifetimePhase: 'grace'
+      }
+    ])
+    const leases = leasesOf(h)
+    // An old client with no lease frame: an implicit holder that never lapses.
+    leases.authenticated(1)
+    clock.advance(leases, 60_000 - HOST_LEASE_DEFAULT_TIMING.tickMs)
+    expect(h.order.slice(-1)).toEqual(['registry.publish'])
+    clock.advance(leases, HOST_LEASE_DEFAULT_TIMING.tickMs)
+    expect(h.order.slice(-3)).toEqual(['registry.publish', 'registry.refresh', 'registry.check'])
+    expect(registry.refreshed).toEqual([{ holders: 1, implicitHolders: 1, lifetimePhase: 'held' }])
+    clock.advance(leases, 60_000)
+    expect(registry.port.check).toHaveBeenCalledTimes(2)
+    await h.server.stop()
+    // Removed last but one: after every resource, before the profile lease.
+    expect(h.order.slice(-5)).toEqual([
+      'listener.stop',
+      'domain.shutdown',
+      'composition.shutdown',
+      'registry.remove',
+      'lease.release'
+    ])
+    expect(registry.port.remove).toHaveBeenCalledOnce()
+  })
+
+  it('stops after two consecutive missing or foreign self-checks and never on unreadable', async () => {
+    const clock = steppedLeaseClock()
+    const registry = fakeRegistryPort([
+      'missing',
+      'unreadable',
+      'missing',
+      'unreadable',
+      'foreign',
+      'present',
+      'missing',
+      'foreign'
+    ])
+    const h = harness({ environment: {}, leasePorts: clock.ports, registry: registry.port })
+    await h.server.start()
+    const leases = leasesOf(h)
+    leases.authenticated(1)
+    for (let check = 1; check <= 7; check += 1) {
+      clock.advance(leases, 60_000)
+      expect(h.server.phase, `after check ${check}`).toBe('running')
+    }
+    // The eighth check is the second consecutive missing/foreign verdict.
+    clock.advance(leases, 60_000)
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+    expect(registry.port.check).toHaveBeenCalledTimes(8)
+    expect(registry.port.remove).toHaveBeenCalledOnce()
+  })
+
+  it('keeps self-checking under TASKWRAITH_HOST_PERSIST=1: the registry is the kill switch', async () => {
+    const clock = steppedLeaseClock()
+    const registry = fakeRegistryPort(['missing', 'missing'])
+    const h = harness({
+      environment: { [HOST_PERSIST_ENV]: '1' },
+      leasePorts: clock.ports,
+      registry: registry.port
+    })
+    await h.server.start()
+    const leases = leasesOf(h)
+    clock.advance(leases, 120_000)
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+  })
+
+  it('publishes nothing and never self-checks when its registry publish fails', async () => {
+    const clock = steppedLeaseClock()
+    const registry = fakeRegistryPort(['missing', 'missing', 'missing'])
+    registry.port.publish.mockImplementation(() => {
+      throw new Error('registry root unwritable')
+    })
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const h = harness({ environment: {}, leasePorts: clock.ports, registry: registry.port })
+      await h.server.start()
+      const leases = leasesOf(h)
+      leases.authenticated(1)
+      clock.advance(leases, 180_000)
+      expect(h.server.phase).toBe('running')
+      expect(registry.port.check).not.toHaveBeenCalled()
+      await h.server.stop()
+      expect(registry.port.remove).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
   })
 })

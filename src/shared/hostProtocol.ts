@@ -206,6 +206,63 @@ export interface HostHealthProjection {
   freshness: HostProjectionFreshness
 }
 
+/** Host lifetime phase as the Host reports it from its own lease registry. */
+export type HostLifetimePhase = 'held' | 'grace' | 'draining' | 'stopping'
+
+/**
+ * Per-socket lease state. `implicit` is an authenticated client that never
+ * spoke `host.lease` (an older build), counted as a holder for the transition
+ * releases; `declined` covers a socket that said so, released, or lapsed.
+ */
+export type HostClientLeaseState = 'explicit' | 'implicit' | 'declined' | 'none'
+
+export interface HostStatusClientProjection {
+  clientClass: HostClientClass
+  /** Omitted for paired-phone clients: the pair id is not for peers to see. */
+  clientId?: string
+  displayName?: string
+  /** From the Host's own monotonic clock. */
+  connectedForMs: number
+  lease: HostClientLeaseState
+  capabilities: HostCapability[]
+}
+
+export interface HostStatusLifetimeProjection {
+  phase: HostLifetimePhase
+  /** Present only while `phase` is `grace`: awake milliseconds left. */
+  graceRemainingMs?: number
+  /** explicit + implicit */
+  holders: number
+  implicitHolders: number
+  declined: number
+}
+
+/**
+ * Answer to `host.status`. Every duration comes from the Host's own monotonic
+ * clock — never `Date.now() - startedAt` on a client, whose clock, sleep
+ * history and time zone the Host does not share.
+ */
+export interface HostStatusProjection {
+  pid: number
+  /** Listener start, ISO-8601 — the same instant the discovery file carries. */
+  startedAt: string
+  uptimeMs: number
+  hostId: string
+  bootEpoch?: string
+  payloadVersion?: string
+  profilePath: string
+  /** `TASKWRAITH_HOST_PERSIST=1`: the last-lease grace exit is disabled. */
+  persist: boolean
+  lifetime: HostStatusLifetimeProjection
+  liveWork: { runs: number }
+  clients: HostStatusClientProjection[]
+}
+
+/** The listener's client budget; a status never lists more. */
+export const HOST_STATUS_MAX_CLIENTS = 32
+export const HOST_STATUS_MAX_PATH = 4_096
+export const HOST_STATUS_MAX_STARTED_AT = 64
+
 export interface HostWorkspaceProjection {
   id: string
   name: string
@@ -2316,6 +2373,129 @@ export function decodeHostHealthProjection(value: unknown): HostDecodeResult<Hos
     health.detail = value.detail
   }
   return { ok: true, value: health }
+}
+
+const HOST_LIFETIME_PHASES = new Set<string>(['held', 'grace', 'draining', 'stopping'])
+const HOST_CLIENT_LEASE_STATES = new Set<string>(['explicit', 'implicit', 'declined', 'none'])
+const HOST_STATUS_PAYLOAD_VERSION_PATTERN = /^sha256:[0-9a-f]{64}$/
+
+function decodeHostStatusClient(
+  value: unknown,
+  label: string
+): HostDecodeResult<HostStatusClientProjection> {
+  if (!isRecord(value)) return { ok: false, error: `${label} must be an object` }
+  if (!isClientClass(value.clientClass)) {
+    return { ok: false, error: `${label}.clientClass is invalid` }
+  }
+  if (!isOptionalString(value.clientId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: `${label}.clientId is invalid` }
+  }
+  if (!isOptionalString(value.displayName, HOST_PROTOCOL_MAX_SHORT)) {
+    return { ok: false, error: `${label}.displayName is invalid` }
+  }
+  if (!isNonNegativeInt(value.connectedForMs)) {
+    return { ok: false, error: `${label}.connectedForMs is invalid` }
+  }
+  if (typeof value.lease !== 'string' || !HOST_CLIENT_LEASE_STATES.has(value.lease)) {
+    return { ok: false, error: `${label}.lease is invalid` }
+  }
+  if (
+    !Array.isArray(value.capabilities) ||
+    value.capabilities.length > HOST_PROTOCOL_MAX_CAPABILITIES ||
+    !value.capabilities.every(
+      (entry: unknown) => typeof entry === 'string' && HOST_CAPABILITIES.has(entry)
+    )
+  ) {
+    return { ok: false, error: `${label}.capabilities is invalid` }
+  }
+  const client: HostStatusClientProjection = {
+    clientClass: value.clientClass,
+    connectedForMs: value.connectedForMs,
+    lease: value.lease as HostClientLeaseState,
+    capabilities: [...(value.capabilities as HostCapability[])]
+  }
+  if (value.clientId !== undefined) client.clientId = value.clientId
+  if (value.displayName !== undefined) client.displayName = value.displayName
+  return { ok: true, value: client }
+}
+
+/** Strict wire decoder for `HostStatusProjection`; unknown keys are dropped. */
+export function decodeHostStatusProjection(value: unknown): HostDecodeResult<HostStatusProjection> {
+  if (!isRecord(value)) return { ok: false, error: 'status must be an object' }
+  if (!isNonNegativeInt(value.pid) || value.pid === 0) {
+    return { ok: false, error: 'status.pid is invalid' }
+  }
+  if (
+    !isNonEmptyString(value.startedAt, HOST_STATUS_MAX_STARTED_AT) ||
+    Number.isNaN(Date.parse(value.startedAt))
+  ) {
+    return { ok: false, error: 'status.startedAt is invalid' }
+  }
+  if (!isNonNegativeInt(value.uptimeMs)) return { ok: false, error: 'status.uptimeMs is invalid' }
+  if (!isNonEmptyString(value.hostId, HOST_PROTOCOL_MAX_ID)) {
+    return { ok: false, error: 'status.hostId is invalid' }
+  }
+  if (value.bootEpoch !== undefined && !isBootEpoch(value.bootEpoch)) {
+    return { ok: false, error: 'status.bootEpoch is invalid' }
+  }
+  if (
+    value.payloadVersion !== undefined &&
+    (typeof value.payloadVersion !== 'string' ||
+      !HOST_STATUS_PAYLOAD_VERSION_PATTERN.test(value.payloadVersion))
+  ) {
+    return { ok: false, error: 'status.payloadVersion is invalid' }
+  }
+  if (!isNonEmptyString(value.profilePath, HOST_STATUS_MAX_PATH)) {
+    return { ok: false, error: 'status.profilePath is invalid' }
+  }
+  if (typeof value.persist !== 'boolean') return { ok: false, error: 'status.persist is invalid' }
+  const lifetime = value.lifetime
+  if (
+    !isRecord(lifetime) ||
+    typeof lifetime.phase !== 'string' ||
+    !HOST_LIFETIME_PHASES.has(lifetime.phase) ||
+    !isNonNegativeInt(lifetime.holders) ||
+    !isNonNegativeInt(lifetime.implicitHolders) ||
+    !isNonNegativeInt(lifetime.declined) ||
+    (lifetime.graceRemainingMs !== undefined && !isNonNegativeInt(lifetime.graceRemainingMs))
+  ) {
+    return { ok: false, error: 'status.lifetime is invalid' }
+  }
+  const liveWork = value.liveWork
+  if (!isRecord(liveWork) || !isNonNegativeInt(liveWork.runs)) {
+    return { ok: false, error: 'status.liveWork is invalid' }
+  }
+  if (!Array.isArray(value.clients) || value.clients.length > HOST_STATUS_MAX_CLIENTS) {
+    return { ok: false, error: 'status.clients is invalid' }
+  }
+  const clients: HostStatusClientProjection[] = []
+  for (let index = 0; index < value.clients.length; index += 1) {
+    const client = decodeHostStatusClient(value.clients[index], `status.clients[${index}]`)
+    if (!client.ok) return client
+    clients.push(client.value)
+  }
+  const status: HostStatusProjection = {
+    pid: value.pid,
+    startedAt: value.startedAt,
+    uptimeMs: value.uptimeMs,
+    hostId: value.hostId,
+    profilePath: value.profilePath,
+    persist: value.persist,
+    lifetime: {
+      phase: lifetime.phase as HostLifetimePhase,
+      holders: lifetime.holders,
+      implicitHolders: lifetime.implicitHolders,
+      declined: lifetime.declined
+    },
+    liveWork: { runs: liveWork.runs },
+    clients
+  }
+  if (value.bootEpoch !== undefined) status.bootEpoch = value.bootEpoch
+  if (value.payloadVersion !== undefined) status.payloadVersion = value.payloadVersion
+  if (lifetime.graceRemainingMs !== undefined) {
+    status.lifetime.graceRemainingMs = lifetime.graceRemainingMs
+  }
+  return { ok: true, value: status }
 }
 
 function decodeHostUsageObservation(value: unknown): HostDecodeResult<HostUsageObservation> {

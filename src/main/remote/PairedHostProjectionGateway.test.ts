@@ -287,7 +287,9 @@ describe('PairedHostProjectionGateway', () => {
         kind: 'history.since',
         params: { threadId: 'thread-1', since: { generation: 3, cursor: 4 } }
       },
-      { kind: 'host.shutdown', params: {} }
+      { kind: 'host.shutdown', params: {} },
+      { kind: 'host.lease', params: { action: 'acquire' } },
+      { kind: 'host.status', params: {} }
     ]) {
       await expect(h.gateway.request(DEVICE_KEY, request)).rejects.toMatchObject({
         code: 'unauthorized'
