@@ -61,7 +61,10 @@ import { HostShutdownClient } from './HostShutdownClient'
  *
  * A pid born at another time is a reused pid: the Host is already gone and
  * only its artefacts are swept (`pid_reused`), and an identity that changes
- * between TERM and KILL aborts the escalation the same way. After death the
+ * between TERM and KILL aborts the escalation the same way. When a fresh
+ * observation of that pid still contradicts none of the birth one record
+ * carries, the records disagree about whose pid it is: that is refused as
+ * `inconsistent`, and nothing is swept. After death the
  * socket file and directory, discovery, token, lease and registry entry are
  * removed — each only while it still carries exactly the record read before
  * termination (never by pid alone: a successor may have been handed the same
@@ -776,21 +779,31 @@ export async function terminateHostProcess(
   const expected = hostTerminationExpectation(judged)
 
   /**
-   * The records to sweep: those dropped as stale on the way in, and each
-   * record naming the target pid that a fresh observation of that pid proves
-   * stale — all of them once it is dead; while another process lives at that
-   * pid, only those contradicting their own birth. A record that cannot be
-   * proven stale is never swept.
+   * A fresh observation of the target pid, judged against every record that
+   * names it. `stale` is what may be swept: the records dropped as stale on
+   * the way in, and each record the observation proves stale — all of them
+   * once the pid is dead; while another process lives at it, only those
+   * contradicting their own birth. A record that cannot be proven stale is
+   * never swept. `surviving` says a live process at the pid contradicts none
+   * of the birth one record carries: that record may be its own.
    */
-  const provenStale = async (): Promise<HostTerminationEvidence> => {
-    if (pid === null) return stale
+  const finalJudgement = async (): Promise<{
+    readonly stale: HostTerminationEvidence
+    readonly surviving: boolean
+  }> => {
+    if (pid === null) return { stale, surviving: false }
     const observation = await ports.observe(pid)
     const staleNow = (record: HostTerminationRecord): boolean =>
       judged[record] !== null && recordIsStale(judged, record, observation)
+    const survives = (record: HostTerminationRecord): boolean =>
+      observation.state === 'live' && judged[record] !== null && !staleNow(record)
     return {
-      registry: staleNow('registry') ? judged.registry : stale.registry,
-      lease: staleNow('lease') ? judged.lease : stale.lease,
-      discovery: staleNow('discovery') ? judged.discovery : stale.discovery
+      stale: {
+        registry: staleNow('registry') ? judged.registry : stale.registry,
+        lease: staleNow('lease') ? judged.lease : stale.lease,
+        discovery: staleNow('discovery') ? judged.discovery : stale.discovery
+      },
+      surviving: survives('registry') || survives('lease') || survives('discovery')
     }
   }
 
@@ -799,7 +812,22 @@ export async function terminateHostProcess(
     sweep: boolean,
     detail?: string
   ): Promise<HostTerminationOutcome> => {
-    const swept = sweep ? await ports.sweep(profilePath, await provenStale(), registryRoot) : []
+    let swept: readonly string[] = []
+    if (sweep) {
+      const judgement = await finalJudgement()
+      if (kind === 'pid_reused' && judgement.surviving) {
+        // One record reads the pid as reused, another as the live process's
+        // own (a legacy lease taken after a wall-clock step reads as another
+        // birth beside the discovery that process wrote): the evidence
+        // disagrees about whose pid it is, so this is a refusal, not a
+        // success, and nothing is swept.
+        steps.push('evidence:inconsistent')
+        const reason = 'a record naming the pid is not contradicted by the process now at it'
+        log(`inconsistent (${reason}) after ${steps.join(' -> ')}`)
+        return { kind: 'inconsistent', pid, steps, swept: [], detail: reason }
+      }
+      swept = await ports.sweep(profilePath, judgement.stale, registryRoot)
+    }
     if (swept.length) steps.push(`swept:${swept.join(',')}`)
     log(`${kind}${detail ? ` (${detail})` : ''} after ${steps.join(' -> ') || 'no steps'}`)
     return { kind, pid, steps, swept, ...(detail ? { detail } : {}) }

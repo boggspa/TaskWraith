@@ -150,15 +150,21 @@ async function startDecoy(argv: readonly string[]): Promise<Tracked> {
   return track(child)
 }
 
-/** A lease written on behalf of `process_` the way a pre-birth-identity build wrote it: a nonce. */
-function publishLegacyLease(profile: string, process_: Tracked): void {
+/**
+ * A lease written on behalf of `process_` the way a pre-birth-identity build
+ * wrote it: a nonce, with the process start it recorded (`startOffsetMs` off
+ * the real one models a wall-clock step between process start and the lease).
+ */
+function publishLegacyLease(profile: string, process_: Tracked, startOffsetMs = 0): void {
   HostProfileAuthorityLease.acquire({
     profilePath: profile,
     processPort: {
       current: {
         pid: process_.pid,
         processStartIdentity: `node:${process_.pid}:172d23b8aef73`,
-        processStartedAt: new Date(process_.birth.startedAtMs ?? Date.now()).toISOString()
+        processStartedAt: new Date(
+          (process_.birth.startedAtMs ?? Date.now()) + startOffsetMs
+        ).toISOString()
       },
       inspectOwner: () => 'unknown'
     }
@@ -556,6 +562,34 @@ describe.skipIf(process.platform === 'win32')(
       await expect(host.exited).resolves.toBe('SIGKILL')
       expect(profileArtefacts(profile).lease).toBe(false)
     }, 60_000)
+
+    it('C1: a live legacy Host whose lease records a start 3 s off is refused as inconsistent: never signalled, nothing swept', async () => {
+      const base = scratch('host-termination-c1-')
+      const root = join(base, 'hosts')
+      const profile = scratch('host-termination-c1-profile-')
+      const host = await startFakeHost(base, profile, 'exit')
+      // The discovery (written 4 s after the process started) names the live
+      // Host; only the lease, taken after a wall-clock step, reads as another birth.
+      publishLegacyLease(profile, host, 3_000)
+      publishDiscovery(profile, host)
+
+      const outcome = await terminateHostProcess({
+        profilePath: profile,
+        registryRoot: root,
+        timings: FAST
+      })
+
+      expect(outcome).toMatchObject({ kind: 'inconsistent', pid: host.pid, swept: [] })
+      expect(outcome.steps).toEqual([
+        'socket:failed:Host shutdown request timed out',
+        'verify:mismatch',
+        'evidence:inconsistent'
+      ])
+      expect(alive(host.pid)).toBe(true)
+      expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+      // Still the profile's owner: no contender takes the lease from it.
+      expect(contenderAcquires(profile)).toBe(false)
+    }, 30_000)
 
     it("N12-e/i: a registry entry naming another profile's Host is refused, and a legacy lease beside the Host's own digest is stopped", async () => {
       const base = scratch('host-termination-n12ei-')
