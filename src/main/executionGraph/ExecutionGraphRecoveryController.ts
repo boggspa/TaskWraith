@@ -109,13 +109,13 @@ export class ExecutionGraphRecoveryController {
    * records each refusal and arms ONE automatic retry for the paused set.
    *
    * Every later pass (the starter re-runs for owners that failed to preload,
-   * and a deferred workspace-lock replay starts another starter) covers only
-   * the stacks still paused, as `retry()` does. Recovery re-evaluates a stack
-   * as if the process had just restarted, so a pass over a stack that has been
-   * recovered and dispatched since would park it while its provider run went
-   * on. A throw propagates: the starter re-runs the pass on its backoff and
-   * reports it through `startupPassFailed`, and the paused set stays as the
-   * last good pass left it.
+   * and a deferred workspace-lock replay starts another starter) is `retry()`
+   * over the stacks still paused. Recovery re-evaluates a stack as if the
+   * process had just restarted, so a pass over a stack that has been recovered
+   * and dispatched since would park it while its provider run went on. A throw
+   * propagates: the starter re-runs the pass on its backoff and reports it
+   * through `startupPassFailed`, and the paused set stays as the last good pass
+   * left it.
    */
   runStartupRecovery(): readonly ExecutionGraphRecoveryDiagnostic[] {
     const coordinator = this.deps.coordinator()
@@ -123,11 +123,7 @@ export class ExecutionGraphRecoveryController {
       this.deps.writeDiagnostics([])
       return []
     }
-    if (this.launchPassCompleted) {
-      const next = this.retry()
-      this.startupPassSucceeded()
-      return next
-    }
+    if (this.launchPassCompleted) return this.retry()
     const diagnostics = coordinator.recover()
     this.launchPassCompleted = true
     this.startupPassSucceeded()
@@ -178,6 +174,10 @@ export class ExecutionGraphRecoveryController {
   /** A pass got through: startup recovery has run, so a standing failure report is withdrawn. */
   private startupPassSucceeded(): void {
     this.consecutivePassFailures = 0
+    this.withdrawStartupFailureReport()
+  }
+
+  private withdrawStartupFailureReport(): void {
     const service = this.deps.readServiceDiagnostics()
     const remaining = service.filter((diagnostic) => diagnostic.code !== 'startup_recovery_failed')
     this.startupFailureReported = false
@@ -189,8 +189,21 @@ export class ExecutionGraphRecoveryController {
    * their diagnostics with the fresh outcome. Only executions the launch pass
    * reported may be retried: recovery re-evaluates a graph as if the process
    * had just restarted, which is wrong for a graph that has been live since.
+   *
+   * Once the launch pass has run, a retry that gets through is a startup pass
+   * that succeeded, whoever asked for it (a later starter pass, the automatic
+   * retry or the user), so it withdraws a standing startup failure report.
+   * Before then there is nothing paused for it to cover, and the report stays.
    */
   retry(input: ExecutionGraphRecoveryRetryInput = {}): readonly ExecutionGraphRecoveryDiagnostic[] {
+    const next = this.retryPaused(input)
+    if (this.launchPassCompleted) this.startupPassSucceeded()
+    return next
+  }
+
+  private retryPaused(
+    input: ExecutionGraphRecoveryRetryInput
+  ): readonly ExecutionGraphRecoveryDiagnostic[] {
     const coordinator = this.deps.coordinator()
     if (!coordinator) throw new Error('Durable Stack recovery is unavailable in this session.')
     const paused = this.deps.readDiagnostics()
@@ -234,9 +247,13 @@ export class ExecutionGraphRecoveryController {
     if (!coordinator) throw new Error('Durable Stack recovery is unavailable in this session.')
     const projection = await coordinator.archiveExecution(executionId, reason)
     if (isExecutionRunTerminal(projection.state)) {
-      this.deps.writeDiagnostics(
-        this.deps.readDiagnostics().filter((diagnostic) => diagnostic.executionId !== executionId)
-      )
+      const remaining = this.deps
+        .readDiagnostics()
+        .filter((diagnostic) => diagnostic.executionId !== executionId)
+      this.deps.writeDiagnostics(remaining)
+      // Nothing left paused after the launch pass is nothing left for startup
+      // recovery to do, so a standing startup failure report is out of date.
+      if (this.launchPassCompleted && remaining.length === 0) this.withdrawStartupFailureReport()
     }
     return projection
   }

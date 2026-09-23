@@ -234,6 +234,73 @@ describe('ExecutionGraphRecoveryController', () => {
     expect(h.service()).toEqual([])
   })
 
+  it('withdraws the report when a user retry gets through after the launch pass', () => {
+    const h = harness({ startup: [diagnostic('a'), diagnostic('b')] })
+    h.controller.runStartupRecovery()
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    expect(h.service()).toEqual([unreadable])
+
+    h.controller.retry({ executionId: 'a' })
+
+    expect(h.read()).toEqual([diagnostic('b')])
+    expect(h.service()).toEqual([])
+  })
+
+  it('keeps the report when a user retry throws', () => {
+    const h = harness({ startup: [diagnostic('a')] })
+    h.controller.runStartupRecovery()
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    h.coordinator.recoverExecutions.mockImplementationOnce(() => {
+      throw new Error('execution registry unreadable')
+    })
+
+    expect(() => h.controller.retry({ executionId: 'a' })).toThrow('execution registry unreadable')
+
+    expect(h.read()).toEqual([diagnostic('a')])
+    expect(h.service()).toEqual([unreadable])
+  })
+
+  it('keeps the report when a retry has nothing to cover because the launch pass never ran', () => {
+    const h = harness({ startup: [diagnostic('a')] })
+    h.coordinator.recover.mockImplementation(() => {
+      throw new Error('execution registry unreadable')
+    })
+    expect(() => h.controller.runStartupRecovery()).toThrow('execution registry unreadable')
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+
+    expect(h.controller.retry()).toEqual([])
+
+    expect(h.coordinator.recoverExecutions).not.toHaveBeenCalled()
+    expect(h.service()).toEqual([unreadable])
+  })
+
+  it('withdraws the report once the last paused stack is archived', async () => {
+    const h = harness({ startup: [diagnostic('a'), diagnostic('b')] })
+    h.controller.runStartupRecovery()
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+
+    await h.controller.archive('a')
+    // Stack b still waits for a pass the failure may be stopping.
+    expect(h.service()).toEqual([unreadable])
+
+    await h.controller.archive('b')
+    expect(h.read()).toEqual([])
+    expect(h.service()).toEqual([])
+  })
+
+  it('keeps the report after an archive while the launch pass has not run', async () => {
+    const h = harness()
+    h.coordinator.recover.mockImplementation(() => {
+      throw new Error('execution registry unreadable')
+    })
+    expect(() => h.controller.runStartupRecovery()).toThrow('execution registry unreadable')
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+
+    await h.controller.archive('a')
+
+    expect(h.service()).toEqual([unreadable])
+  })
+
   it('bounds the reported message like every other graph diagnostic', () => {
     const h = harness()
     h.controller.startupPassFailed(new Error('x'.repeat(5_000)), false)

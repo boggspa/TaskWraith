@@ -44,10 +44,13 @@ export async function preloadCatalogueExecutionOwners(
 
 /**
  * Spacing of the passes that follow one that could not finish, because an
- * owner failed to preload or the pass threw. Doubling to a one-minute cap and
- * bounded at about eleven minutes, so a slow catalogue or Host still heals the
- * paused owners, while a condition that never clears is left to the notices it
- * raised rather than retried for the whole session.
+ * owner failed to preload or the pass threw. It doubles to a one-minute cap
+ * and allows fifteen re-runs, so the bound is on passes, not on wall time:
+ * the waits add up to about eleven minutes, and each pass's own owner preload
+ * comes on top (with a catalogue that takes 20 s a request, the last pass
+ * lands after about sixteen minutes). That gives a slow catalogue or Host
+ * time to heal the paused owners, while a condition that never clears is left
+ * to the notices it raised rather than retried for the whole session.
  */
 export const CATALOGUE_EXECUTION_RECOVERY_RETRY_DELAYS_MS: readonly number[] = Object.freeze([
   2_000,

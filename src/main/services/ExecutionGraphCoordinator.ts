@@ -400,8 +400,18 @@ export class ExecutionGraphCoordinator {
   private readonly now: () => string
   private readonly createId: () => string
   private readonly draining = new Set<string>()
-  /** Graph runs this process's main-owned dispatcher has leased; see `noteDispatchLease`. */
+  /**
+   * Graph runs this process's main-owned dispatcher has leased and not seen
+   * fail before a provider session; see `noteDispatchLease`.
+   */
   private readonly dispatchLeasedRunIds = new Set<string>()
+  /**
+   * Executions this process created. Memory that dies with the process, so no
+   * earlier process, and no pid reused since, can ever be counted as this one.
+   * Startup recovery reconciles what a previous process left behind and skips
+   * these: they are live here, and their own lifecycle owns them.
+   */
+  private readonly createdExecutionIds = new Set<string>()
   private readonly cancellationOperations = new Map<string, Promise<void>>()
   private readonly cancellationContexts = new Map<
     string,
@@ -505,6 +515,7 @@ export class ExecutionGraphCoordinator {
         }
       ]
     )
+    this.createdExecutionIds.add(projection.executionId)
     this.changed(
       projection,
       'execution-created',
@@ -523,7 +534,11 @@ export class ExecutionGraphCoordinator {
    * stack. A row leased here is live here instead: the boot sweep can lease a
    * queued attempt before the deferred launch pass runs, and a later pass can
    * meet a stack dispatched since. Recovery leaves such an attempt to its run
-   * lifecycle rather than parking a stack whose provider run carries on.
+   * lifecycle rather than parking a stack whose provider run carries on, but
+   * only while its queue row is live. A row that has settled while the attempt
+   * has not means the settlement could not be written, and a dispatch that
+   * failed before its session withdraws the note (see
+   * `recordPreSessionDispatchFailure`), so either is parked like any other.
    */
   noteDispatchLease(runId: string): void {
     this.dispatchLeasedRunIds.add(runId)
@@ -571,6 +586,8 @@ export class ExecutionGraphCoordinator {
    * success/failure result.
    */
   recordPreSessionDispatchFailure(runId: string, reason: string): ExecutionRunProjection {
+    // The dispatch this lease stood for is over, whatever can be written below.
+    this.dispatchLeasedRunIds.delete(runId)
     const detail = reason.trim()
     if (!detail) throw new Error('Pre-session dispatch failure requires a reason.')
     const job = this.deps.getQueueJob(runId)
@@ -814,6 +831,7 @@ export class ExecutionGraphCoordinator {
     }
     if (creationInput) {
       projection = this.repository.createExecution(creationInput, events)
+      this.createdExecutionIds.add(projection.executionId)
       this.changed(projection, 'execution-created')
     } else {
       this.append(projection!, events)
@@ -1383,6 +1401,10 @@ export class ExecutionGraphCoordinator {
   ): readonly ExecutionGraphRecoveryDiagnostic[] {
     const diagnostics: ExecutionGraphRecoveryDiagnostic[] = []
     for (const projection of projections) {
+      // Created by this process, so not left behind by a previous one: a turn
+      // here can start a graph before the launch pass has finished its owner
+      // preload, and that graph's own lifecycle owns it.
+      if (this.createdExecutionIds.has(projection.executionId)) continue
       try {
         this.reconcileTerminalAttemptQueueRows(projection)
         // The graph ledger is authoritative. If it is already terminal, no
@@ -1477,12 +1499,16 @@ export class ExecutionGraphCoordinator {
         changed = true
         break
       }
-      if (this.dispatchLeasedRunIds.has(providerRunRef)) {
-        // Leased by this process, so live here: its run lifecycle owns it now.
+      const job = this.deps.getQueueJob(providerRunRef)
+      if (
+        job &&
+        !TERMINAL_QUEUE_STATUSES.has(job.status) &&
+        this.dispatchLeasedRunIds.has(providerRunRef)
+      ) {
+        // Leased by this process and still live: its run lifecycle owns it.
         changed = true
         continue
       }
-      const job = this.deps.getQueueJob(providerRunRef)
       if (!job) {
         this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
         changed = true

@@ -210,6 +210,31 @@ describe('startup execution recovery passes', () => {
     expect(recover).not.toHaveBeenCalled()
   })
 
+  it('recovers nothing for a pass stopped while its owners load', async () => {
+    vi.useFakeTimers()
+    let release!: () => void
+    const loading = new Promise<null>((resolve) => {
+      release = () => resolve(null)
+    })
+    const recover = vi.fn()
+    const onError = vi.fn()
+    const stop = startCatalogueExecutionRecovery({
+      mirror: catalogue(() => loading),
+      ownerIds: () => ['chat'],
+      recover,
+      onError
+    })
+    await vi.advanceTimersByTimeAsync(0)
+
+    // The app quits while the first pass waits on its owner preload.
+    stop()
+    release()
+    await vi.advanceTimersByTimeAsync(3_600_000)
+
+    expect(recover).not.toHaveBeenCalled()
+    expect(onError).not.toHaveBeenCalled()
+  })
+
   it('runs no further pass once stopped', async () => {
     vi.useFakeTimers()
     const recover = vi.fn()

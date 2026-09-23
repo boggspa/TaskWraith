@@ -105,6 +105,12 @@ interface Harness {
   templateRef: string
   ceiling: ExecutionPermissionCeilingRef
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
+  /**
+   * The process restarts: a fresh coordinator, with none of the old one's
+   * in-process memory, over the same ledger and persisted queue rows. Startup
+   * recovery only reconciles what an earlier process left behind.
+   */
+  restart: () => void
 }
 
 function harness(
@@ -194,7 +200,7 @@ function harness(
     authorityDigest: 'a'.repeat(64),
     workspaceId: 'workspace-one'
   }
-  return {
+  const h: Harness = {
     repository,
     coordinator,
     jobs,
@@ -205,6 +211,9 @@ function harness(
     ownerStatuses,
     templateRef: template.templateId,
     ceiling,
+    restart: () => {
+      h.coordinator = new ExecutionGraphCoordinator(deps)
+    },
     input: (overrides = {}) => {
       const clientRequestId = overrides.clientRequestId ?? `client-request-${++clientRequest}`
       return {
@@ -222,6 +231,7 @@ function harness(
       }
     }
   }
+  return h
 }
 
 function appendClaimCrashWindow(
@@ -617,6 +627,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )
     expect(h.jobs.get(runId)?.status).toBe('starting')
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.jobs.get(runId)?.status).toBe('completed')
@@ -995,6 +1006,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1004,26 +1016,99 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
   })
 
-  it('leaves an attempt this process leased to its run lifecycle on recovery', () => {
-    // The boot sweep can lease a queued attempt before the deferred launch pass
-    // runs: that row is live here, not a dispatch from before the restart.
-    const h = harness()
+  /** The boot sweep of a restarted process leases a queued attempt the previous one left. */
+  function leasedAfterRestart(h: Harness) {
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
     const before = h.coordinator.getExecution(started.executionId)!
     expect(Object.values(before.attempts)[0].state).toBe('queued')
     expect(h.jobs.get(runId)?.status).toBe('queued')
+    h.restart()
     h.coordinator.assertQueueJobDispatchable(runId)
     markQueueStarting(h, runId)
     h.coordinator.noteDispatchLease(runId)
+    return { executionId: started.executionId, runId, before }
+  }
+
+  it('leaves an attempt this process leased to its run lifecycle on recovery', () => {
+    // The boot sweep can lease a queued attempt before the deferred launch pass
+    // runs: that row is live here, not a dispatch from before the restart.
+    const h = harness()
+    const { executionId, runId, before } = leasedAfterRestart(h)
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('running')
+    expect(Object.values(recovered.attempts)[0].state).toBe('queued')
+    expect(recovered.lastSequence).toBe(before.lastSequence)
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+  })
+
+  it('parks a leased attempt whose queue row settled while its ledger settlement did not', () => {
+    // The row is this process's own view of the lease. Settled while the
+    // attempt is not means the settlement could not be written, and there is
+    // no run left behind the stack.
+    const h = harness()
+    const { executionId, runId } = leasedAfterRestart(h)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'failed' })
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/not authoritative provider terminal evidence/i)
+    })
+  })
+
+  it('parks a leased attempt whose dispatch failed before its session when nothing could be written', () => {
+    // A full disk: neither the queue row nor the ledger takes the failure, so
+    // the row still reads as leased. The failure itself withdraws the lease.
+    const h = harness()
+    const { executionId, runId } = leasedAfterRestart(h)
+    h.transitions.mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device, write')
+    })
+    const append = vi.spyOn(h.repository, 'appendExecutionEvents').mockImplementationOnce(() => {
+      throw new Error('ENOSPC: no space left on device, write')
+    })
+    expect(() =>
+      h.coordinator.recordPreSessionDispatchFailure(
+        runId,
+        'Graph-owned provider dispatch failed: adapter refused'
+      )
+    ).toThrow('ENOSPC')
+    append.mockRestore()
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+    expect(h.coordinator.getExecution(executionId)?.state).toBe('running')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/side-effect boundary/i)
+    })
+  })
+
+  it('leaves an execution this process created to its own lifecycle on startup recovery', () => {
+    // Recovery would park this row as a dispatch from before a restart, but
+    // there was none: the Stack was created here.
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.transitions.mockClear()
 
     expect(h.coordinator.recover()).toEqual([])
 
     const recovered = h.coordinator.getExecution(started.executionId)!
     expect(recovered.state).toBe('running')
-    expect(Object.values(recovered.attempts)[0].state).toBe('queued')
-    expect(recovered.lastSequence).toBe(before.lastSequence)
-    expect(h.jobs.get(runId)?.status).toBe('starting')
+    expect(recovered.lastSequence).toBe(started.lastSequence)
+    expect(h.transitions).not.toHaveBeenCalled()
   })
 
   it('continues recovering healthy executions after one execution throws', () => {
@@ -1035,6 +1120,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const healthyRunId = providerRunId(healthy)
     h.jobs.set(healthyRunId, { ...h.jobs.get(healthyRunId)!, status: 'completed' })
 
+    h.restart()
     const internals = h.coordinator as unknown as {
       reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
     }
@@ -1085,6 +1171,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       h.jobs.set(runId, genericRecovery.jobs[0])
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(first.executionId)!
@@ -1123,6 +1210,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, genericRecovery.jobs[0])
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1158,6 +1246,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.jobs.set(runId, genericRecovery.jobs[0])
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1184,6 +1273,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1203,6 +1293,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       h.jobs.set(runId, { ...h.jobs.get(runId)!, status: terminalStatus })
       h.transitions.mockClear()
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(started.executionId)!
@@ -1220,6 +1311,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     h.anchorStatuses.set('anchor-run', 'completed')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1235,6 +1327,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
       h.anchorStatuses.set('anchor-run', anchorStatus)
 
+      h.restart()
       h.coordinator.recover()
 
       const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1249,6 +1342,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     h.anchorStatuses.set('anchor-run', 'nonterminal')
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.coordinator.getExecution(waiting.executionId)?.state).toBe('waiting')
@@ -1260,6 +1354,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'activation-only')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1273,6 +1368,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'attempt-created')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1288,6 +1384,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated')
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1324,6 +1421,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1347,6 +1445,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    h.restart()
     h.coordinator.recover()
 
     const recovered = h.coordinator.getExecution(waiting.executionId)!
@@ -1547,6 +1646,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.jobs.get(runId)?.status).toBe('queued')
     h.transitions.mockClear()
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.jobs.get(runId)?.status).toBe('completed')
@@ -2094,6 +2194,7 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
     const h = harness()
     startTethered(h, 'tether-restart')
 
+    h.restart()
     h.coordinator.recover()
     await settleCancellation(h, 'tether-restart')
 
@@ -2105,10 +2206,25 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
     expect([...h.jobs.values()].map((job) => job.status)).toEqual(['cancelled', 'cancelled'])
   })
 
+  it('leaves a tethered graph a turn in this process started to its owning run on startup recovery', () => {
+    // A turn here can start one while the launch pass still waits on owner
+    // metadata. Its owning run is alive in this process, so nothing ended it.
+    const h = harness()
+    startTethered(h, 'tether-started-here')
+    h.transitions.mockClear()
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    expect(h.coordinator.getExecution('tether-started-here')?.state).toBe('running')
+    expect([...h.jobs.values()].map((job) => job.status)).toEqual(['queued', 'queued'])
+    expect(h.transitions).not.toHaveBeenCalled()
+  })
+
   it('recovery leaves a thread-owned Stack in flight', () => {
     const h = harness()
     const started = h.coordinator.appendStackStep(h.input())
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
@@ -2120,6 +2236,7 @@ describe('ExecutionGraphCoordinator owning-run tether', () => {
     expect(started.state).toBe('waiting')
     h.anchorStatuses.set('anchor-run', 'nonterminal')
 
+    h.restart()
     h.coordinator.recover()
 
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('waiting')
@@ -2132,6 +2249,7 @@ describe('ExecutionGraphCoordinator recovery retry and archive', () => {
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.restart()
     h.coordinator.recover()
     const paused = h.coordinator.getExecution(started.executionId)!
     expect(paused.state).toBe('requires_action')
@@ -2146,8 +2264,9 @@ describe('ExecutionGraphCoordinator recovery retry and archive', () => {
     expect(started.state).toBe('running')
     h.ownerStatuses.set('chat-one', 'missing')
 
-    // A foreign id resolves to nothing: no diagnostic, and the live stack is
-    // not re-evaluated as if the process had just restarted.
+    h.restart()
+    // A foreign id resolves to nothing: no diagnostic, and the stack it did
+    // not name is not re-evaluated.
     expect(h.coordinator.recoverExecutions(['never-created'])).toEqual([])
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
 
@@ -2163,6 +2282,7 @@ describe('ExecutionGraphCoordinator recovery retry and archive', () => {
     const healthy = h.coordinator.appendStackStep(
       h.input({ rootChatId: 'chat-two', title: 'Second Stack' })
     )
+    h.restart()
     const internals = h.coordinator as unknown as {
       reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
     }
@@ -2209,6 +2329,7 @@ describe('ExecutionGraphCoordinator recovery retry and archive', () => {
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.restart()
     h.coordinator.recover()
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
 
