@@ -25,6 +25,7 @@ import {
   type OllamaChatMessage,
   type OllamaModelInfo
 } from '../host-shared/ollama/OllamaDaemonClient'
+import type { OllamaCliSignInRecord } from '../host-shared/ollama/OllamaCliSignInMemory'
 import { isOllamaCloudModelId, ollamaCloudBaseModelId } from '../shared/ollamaModelAvailability'
 import { ollamaToolLoopRetryCeilingEnabled } from '../shared/ollamaLoopProtectionPolicy'
 import {
@@ -150,6 +151,11 @@ export interface HostNodeOllamaProviderOptions {
   readonly cloudApiKey?: string | null
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  /**
+   * The remembered `ollama signin` main persisted, read afresh per catalog
+   * fetch so a sign-in or sign-out reaches the Host without a restart.
+   */
+  readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
 }
 
 interface ActiveOllamaRun {
@@ -165,6 +171,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
   private readonly baseUrl: string
   private readonly cloudApiKey: string | null
   private readonly terminalLauncher?: HostNodeProviderTerminalLauncher
+  private readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
   private currentOffers: HostProviderOffersProjection
   private readonly executeTool?: (
     toolCall: OllamaToolCall
@@ -184,6 +191,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     this.baseUrl = options.baseUrl ?? 'http://127.0.0.1:11434'
     this.cloudApiKey = options.cloudApiKey ?? null
     this.terminalLauncher = options.terminalLauncher
+    this.rememberedCliSignIn = options.rememberedCliSignIn
     this.currentOffers = options.offers
     this.executeTool = options.executeTool
   }
@@ -196,6 +204,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     const pending = fetchOllamaModelCatalog(this.baseUrl, {
       timeoutMs: 2_000,
       cloudApiKey: this.cloudApiKey,
+      rememberedCliSignIn: this.rememberedCliSignIn?.() ?? null,
       ...(defaultModel ? { defaultModel } : {})
     })
     if (defaultModel) return pending
@@ -353,6 +362,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     try {
       catalog = await fetchOllamaModelCatalog(this.baseUrl, {
         cloudApiKey: this.cloudApiKey,
+        rememberedCliSignIn: this.rememberedCliSignIn?.() ?? null,
         defaultModel: modelId
       })
     } catch {
@@ -789,6 +799,7 @@ export interface HostNodeOllamaProviderFactoryOptions {
   readonly cloudApiKey?: string | null
   readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   readonly executeTool?: (toolCall: OllamaToolCall) => Promise<{ ok: boolean; result: string }>
+  readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
 }
 
 /** Static Ollama factory implementing the generic HostNodeProvider contract. */
@@ -815,7 +826,8 @@ export function createHostNodeOllamaProviderFactory(
         ...(options.baseUrl ? { baseUrl: options.baseUrl } : {}),
         ...(options.cloudApiKey !== undefined ? { cloudApiKey: options.cloudApiKey } : {}),
         ...(options.terminalLauncher ? { terminalLauncher: options.terminalLauncher } : {}),
-        ...(options.executeTool ? { executeTool: options.executeTool } : {})
+        ...(options.executeTool ? { executeTool: options.executeTool } : {}),
+        ...(options.rememberedCliSignIn ? { rememberedCliSignIn: options.rememberedCliSignIn } : {})
       })
     }
   }

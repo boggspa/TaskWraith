@@ -20,7 +20,7 @@ function model(
 }
 
 describe('hostNodeOllamaOffersFromCatalog', () => {
-  it('projects only runnable discovered rows and preserves the proven default', () => {
+  it('projects discovered rows, keeping an unproven Cloud row present but unavailable', () => {
     const offers = hostNodeOllamaOffersFromCatalog({
       models: [
         model('qwen3.5:9b', 'local'),
@@ -40,9 +40,16 @@ describe('hostNodeOllamaOffersFromCatalog', () => {
         available: true,
         default: true,
         detail: 'Ollama Cloud · pro plan'
+      }),
+      expect.objectContaining({
+        modelId: 'unproven:cloud',
+        available: false,
+        detail: 'Account state unavailable.'
       })
     ])
-    expect(offers.models.map((entry) => entry.modelId)).not.toContain('unproven:cloud')
+    expect(offers.models.find((entry) => entry.modelId === 'unproven:cloud')).not.toHaveProperty(
+      'default'
+    )
   })
 
   it('keeps a local default when no proven Cloud model is present', () => {
@@ -63,5 +70,28 @@ describe('hostNodeOllamaOffersFromCatalog', () => {
 
     expect(offers.models).toHaveLength(128)
     expect(offers.models.at(-1)?.modelId).toBe('cloud-127:cloud')
+  })
+
+  it('never lets an unavailable Cloud list crowd the installed local models out of the bound', () => {
+    const offers = hostNodeOllamaOffersFromCatalog({
+      models: [
+        ...Array.from({ length: 129 }, (_, index) =>
+          model(`cloud-${index}:cloud`, 'cloud', {
+            disabled: true,
+            disabledReason: 'Ollama Cloud account status is unavailable.'
+          })
+        ),
+        model('qwen3.5:9b', 'local', { isDefault: true })
+      ]
+    })
+
+    expect(offers.models).toHaveLength(128)
+    expect(offers.models[0]).toEqual(
+      expect.objectContaining({ modelId: 'qwen3.5:9b', available: true, default: true })
+    )
+    const unavailable = offers.models.slice(1)
+    expect(unavailable).toHaveLength(127)
+    expect(unavailable.every((entry) => entry.available === false)).toBe(true)
+    expect(unavailable.at(-1)?.modelId).toBe('cloud-126:cloud')
   })
 })

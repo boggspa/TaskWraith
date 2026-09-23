@@ -19,6 +19,11 @@ import {
   ollamaCloudModelId,
   ollamaModelIdsMatch
 } from '../../shared/ollamaModelAvailability'
+import {
+  applyRememberedOllamaCliSignIn,
+  type OllamaCliSignInRecord,
+  type OllamaProbeOutcome
+} from './OllamaCliSignInMemory'
 
 export const OLLAMA_CLOUD_API_BASE_URL = 'https://ollama.com'
 export const DEFAULT_OLLAMA_BASE_URL = 'http://127.0.0.1:11434'
@@ -77,6 +82,10 @@ export interface OllamaCloudDiscoverySnapshot {
   plan?: string
   source?: string
   apiKeyConfigured?: boolean
+  /** `authenticated` came from the remembered CLI sign-in, not this probe. */
+  authenticatedFromMemory?: true
+  /** How the daemon account probe (`POST /api/me`) behind `authenticated` ended. */
+  accountProbe?: OllamaProbeOutcome
   models: OllamaModelInfo[]
 }
 
@@ -85,6 +94,7 @@ interface BoundedJsonResult {
   ok: boolean
   status: number
   value: unknown
+  outcome: OllamaProbeOutcome
 }
 
 export interface OllamaModelShowResponse {
@@ -219,7 +229,11 @@ async function readJsonWithDeadline(
   const abort = (): void => controller.abort()
   if (options.signal?.aborted) controller.abort()
   else options.signal?.addEventListener('abort', abort, { once: true })
-  const timer = setTimeout(abort, options.timeoutMs ?? 1_500)
+  let deadlineFired = false
+  const timer = setTimeout(() => {
+    deadlineFired = true
+    controller.abort()
+  }, options.timeoutMs ?? 1_500)
   try {
     const response = await fetch(url, { ...init, signal: controller.signal })
     let value: unknown = null
@@ -230,9 +244,16 @@ async function readJsonWithDeadline(
         value = null
       }
     }
-    return { reachable: true, ok: response.ok, status: response.status, value }
+    return { reachable: true, ok: response.ok, status: response.status, value, outcome: 'answered' }
   } catch {
-    return { reachable: false, ok: false, status: 0, value: null }
+    // Our own deadline is not a transport verdict; only a rejection that
+    // arrived before it fired says anything about whether a daemon is there.
+    const outcome: OllamaProbeOutcome = deadlineFired
+      ? 'timed-out'
+      : options.signal?.aborted
+        ? 'aborted'
+        : 'refused'
+    return { reachable: false, ok: false, status: 0, value: null, outcome }
   } finally {
     clearTimeout(timer)
     options.signal?.removeEventListener('abort', abort)
@@ -504,8 +525,12 @@ export async function discoverOllamaCloudAccount(
         : null
   const enabled = apiKey ? true : cloudRecord?.disabled !== true
   const daemonRecommendations = normalizeDaemonCloudRecommendations(recommendations.value)
+  // An unknown account answer keeps the daemon's Cloud rows: the merge marks
+  // them disabled with the reason, so a slow `/api/me` disables rather than
+  // drops them and a remembered sign-in can re-enable them. A definitive 401
+  // still drops them.
   const daemonModels =
-    daemonAuthenticated === true && enabled
+    daemonAuthenticated !== false && enabled
       ? mergeCloudModels([...(options.daemonCloudModels ?? [])], daemonRecommendations)
       : []
   const directModels = directAuthenticated === true ? direct.models : []
@@ -521,6 +546,7 @@ export async function discoverOllamaCloudAccount(
     ),
     enabled,
     authenticated,
+    accountProbe: account.outcome,
     ...(plan ? { plan } : {}),
     ...(source ? { source } : {}),
     ...(apiKey ? { apiKeyConfigured: true } : {}),
@@ -596,7 +622,12 @@ export function mergeOllamaLocalAndCloudModels(
   }
 }
 
-/** Fetch the full model catalog (local + cloud). */
+/**
+ * Fetch the full model catalog (local + cloud). `rememberedCliSignIn` is the
+ * record main persisted from the daemon's last definitive account answer; it
+ * stands in for an unknown answer under the same rule main applies, so the
+ * Host's Cloud rows stay runnable across a slow account probe.
+ */
 export async function fetchOllamaModelCatalog(
   baseUrl: string,
   options: {
@@ -605,6 +636,7 @@ export async function fetchOllamaModelCatalog(
     launchAuthorized?: () => boolean
     cloudApiKey?: string | null
     defaultModel?: string | null
+    rememberedCliSignIn?: OllamaCliSignInRecord | null
   } = {}
 ): Promise<ReturnType<typeof mergeOllamaLocalAndCloudModels>> {
   const normalizedBaseUrl = normalizeOllamaBaseUrl(baseUrl)
@@ -629,7 +661,14 @@ export async function fetchOllamaModelCatalog(
           cloudApiKey: options.cloudApiKey,
           daemonCloudModels
         })
-  return mergeOllamaLocalAndCloudModels(localModels, cloud, options.defaultModel, {
+  // Repair BEFORE the merge: the merge is what disables every Cloud row when
+  // `authenticated !== true`.
+  const rememberedCloud = applyRememberedOllamaCliSignIn(
+    cloud,
+    options.rememberedCliSignIn ?? null,
+    { localReachable }
+  )
+  return mergeOllamaLocalAndCloudModels(localModels, rememberedCloud, options.defaultModel, {
     reachable: localReachable,
     error: localError
   })

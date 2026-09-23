@@ -31,6 +31,7 @@ import { createHostNodeMistralProvider } from './HostNodeMistralProvider'
 import { createHostNodeDevinProvider } from './HostNodeDevinProvider'
 import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
 import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
+import { readRememberedOllamaCliSignIn } from '../host-shared/ollama/OllamaCliSignInProfile'
 import { createHostNodeProviderResourcePort } from './HostNodeProviderResources'
 import { createHostNodePiProviderFactory } from './HostNodePiProvider'
 import { createHostNodeCursorProviderFactory } from './HostNodeCursorProvider'
@@ -239,7 +240,10 @@ export function createHostNodeProductionServer(
                 offers: hostNodeOllamaOffersFromCatalog({ models: [] }),
                 resources: createHostNodeProviderResourcePort('ollama', { environment }),
                 ...(launcher ? { terminalLauncher: launcher } : {}),
-                ...(ollamaCloudApiKey ? { cloudApiKey: ollamaCloudApiKey } : {})
+                ...(ollamaCloudApiKey ? { cloudApiKey: ollamaCloudApiKey } : {}),
+                // The profile's settings.json carries main's remembered
+                // `ollama signin`; the Host reads it per catalog fetch.
+                rememberedCliSignIn: () => readRememberedOllamaCliSignIn(profilePath)
               }),
               createHostNodePiProviderFactory(),
               createHostNodeCursorProviderFactory({

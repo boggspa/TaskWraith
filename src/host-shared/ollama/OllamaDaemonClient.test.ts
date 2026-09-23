@@ -1,9 +1,40 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   discoverOllamaCloud,
+  discoverOllamaCloudAccount,
   fetchOllamaLocalModels,
   fetchOllamaModelCatalog
 } from './OllamaDaemonClient'
+
+const REMEMBERED = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+
+/** A daemon that lists a pulled Cloud tag but whose account relay never answers. */
+function daemonWithSilentAccount(): typeof fetch {
+  return vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/api/tags')) {
+      return new Response(
+        JSON.stringify({
+          models: [
+            { model: 'qwen3.5:9b' },
+            { model: 'minimax-m3:cloud', remote_host: 'ollama.com' }
+          ]
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )
+    }
+    if (url.endsWith('/api/me')) {
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener(
+          'abort',
+          () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' })),
+          { once: true }
+        )
+      })
+    }
+    throw new TypeError('fetch failed')
+  }) as unknown as typeof fetch
+}
 
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -253,5 +284,136 @@ describe('OllamaDaemonClient model presentation', () => {
     })
 
     expect(catalog.models.find((model) => model.isDefault)?.id).toBe('qwen3.5:9b')
+  })
+
+  // The Host lane used to drop every Cloud row on an unknown account answer,
+  // so a slow `/api/me` emptied the offers and refused the run outright.
+  it('keeps the daemon Cloud rows present but disabled when the account probe hits its deadline', async () => {
+    vi.stubGlobal('fetch', daemonWithSilentAccount())
+
+    const catalog = await fetchOllamaModelCatalog('http://127.0.0.1:11434', { timeoutMs: 20 })
+
+    expect(catalog.cloud).toMatchObject({
+      supported: false,
+      authenticated: null,
+      accountProbe: 'timed-out'
+    })
+    expect(catalog.cloudModels).toEqual([
+      expect.objectContaining({
+        id: 'minimax-m3:cloud',
+        disabled: true,
+        disabledReason: 'Ollama Cloud account status is unavailable.'
+      })
+    ])
+    expect(catalog.models.find((model) => model.isDefault)?.id).toBe('qwen3.5:9b')
+  })
+
+  it('answers the account from the remembered sign-in and re-enables the daemon Cloud rows', async () => {
+    vi.stubGlobal('fetch', daemonWithSilentAccount())
+
+    const catalog = await fetchOllamaModelCatalog('http://127.0.0.1:11434', {
+      timeoutMs: 20,
+      rememberedCliSignIn: REMEMBERED
+    })
+
+    expect(catalog.cloud).toMatchObject({
+      supported: false,
+      authenticated: true,
+      plan: 'pro',
+      authenticatedFromMemory: true,
+      accountProbe: 'timed-out'
+    })
+    expect(catalog.cloudModels).toEqual([
+      expect.objectContaining({ id: 'minimax-m3:cloud', disabled: false, isDefault: true })
+    ])
+  })
+
+  it('answers from the remembered sign-in when the daemon listed models but refused the account relay', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/api/tags')) {
+          return new Response(
+            JSON.stringify({ models: [{ model: 'minimax-m3:cloud', remote_host: 'ollama.com' }] }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        throw new TypeError('fetch failed')
+      })
+    )
+
+    const catalog = await fetchOllamaModelCatalog('http://127.0.0.1:11434', {
+      rememberedCliSignIn: REMEMBERED
+    })
+
+    expect(catalog.cloud).toMatchObject({
+      supported: false,
+      authenticated: true,
+      authenticatedFromMemory: true,
+      accountProbe: 'refused'
+    })
+    expect(catalog.cloudModels).toEqual([
+      expect.objectContaining({ id: 'minimax-m3:cloud', disabled: false })
+    ])
+  })
+
+  it('still drops the daemon Cloud rows on a definitive 401 even with a remembered sign-in', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.endsWith('/api/tags')) {
+          return new Response(
+            JSON.stringify({
+              models: [
+                { model: 'qwen3.5:9b' },
+                { model: 'minimax-m3:cloud', remote_host: 'ollama.com' }
+              ]
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        if (url.endsWith('/api/me')) {
+          return new Response(JSON.stringify({ error: 'unauthorized' }), {
+            status: 401,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (url.endsWith('/api/status')) {
+          return new Response(JSON.stringify({ cloud: { disabled: false } }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        return new Response(JSON.stringify({ recommendations: [{ model: 'minimax-m3:cloud' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      })
+    )
+
+    const catalog = await fetchOllamaModelCatalog('http://127.0.0.1:11434', {
+      rememberedCliSignIn: REMEMBERED
+    })
+
+    expect(catalog.cloud).toMatchObject({ authenticated: false, accountProbe: 'answered' })
+    expect(catalog.cloudModels).toEqual([])
+  })
+
+  it('tells its own deadline apart from a refused connection in the account probe', async () => {
+    vi.stubGlobal('fetch', daemonWithSilentAccount())
+    await expect(
+      discoverOllamaCloudAccount('http://127.0.0.1:11434', { timeoutMs: 20 })
+    ).resolves.toMatchObject({ authenticated: null, accountProbe: 'timed-out' })
+
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('fetch failed')
+      })
+    )
+    await expect(
+      discoverOllamaCloudAccount('http://127.0.0.1:11434', { timeoutMs: 20 })
+    ).resolves.toMatchObject({ supported: false, authenticated: null, accountProbe: 'refused' })
   })
 })

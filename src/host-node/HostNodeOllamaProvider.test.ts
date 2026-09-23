@@ -4,6 +4,8 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 
+import { MainSourceProbe } from '../main/mainSourceProbe.testutil'
+
 import {
   createHostNodeOllamaProviderFactory,
   HostNodeOllamaProvider,
@@ -280,6 +282,63 @@ describe('HostNodeOllamaProvider status and auth', () => {
     expect(signedOutAgain.models.map((model) => model.modelId)).toEqual(['qwen3.5:9b'])
     expect(signedIn.offerRevision).not.toBe(signedOut.offerRevision)
     expect(signedOutAgain.offerRevision).toBe(signedOut.offerRevision)
+  })
+
+  // The Host has no settings store; the remembered `ollama signin` reaches it
+  // through this reader, consulted afresh on every catalog fetch so a sign-in
+  // or sign-out lands without a Host restart.
+  it('threads the remembered CLI sign-in into the offers catalog and the run-time catalog', async () => {
+    const records = [
+      { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' },
+      { signedIn: false, updatedAt: '2026-09-01T00:00:00.000Z' }
+    ]
+    const rememberedCliSignIn = vi.fn(() => records.shift() ?? null)
+    mockRunChatLoop.mockResolvedValue({
+      content: 'done',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
+    const runPort = new FakeRunPort()
+    const instance = provider(resourcePort(), runPort, { rememberedCliSignIn })
+
+    await instance.getOffers()
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:11434',
+      expect.objectContaining({
+        rememberedCliSignIn: { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+      })
+    )
+
+    await instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: TARGET })
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:11434',
+      expect.objectContaining({
+        defaultModel: OLLAMA_MODEL_ID,
+        rememberedCliSignIn: { signedIn: false, updatedAt: '2026-09-01T00:00:00.000Z' }
+      })
+    )
+    expect(rememberedCliSignIn).toHaveBeenCalledTimes(2)
+  })
+
+  it('passes the remembered sign-in reader through the factory', async () => {
+    const remembered = { signedIn: true, updatedAt: '2026-08-01T00:00:00.000Z' }
+    const factory = createHostNodeOllamaProviderFactory({ rememberedCliSignIn: () => remembered })
+    const instance = factory.create({ runPort: new FakeRunPort(), interactions: {} as never })
+
+    await instance.getOffers?.()
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:11434',
+      expect.objectContaining({ rememberedCliSignIn: remembered })
+    )
+  })
+
+  it('sends no remembered record when the Host was given no reader', async () => {
+    await provider().getOffers()
+    expect(mockFetchCatalog).toHaveBeenLastCalledWith(
+      'http://127.0.0.1:11434',
+      expect.objectContaining({ rememberedCliSignIn: null })
+    )
   })
 })
 
@@ -702,6 +761,23 @@ describe('OllamaDaemonClient retry abort', () => {
     const iteration = stream.next()
     setTimeout(() => controller.abort(), 20)
     await expect(iteration).rejects.toThrow()
+  })
+})
+
+describe('HostNodeProductionFactory wiring', () => {
+  // The production Host has no test that reaches the daemon; pin the wiring
+  // structurally so the reader cannot be dropped from the composition root
+  // without a named red.
+  it('hands the Ollama factory a reader of the profile settings record', () => {
+    const probe = new MainSourceProbe(
+      'HostNodeProductionFactory.ts',
+      new URL('./HostNodeProductionFactory.ts', import.meta.url)
+    )
+    const calls = probe.callsTo(probe.source, 'createHostNodeOllamaProviderFactory')
+    expect(calls).toHaveLength(1)
+    expect(probe.propText(calls[0], 0, 'rememberedCliSignIn')).toBe(
+      '() => readRememberedOllamaCliSignIn(profilePath)'
+    )
   })
 })
 
