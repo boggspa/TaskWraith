@@ -167,6 +167,10 @@ export async function runHostShutdownCli(
     input
   ) => new HostShutdownClient(input)
 ): Promise<void> {
+  // The npm `taskwraith-host stop` bin calls this directly too, not through
+  // main(). Its only writes are its failures, and a gone reader must not turn
+  // one into an uncaught EPIPE that replaces the bin's exit code. Idempotent.
+  installHostStdioGuard()
   const command = parseHostProductionCli(argv)
   if (command.command !== 'stop') throw new HostProductionCliError('Expected stop command.')
   await createShutdown({ profilePath: command.profilePath }).shutdown()

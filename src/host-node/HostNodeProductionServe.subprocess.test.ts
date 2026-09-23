@@ -699,6 +699,44 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     await outlivesAGoneStderrReader(root, profile, [bin, '--profile', profile])
   }, 90_000)
 
+  // S1a confirmation C4: the bin's `stop` calls runHostShutdownCli directly as
+  // well. Its only writes are its failures, and unguarded the first one into a
+  // gone reader was an uncaught EPIPE: exit 1 in place of the bin's own code.
+  it("keeps the npm bin's own exit code for a failed stop whose stderr reader has gone", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-epipe-bin-stop-subprocess-'))
+    paths.push(root)
+    const packageRoot = join(root, 'package')
+    buildCli(root, join(packageRoot, 'dist', 'host'), false)
+    const bin = join(packageRoot, 'bin', 'taskwraith-host.cjs')
+    mkdirSync(join(packageRoot, 'bin'))
+    copyFileSync(join(process.cwd(), 'packages', 'cli', 'bin', 'taskwraith-host.cjs'), bin)
+    const stop = async (readerGone: boolean): Promise<{ code: number | null; stderr: string }> => {
+      const child = spawn(process.execPath, [bin, 'stop', '--not-an-option'], {
+        env: { ...process.env, PATH: '' },
+        stdio: ['ignore', 'ignore', 'pipe']
+      })
+      spawned.push(child)
+      let stderr = ''
+      if (readerGone) {
+        // Gone before the bin has even booted, let alone written.
+        child.stderr!.destroy()
+      } else {
+        child.stderr!.setEncoding('utf8')
+        child.stderr!.on('data', (chunk: string) => {
+          stderr += chunk
+        })
+      }
+      await waitForExit(child)
+      return { code: child.exitCode, stderr }
+    }
+    // A usage error: the bin reports it and exits 2...
+    const kept = await stop(false)
+    expect(kept.stderr).toContain('Unknown argument "--not-an-option"')
+    expect(kept.code).toBe(2)
+    // ...and exits 2 all the same when the report goes nowhere.
+    await expect(stop(true)).resolves.toMatchObject({ code: 2 })
+  }, 90_000)
+
   /**
    * S1a re-review R3 on the real binary, by the reviewer's reproduction: a
    * Host whose history worker cannot start (built without the stage-3 worker
