@@ -46,9 +46,11 @@ import {
  * command) can never hide the genuine Host; anything unverified is listed and
  * left alone. Windows has no argv scan here.
  *
- * `--sweep` removes dead registry entries and socket directories after the
- * terminations; it needs a scope like any other mutation, and a listing
- * never sweeps.
+ * `--sweep` then removes dead registry entries and socket directories: with
+ * `--profile` or `--payload-root` only the selected Hosts' own (termination
+ * has already removed each one's proven-stale discovery, token and lease), and
+ * every profile's only with `--all`. It needs a scope like any other
+ * mutation, and a listing never sweeps.
  */
 
 export type HostStopAllScope =
@@ -104,7 +106,11 @@ export interface HostStopAllPorts {
     readonly profilePath: string
     readonly registryRoot: string
   }): Promise<HostTerminationOutcome>
-  sweep(registryRoot: string): Promise<HostRegistrySweepReport>
+  /** The registry sweep over these profiles' records only, or machine-wide when null. */
+  sweep(
+    registryRoot: string,
+    profilePaths: readonly string[] | null
+  ): Promise<HostRegistrySweepReport>
 }
 
 export interface HostStopAllOptions {
@@ -194,8 +200,13 @@ function defaultPorts(
     readEvidence: readHostTerminationEvidence,
     terminate: (input) =>
       terminateHostProcess({ ...input, platform, ...(log ? { ports: { log } } : {}) }),
-    sweep: (registryRoot) =>
-      sweepHostRegistry({ root: registryRoot, platform, ...(log ? { log } : {}) })
+    sweep: (registryRoot, profilePaths) =>
+      sweepHostRegistry({
+        root: registryRoot,
+        platform,
+        ...(profilePaths ? { profilePaths } : {}),
+        ...(log ? { log } : {})
+      })
   }
 }
 
@@ -386,10 +397,16 @@ export async function stopAllHosts(options: HostStopAllOptions): Promise<HostSto
       return reportedHost(candidate, selected, outcome)
     })
   )
-  // A listing changes nothing, a sweep included.
+  // A listing changes nothing, a sweep included. A scoped sweep stays in its
+  // scope: the selected Hosts' own records, whatever else is dead.
   const sweep =
     options.sweep === true && options.scope.kind !== 'list'
-      ? await ports.sweep(registryRoot)
+      ? await ports.sweep(
+          registryRoot,
+          options.scope.kind === 'all'
+            ? null
+            : hosts.filter((host) => host.selected).map((host) => host.profilePath)
+        )
       : undefined
   const failed = hosts.some(
     (host) => host.outcome && !HOST_TERMINATION_SUCCESS_KINDS.has(host.outcome.kind)

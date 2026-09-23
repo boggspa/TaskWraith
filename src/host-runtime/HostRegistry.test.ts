@@ -8,6 +8,7 @@ import {
   renameSync,
   rmSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync
 } from 'node:fs'
@@ -907,5 +908,68 @@ describe('sweepHostRegistry', () => {
     expect(report.keptSocketDirectories).toEqual([name])
     expect(existsSync(join(temporaryDirectory, name))).toBe(true)
     expect(existsSync(join(temporaryDirectory, name, TASKWRAITH_HOST_SOCKET_FILE))).toBe(false)
+  })
+
+  it("sweeps only the named profiles: another profile's dead entry and socket directory are neither judged nor removed", async () => {
+    const parent = scratch('host-registry-')
+    const root = join(parent, 'hosts')
+    const temporaryDirectory = join(parent, 'tmp')
+    mkdirSync(temporaryDirectory)
+    const inScope = scratch('host-registry-profile-in-')
+    const outOfScope = scratch('host-registry-profile-out-')
+    // The scope may name the profile through a link: it is judged canonically.
+    const spelled = join(parent, 'profile-link')
+    symlinkSync(inScope, spelled)
+    const directory = (profile: string) =>
+      join(temporaryDirectory, `twh2-501-${hostRegistryEntryId(profile)}`)
+    for (const [profile, pid] of [
+      [inScope, 11],
+      [outOfScope, 22]
+    ] as const) {
+      writeEntry(root, entryFor(profile, pid, BORN))
+      mkdirSync(directory(profile))
+      writeFileSync(join(directory(profile), TASKWRAITH_HOST_SOCKET_FILE), '')
+    }
+    const orphan = join(temporaryDirectory, `twh2-501-${'d'.repeat(16)}`)
+    mkdirSync(orphan)
+    const observe = vi.fn(async (): Promise<ProcessBirthObservation> => ({ state: 'dead' }))
+    const sweep = (profilePaths?: readonly string[]) =>
+      sweepHostRegistry({
+        root,
+        ...(profilePaths ? { profilePaths } : {}),
+        platform: 'darwin',
+        temporaryDirectory,
+        uid: 501,
+        observe,
+        socketIsLive: async () => false,
+        now: anHourLater
+      })
+
+    const scoped = await sweep([spelled])
+    expect(scoped).toEqual({
+      removedEntries: [hostRegistryEntryId(inScope)],
+      keptEntries: [],
+      removedSocketDirectories: [basename(directory(inScope))],
+      keptSocketDirectories: []
+    })
+    expect(observe.mock.calls).toEqual([[11]])
+    expect(existsSync(hostRegistryEntryPath(root, inScope))).toBe(false)
+    expect(existsSync(directory(inScope))).toBe(false)
+    expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
+    expect(existsSync(directory(outOfScope))).toBe(true)
+    expect(existsSync(orphan)).toBe(true)
+
+    // Nothing named, nothing swept; unscoped, the rest was dead all along.
+    await expect(sweep([])).resolves.toEqual({
+      removedEntries: [],
+      keptEntries: [],
+      removedSocketDirectories: [],
+      keptSocketDirectories: []
+    })
+    const everything = await sweep()
+    expect(everything.removedEntries).toEqual([hostRegistryEntryId(outOfScope)])
+    expect([...everything.removedSocketDirectories].sort()).toEqual(
+      [basename(directory(outOfScope)), basename(orphan)].sort()
+    )
   })
 })

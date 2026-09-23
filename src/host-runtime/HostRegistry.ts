@@ -629,6 +629,11 @@ export function hostSocketIsLive(
 
 export interface HostRegistrySweepOptions {
   readonly root: string
+  /**
+   * Only these profiles' own records: their entries and their socket
+   * directories. Absent, the sweep is machine-wide (`stop-all --all --sweep`).
+   */
+  readonly profilePaths?: readonly string[]
   readonly platform?: NodeJS.Platform
   readonly temporaryDirectory?: string
   readonly uid?: number | string
@@ -704,7 +709,8 @@ export async function unlinkDeadHostSocket(
  * (that is verified termination's job, not the sweep's), nor one changed
  * within the last HOST_REGISTRY_SWEEP_MIN_AGE_MS (a Host may be starting in
  * it). An entry is removed only while it still names the pid and birth that
- * were judged dead.
+ * were judged dead. With `profilePaths` nothing else is looked at: another
+ * profile's entry or directory is neither judged nor reported.
  */
 export async function sweepHostRegistry(
   options: HostRegistrySweepOptions
@@ -716,12 +722,19 @@ export async function sweepHostRegistry(
   const rmdir = options.rmdir ?? rmdirSync
   const minimumAgeMs = options.minimumAgeMs ?? HOST_REGISTRY_SWEEP_MIN_AGE_MS
   const now = options.now ?? (() => Date.now())
+  // Entry ids and socket-directory suffixes are both the canonical profile's hash.
+  const scope = options.profilePaths
+    ? new Set(
+        options.profilePaths.map((path) => hostRegistryEntryId(canonicalHostProfilePath(path)))
+      )
+    : null
   const listing = readHostRegistry(options.root)
   const removedEntries: string[] = []
   const keptEntries: string[] = []
   const liveEntryIds = new Set<string>()
   for (const entry of listing.entries) {
     const id = hostRegistryEntryId(entry.profilePath)
+    if (scope && !scope.has(id)) continue
     const observation = await observe(entry.pid)
     const gone =
       observation.state === 'dead' ||
@@ -765,7 +778,7 @@ export async function sweepHostRegistry(
     }
     for (const name of names.sort()) {
       const match = SOCKET_DIRECTORY_PATTERN.exec(name)
-      if (!match || match[1] !== uid) continue
+      if (!match || match[1] !== uid || (scope && !scope.has(match[2]))) continue
       const directory = join(temporaryDirectory, name)
       let directoryStat: Stats | null = null
       try {

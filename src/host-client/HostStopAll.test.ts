@@ -1,4 +1,5 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -6,6 +7,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   HOST_REGISTRY_SCHEMA,
+  hostRegistryEntryId,
+  hostRegistryEntryPath,
+  sweepHostRegistry,
   type HostRegistryEntry,
   type HostRegistryListing
 } from '../host-runtime/HostRegistry'
@@ -97,14 +101,20 @@ function ports(
     readonly observe?: (pid: number) => ProcessBirthObservation
     readonly evidence?: (profilePath: string) => HostTerminationEvidence
   } = {}
-): HostStopAllPorts & { readonly terminated: string[]; readonly swept: string[] } {
+): HostStopAllPorts & {
+  readonly terminated: string[]
+  readonly swept: string[]
+  readonly sweptScopes: Array<readonly string[] | null>
+} {
   const terminated: string[] = []
   const swept: string[] = []
+  const sweptScopes: Array<readonly string[] | null> = []
   const entries = options.entries ?? [DEV, VERIFY, APP]
   const listing: HostRegistryListing = { root: ROOT, entries, unreadable: [] }
   return {
     terminated,
     swept,
+    sweptScopes,
     readRegistry: () => listing,
     listProcesses: async () => ({ ok: true, processes: options.processes ?? [] }),
     observe: async (pid) => {
@@ -124,8 +134,9 @@ function ports(
         entries.find((candidate) => candidate.profilePath === profilePath)?.pid ?? LEGACY_PID
       return stopped(pid)
     },
-    sweep: async (root) => {
+    sweep: async (root, profilePaths) => {
       swept.push(root)
+      sweptScopes.push(profilePaths)
       return {
         removedEntries: [],
         keptEntries: [],
@@ -135,6 +146,11 @@ function ports(
     }
   }
 }
+
+const scratchRoots: string[] = []
+afterEach(() => {
+  while (scratchRoots.length) rmSync(scratchRoots.pop()!, { recursive: true, force: true })
+})
 
 async function run(
   scope: HostStopAllScope,
@@ -411,6 +427,153 @@ describe('stopAllHosts', () => {
     expect(formatHostStopAllReport(swept)).toContain(
       'swept 0 registry entries and 0 socket directories'
     )
+  })
+
+  it('keeps a scoped --sweep to the selected Hosts, and sweeps every profile only with --all', async () => {
+    const injected = ports()
+    await run({ kind: 'payload-root', payloadRoot: REPO_PAYLOAD }, injected, { sweep: true })
+    await run({ kind: 'profile', profilePath: '/profiles/app' }, injected, { sweep: true })
+    await run({ kind: 'payload-root', payloadRoot: '/elsewhere/out/host' }, injected, {
+      sweep: true
+    })
+    await run({ kind: 'all' }, injected, { sweep: true })
+    expect(injected.sweptScopes).toEqual([
+      ['/profiles/dev', '/profiles/verify'],
+      ['/profiles/app'],
+      [],
+      null
+    ])
+  })
+
+  it('leaves a dead record outside a scoped --sweep in place: registry entry and socket directory (S6)', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'host-stop-all-sweep-')))
+    scratchRoots.push(base)
+    const root = join(base, 'hosts')
+    const temporaryDirectory = join(base, 'tmp')
+    const payloadRoot = join(base, 'repo', 'out', 'host')
+    const inScope = join(base, 'profiles', 'dev')
+    const outOfScope = join(base, 'profiles', 'app')
+    const directory = (profile: string) =>
+      join(temporaryDirectory, `twh2-501-${hostRegistryEntryId(profile)}`)
+    const dead = async (): Promise<ProcessBirthObservation> => ({ state: 'dead' })
+    const seed = (): void => {
+      rmSync(root, { recursive: true, force: true })
+      rmSync(temporaryDirectory, { recursive: true, force: true })
+      mkdirSync(root, { recursive: true, mode: 0o700 })
+      mkdirSync(temporaryDirectory, { recursive: true })
+      // Both Hosts are gone: a crashed dev Host of this checkout, and the
+      // production app's, whose entry the scope never selects.
+      for (const [profile, record] of [
+        [inScope, entry(inScope, 301, `${payloadRoot}/host-runtime/cli.js`, BORN('a'))],
+        [outOfScope, entry(outOfScope, 302, `${APP_PAYLOAD}/host-runtime/cli.js`, BORN('c'))]
+      ] as const) {
+        writeFileSync(hostRegistryEntryPath(root, profile), `${JSON.stringify(record)}\n`, {
+          mode: 0o600
+        })
+        mkdirSync(directory(profile))
+      }
+    }
+    const stop = (scope: HostStopAllScope) =>
+      stopAllHosts({
+        scope,
+        registryRoot: root,
+        platform: 'darwin',
+        sweep: true,
+        ports: {
+          observe: dead,
+          // Termination sweeps nothing here: whatever goes, the sweep removed.
+          terminate: async ({ profilePath }) => ({
+            kind: 'already_gone',
+            pid: profilePath === inScope ? 301 : 302,
+            steps: [],
+            swept: []
+          }),
+          sweep: (registryRoot, profilePaths) =>
+            sweepHostRegistry({
+              root: registryRoot,
+              ...(profilePaths ? { profilePaths } : {}),
+              platform: 'darwin',
+              temporaryDirectory,
+              uid: 501,
+              observe: dead,
+              socketIsLive: async () => false,
+              now: () => Date.now() + 3_600_000
+            })
+        }
+      })
+
+    for (const scope of [
+      { kind: 'payload-root', payloadRoot },
+      { kind: 'profile', profilePath: inScope }
+    ] as const) {
+      seed()
+      const report = await stop(scope)
+      // Listed in entry-id order, which the random scratch path decides.
+      expect(new Map(report.hosts.map((host) => [host.profilePath, host.selected]))).toEqual(
+        new Map([
+          [inScope, true],
+          [outOfScope, false]
+        ])
+      )
+      expect(report.sweep).toEqual({
+        removedEntries: [hostRegistryEntryId(inScope)],
+        keptEntries: [],
+        removedSocketDirectories: [`twh2-501-${hostRegistryEntryId(inScope)}`],
+        keptSocketDirectories: []
+      })
+      expect(existsSync(hostRegistryEntryPath(root, inScope))).toBe(false)
+      expect(existsSync(directory(inScope))).toBe(false)
+      expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
+      expect(existsSync(directory(outOfScope))).toBe(true)
+    }
+
+    // Only --all sweeps every profile's dead records.
+    seed()
+    const all = await stop({ kind: 'all' })
+    expect([...(all.sweep?.removedEntries ?? [])].sort()).toEqual(
+      [hostRegistryEntryId(inScope), hostRegistryEntryId(outOfScope)].sort()
+    )
+    expect(existsSync(directory(outOfScope))).toBe(false)
+  })
+
+  it('hands its own registry sweep the scope: a dead entry outside --profile is left in place (S6)', async () => {
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'host-stop-all-sweep-')))
+    scratchRoots.push(base)
+    const root = join(base, 'hosts')
+    const inScope = join(base, 'profiles', 'dev')
+    const outOfScope = join(base, 'profiles', 'app')
+    // A pid nothing runs at any more: both Hosts are gone.
+    const exited = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+    await new Promise((resolve) => exited.once('exit', resolve))
+    const gone = exited.pid!
+    mkdirSync(root, { mode: 0o700 })
+    for (const profile of [inScope, outOfScope]) {
+      writeFileSync(
+        hostRegistryEntryPath(root, profile),
+        `${JSON.stringify(entry(profile, gone, `${APP_PAYLOAD}/host-runtime/cli.js`, BORN('a')))}\n`,
+        { mode: 0o600 }
+      )
+    }
+    const report = await stopAllHosts({
+      scope: { kind: 'profile', profilePath: inScope },
+      registryRoot: root,
+      // Windows: the default sweep then leaves the real temp directory's
+      // socket directories alone, and judges only these entries.
+      platform: 'win32',
+      sweep: true,
+      ports: {
+        observe: async () => ({ state: 'dead' }),
+        terminate: async () => ({ kind: 'already_gone', pid: gone, steps: [], swept: [] })
+      }
+    })
+    expect(report.sweep).toEqual({
+      removedEntries: [hostRegistryEntryId(inScope)],
+      keptEntries: [],
+      removedSocketDirectories: [],
+      keptSocketDirectories: []
+    })
+    expect(existsSync(hostRegistryEntryPath(root, inScope))).toBe(false)
+    expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
   })
 })
 
