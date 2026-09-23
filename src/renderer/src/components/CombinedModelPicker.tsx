@@ -24,7 +24,16 @@
  *   - Click-outside dismisses.
  */
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  Fragment,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode
+} from 'react'
 import { createPortal } from 'react-dom'
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
 import {
@@ -48,11 +57,19 @@ import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
 import { antigravityEffortForModelId } from '../../../shared/antigravityAgyModelGrouping'
 import { modelRequiresApiKey } from '../../../shared/apiKeyModelIndicator'
 import { PillButton } from './PillButton'
+import { getProviderDescription } from './ComposerProviderPicker'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { isOllamaCloudModelId } from '../../../shared/ollamaModelAvailability'
 import { resolveOllamaComposerReasoningEffort } from '../../../shared/ollamaReasoning'
 import { OllamaCloudIcon } from './icons/OllamaCloudIcon'
+import {
+  buildLadderMarks,
+  ladderDeadbandFraction,
+  ladderPointerFraction,
+  resolveLadderPointerStop,
+  stepLadderDrag
+} from '../lib/reasoningLadderPointer'
 
 export type {
   CombinedModelPickerModelOption,
@@ -365,108 +382,170 @@ export function shouldScrollHighlightedRowIntoView(params: {
   highlightSource: CombinedModelPickerHighlightSource
   modelHighlight: number
 }): boolean {
-  // A collapsed group parks the highlight at -1; there is no row to reveal.
+  // A tab browsed away from the current model (or an empty tab) parks the
+  // highlight at -1; there is no row to reveal.
   if (params.modelHighlight < 0) return false
   return params.highlightSource !== 'pointer'
 }
 
-const NO_COLLAPSED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
-const NO_EXPANDED_PROVIDER_GROUPS: ReadonlySet<ProviderId> = new Set()
 const NO_UNIFIED_PROVIDER_GROUPS: readonly CombinedModelPickerProviderGroup[] = []
 
-export function flattenUnifiedProviderModels(
+/**
+ * The provider tab the rail shows: the requested tab when it exists, else the
+ * current model's provider, else the first tab. Null only with no groups.
+ *
+ * Browsing is transient. The picker requests `null` (follow the current model)
+ * whenever it opens and whenever the committed provider/model changes, so it
+ * always opens on the model in use and a seat retarget moves the rail with it.
+ */
+export function resolveActiveProviderTab(
   groups: readonly CombinedModelPickerProviderGroup[],
-  collapsedProviderIds: ReadonlySet<ProviderId> = NO_COLLAPSED_PROVIDER_GROUPS
-): UnifiedModelEntry[] {
-  return groups.flatMap((group) =>
-    collapsedProviderIds.has(group.provider)
-      ? []
-      : group.modelOptions.map((option) => ({ provider: group.provider, option }))
-  )
-}
-
-export function resolveCollapsedUnifiedProviderIds(
-  groups: readonly CombinedModelPickerProviderGroup[],
-  expandedProviderIds: ReadonlySet<ProviderId> = NO_EXPANDED_PROVIDER_GROUPS
-): Set<ProviderId> {
-  return new Set(
-    groups
-      .filter((group) => !expandedProviderIds.has(group.provider))
-      .map((group) => group.provider)
-  )
-}
-
-export function toggleExpandedProviderGroup(
-  expandedProviderIds: ReadonlySet<ProviderId>,
+  requested: ProviderId | null,
   provider: ProviderId
-): Set<ProviderId> {
-  const next = new Set(expandedProviderIds)
-  if (next.has(provider)) next.delete(provider)
-  else next.add(provider)
-  return next
+): ProviderId | null {
+  if (requested && groups.some((group) => group.provider === requested)) return requested
+  if (groups.some((group) => group.provider === provider)) return provider
+  return groups[0]?.provider ?? null
 }
 
-function ProviderGroupDisclosureChevron({ expanded }: { expanded: boolean }): React.JSX.Element {
-  return (
-    <span
-      className={`composer-combined-picker-provider-chevron ${expanded ? 'is-expanded' : ''}`}
-      aria-hidden
-    >
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.4"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <path d="M6.2 4.7 10 8.1 6.2 11.5" />
-      </svg>
-    </span>
+/** Arrow-key step through the provider rail; clamps at both ends like the columns. */
+export function stepProviderTab(
+  groups: readonly CombinedModelPickerProviderGroup[],
+  current: ProviderId | null,
+  delta: number
+): ProviderId | null {
+  if (groups.length === 0) return null
+  const index = Math.max(
+    0,
+    groups.findIndex((group) => group.provider === current)
   )
+  return groups[Math.max(0, Math.min(groups.length - 1, index + delta))]!.provider
 }
 
-export function CombinedModelPickerProviderHeader({
+export interface ProviderTabSection {
+  /** Stable key; `all` when the tab renders one flat list. */
+  id: string
+  /** Sub-group heading, or null for the flat list. */
+  label: string | null
+  /** Hue class for the heading's swatch. */
+  hueClass: string | null
+  isCloud: boolean
+  options: CombinedModelPickerModelOption[]
+}
+
+/**
+ * One tab's rows in display order. Ollama splits into Cloud plus its local
+ * upstream brands (the legacy Ollama picker's grouping) and Pi into its
+ * upstreams, so a long catalogue reads as a few labelled runs. Every other
+ * provider — and a grouped one whose rows all share one group — stays a single
+ * flat list, because a lone heading would only repeat the tab it sits under.
+ */
+export function buildProviderTabSections(
+  group: CombinedModelPickerProviderGroup
+): ProviderTabSection[] {
+  const flat: ProviderTabSection[] = [
+    { id: 'all', label: null, hueClass: null, isCloud: false, options: group.modelOptions }
+  ]
+  if (group.provider === 'ollama') {
+    const ollamaGroups = buildOllamaProviderGroups(group.modelOptions)
+    if (ollamaGroups.length < 2) return flat
+    return ollamaGroups.map((ollamaGroup) => ({
+      id: ollamaGroup.id,
+      label: ollamaGroup.label,
+      hueClass: ollamaGroup.providerClass,
+      isCloud: Boolean(ollamaGroup.isCloud),
+      options: ollamaGroup.models
+    }))
+  }
+  if (group.provider === 'pi') {
+    const sections: ProviderTabSection[] = []
+    for (const option of group.modelOptions) {
+      const label = resolveProviderBrandLabel('pi', option.id, option.label) || 'Pi'
+      let section = sections.find((entry) => entry.label === label)
+      if (!section) {
+        section = {
+          id: `pi:${label}`,
+          label,
+          hueClass: modelPickerHueClass('pi', option.id, option.label),
+          isCloud: false,
+          options: []
+        }
+        sections.push(section)
+      }
+      section.options.push(option)
+    }
+    return sections.length < 2 ? flat : sections
+  }
+  return flat
+}
+
+/** The active tab's navigable rows, flattened in display order. */
+export function flattenProviderTabEntries(
+  provider: ProviderId,
+  sections: readonly ProviderTabSection[]
+): UnifiedModelEntry[] {
+  return sections.flatMap((section) => section.options.map((option) => ({ provider, option })))
+}
+
+export function CombinedModelPickerProviderTab({
   provider,
   label,
+  active,
+  current,
   pauseLabel,
   rerouteLabel,
-  expanded,
   disabled,
-  onToggle
+  tabId,
+  panelId,
+  onSelect
 }: {
   provider: ProviderId
   label: string
+  active: boolean
+  /** The current model belongs to this provider: the rail's Dock-style dot. */
+  current: boolean
   pauseLabel?: string
   rerouteLabel?: string
-  expanded: boolean
   disabled?: boolean
-  onToggle: () => void
+  tabId?: string
+  panelId?: string
+  onSelect: () => void
 }): React.JSX.Element {
-  const actionLabel = `${expanded ? 'Collapse' : 'Expand'} ${label} models`
+  const name = [label, pauseLabel ? 'paused' : null, current ? 'current model' : null]
+    .filter(Boolean)
+    .join(' · ')
   return (
     <button
       type="button"
-      className="composer-combined-picker-provider-header"
-      aria-expanded={expanded}
-      aria-label={actionLabel}
-      title={actionLabel}
+      role="tab"
+      id={tabId}
+      className={[
+        'composer-combined-picker-provider-tab',
+        active ? 'is-active' : '',
+        current ? 'is-current' : '',
+        pauseLabel ? 'is-paused' : ''
+      ]
+        .filter(Boolean)
+        .join(' ')}
+      data-provider={provider}
+      style={
+        {
+          '--provider-tab-accent': `var(--provider-${provider}-color, var(--accent))`
+        } as React.CSSProperties
+      }
+      aria-selected={active}
+      aria-controls={panelId}
+      aria-label={name}
+      title={[name, pauseLabel, rerouteLabel].filter(Boolean).join('\n')}
+      tabIndex={-1}
       disabled={disabled}
-      onClick={onToggle}
+      // The picker drives the keyboard from its trigger (focusedColumn), so a
+      // click must not move focus onto the tab or the arrow keys would go dead.
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={onSelect}
     >
-      <span className="composer-combined-picker-provider-header-icon" aria-hidden>
-        <ProviderBrandLogoIcon provider={provider} />
-      </span>
-      <span className="composer-combined-picker-provider-header-label">{label}</span>
-      {pauseLabel && (
-        <span
-          className="composer-provider-paused-pill"
-          title={[pauseLabel, rerouteLabel].filter(Boolean).join('\n')}
-        >
-          Paused
-        </span>
-      )}
-      <ProviderGroupDisclosureChevron expanded={expanded} />
+      <ProviderBrandLogoIcon provider={provider} />
+      {pauseLabel && <span className="composer-combined-picker-provider-tab-paused" aria-hidden />}
     </button>
   )
 }
@@ -1050,17 +1129,28 @@ export function ReasoningLadderSlider({
 }): React.JSX.Element {
   const trackRef = useRef<HTMLDivElement | null>(null)
   const draggingRef = useRef(false)
-  // During a drag the thumb tracks the finger via LOCAL state and commits ONLY
-  // on release — so a whole drag fires one onSelectReasoning (one persist + one
-  // parent re-render / ensemble notice), not one per stop crossed. Keyboard/
-  // click paths still commit directly.
+  // During a drag the thumb shows a LOCAL stop and commits ONLY on release, so
+  // a whole drag fires one onSelectReasoning (one persist + one parent
+  // re-render / ensemble notice), not one per stop crossed. Keyboard/click
+  // paths still commit directly. The ref mirrors the state because pointer
+  // events can outrun re-renders, and the deadband must always be measured
+  // from the stop actually on screen.
+  const dragIndexRef = useRef<number | null>(null)
   const [dragIndex, setDragIndex] = useState<number | null>(null)
+  // The user's choice always resolves: a released stop stays on screen until
+  // the parent's value arrives. A live ensemble seat commits through an
+  // authoritative round trip, and without this hold the thumb fell back to the
+  // old stop for the length of that trip. There is deliberately no timeout
+  // back to the old value; the hold ends when the value (or model) changes.
+  const [heldIndex, setHeldIndex] = useState<number | null>(null)
+  // The stop a click would land on while the pointer hovers the track.
+  const [hoverIndex, setHoverIndex] = useState<number | null>(null)
   const interactive =
     !disabled && !unavailablePresentation && ladder.enabledIndices.length > 1
   const currentIndex =
     unavailablePresentation?.index ??
     clampedLadderIndex(provider, selectedReasoning, ladder, modelId)
-  const displayIndex = interactive && dragIndex != null ? dragIndex : currentIndex
+  const displayIndex = interactive ? (dragIndex ?? heldIndex ?? currentIndex) : currentIndex
   const providerHueClass = modelPickerHueClass(provider, modelId)
   // A locked nonzero stop is still meaningful reasoning state (K2.7's On,
   // Mistral Medium's High, Cursor Composer's implicit Medium, or a live
@@ -1087,14 +1177,23 @@ export function ReasoningLadderSlider({
           ? 'max'
           : null
     : null
+  // A tick beside every stop this model offers and a faint dot at every level
+  // it doesn't, so a jump over a gap is legible before the drag starts.
+  const marks = buildLadderMarks(ladder.enabledIndices, displayIndex, LADDER_MAX_INDEX)
 
-  const indexFromClientY = (clientY: number): number | null => {
-    const el = trackRef.current
-    if (!el) return null
-    const rect = el.getBoundingClientRect()
-    const usable = Math.max(1, rect.height - LADDER_TRACK_INSET * 2)
-    const frac = Math.max(0, Math.min(1, 1 - (clientY - rect.top - LADDER_TRACK_INSET) / usable))
-    return nearestEnabledLadderIndex(Math.round(frac * LADDER_MAX_INDEX), ladder.enabledIndices)
+  useEffect(() => {
+    setHeldIndex(null)
+  }, [selectedReasoning, provider, modelId])
+
+  const dragRail = (rect: DOMRect) => ({
+    enabledIndices: ladder.enabledIndices,
+    maxIndex: LADDER_MAX_INDEX,
+    deadbandFraction: ladderDeadbandFraction(rect.height, LADDER_TRACK_INSET)
+  })
+  const showDragIndex = (next: number | null): void => {
+    if (next === dragIndexRef.current) return
+    dragIndexRef.current = next
+    setDragIndex(next)
   }
 
   return (
@@ -1159,13 +1258,29 @@ export function ReasoningLadderSlider({
           } catch {
             /* setPointerCapture can throw on stale pointer ids; ignore. */
           }
-          const idx = indexFromClientY(event.clientY)
-          if (idx != null) setDragIndex(idx)
+          const rect = event.currentTarget.getBoundingClientRect()
+          const fraction = ladderPointerFraction(event.clientY, rect, LADDER_TRACK_INSET)
+          setHoverIndex(null)
+          showDragIndex(stepLadderDrag(null, { type: 'press', fraction }, dragRail(rect)).dragIndex)
         }}
         onPointerMove={(event) => {
-          if (!draggingRef.current) return
-          const idx = indexFromClientY(event.clientY)
-          if (idx != null) setDragIndex(idx)
+          if (!interactive) return
+          const rect = event.currentTarget.getBoundingClientRect()
+          const fraction = ladderPointerFraction(event.clientY, rect, LADDER_TRACK_INSET)
+          if (!draggingRef.current) {
+            setHoverIndex(
+              resolveLadderPointerStop({
+                fraction,
+                enabledIndices: ladder.enabledIndices,
+                maxIndex: LADDER_MAX_INDEX
+              })
+            )
+            return
+          }
+          showDragIndex(
+            stepLadderDrag(dragIndexRef.current, { type: 'move', fraction }, dragRail(rect))
+              .dragIndex
+          )
         }}
         onPointerUp={(event) => {
           if (!draggingRef.current) return
@@ -1175,15 +1290,27 @@ export function ReasoningLadderSlider({
           } catch {
             /* releasePointerCapture can throw if capture was already lost. */
           }
-          const idx = indexFromClientY(event.clientY) ?? dragIndex
-          const value = idx != null ? ladder.valueByIndex[idx] : undefined
-          if (value != null && value !== selectedReasoning) onSelectReasoning(value)
+          // Commit exactly the stop on screen; the release point is never
+          // re-read, so letting go can't move the thumb.
+          const { commitIndex } = stepLadderDrag(
+            dragIndexRef.current,
+            { type: 'release' },
+            dragRail(event.currentTarget.getBoundingClientRect())
+          )
+          dragIndexRef.current = null
           setDragIndex(null)
+          const value = commitIndex != null ? ladder.valueByIndex[commitIndex] : undefined
+          if (value != null && value !== selectedReasoning) {
+            setHeldIndex(commitIndex)
+            onSelectReasoning(value)
+          }
         }}
         onPointerCancel={() => {
           draggingRef.current = false
+          dragIndexRef.current = null
           setDragIndex(null)
         }}
+        onPointerLeave={() => setHoverIndex(null)}
       >
         <div className="composer-combined-picker-ladder-rail" aria-hidden />
         {/* Coloured gradient fill, clipped to BELOW the thumb — the hue emerges
@@ -1193,6 +1320,26 @@ export function ReasoningLadderSlider({
           style={{ height: fillHeight }}
           aria-hidden
         />
+        {marks.length > 0 && (
+          <div className="composer-combined-picker-ladder-marks" aria-hidden>
+            {marks.map((mark) => (
+              <span
+                key={mark.index}
+                className="composer-combined-picker-ladder-mark"
+                data-stop={mark.index}
+                data-enabled={mark.enabled ? 'true' : 'false'}
+                data-reached={mark.reached ? 'true' : undefined}
+                data-current={mark.current ? 'true' : undefined}
+                data-target={
+                  interactive && dragIndex === null && mark.enabled && hoverIndex === mark.index
+                    ? 'true'
+                    : undefined
+                }
+                style={{ bottom: ladderStopBottom(mark.index) }}
+              />
+            ))}
+          </div>
+        )}
         {fxProfile.active && (
           <>
             <div className="composer-combined-picker-ladder-pulse" aria-hidden />
@@ -1348,21 +1495,63 @@ export function CombinedModelPicker({
   // Why the highlight last moved, so the reveal effect below can tell a row the
   // user navigated to from the row their cursor is already resting on.
   const highlightSourceRef = useRef<CombinedModelPickerHighlightSource>('navigation')
-  // No explicit expansions means every provider starts collapsed. This state
-  // belongs to the mounted picker rather than an individual open cycle, so
-  // closing and reopening preserves exactly the disclosure state the user left.
-  const [expandedProviderIds, setExpandedProviderIds] = useState<Set<ProviderId>>(() => new Set())
+  // The provider tab the user is browsing, or null to follow the current
+  // model's provider. Reset to null on close and on every committed selection
+  // change, so the picker always opens on the model in use.
+  const [browsedProviderTab, setBrowsedProviderTab] = useState<ProviderId | null>(null)
+  // Which way the list should arrive from on a tab switch (the rail is ordered).
+  const [tabEnterDirection, setTabEnterDirection] = useState<'up' | 'down' | null>(null)
+  // Per-tab scroll positions for the current open cycle.
+  const providerTabScrollRef = useRef<Map<ProviderId, number>>(new Map())
+  const providerTabsRef = useRef<HTMLDivElement | null>(null)
+  const tabPanelRowsRef = useRef<HTMLDivElement | null>(null)
+  const providerTabDomId = useId()
   const resetSignatureRef = useRef<string | null>(null)
 
-  const collapsedProviderIds = useMemo(
-    () => resolveCollapsedUnifiedProviderIds(unifiedProviderGroups, expandedProviderIds),
-    [expandedProviderIds, unifiedProviderGroups]
+  const activeProviderTab = isUnifiedProviderPicker
+    ? resolveActiveProviderTab(unifiedProviderGroups, browsedProviderTab, provider)
+    : null
+  const activeProviderGroup = activeProviderTab
+    ? unifiedProviderGroups.find((group) => group.provider === activeProviderTab)
+    : undefined
+  const activeTabSections = useMemo(
+    () => (activeProviderGroup ? buildProviderTabSections(activeProviderGroup) : []),
+    [activeProviderGroup]
   )
-
   const unifiedModelEntries = useMemo<UnifiedModelEntry[]>(
-    () => flattenUnifiedProviderModels(unifiedProviderGroups, collapsedProviderIds),
-    [collapsedProviderIds, unifiedProviderGroups]
+    () =>
+      activeProviderGroup
+        ? flattenProviderTabEntries(activeProviderGroup.provider, activeTabSections)
+        : [],
+    [activeProviderGroup, activeTabSections]
   )
+  const activeProviderTabIndex = activeProviderTab
+    ? unifiedProviderGroups.findIndex((group) => group.provider === activeProviderTab)
+    : -1
+
+  // Switch the rail. Browsing never commits: the list shows the other
+  // provider's models, and the reasoning column keeps describing the model in
+  // use until a row is actually picked.
+  const selectProviderTab = (next: ProviderId | null): void => {
+    if (!next || next === activeProviderTab) return
+    const order = unifiedProviderGroups.map((group) => group.provider)
+    setTabEnterDirection(
+      order.indexOf(next) > order.indexOf(activeProviderTab as ProviderId) ? 'down' : 'up'
+    )
+    setBrowsedProviderTab(next)
+    const nextGroup = unifiedProviderGroups.find((group) => group.provider === next)
+    const nextEntries = nextGroup
+      ? flattenProviderTabEntries(next, buildProviderTabSections(nextGroup))
+      : []
+    // The tab-switch layout effect owns the scroll, so the reveal effect must
+    // not also chase the highlight.
+    highlightSourceRef.current = 'pointer'
+    setModelHighlight(
+      nextEntries.findIndex(
+        (entry) => entry.provider === provider && entry.option.id === selectedModelId
+      )
+    )
+  }
 
   useEffect(() => {
     if (disabled && open) setOpen(false)
@@ -1402,7 +1591,35 @@ export function CombinedModelPicker({
       onCloseWithHighlightRef.current?.(highlightSnapshotRef.current)
     }
     wasOpenRef.current = open
+    if (!open) {
+      // Browsing is per open cycle: the next open starts on the model in use.
+      setBrowsedProviderTab(null)
+      setTabEnterDirection(null)
+      providerTabScrollRef.current.clear()
+    }
   }, [open])
+
+  // A tab switch restores where the user left that tab this open cycle, or
+  // centres the current model when it lives there. Layout effect, so the new
+  // list never paints at the wrong offset first.
+  useLayoutEffect(() => {
+    if (!open || !activeProviderTab) return
+    const rows = tabPanelRowsRef.current
+    if (rows) {
+      const remembered = providerTabScrollRef.current.get(activeProviderTab)
+      const selectedRow = rows.querySelector<HTMLElement>(
+        '.composer-combined-picker-row.is-selected'
+      )
+      rows.scrollTop =
+        remembered ??
+        (selectedRow
+          ? Math.max(0, selectedRow.offsetTop - (rows.clientHeight - selectedRow.offsetHeight) / 2)
+          : 0)
+    }
+    providerTabsRef.current
+      ?.querySelector<HTMLElement>('.composer-combined-picker-provider-tab.is-active')
+      ?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+  }, [activeProviderTab, open, position])
 
   useEffect(() => {
     if (!open || !isUnifiedProviderPicker || focusedColumn !== 'model') return
@@ -1636,7 +1853,7 @@ export function CombinedModelPicker({
       const popoverWidth = hasTopContent
         ? 520
         : isUnifiedProviderPicker
-          ? 420
+          ? 452
           : isOllamaProviderPicker
             ? 500
             : showReasoningSidecar
@@ -1646,7 +1863,7 @@ export function CombinedModelPicker({
       const effectiveWidth = measuredPopover?.width || popoverWidth
       const effectiveHeight =
         measuredPopover?.height ||
-        Math.min(hasTopContent ? 570 : 322, Math.max(1, window.innerHeight - 16))
+        Math.min(hasTopContent ? 570 : 334, Math.max(1, window.innerHeight - 16))
       setPosition(
         resolveCombinedPickerPosition({
           triggerRect: rect,
@@ -1710,18 +1927,31 @@ export function CombinedModelPicker({
     // under the cursor.
     if (resetSignatureRef.current === null) highlightSourceRef.current = 'navigation'
     resetSignatureRef.current = resetSignature
+    // The rail follows the committed model (open, pick, or a seat retarget), so
+    // the highlight is resolved against that provider's tab, not the one being
+    // browsed at the moment the selection changed.
+    const homeProviderTab = isUnifiedProviderPicker
+      ? resolveActiveProviderTab(unifiedProviderGroups, null, provider)
+      : null
+    const homeProviderGroup = homeProviderTab
+      ? unifiedProviderGroups.find((group) => group.provider === homeProviderTab)
+      : undefined
     const resetState = isUnifiedProviderPicker
       ? {
           providerIndex: 0,
           activeOllamaProviderId: null,
-          modelIndex: collapsedProviderIds.has(provider)
-            ? -1
-            : Math.max(
-                0,
-                unifiedModelEntries.findIndex(
-                  (entry) => entry.provider === provider && entry.option.id === selectedModelId
+          modelIndex: Math.max(
+            0,
+            (homeProviderGroup
+              ? flattenProviderTabEntries(
+                  homeProviderGroup.provider,
+                  buildProviderTabSections(homeProviderGroup)
                 )
-              ),
+              : []
+            ).findIndex(
+              (entry) => entry.provider === provider && entry.option.id === selectedModelId
+            )
+          ),
           reasoningIndex: 0,
           focusedColumn: 'model' as CombinedModelPickerColumn
         }
@@ -1739,6 +1969,7 @@ export function CombinedModelPicker({
       setActiveOllamaProviderId(resetState.activeOllamaProviderId)
       setModelHighlight(resetState.modelIndex)
       setFocusedColumn(resetState.focusedColumn)
+      if (isUnifiedProviderPicker) setBrowsedProviderTab(null)
     })
     return () => window.cancelAnimationFrame(frame)
   }, [
@@ -1751,9 +1982,8 @@ export function CombinedModelPicker({
     selectedOllamaProviderId,
     reasoningOptions,
     selectedReasoning,
-    unifiedModelEntries,
-    provider,
-    collapsedProviderIds
+    unifiedProviderGroups,
+    provider
   ])
 
   // Click-outside + Escape dismiss.
@@ -1815,7 +2045,11 @@ export function CombinedModelPicker({
       if (event.key === 'ArrowDown') {
         event.preventDefault()
         if (focusedColumn === 'provider') {
-          setProviderHighlight((idx) => Math.min(ollamaProviderGroups.length - 1, idx + 1))
+          if (isUnifiedProviderPicker) {
+            selectProviderTab(stepProviderTab(unifiedProviderGroups, activeProviderTab, 1))
+          } else {
+            setProviderHighlight((idx) => Math.min(ollamaProviderGroups.length - 1, idx + 1))
+          }
         } else if (focusedColumn === 'model') {
           setModelHighlight((idx) => Math.min(Math.max(0, visibleModelOptions.length - 1), idx + 1))
         } else {
@@ -1832,7 +2066,11 @@ export function CombinedModelPicker({
       } else if (event.key === 'ArrowUp') {
         event.preventDefault()
         if (focusedColumn === 'provider') {
-          setProviderHighlight((idx) => Math.max(0, idx - 1))
+          if (isUnifiedProviderPicker) {
+            selectProviderTab(stepProviderTab(unifiedProviderGroups, activeProviderTab, -1))
+          } else {
+            setProviderHighlight((idx) => Math.max(0, idx - 1))
+          }
         } else if (focusedColumn === 'model') {
           setModelHighlight((idx) => Math.max(0, idx - 1))
         } else {
@@ -1851,6 +2089,11 @@ export function CombinedModelPicker({
         event.preventDefault()
         if (focusedColumn === 'provider') {
           setFocusedColumn('model')
+          // Entering a browsed tab lands on its first row (the current model's
+          // row when this is its tab — selectProviderTab already parked it).
+          if (isUnifiedProviderPicker) {
+            setModelHighlight((idx) => (idx >= 0 ? idx : unifiedModelEntries.length > 0 ? 0 : -1))
+          }
         } else if (focusedColumn === 'model' && reasoningAvailability.mutable) {
           setFocusedColumn('reasoning')
         }
@@ -1858,13 +2101,19 @@ export function CombinedModelPicker({
         event.preventDefault()
         if (focusedColumn === 'reasoning') {
           setFocusedColumn('model')
-        } else if (focusedColumn === 'model' && isOllamaProviderPicker) {
+        } else if (
+          focusedColumn === 'model' &&
+          (isOllamaProviderPicker || isUnifiedProviderPicker)
+        ) {
           setFocusedColumn('provider')
         }
       } else if (event.key === 'Enter') {
         event.preventDefault()
         if (disabled) return
-        if (focusedColumn === 'provider') {
+        if (focusedColumn === 'provider' && isUnifiedProviderPicker) {
+          setFocusedColumn('model')
+          setModelHighlight((idx) => (idx >= 0 ? idx : unifiedModelEntries.length > 0 ? 0 : -1))
+        } else if (focusedColumn === 'provider') {
           const option = ollamaProviderGroups[providerHighlight]
           if (option) {
             setActiveOllamaProviderId(option.id)
@@ -1919,6 +2168,9 @@ export function CombinedModelPicker({
     selectedReasoning,
     selectedModelId,
     unifiedModelEntries,
+    unifiedProviderGroups,
+    activeProviderTab,
+    selectProviderTab,
     enterConfirmAction
   ])
 
@@ -1992,149 +2244,245 @@ export function CombinedModelPicker({
           })}
         </div>
       )}
+      {isUnifiedProviderPicker && (
+        <div
+          ref={providerTabsRef}
+          className={`composer-combined-picker-provider-tabs ${
+            focusedColumn === 'provider' ? 'is-focused' : ''
+          }`}
+          role="tablist"
+          aria-orientation="vertical"
+          aria-label="Providers"
+          style={
+            {
+              '--provider-tab-active-index': Math.max(0, activeProviderTabIndex)
+            } as React.CSSProperties
+          }
+        >
+          {/* One pill that glides between tabs and re-tints to each provider, so a
+              switch reads as movement rather than a repaint. */}
+          <span
+            className="composer-combined-picker-provider-tab-indicator"
+            style={
+              {
+                '--provider-tab-indicator-accent': `var(--provider-${activeProviderTab}-color, var(--accent))`
+              } as React.CSSProperties
+            }
+            aria-hidden
+          />
+          {unifiedProviderGroups.map((group) => (
+            <CombinedModelPickerProviderTab
+              key={group.provider}
+              provider={group.provider}
+              label={group.label || getProviderName(group.provider)}
+              active={group.provider === activeProviderTab}
+              current={group.provider === provider}
+              pauseLabel={group.pauseLabel}
+              rerouteLabel={group.rerouteLabel}
+              disabled={disabled}
+              tabId={`${providerTabDomId}-tab-${group.provider}`}
+              panelId={`${providerTabDomId}-panel`}
+              onSelect={() => {
+                setFocusedColumn('provider')
+                selectProviderTab(group.provider)
+              }}
+            />
+          ))}
+        </div>
+      )}
       <div
         className={`composer-combined-picker-column composer-combined-picker-models ${
-          isUnifiedProviderPicker ? 'is-unified-model-list' : ''
+          isUnifiedProviderPicker ? 'is-unified-model-list is-provider-tab-panel' : ''
         } ${focusedColumn === 'model' ? 'is-focused' : ''}`}
+        {...(isUnifiedProviderPicker && activeProviderGroup
+          ? {
+              id: `${providerTabDomId}-panel`,
+              role: 'tabpanel',
+              'aria-labelledby': `${providerTabDomId}-tab-${activeProviderGroup.provider}`,
+              style: {
+                '--model-provider-accent': `var(--provider-${activeProviderGroup.provider}-color, var(--accent))`
+              } as React.CSSProperties
+            }
+          : {})}
       >
         {!isUnifiedProviderPicker && (
           <div className="composer-combined-picker-column-header">Model</div>
         )}
         {isUnifiedProviderPicker ? (
-          unifiedProviderGroups.map((group, groupIndex) => {
-            const groupCollapsed = collapsedProviderIds.has(group.provider)
-            const modelOffset = unifiedProviderGroups
-              .slice(0, groupIndex)
-              .reduce(
-                (count, item) =>
-                  count + (collapsedProviderIds.has(item.provider) ? 0 : item.modelOptions.length),
-                0
-              )
-            const groupSelected = group.provider === provider
-            const groupLabel = group.label || getProviderName(group.provider)
-            const visibleGroupModelOptions = groupCollapsed ? [] : group.modelOptions
-            return (
-              <section
-                key={group.provider}
-                className={`composer-combined-picker-provider-group ${
-                  groupSelected ? 'is-current' : ''
-                } ${groupCollapsed ? 'is-collapsed' : ''}`}
-                data-provider={group.provider}
-                style={
-                  {
-                    '--model-provider-accent': `var(--provider-${group.provider}-color, var(--accent))`
-                  } as React.CSSProperties
-                }
+          activeProviderGroup ? (
+            <>
+              {/* The icon-only tab can't carry the name, the runtime line or a
+                  pause, so the panel says them once at the top. */}
+              <div className="composer-combined-picker-tab-panel-header">
+                <span className="composer-combined-picker-tab-panel-title">
+                  {activeProviderGroup.label || getProviderName(activeProviderGroup.provider)}
+                </span>
+                {getProviderDescription(activeProviderGroup.provider) && (
+                  <span className="composer-combined-picker-tab-panel-subtitle">
+                    {getProviderDescription(activeProviderGroup.provider)}
+                  </span>
+                )}
+                {activeProviderGroup.pauseLabel && (
+                  <span
+                    className="composer-provider-paused-pill"
+                    title={[activeProviderGroup.pauseLabel, activeProviderGroup.rerouteLabel]
+                      .filter(Boolean)
+                      .join('\n')}
+                  >
+                    Paused
+                  </span>
+                )}
+              </div>
+              <div
+                key={activeProviderGroup.provider}
+                ref={tabPanelRowsRef}
+                className="composer-combined-picker-tab-panel-rows"
+                data-enter={tabEnterDirection ?? undefined}
+                onScroll={(event) => {
+                  providerTabScrollRef.current.set(
+                    activeProviderGroup.provider,
+                    event.currentTarget.scrollTop
+                  )
+                }}
               >
-                <CombinedModelPickerProviderHeader
-                  provider={group.provider}
-                  label={groupLabel}
-                  pauseLabel={group.pauseLabel}
-                  rerouteLabel={group.rerouteLabel}
-                  expanded={!groupCollapsed}
-                  disabled={disabled}
-                  onToggle={() => {
-                    setExpandedProviderIds((current) =>
-                      toggleExpandedProviderGroup(current, group.provider)
-                    )
-                    setModelHighlight(-1)
-                  }}
-                />
-                {!groupCollapsed && group.modelOptions.length === 0 && (
-                  <div className="composer-combined-picker-empty-provider">
-                    {emptyProviderModelsLabel(group.provider)}
+                {unifiedModelEntries.length === 0 && (
+                  <div className="composer-combined-picker-tab-panel-empty">
+                    {emptyProviderModelsLabel(activeProviderGroup.provider)}
                   </div>
                 )}
-                {visibleGroupModelOptions.map((option, optionIndex) => {
-                  const rowIndex = modelOffset + optionIndex
-                  const selected = group.provider === provider && option.id === selectedModelId
-                  const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
-                  const rowHueClass = modelPickerHueClass(
-                    group.provider,
-                    option.id,
-                    option.label
-                  )
-                  // Grouped view spans providers, so the lane is decided by THIS
-                  // row's provider — not the picker's currently selected one.
-                  const requiresApiKey = modelRequiresApiKey(group.provider, option.id)
+                {activeTabSections.map((section, sectionIndex) => {
+                  const sectionOffset = activeTabSections
+                    .slice(0, sectionIndex)
+                    .reduce((count, item) => count + item.options.length, 0)
+                  const group = activeProviderGroup
                   return (
-                    <button
-                      ref={(node) => {
-                        if (node) unifiedModelRowRefs.current.set(rowIndex, node)
-                        else unifiedModelRowRefs.current.delete(rowIndex)
-                      }}
-                      key={`${group.provider}:${option.id}`}
-                      type="button"
-                      className={`composer-combined-picker-row ${
-                        selected ? 'is-selected' : ''
-                      } ${option.disabled ? 'is-disabled' : ''} ${
-                        rowIndex === modelHighlight && focusedColumn === 'model'
-                          ? 'is-highlighted'
-                          : ''
-                      }`}
-                      data-provider-model={`${group.provider}:${option.id}`}
-                      data-ollama-cloud-model={
-                        group.provider === 'ollama' && isOllamaCloudModelId(option.id)
-                          ? 'true'
-                          : undefined
-                      }
-                      data-provider-hue={rowHueClass}
-                      style={modelPickerAccentStyle(group.provider, option.id, option.label)}
-                      disabled={Boolean(disabled || option.disabled)}
-                      aria-pressed={selected}
-                      title={option.disabled ? option.disabledReason || 'Unavailable' : undefined}
-                      onMouseEnter={() => {
-                        highlightSourceRef.current = 'pointer'
-                        setFocusedColumn('model')
-                        setModelHighlight(rowIndex)
-                      }}
-                      onClick={() => {
-                        if (disabled || option.disabled) return
-                        onSelectProviderModel?.(group.provider, option.id)
-                      }}
-                    >
-                      <span className="composer-combined-picker-row-label">{option.label}</span>
-                      <OllamaCloudModelIndicator
-                        provider={group.provider}
-                        modelId={option.id}
-                      />
-                      {option.retiresAt && (
-                        <span
-                          className="composer-combined-picker-retirement-pill"
-                          title={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
-                          aria-label={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                    <Fragment key={section.id}>
+                      {section.label && (
+                        <div
+                          className="composer-combined-picker-tab-panel-subhead"
+                          style={
+                            {
+                              '--composer-ollama-brand-color': `var(--provider-${
+                                section.hueClass || group.provider
+                              }-color, var(--provider-${group.provider}-color, var(--accent)))`
+                            } as React.CSSProperties
+                          }
                         >
-                          <RetirementClockIcon />
-                          <span className="composer-combined-picker-retirement-date">
-                            {formatRetirementLabel(option.retiresAt)}
-                          </span>
-                        </span>
-                      )}
-                      {supportsFast && (
-                        <span
-                          className="composer-combined-picker-fast-indicator"
-                          title="Supports Fast mode"
-                          aria-label="Supports Fast mode"
-                        >
-                          {useCodexMonolineFastBolt ? (
-                            <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                          {section.isCloud ? (
+                            <OllamaCloudIcon
+                              className="composer-combined-picker-provider-cloud-icon"
+                              decorative
+                            />
                           ) : (
-                            <FastBoltIcon />
+                            <span
+                              className="composer-combined-picker-provider-swatch"
+                              aria-hidden
+                            />
                           )}
-                        </span>
+                          <span>{section.label}</span>
+                          <span className="composer-combined-picker-provider-count">
+                            {section.options.length}
+                          </span>
+                        </div>
                       )}
-                      {requiresApiKey && <ModelApiKeyIndicator />}
-                      {selected && (
-                        <span className="composer-combined-picker-check" aria-hidden>
-                          ✓
-                        </span>
-                      )}
-                    </button>
+                      {section.options.map((option, optionIndex) => {
+                        const rowIndex = sectionOffset + optionIndex
+                        const selected =
+                          group.provider === provider && option.id === selectedModelId
+                        const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
+                        const rowHueClass = modelPickerHueClass(
+                          group.provider,
+                          option.id,
+                          option.label
+                        )
+                        // Rows belong to the tab's provider — not necessarily the
+                        // picker's selected one — so the lane is decided per row.
+                        const requiresApiKey = modelRequiresApiKey(group.provider, option.id)
+                        return (
+                          <button
+                            ref={(node) => {
+                              if (node) unifiedModelRowRefs.current.set(rowIndex, node)
+                              else unifiedModelRowRefs.current.delete(rowIndex)
+                            }}
+                            key={`${group.provider}:${option.id}`}
+                            type="button"
+                            className={`composer-combined-picker-row ${
+                              selected ? 'is-selected' : ''
+                            } ${option.disabled ? 'is-disabled' : ''} ${
+                              rowIndex === modelHighlight && focusedColumn === 'model'
+                                ? 'is-highlighted'
+                                : ''
+                            }`}
+                            data-provider-model={`${group.provider}:${option.id}`}
+                            data-ollama-cloud-model={
+                              group.provider === 'ollama' && isOllamaCloudModelId(option.id)
+                                ? 'true'
+                                : undefined
+                            }
+                            data-provider-hue={rowHueClass}
+                            style={modelPickerAccentStyle(group.provider, option.id, option.label)}
+                            disabled={Boolean(disabled || option.disabled)}
+                            aria-pressed={selected}
+                            title={
+                              option.disabled ? option.disabledReason || 'Unavailable' : undefined
+                            }
+                            onMouseEnter={() => {
+                              highlightSourceRef.current = 'pointer'
+                              setFocusedColumn('model')
+                              setModelHighlight(rowIndex)
+                            }}
+                            onClick={() => {
+                              if (disabled || option.disabled) return
+                              onSelectProviderModel?.(group.provider, option.id)
+                            }}
+                          >
+                            <span className="composer-combined-picker-row-label">
+                              {option.label}
+                            </span>
+                            <OllamaCloudModelIndicator
+                              provider={group.provider}
+                              modelId={option.id}
+                            />
+                            {option.retiresAt && (
+                              <span
+                                className="composer-combined-picker-retirement-pill"
+                                title={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                                aria-label={`Retiring ${formatRetirementLabel(option.retiresAt)}`}
+                              >
+                                <RetirementClockIcon />
+                                <span className="composer-combined-picker-retirement-date">
+                                  {formatRetirementLabel(option.retiresAt)}
+                                </span>
+                              </span>
+                            )}
+                            {supportsFast && (
+                              <span
+                                className="composer-combined-picker-fast-indicator"
+                                title="Supports Fast mode"
+                                aria-label="Supports Fast mode"
+                              >
+                                {useCodexMonolineFastBolt ? (
+                                  <CodexFastBoltIcon className="codex-fast-bolt-icon" />
+                                ) : (
+                                  <FastBoltIcon />
+                                )}
+                              </span>
+                            )}
+                            {requiresApiKey && <ModelApiKeyIndicator />}
+                            {selected && (
+                              <span className="composer-combined-picker-check" aria-hidden>
+                                ✓
+                              </span>
+                            )}
+                          </button>
+                        )
+                      })}
+                    </Fragment>
                   )
                 })}
-              </section>
-            )
-          })
+              </div>
+            </>
+          ) : null
         ) : (
           <>
             {visibleModelOptions.length === 0 && (

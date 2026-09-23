@@ -2384,7 +2384,7 @@
  * composer pickers and the participant-chip popover retain their base layout. */
 .composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 124px;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 124px;
   grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto;
   width: min(520px, calc(100vw - 16px));
   min-width: min(520px, calc(100vw - 16px));
@@ -2407,14 +2407,20 @@
   scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
 }
 
-.is-ensemble-add-participant > .composer-combined-picker-models {
+.is-ensemble-add-participant > .composer-combined-picker-provider-tabs {
   grid-column: 1;
   grid-row: 2;
   min-height: 0;
 }
 
-.is-ensemble-add-participant > .composer-combined-picker-reasoning {
+.is-ensemble-add-participant > .composer-combined-picker-models {
   grid-column: 2;
+  grid-row: 2;
+  min-height: 0;
+}
+
+.is-ensemble-add-participant > .composer-combined-picker-reasoning {
+  grid-column: 3;
   grid-row: 2;
   min-height: 0;
 }
@@ -2645,17 +2651,25 @@
     .is-ensemble-add-participant
   ) {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 112px;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
   grid-template-rows: minmax(0, 1fr) auto;
-  height: min(354px, calc(100vh - 24px));
-  max-height: min(354px, calc(100vh - 24px));
+  height: min(366px, calc(100vh - 24px));
+  max-height: min(366px, calc(100vh - 24px));
+}
+
+.composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
+    .is-ensemble-add-participant
+  )
+  > .composer-combined-picker-provider-tabs {
+  grid-column: 1;
+  grid-row: 1;
 }
 
 .composer-combined-picker-popover.is-unified-provider-picker.has-bottom-content:not(
     .is-ensemble-add-participant
   )
   .composer-combined-picker-models.is-unified-model-list {
-  grid-column: 1;
+  grid-column: 2;
   grid-row: 1;
   height: auto;
   min-height: 0;
@@ -2665,7 +2679,7 @@
     .is-ensemble-add-participant
   )
   .composer-combined-picker-reasoning {
-  grid-column: 2;
+  grid-column: 3;
   grid-row: 1;
   height: auto;
   min-height: 0;

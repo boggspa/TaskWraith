@@ -8866,33 +8866,41 @@
   max-width: min(500px, calc(100vw - 16px));
 }
 
-/* iOS-parity all-provider model picker: a fixed-height, independently
- * scrollable grouped model rail on the left; the current model's reasoning /
- * Fast sidecar stays fixed on the right. */
+/* All-provider model picker, as provider tabs: an icon rail of providers on the
+ * left, the active provider's models in a fixed-height, independently
+ * scrollable list beside it, and the current model's reasoning / Fast sidecar
+ * fixed on the right. The height fits today's eleven provider tabs without the
+ * rail scrolling; more tabs scroll the rail. */
 .composer-combined-picker-popover.is-unified-provider-picker {
-  width: min(420px, calc(100vw - 16px));
-  min-width: min(420px, calc(100vw - 16px));
-  max-width: min(420px, calc(100vw - 16px));
-  height: min(322px, calc(100vh - 24px));
-  max-height: min(322px, calc(100vh - 24px));
+  --provider-tab-size: 26px;
+  --provider-tab-gap: 2px;
+  /* tab + 4px either side (room for the current-model dot) + the divider gap */
+  --provider-tab-rail-w: calc(var(--provider-tab-size) + 12px);
+  display: grid;
+  grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;
+  grid-template-rows: minmax(0, 1fr);
+  width: min(452px, calc(100vw - 16px));
+  min-width: min(452px, calc(100vw - 16px));
+  max-width: min(452px, calc(100vw - 16px));
+  height: min(334px, calc(100vh - 24px));
+  max-height: min(334px, calc(100vh - 24px));
   box-sizing: border-box;
   overflow: hidden;
 }
 .composer-combined-picker-popover.is-unified-provider-picker
   .composer-combined-picker-models.is-unified-model-list {
-  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
   height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+  padding-top: 2px;
+  overflow: hidden;
 }
 .composer-combined-picker-popover.is-unified-provider-picker
   .composer-combined-picker-reasoning {
-  flex: 0 0 112px;
-  min-width: 112px;
+  min-width: 0;
+  min-height: 0;
   height: 100%;
   overflow: hidden;
 }
@@ -9394,99 +9402,254 @@
   color: color-mix(in srgb, var(--text-secondary) 72%, transparent);
 }
 
-.composer-combined-picker-provider-group {
-  padding: 2px 0 6px;
-}
-.composer-combined-picker-provider-group + .composer-combined-picker-provider-group {
-  border-top: 1px solid color-mix(in srgb, var(--panel-border) 58%, transparent);
-  margin-top: 4px;
-  padding-top: 6px;
-}
-.composer-combined-picker-provider-header {
+/* Provider tab rail — one icon tab per provider in its own column. A click (or
+ * ↑/↓ with the rail focused) swaps the list beside it; nothing commits until a
+ * row is picked. */
+.composer-combined-picker-provider-tabs {
+  position: relative;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 7px;
-  width: 100%;
-  min-height: 24px;
-  padding: 3px 10px 4px;
+  gap: var(--provider-tab-gap);
+  min-height: 0;
+  margin-right: 4px;
+  padding: 4px 0;
+  border-right: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+.composer-combined-picker-provider-tabs::-webkit-scrollbar {
+  display: none;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-combined-picker-provider-tabs {
+  border-right-color: var(--surface-border);
+}
+/* ONE selection pill that glides between tabs and re-tints to each provider,
+ * so a switch reads as movement rather than a repaint. Positioned from the
+ * rail's own index variable — declarative, no measurement. */
+.composer-combined-picker-provider-tab-indicator {
+  --provider-tab-indicator-accent: var(--accent);
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  width: var(--provider-tab-size);
+  height: var(--provider-tab-size);
+  margin-left: calc(var(--provider-tab-size) / -2);
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--provider-tab-indicator-accent) 17%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--provider-tab-indicator-accent) 28%, transparent),
+    inset 0 1px 0 color-mix(in srgb, #ffffff 7%, transparent);
+  transform: translateY(
+    calc(var(--provider-tab-active-index, 0) * (var(--provider-tab-size) + var(--provider-tab-gap)))
+  );
+  pointer-events: none;
+  transition:
+    transform 180ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+:root[data-reduce-motion="true"] .composer-combined-picker-provider-tab-indicator {
+  transition: none;
+}
+.composer-combined-picker-provider-tab {
+  --provider-tab-accent: var(--accent);
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 var(--provider-tab-size);
+  width: var(--provider-tab-size);
+  height: var(--provider-tab-size);
+  padding: 0;
   border: 0;
-  border-radius: 5px;
+  border-radius: 7px;
   background: transparent;
-  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 76%, var(--text-primary));
+  color: inherit;
   font: inherit;
-  font-family: var(--font-sans);
-  text-align: left;
   cursor: pointer;
   appearance: none;
   -webkit-appearance: none;
+  transition: background-color 120ms ease;
 }
-.composer-combined-picker-provider-header:hover,
-.composer-combined-picker-provider-header:focus-visible {
-  background: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 9%, transparent);
+.composer-combined-picker-provider-tab .sidebar-provider-icon,
+.composer-combined-picker-provider-tab .provider-brand-logo {
+  display: inline-flex;
+  width: 15px;
+  height: 15px;
 }
-.composer-combined-picker-provider-header:focus-visible {
-  outline: 1px solid color-mix(in srgb, var(--model-provider-accent, var(--accent)) 58%, transparent);
-  outline-offset: -1px;
+.composer-combined-picker-provider-tab .provider-brand-logo {
+  opacity: 0.8;
+  transition: opacity 120ms ease;
 }
-.composer-combined-picker-provider-header-icon,
-.composer-combined-picker-provider-header-icon .sidebar-provider-icon {
+.composer-combined-picker-provider-tab:hover:not(.is-active):not(:disabled) {
+  background: color-mix(in srgb, var(--provider-tab-accent) 9%, transparent);
+}
+.composer-combined-picker-provider-tab:hover .provider-brand-logo,
+.composer-combined-picker-provider-tab.is-active .provider-brand-logo {
+  opacity: 1;
+}
+.composer-combined-picker-provider-tab:disabled {
+  cursor: default;
+}
+.composer-combined-picker-provider-tabs.is-focused .composer-combined-picker-provider-tab.is-active,
+.composer-combined-picker-provider-tab:focus-visible {
+  outline: 1px solid color-mix(in srgb, var(--provider-tab-accent) 64%, transparent);
+  outline-offset: 1px;
+  box-shadow: none;
+}
+/* Dock-style dot: where the CURRENT model lives while another tab is browsed. */
+.composer-combined-picker-provider-tab.is-current::after {
+  content: "";
+  position: absolute;
+  left: -3.5px;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  margin-top: -1.5px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--provider-tab-accent) 82%, var(--text-primary));
+  box-shadow: 0 0 4px color-mix(in srgb, var(--provider-tab-accent) 55%, transparent);
+}
+.composer-combined-picker-provider-tab.is-paused .provider-brand-logo {
+  opacity: 0.42;
+  filter: grayscale(1);
+}
+.composer-combined-picker-provider-tab-paused {
+  position: absolute;
+  right: 1px;
+  bottom: 1px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 14px;
+  gap: 1px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--color-warning, #d29922);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--tw-glass-solid) 80%, transparent);
 }
-.composer-combined-picker-provider-header-icon
-  .sidebar-provider-icon
-  > :is(svg, .provider-brand-logo) {
-  display: block;
-  width: 13px;
-  height: 13px;
+.composer-combined-picker-provider-tab-paused::before,
+.composer-combined-picker-provider-tab-paused::after {
+  content: "";
+  width: 1.5px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(0, 0, 0, 0.72);
 }
-.composer-combined-picker-provider-header-label {
+
+/* Tab panel: the active provider's name, runtime line and any pause, said once
+ * above its independently scrolling rows. */
+.composer-combined-picker-tab-panel-header {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-width: 0;
+  min-height: 24px;
+  padding: 4px 10px;
+  font-family: var(--font-sans);
+}
+.composer-combined-picker-tab-panel-title {
+  flex: 0 0 auto;
+  color: color-mix(in srgb, var(--model-provider-accent, var(--accent)) 78%, var(--text-primary));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.composer-combined-picker-tab-panel-subtitle {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
+  color: var(--text-tertiary);
   font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0;
   text-overflow: ellipsis;
-  text-transform: none;
   white-space: nowrap;
 }
-.composer-combined-picker-provider-header .composer-provider-paused-pill {
-  margin-left: 0;
+.composer-combined-picker-tab-panel-header .composer-provider-paused-pill {
+  align-self: center;
 }
-.composer-combined-picker-provider-chevron {
-  display: inline-flex;
+.composer-combined-picker-tab-panel-rows {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0 2px 4px 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text-primary) 20%, transparent) transparent;
+}
+.composer-combined-picker-tab-panel-rows > .composer-combined-picker-row {
+  flex: 0 0 auto;
+}
+/* The list arrives from the side of the tab you came from. No fill-mode: the
+ * resting state IS the `to` frame, so an unfocused window never parks it
+ * invisible (see 02-transcript-messages-fx.css). */
+.composer-combined-picker-tab-panel-rows[data-enter="down"] {
+  animation: tw-provider-tab-panel-enter-down 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.composer-combined-picker-tab-panel-rows[data-enter="up"] {
+  animation: tw-provider-tab-panel-enter-up 150ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes tw-provider-tab-panel-enter-down {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes tw-provider-tab-panel-enter-up {
+  from {
+    opacity: 0;
+    transform: translateY(-5px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+:root[data-reduce-motion="true"] .composer-combined-picker-tab-panel-rows {
+  animation: none;
+}
+/* Brand sub-groups inside a tab (Ollama Cloud + local brands, Pi upstreams). */
+.composer-combined-picker-tab-panel-subhead {
+  --composer-ollama-brand-color: var(--provider-ollama-color);
+  display: flex;
   align-items: center;
-  justify-content: center;
-  width: 12px;
-  height: 12px;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 10px 3px;
+  color: color-mix(in srgb, var(--composer-ollama-brand-color) 62%, var(--text-secondary));
+  font-size: 10px;
+  font-weight: 650;
+}
+.composer-combined-picker-tab-panel-subhead:first-child {
+  padding-top: 2px;
+}
+.composer-combined-picker-tab-panel-subhead .composer-combined-picker-provider-cloud-icon {
+  width: 13px;
+  height: 13px;
+  flex-basis: 13px;
+}
+.composer-combined-picker-tab-panel-subhead .composer-combined-picker-provider-count {
   margin-left: auto;
-  flex: 0 0 12px;
-  opacity: 0.72;
-  transform: rotate(0deg);
-  transform-origin: center;
-  transition: transform 130ms ease;
 }
-.composer-combined-picker-provider-chevron.is-expanded {
-  transform: rotate(90deg);
-}
-.composer-combined-picker-provider-chevron svg {
-  display: block;
-  width: 12px;
-  height: 12px;
-}
-:root[data-reduce-motion="true"] .composer-combined-picker-provider-chevron {
-  transition: none;
-}
-.composer-combined-picker-empty-provider {
-  padding: 5px 10px 6px 31px;
+.composer-combined-picker-tab-panel-empty {
+  padding: 6px 10px;
   color: var(--text-tertiary);
   font-size: 11px;
   font-style: italic;
+  line-height: 1.45;
 }
 
 .composer-combined-picker-column-header {
@@ -9917,13 +10080,31 @@
   cursor: pointer;
   touch-action: none;
 }
-/* While dragging, the thumb + fill track the finger 1:1 (the slide animation is
- * for keyboard/click stop-to-stop moves only). */
-.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb,
-.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill,
+/* While dragging, the thumb steps between REAL stops (never between them, never
+ * 1:1 with the finger) and glides each step in 110ms. The curve never exceeds
+ * 1 — no overshoot — and the release commits the stop already on screen, so
+ * nothing moves or springs back when the finger lifts. */
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-thumb {
+  transition: bottom 110ms cubic-bezier(0.22, 1, 0.36, 1);
+  box-shadow:
+    0 1px 2px rgba(0, 0, 0, 0.34),
+    0 0 0 3px color-mix(in srgb, var(--ladder-accent, var(--accent)) 16%, transparent);
+}
+.composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-fill {
+  transition: height 110ms cubic-bezier(0.22, 1, 0.36, 1);
+}
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-pulse,
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-shimmer,
 .composer-combined-picker-ladder-track[data-dragging='true'] .composer-combined-picker-ladder-sparkles {
+  transition:
+    height 110ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.24s ease-out;
+}
+.composer-combined-picker-ladder-track[data-dragging='true'] {
+  cursor: grabbing;
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-track .composer-combined-picker-ladder-thumb,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-track .composer-combined-picker-ladder-fill {
   transition: none;
 }
 .composer-combined-picker-ladder-track[aria-disabled='true'] {
@@ -9995,6 +10176,89 @@
   height: 1px;
   border-radius: 1px;
   background: rgba(255, 255, 255, 0.65);
+}
+/* Stop marks — a fader scale. Each mark is a zero-height line at its stop; the
+ * ::before/::after pair are side ticks seated just OUTSIDE the 43px thumb
+ * (half-width 21.5px), so the current stop's pair frames the thumb. Ticks tint
+ * as the fill passes them; a level this model doesn't offer is a faint dot,
+ * which explains a jump over it without inviting a drag to it. */
+.composer-combined-picker-ladder-marks {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.composer-combined-picker-ladder-mark {
+  --ladder-mark-color: color-mix(in srgb, var(--text-primary) 24%, transparent);
+  --ladder-mark-len: 5px;
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 0;
+}
+.composer-combined-picker-ladder-mark::before,
+.composer-combined-picker-ladder-mark::after {
+  content: '';
+  position: absolute;
+  top: -0.5px;
+  width: var(--ladder-mark-len);
+  height: 1px;
+  border-radius: 1px;
+  background: var(--ladder-mark-color);
+  transition:
+    width 140ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 140ms ease;
+}
+.composer-combined-picker-ladder-mark::before {
+  right: calc(50% + 24px);
+}
+.composer-combined-picker-ladder-mark::after {
+  left: calc(50% + 24px);
+}
+.composer-combined-picker-ladder-mark[data-reached='true'] {
+  --ladder-mark-color: color-mix(in srgb, var(--ladder-accent, var(--accent)) 56%, transparent);
+}
+/* Where a click would land while the pointer hovers the track. */
+.composer-combined-picker-ladder-mark[data-target='true'] {
+  --ladder-mark-color: color-mix(in srgb, var(--text-primary) 58%, transparent);
+  --ladder-mark-len: 7px;
+}
+.composer-combined-picker-ladder-mark[data-current='true'] {
+  --ladder-mark-color: color-mix(
+    in srgb,
+    var(--ladder-accent, var(--accent)) 88%,
+    var(--text-primary)
+  );
+  --ladder-mark-len: 7px;
+}
+/* A brief glow each time a stop becomes current — the detent "landing". Pure
+ * CSS: the animation starts whenever the attribute starts applying. */
+.composer-combined-picker-ladder-mark[data-current='true']::before,
+.composer-combined-picker-ladder-mark[data-current='true']::after {
+  animation: tw-ladder-mark-land 320ms ease-out;
+}
+@keyframes tw-ladder-mark-land {
+  35% {
+    box-shadow: 0 0 5px 1px color-mix(in srgb, var(--ladder-accent, var(--accent)) 70%, transparent);
+  }
+}
+[data-reduce-motion='true'] .composer-combined-picker-ladder-mark::before,
+[data-reduce-motion='true'] .composer-combined-picker-ladder-mark::after {
+  animation: none;
+  transition: none;
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::before,
+.composer-combined-picker-ladder-mark[data-enabled='false']::after {
+  top: -1px;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::before {
+  right: calc(50% + 26px);
+}
+.composer-combined-picker-ladder-mark[data-enabled='false']::after {
+  left: calc(50% + 26px);
 }
 /* Active FX use the exact fill height as their upper gate. At any intermediate
  * stop the neutral rail above the thumb stays completely untouched; inside the

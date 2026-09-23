@@ -763,9 +763,15 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(css).toContain(
         '.composer-combined-picker-popover.is-unified-provider-picker.has-top-content.is-ensemble-add-participant'
       )
-      expect(css).toContain('grid-template-columns: minmax(0, 1fr) 124px')
+      expect(css).toContain(
+        'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 124px'
+      )
       expect(css).toContain(
         'grid-template-rows: minmax(min(232px, 42dvh), 0.75fr) minmax(0, 1fr) auto'
+      )
+      // The provider tab rail sits in its own column beside the model list.
+      expect(css).toMatch(
+        /\.is-ensemble-add-participant > \.composer-combined-picker-provider-tabs\s*\{[^}]*grid-column: 1;[^}]*grid-row: 2;/
       )
       expect(css).toContain('height: min(610px, calc(100dvh - 16px))')
       expect(css).toContain('.is-ensemble-add-participant > .composer-combined-picker-top-content')

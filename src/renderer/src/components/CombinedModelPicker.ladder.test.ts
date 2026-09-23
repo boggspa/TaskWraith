@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../../../main/mainSourceProbe.testutil'
 import { getEnsembleReasoningOptions } from '../lib/ensembleProviderDefaults'
 import {
   CombinedModelPicker,
@@ -574,6 +575,115 @@ describe('reasoning ladder visual taper', () => {
     )
 
     expect(html).toContain('--ladder-accent:var(--provider-deepseek-color, var(--accent))')
+  })
+})
+
+describe('reasoning ladder stop marks', () => {
+  const markAt = (markup: string, stop: number): string =>
+    markup.match(
+      new RegExp(`<span class="composer-combined-picker-ladder-mark" data-stop="${stop}"[^>]*>`)
+    )?.[0] ?? ''
+
+  it('ticks every stop the model offers and dots every level it skips', () => {
+    // A gapped ladder (Kimi K3 style): Off, Light, High, Max.
+    const ladder = buildLadderModel('kimi', [
+      { value: 'off', label: 'Off' },
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
+    ])
+    expect(ladder.enabledIndices).toEqual([0, 1, 3, 5])
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'kimi',
+        ladder,
+        selectedReasoning: 'high',
+        onSelectReasoning: () => undefined,
+        onInteract: () => undefined
+      })
+    )
+
+    expect(markup.match(/class="composer-combined-picker-ladder-mark"/g)).toHaveLength(8)
+    for (const stop of [0, 1, 3, 5]) {
+      expect(markAt(markup, stop)).toContain('data-enabled="true"')
+    }
+    for (const stop of [2, 4, 6, 7]) {
+      expect(markAt(markup, stop)).toContain('data-enabled="false"')
+      expect(markAt(markup, stop)).not.toContain('data-reached')
+    }
+    // The fill has passed Off and Light; the thumb sits on High.
+    expect(markAt(markup, 0)).toContain('data-reached="true"')
+    expect(markAt(markup, 1)).toContain('data-reached="true"')
+    expect(markAt(markup, 3)).toContain('data-current="true"')
+    expect(markAt(markup, 3)).not.toContain('data-reached')
+    expect(markAt(markup, 5)).not.toContain('data-reached')
+    expect(markup.match(/data-current="true"/g)).toHaveLength(1)
+    // Each mark sits exactly on its stop, the same geometry as the thumb.
+    expect(markAt(markup, 3)).toContain('bottom:calc(11px + (100% - 22px) * 0.42857142857142855)')
+    // No hover target without a pointer.
+    expect(markup).not.toContain('data-target')
+    // Marks are decoration; the slider's value is announced once, by the track.
+    expect(markup).toContain(
+      '<div class="composer-combined-picker-ladder-marks" aria-hidden="true">'
+    )
+  })
+
+  it('draws no marks on the neutral rail of a model without configurable reasoning', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ReasoningLadderSlider, {
+        provider: 'codex',
+        ladder: buildLadderModel('codex', []),
+        selectedReasoning: '',
+        onSelectReasoning: () => undefined,
+        onInteract: () => undefined
+      })
+    )
+
+    expect(markup).toContain('data-disabled="true"')
+    expect(markup).not.toContain('composer-combined-picker-ladder-mark')
+  })
+})
+
+// A pointer drag cannot run under renderToStaticMarkup (no events, no effects),
+// so the slider's commit contract is pinned structurally. The drag arithmetic
+// itself is covered against real inputs in lib/reasoningLadderPointer.test.ts.
+describe('reasoning ladder drag commit', () => {
+  const probe = new MainSourceProbe(
+    'CombinedModelPicker.tsx',
+    new URL('./CombinedModelPicker.tsx', import.meta.url)
+  )
+  const slider = probe.fn('ReasoningLadderSlider')
+
+  it('holds the released stop until the new value lands and never reverts on a timer', () => {
+    const holds = probe.callsTo(slider, 'setHeldIndex')
+    expect(holds.map((call) => probe.argText(call, 0)).sort()).toEqual(['commitIndex', 'null'])
+
+    // The hold goes up BEFORE the parent hears the value, so a slow
+    // authoritative round trip (a live ensemble seat) never flashes the old stop.
+    const hold = holds.find((call) => probe.argText(call, 0) === 'commitIndex')!
+    const commits = probe.callsTo(slider, 'onSelectReasoning')
+    expect(commits).toHaveLength(1)
+    expect(probe.argText(commits[0]!, 0)).toBe('value')
+    expect(hold.getStart()).toBeLessThan(commits[0]!.getStart())
+
+    // The user's choice always resolves: the hold ends only when the value (or
+    // the model it belongs to) changes, never on a clock back to the old stop.
+    const release = probe
+      .callsTo(slider, 'useEffect')
+      .filter((effect) => probe.text(effect).includes('setHeldIndex(null)'))
+    expect(release).toHaveLength(1)
+    expect(probe.argText(release[0]!, 1)).toBe('[selectedReasoning, provider, modelId]')
+    for (const timer of ['setTimeout', 'setInterval', 'requestAnimationFrame']) {
+      expect(probe.callsTo(slider, timer)).toEqual([])
+    }
+  })
+
+  it('commits the stop on screen at release without re-reading the pointer', () => {
+    const releases = probe
+      .callsTo(slider, 'stepLadderDrag')
+      .filter((call) => probe.argText(call, 1) === "{ type: 'release' }")
+    expect(releases).toHaveLength(1)
+    expect(probe.argText(releases[0]!, 0)).toBe('dragIndexRef.current')
   })
 })
 

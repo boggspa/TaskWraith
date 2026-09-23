@@ -65,7 +65,9 @@
 .is-window-idle .bug-report-sheet-confirmation-check,
 .is-window-idle .composer-combined-picker-ladder-pulse,
 .is-window-idle .composer-combined-picker-ladder-shimmer,
-.is-window-idle .composer-combined-picker-ladder-sparkles {
+.is-window-idle .composer-combined-picker-ladder-sparkles,
+.is-window-idle .composer-combined-picker-tab-panel-rows[data-enter="down"],
+.is-window-idle .composer-combined-picker-tab-panel-rows[data-enter="up"] {
   animation-play-state: running !important;
 }
 

@@ -5,19 +5,20 @@ import { PI_MODEL_LABELS, PI_UPSTREAM_BRANDS } from '../../../shared/piBrandTabl
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
-  CombinedModelPickerProviderHeader,
+  CombinedModelPickerProviderTab,
   buildOllamaProviderGroups,
+  buildProviderTabSections,
   emptyProviderModelsLabel,
-  flattenUnifiedProviderModels,
+  flattenProviderTabEntries,
   getCombinedModelPickerResetSignature,
   modelPickerHueClass,
-  resolveCollapsedUnifiedProviderIds,
+  resolveActiveProviderTab,
   resolveCombinedModelPickerEnterAction,
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition,
   runCombinedModelPickerConfirmAction,
   shouldScrollHighlightedRowIntoView,
-  toggleExpandedProviderGroup
+  stepProviderTab
 } from './CombinedModelPicker'
 import type { ProviderId } from '../../../main/store/types'
 import { OLLAMA_CLOUD_MODEL_CLASSIFIER_LABEL, OllamaCloudIcon } from './icons/OllamaCloudIcon'
@@ -531,77 +532,151 @@ describe('CombinedModelPicker', () => {
     ).toBe(true)
   })
 
-  it('flattens provider groups without losing provider order or duplicate model ids', () => {
-    const entries = flattenUnifiedProviderModels([
+  describe('provider tabs', () => {
+    const groups = [
       {
-        provider: 'codex',
+        provider: 'codex' as ProviderId,
         modelOptions: [
           { id: 'shared', label: 'Codex Shared' },
           { id: 'codex-only', label: 'Codex Only' }
         ]
       },
       {
-        provider: 'claude',
+        provider: 'claude' as ProviderId,
         modelOptions: [{ id: 'shared', label: 'Claude Shared' }]
-      }
-    ])
-
-    expect(entries.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
-      'codex:shared',
-      'codex:codex-only',
-      'claude:shared'
-    ])
-  })
-
-  it('removes collapsed provider rows from the unified keyboard-navigation order', () => {
-    const entries = flattenUnifiedProviderModels(
-      [
-        {
-          provider: 'codex',
-          modelOptions: [
-            { id: 'gpt-5.5', label: 'GPT-5.5' },
-            { id: 'gpt-5.4', label: 'GPT-5.4' }
-          ]
-        },
-        {
-          provider: 'claude',
-          modelOptions: [{ id: 'claude-opus-4-8', label: 'Opus 4.8' }]
-        }
-      ],
-      new Set<ProviderId>(['codex'])
-    )
-
-    expect(entries.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
-      'claude:claude-opus-4-8'
-    ])
-  })
-
-  it('starts every provider collapsed and retains explicit expansion choices', () => {
-    const groups = [
-      {
-        provider: 'codex' as const,
-        modelOptions: [{ id: 'gpt-5.5', label: 'GPT-5.5' }]
       },
-      {
-        provider: 'claude' as const,
-        modelOptions: [{ id: 'claude-opus-4-8', label: 'Opus 4.8' }]
-      }
+      { provider: 'kimi' as ProviderId, modelOptions: [] }
     ]
-    const initiallyExpanded = new Set<ProviderId>()
 
-    expect([...resolveCollapsedUnifiedProviderIds(groups, initiallyExpanded)]).toEqual([
-      'codex',
-      'claude'
-    ])
+    it("opens on the current model's tab, honours a browsed tab, and falls back to the first", () => {
+      expect(resolveActiveProviderTab(groups, null, 'claude')).toBe('claude')
+      expect(resolveActiveProviderTab(groups, 'kimi', 'claude')).toBe('kimi')
+      // A browsed tab that vanished (catalogue refresh) follows the model again.
+      expect(resolveActiveProviderTab(groups, 'grok', 'claude')).toBe('claude')
+      // A current provider with no tab (retired / not admitted) opens the first.
+      expect(resolveActiveProviderTab(groups, null, 'gemini')).toBe('codex')
+      expect(resolveActiveProviderTab([], null, 'codex')).toBeNull()
+    })
 
-    const afterClaudeExpansion = toggleExpandedProviderGroup(initiallyExpanded, 'claude')
-    expect([...resolveCollapsedUnifiedProviderIds(groups, afterClaudeExpansion)]).toEqual(['codex'])
+    it('steps the rail with arrow keys and clamps at both ends', () => {
+      expect(stepProviderTab(groups, 'codex', 1)).toBe('claude')
+      expect(stepProviderTab(groups, 'claude', 1)).toBe('kimi')
+      expect(stepProviderTab(groups, 'kimi', 1)).toBe('kimi')
+      expect(stepProviderTab(groups, 'codex', -1)).toBe('codex')
+      expect(stepProviderTab(groups, 'claude', -1)).toBe('codex')
+      expect(stepProviderTab([], 'codex', 1)).toBeNull()
+    })
 
-    const afterClaudeCollapse = toggleExpandedProviderGroup(afterClaudeExpansion, 'claude')
-    expect([...resolveCollapsedUnifiedProviderIds(groups, afterClaudeCollapse)]).toEqual([
-      'codex',
-      'claude'
-    ])
+    it("navigates only the active tab's rows, keeping duplicate ids per provider", () => {
+      const codex = flattenProviderTabEntries('codex', buildProviderTabSections(groups[0]!))
+      const claude = flattenProviderTabEntries('claude', buildProviderTabSections(groups[1]!))
+      expect(codex.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
+        'codex:shared',
+        'codex:codex-only'
+      ])
+      expect(claude.map((entry) => `${entry.provider}:${entry.option.id}`)).toEqual([
+        'claude:shared'
+      ])
+      // An ordinary provider is one flat, unlabelled run in catalogue order.
+      expect(buildProviderTabSections(groups[0]!)).toEqual([
+        {
+          id: 'all',
+          label: null,
+          hueClass: null,
+          isCloud: false,
+          options: groups[0]!.modelOptions
+        }
+      ])
+    })
+
+    it('splits Ollama into Cloud plus local brands and Pi into upstreams', () => {
+      const ollama = buildProviderTabSections({
+        provider: 'ollama',
+        modelOptions: [
+          { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
+          { id: 'glm-5.2:cloud', label: 'GLM 5.2' },
+          { id: 'granite4.1:3b', label: 'Granite 4.1 (3B Param)' }
+        ]
+      })
+      expect(ollama.map((section) => [section.label, section.isCloud])).toEqual([
+        ['Ollama Cloud', true],
+        ['Alibaba', false],
+        ['IBM', false]
+      ])
+      // Keyboard order follows the grouped display order, not catalogue order.
+      expect(flattenProviderTabEntries('ollama', ollama).map((entry) => entry.option.id)).toEqual([
+        'glm-5.2:cloud',
+        'qwen3.5:9b',
+        'granite4.1:3b'
+      ])
+
+      const piModels = Object.keys(PI_MODEL_LABELS)
+      const firstUpstream = piModels[0]!.split('/')[0]
+      const otherUpstream = piModels.find((id) => id.split('/')[0] !== firstUpstream)!
+      const pi = buildProviderTabSections({
+        provider: 'pi',
+        modelOptions: [piModels[0]!, otherUpstream].map((id) => ({
+          id,
+          label: PI_MODEL_LABELS[id]!
+        }))
+      })
+      expect(pi).toHaveLength(2)
+      expect(pi.every((section) => section.label && section.hueClass)).toBe(true)
+    })
+
+    it('keeps a single-brand grouped provider as one flat list', () => {
+      expect(
+        buildProviderTabSections({
+          provider: 'ollama',
+          modelOptions: [
+            { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
+            { id: 'qwen3.6:35b', label: 'Qwen 3.6 (35B-A3B)' }
+          ]
+        }).map((section) => section.label)
+      ).toEqual([null])
+    })
+
+    it('renders each provider as an accessible tab that never takes focus from the trigger', () => {
+      const active = renderToStaticMarkup(
+        <CombinedModelPickerProviderTab
+          provider="kimi"
+          label="Kimi"
+          active
+          current
+          tabId="t-kimi"
+          panelId="panel"
+          onSelect={() => undefined}
+        />
+      )
+      const paused = renderToStaticMarkup(
+        <CombinedModelPickerProviderTab
+          provider="grok"
+          label="Grok"
+          active={false}
+          current={false}
+          pauseLabel="Paused until 16:00"
+          rerouteLabel="Rerouting to Codex"
+          onSelect={() => undefined}
+        />
+      )
+
+      expect(active).toContain('role="tab"')
+      expect(active).toContain('aria-selected="true"')
+      expect(active).toContain('aria-controls="panel"')
+      expect(active).toContain('id="t-kimi"')
+      expect(active).toContain('aria-label="Kimi · current model"')
+      expect(active).toContain('class="composer-combined-picker-provider-tab is-active is-current"')
+      expect(active).toContain('--provider-tab-accent:var(--provider-kimi-color, var(--accent))')
+      expect(active).toContain('data-provider-logo="kimi"')
+      // Keyboard stays on the trigger's column model; tabs are not Tab stops.
+      expect(active).toContain('tabindex="-1"')
+
+      expect(paused).toContain('aria-selected="false"')
+      expect(paused).toContain('aria-label="Grok · paused"')
+      expect(paused).toContain('class="composer-combined-picker-provider-tab is-paused"')
+      expect(paused).toContain('composer-combined-picker-provider-tab-paused')
+      expect(paused).toContain('title="Grok · paused\nPaused until 16:00\nRerouting to Codex"')
+    })
   })
 
   it('never scrolls the row the cursor is already resting on', () => {
@@ -615,7 +690,8 @@ describe('CombinedModelPicker', () => {
     expect(
       shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: 4 })
     ).toBe(true)
-    // A collapsed group parks the highlight at -1; there is no row to reveal.
+    // A tab browsed away from the current model (or an empty tab) parks the
+    // highlight at -1; there is no row to reveal.
     expect(
       shouldScrollHighlightedRowIntoView({ highlightSource: 'navigation', modelHighlight: -1 })
     ).toBe(false)
@@ -643,70 +719,65 @@ describe('CombinedModelPicker', () => {
     expect(revealEffect).toContain('shouldScrollHighlightedRowIntoView')
   })
 
-  it('renders provider headers as accessible disclosure buttons', () => {
-    const expanded = renderToStaticMarkup(
-      <CombinedModelPickerProviderHeader
-        provider="pi"
-        label="Pi"
-        expanded
-        onToggle={() => undefined}
-      />
-    )
-    const collapsed = renderToStaticMarkup(
-      <CombinedModelPickerProviderHeader
-        provider="pi"
-        label="Pi"
-        expanded={false}
-        onToggle={() => undefined}
-      />
-    )
-
-    expect(expanded).toContain('aria-expanded="true"')
-    expect(expanded).toContain('aria-label="Collapse Pi models"')
-    expect(expanded).toContain('composer-combined-picker-provider-chevron is-expanded')
-    expect(collapsed).toContain('aria-expanded="false"')
-    expect(collapsed).toContain('aria-label="Expand Pi models"')
-    expect(collapsed).not.toContain('composer-combined-picker-provider-chevron is-expanded')
-  })
-
-  it('uses each provider accent with the shared OS UI font and natural title-case labels', () => {
+  it('titles the tab panel in the provider accent with the shared OS UI font and natural case', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
       'utf8'
     )
-    const headerRule = css.match(/\.composer-combined-picker-provider-header\s*\{([^}]*)\}/)?.[1]
-    const labelRule = css.match(
-      /\.composer-combined-picker-provider-header-label\s*\{([^}]*)\}/
-    )?.[1]
+    const headerRule = css.match(/\.composer-combined-picker-tab-panel-header\s*\{([^}]*)\}/)?.[1]
+    const titleRule = css.match(/\.composer-combined-picker-tab-panel-title\s*\{([^}]*)\}/)?.[1]
 
     expect(headerRule).toBeDefined()
-    expect(headerRule).toContain('var(--model-provider-accent, var(--accent)) 76%')
     expect(headerRule).toContain('font-family: var(--font-sans)')
-    expect(labelRule).toBeDefined()
-    expect(labelRule).toContain('letter-spacing: 0;')
-    expect(labelRule).toContain('text-transform: none;')
-    expect(css).not.toContain(
-      '.composer-combined-picker-provider-group.is-current .composer-combined-picker-provider-header'
-    )
+    expect(titleRule).toBeDefined()
+    expect(titleRule).toContain('var(--model-provider-accent, var(--accent)) 78%')
+    expect(titleRule).toContain('letter-spacing: 0;')
+    expect(titleRule).toContain('text-transform: none;')
+    // The collapsible stacks are gone, not left behind as dead selectors.
+    for (const retired of [
+      '.composer-combined-picker-provider-group',
+      '.composer-combined-picker-provider-header',
+      '.composer-combined-picker-provider-chevron',
+      '.composer-combined-picker-empty-provider'
+    ]) {
+      expect(css).not.toContain(retired)
+    }
   })
 
-  it('keeps the unified model rail fixed-height and independently scrollable', () => {
+  it('lays the unified picker out as a tab rail beside a fixed-height scrolling list', () => {
     const css = readFileSync(
       new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
       'utf8'
     )
-    expect(css).toMatch(
-      /\.composer-combined-picker-popover\.is-unified-provider-picker\s*\{[\s\S]*?height:\s*min\(322px, calc\(100vh - 24px\)\);/
+    const popoverRule = css.match(
+      /\.composer-combined-picker-popover\.is-unified-provider-picker\s*\{([^}]*)\}/
+    )?.[1]
+    const listRule = css.match(
+      /\.is-unified-provider-picker\s+\.composer-combined-picker-models\.is-unified-model-list\s*\{([^}]*)\}/
+    )?.[1]
+    const rowsRule = css.match(/\.composer-combined-picker-tab-panel-rows\s*\{([^}]*)\}/)?.[1]
+    const indicatorRule = css.match(
+      /\.composer-combined-picker-provider-tab-indicator\s*\{([^}]*)\}/
+    )?.[1]
+
+    expect(popoverRule).toContain(
+      'grid-template-columns: var(--provider-tab-rail-w) minmax(0, 1fr) 112px;'
     )
-    expect(css).toMatch(
-      /\.composer-combined-picker-models\.is-unified-model-list\s*\{[\s\S]*?overflow-y:\s*auto;/
+    expect(popoverRule).toContain('height: min(334px, calc(100vh - 24px));')
+    // The column holds the header still; only the rows beneath it scroll.
+    expect(listRule).toContain('overflow: hidden;')
+    expect(rowsRule).toContain('overflow-y: auto;')
+    // One pill glides between tabs, positioned declaratively from the index.
+    expect(indicatorRule).toContain('var(--provider-tab-active-index, 0)')
+    expect(indicatorRule).toContain('transition:')
+    // A fill-mode would park the list invisible in an unfocused window.
+    const enterRules = css.match(
+      /\.composer-combined-picker-tab-panel-rows\[data-enter="(?:down|up)"\]\s*\{[^}]*\}/g
     )
-    expect(css).toMatch(
-      /\.composer-combined-picker-provider-chevron\s*\{[\s\S]*?margin-left:\s*auto;/
-    )
-    expect(css).toMatch(
-      /\.composer-combined-picker-provider-chevron\.is-expanded\s*\{[\s\S]*?transform:\s*rotate\(90deg\);/
-    )
+    expect(enterRules).toHaveLength(2)
+    for (const rule of enterRules ?? []) {
+      expect(rule).not.toMatch(/\b(?:forwards|both|backwards)\b/)
+    }
   })
 
   it('opens below a high trigger and above a low trigger without leaving the viewport', () => {

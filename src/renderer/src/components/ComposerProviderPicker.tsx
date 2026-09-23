@@ -122,6 +122,11 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   devin: 'Devin CLI'
 }
 
+/** The one-line runtime descriptor, shared with the model picker's tab header. */
+export function getProviderDescription(provider: ProviderId): string | undefined {
+  return PROVIDER_DESCRIPTIONS[provider]
+}
+
 /** User-facing offer-policy reason for a retired or not-yet-configured provider. */
 export function providerRunUnavailableReason(provider: ProviderId): string | null {
   // AntiGravity's real admission authority is the consent/key union enforced by
