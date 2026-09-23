@@ -45,6 +45,7 @@ export type TuiOverlay =
   | 'goal'
   | 'theme'
   | 'login'
+  | 'host'
 export type TuiMissionFilter = 'active' | 'history' | 'all'
 /** The three workspace-git read scopes the Host serves (no show, no blame). */
 export type TuiGitScope = 'status' | 'diff' | 'log'
@@ -158,6 +159,41 @@ export interface TuiGitState {
   error?: string
 }
 
+export type TuiHostPanelTone = 'good' | 'warning' | 'error'
+
+export interface TuiHostPanelField {
+  readonly label: string
+  readonly value: string
+  readonly tone?: TuiHostPanelTone
+}
+
+/**
+ * One Host row on the /host lens. `pid` and `holders` are always drawn whole;
+ * only `profile` is shortened, from the middle, so its unique tail survives.
+ */
+export interface TuiHostPanelHost {
+  readonly pid: string
+  readonly holders: string
+  readonly profile: string
+  readonly note?: string
+  readonly tone?: TuiHostPanelTone
+}
+
+/**
+ * The /host lens, built by the controller and drawn as given. A `prompt` means
+ * an explicit `y` is armed, so it states the total it acts on: rows past the
+ * viewport are counted as "+N more", never drawn.
+ */
+export interface TuiHostPanel {
+  readonly title: string
+  readonly fields: readonly TuiHostPanelField[]
+  readonly hostsHeading?: string
+  readonly hosts?: readonly TuiHostPanelHost[]
+  readonly notes?: readonly string[]
+  readonly prompt?: string
+  readonly hint: string
+}
+
 /**
  * The /seats lens state. The roster itself is NEVER stored here — it always
  * renders from the coherent Host projection (`hostProjection.participants`),
@@ -253,6 +289,8 @@ export interface TaskWraithTuiState {
   git?: TuiGitState
   /** The /seats lens state (ensemble seat control on the selected thread). */
   seats?: TuiSeatsState
+  /** The /host lens: Host status, or a restart/stop-all plan awaiting an explicit y. */
+  hostPanel?: TuiHostPanel
   /**
    * Whether the /threads picker reveals archived chats. Off by default: the
    * picker is for switching, and an archived chat cannot be selected.

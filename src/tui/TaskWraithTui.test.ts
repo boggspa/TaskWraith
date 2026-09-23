@@ -23,10 +23,12 @@ import {
   type HostDeltasSinceResult,
   type HostParticipantProjection,
   type HostResultRef,
-  type HostSnapshot
+  type HostSnapshot,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
+  type HostLocalTransportErrorCode,
   type HostLocalTransportHostFrame,
   type HostWorkspaceGitReadParams,
   type HostWorkspaceGitReadResult
@@ -41,8 +43,11 @@ import {
   HostPermissionConsentAuthority,
   type HostPermissionConsentProofRequest
 } from '../host-runtime/HostPermissionConsent'
+import type { HostTerminationOutcome } from '../host-client/HostProcessTermination'
+import type { HostStopAllHost } from '../host-client/HostStopAll'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import { taskWraithHostSocketPath } from '../shared/taskWraithHostPaths.node'
+import { taskWraithControlSocketPath } from '../shared/taskWraithControlPaths.node'
 import type {
   HostProviderAuthFlowProjection,
   HostProviderAuthStatusProjection,
@@ -51,13 +56,19 @@ import type {
 } from '../shared/hostSetupProtocol'
 import { stripAnsi } from './ansi'
 import { createTuiFullAccessPresence } from './fullAccessConsent'
+import type {
+  TuiHostControl,
+  TuiHostStopAllOutcome,
+  TuiHostStopAllPlan,
+  TuiHostStopAllRequest
+} from './hostProcessManager'
 import {
   TaskWraithTui,
   hostDeltasMayReleaseQueuedDraft,
   shouldAdvanceAnimationFrame,
   terminalRunIdsFromHostDeltas
 } from './TaskWraithTui'
-import { TUI_GLYPHS_ASCII } from './theme'
+import { TUI_GLYPHS_ASCII, TUI_GLYPHS_UNICODE } from './theme'
 
 const cleanup: Array<() => Promise<void> | void> = []
 
@@ -156,6 +167,44 @@ interface FakeHostHandlers {
   rejectCommandBeforeHandling?: (command: HostCommand) => boolean
   /** allow = immediate succeeded; defer = pending ask until approval.decide */
   mutationMode?: MutationMode
+  /** Speak `host.lease`. Absent, the fake answers `unknown_request_kind` like a pre-lease Host. */
+  lease?: FakeHostLeaseOptions
+  /** Answer `host.status`. Absent, the fake answers `unknown_request_kind`. */
+  hostStatus?: (context: { readonly explicitHolders: number }) => HostStatusProjection
+  /** Written into the discovery record, as a Host started from a known payload does. */
+  discoveryPayloadVersion?: string
+}
+
+interface FakeHostLeaseOptions {
+  /** Renewal cadence the fake grants; long by default so a test renews only when it asks to. */
+  readonly heartbeatMs?: number
+  /** A transport error code to answer renewals with; undefined renews normally. */
+  readonly renewError?: () => HostLocalTransportErrorCode | undefined
+}
+
+/** One `host.lease` request as the fake received it, in arrival order. */
+interface FakeHostLeaseRequest {
+  readonly socket: number
+  readonly action: string
+  readonly leaseId?: string
+}
+
+const FAKE_PAYLOAD_VERSION = `sha256:${'0123456789abcdef'.repeat(4)}`
+
+function makeHostStatus(overrides: Partial<HostStatusProjection> = {}): HostStatusProjection {
+  return {
+    pid: process.pid,
+    startedAt: new Date(0).toISOString(),
+    uptimeMs: 3 * 3_600_000 + 12 * 60_000,
+    hostId: 'fake-host',
+    payloadVersion: FAKE_PAYLOAD_VERSION,
+    profilePath: '/profiles/fake',
+    persist: false,
+    lifetime: { phase: 'held', holders: 2, implicitHolders: 1, declined: 0 },
+    liveWork: { runs: 0 },
+    clients: [],
+    ...overrides
+  }
 }
 
 const SETUP_HOST_CAPABILITIES: readonly HostCapability[] = [
@@ -191,6 +240,12 @@ class FakeHostV2 {
   helloCapabilities: HostCapability[] = []
   readonly commands: HostCommand[] = []
   readonly commandAttempts: HostCommand[] = []
+  /** Every `host.lease` request, and every socket close, in arrival order. */
+  readonly leaseRequests: FakeHostLeaseRequest[] = []
+  readonly socketEvents: string[] = []
+  private readonly leases = new Map<string, number>()
+  private socketCount = 0
+  private leaseCount = 0
 
   constructor(userDataPath: string, handlers: FakeHostHandlers) {
     this.userDataPath = userDataPath
@@ -226,7 +281,10 @@ class FakeHostV2 {
         pid: process.pid,
         startedAt: new Date(0).toISOString(),
         hostId: 'fake-host',
-        hostVersion: '1.9.1-preview'
+        hostVersion: '1.9.1-preview',
+        ...(this.handlers.discoveryPayloadVersion
+          ? { payloadVersion: this.handlers.discoveryPayloadVersion }
+          : {})
       }),
       'utf8'
     )
@@ -243,6 +301,11 @@ class FakeHostV2 {
 
   dropAllClients(): void {
     for (const socket of this.sockets) socket.destroy()
+  }
+
+  /** Leases the fake currently counts, as a real Host counts explicit holders. */
+  get explicitHolders(): number {
+    return this.leases.size
   }
 
   pushDeltas(
@@ -298,6 +361,8 @@ class FakeHostV2 {
 
   private accept(socket: Socket): void {
     this.sockets.add(socket)
+    this.socketCount += 1
+    const socketId = this.socketCount
     socket.setEncoding('utf8')
     let buffer = ''
     socket.on('data', (chunk: string) => {
@@ -306,15 +371,102 @@ class FakeHostV2 {
       while (newline >= 0) {
         const line = buffer.slice(0, newline).trim()
         buffer = buffer.slice(newline + 1)
-        if (line) this.onLine(socket, line)
+        if (line) this.onLine(socket, line, socketId)
         newline = buffer.indexOf('\n')
       }
     })
-    socket.on('close', () => this.sockets.delete(socket))
+    socket.on('close', () => {
+      this.sockets.delete(socket)
+      // A real Host drops a closed socket's lease at once.
+      for (const [leaseId, owner] of this.leases) {
+        if (owner === socketId) this.leases.delete(leaseId)
+      }
+      this.socketEvents.push(`close:${socketId}`)
+    })
     socket.on('error', () => {})
   }
 
-  private onLine(socket: Socket, line: string): void {
+  private onLeaseRequest(socket: Socket, id: string, params: unknown, socketId: number): void {
+    const lease = this.handlers.lease
+    const request = (params ?? {}) as { action?: unknown; leaseId?: unknown }
+    const action = String(request.action)
+    const leaseId = typeof request.leaseId === 'string' ? request.leaseId : undefined
+    this.leaseRequests.push({ socket: socketId, action, ...(leaseId ? { leaseId } : {}) })
+    this.socketEvents.push(`lease:${action}:${socketId}`)
+    const fail = (code: HostLocalTransportErrorCode): void =>
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: false,
+        error: { code }
+      })
+    if (!lease) {
+      fail('unknown_request_kind')
+      return
+    }
+    const heartbeatMs = lease.heartbeatMs ?? 60_000
+    if (action === 'acquire') {
+      // One lease per socket, as the real Host keeps it.
+      const held = [...this.leases].find(([, owner]) => owner === socketId)?.[0]
+      const granted = held ?? `lease-${++this.leaseCount}`
+      this.leases.set(granted, socketId)
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'host.lease',
+          action: 'acquire',
+          leaseId: granted,
+          heartbeatMs,
+          ttlMs: heartbeatMs * 4,
+          hostNowMs: 1
+        }
+      })
+      return
+    }
+    if (action === 'renew') {
+      const code = lease.renewError?.()
+      if (code) {
+        fail(code)
+        return
+      }
+      if (!leaseId || this.leases.get(leaseId) !== socketId) {
+        fail('invalid_payload')
+        return
+      }
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'host.lease',
+          action: 'renew',
+          leaseId,
+          expiresInMs: heartbeatMs * 4,
+          hostNowMs: 2
+        }
+      })
+      return
+    }
+    if (action === 'release') {
+      if (leaseId && this.leases.get(leaseId) === socketId) this.leases.delete(leaseId)
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: { kind: 'host.lease', action: 'release', released: true }
+      })
+      return
+    }
+    fail('invalid_payload')
+  }
+
+  private onLine(socket: Socket, line: string, socketId: number): void {
     const message = JSON.parse(line) as Record<string, unknown>
     if (message.type === 'hello') {
       if (message.token !== this.token) {
@@ -367,6 +519,23 @@ class FakeHostV2 {
     if (message.type !== 'request') return
     const id = String(message.id)
     const kind = String(message.kind)
+    if (kind === 'host.lease') {
+      this.onLeaseRequest(socket, id, message.params, socketId)
+      return
+    }
+    if (kind === 'host.status' && this.handlers.hostStatus) {
+      this.write(socket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id,
+        ok: true,
+        result: {
+          kind: 'host.status',
+          status: this.handlers.hostStatus({ explicitHolders: this.leases.size })
+        }
+      })
+      return
+    }
     if (kind === 'snapshot.get') {
       this.snapshotRequests += 1
       const respond = (base: HostSnapshot): void => {
@@ -1938,8 +2107,13 @@ describe('TaskWraithTui Host projection (Wave 4.2b)', () => {
     )
 
     feed(input, '/status\r')
+    // The fake predates leases, so the Host's pid is followed by the legacy
+    // note, both joined by the ASCII separator like every other segment.
     await waitFor(
-      () => output.lastFrame.includes('Node Host connected . profile'),
+      () =>
+        output.lastFrame.includes(
+          `Node Host connected . pid ${process.pid} . Host predates leases . /host`
+        ),
       'ASCII Host status shown'
     )
     expect(output.lastFrame).not.toContain('·')
@@ -5134,4 +5308,591 @@ describe('animation frame gating', () => {
     expect(gate({ homeFrame: true, tick: 1, stride: 0 })).toBe(true)
     expect(gate({ homeFrame: true, tick: 1, stride: -3 })).toBe(true)
   })
+})
+
+/* -------------------------------------------------------------------------
+ * Host lease and /host (Host-lifetime S3)
+ * ---------------------------------------------------------------------- */
+
+/**
+ * The pre-S3 `/status` line for an open solo thread, captured from the old
+ * code at a3f48c3b9 with the profile and socket paths replaced by
+ * placeholders. S3 only inserts segments after the connection state.
+ */
+const STATUS_GOLDEN_THREAD_UNICODE =
+  'Node Host connected · profile <profile> · socket <socket> · Claude / none / default · caps bootstrap, snapshot, deltas, model-offers, health, commands, receipts'
+
+async function setupLeaseHost(
+  handlers: Partial<FakeHostHandlers> = {}
+): Promise<{ host: FakeHostV2; userDataPath: string }> {
+  const userDataPath = await mkdtemp(join(tmpdir(), 'taskwraith-tui-host-lease-'))
+  cleanup.push(() => rm(userDataPath, { recursive: true, force: true }))
+  const host = new FakeHostV2(userDataPath, {
+    snapshot: () => makeHostSnapshot(),
+    mutationMode: 'allow',
+    lease: {},
+    ...handlers
+  })
+  await host.start()
+  cleanup.push(() => host.stop())
+  return { host, userDataPath }
+}
+
+function tuiState(tui: TaskWraithTui): {
+  notice?: { text: string }
+  overlay: string
+  hostPanel?: unknown
+} {
+  return (
+    tui as unknown as {
+      state: { notice?: { text: string }; overlay: string; hostPanel?: unknown }
+    }
+  ).state
+}
+
+function tuiNotice(tui: TaskWraithTui): string {
+  return tuiState(tui).notice?.text ?? ''
+}
+
+async function settle(ms = 60): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+function terminationOutcome(
+  kind: HostTerminationOutcome['kind'],
+  pid: number | null,
+  detail?: string
+): HostTerminationOutcome {
+  return { kind, pid, steps: [], swept: [], ...(detail ? { detail } : {}) }
+}
+
+function stopAllHostRow(
+  profilePath: string,
+  pid: number,
+  overrides: Partial<HostStopAllHost> = {}
+): HostStopAllHost {
+  return {
+    source: 'registry',
+    profilePath,
+    pid,
+    cliPath: '/payload/host-runtime/cli.js',
+    payloadVersion: FAKE_PAYLOAD_VERSION,
+    startedAt: new Date(0).toISOString(),
+    holders: 1,
+    implicitHolders: 0,
+    persist: false,
+    liveness: 'live',
+    selected: true,
+    ...overrides
+  }
+}
+
+function stopAllPlan(
+  request: TuiHostStopAllRequest,
+  hosts: readonly HostStopAllHost[]
+): TuiHostStopAllPlan {
+  return {
+    request,
+    registryRoot: '/registry',
+    hosts,
+    selected: hosts.filter((host) => host.selected),
+    unreadableEntries: 0,
+    fingerprint: 'plan-fingerprint'
+  }
+}
+
+function hostControl(overrides: Partial<TuiHostControl> = {}): {
+  control: TuiHostControl
+  planStopAll: ReturnType<
+    typeof vi.fn<(request: TuiHostStopAllRequest) => Promise<TuiHostStopAllPlan>>
+  >
+  runStopAll: ReturnType<typeof vi.fn<(plan: TuiHostStopAllPlan) => Promise<TuiHostStopAllOutcome>>>
+} {
+  const plan = stopAllPlan({ scope: { kind: 'all' }, scanArgv: false }, [
+    stopAllHostRow('/profiles/a', 101),
+    stopAllHostRow('/profiles/b', 102, { holders: 0, implicitHolders: 1 })
+  ])
+  const planStopAll = vi.fn(async (_request: TuiHostStopAllRequest) => plan)
+  const runStopAll = vi.fn(
+    async (shown: TuiHostStopAllPlan): Promise<TuiHostStopAllOutcome> => ({
+      kind: 'done',
+      results: shown.selected.map((host) => ({
+        host,
+        outcome: terminationOutcome('stopped', host.pid)
+      }))
+    })
+  )
+  return {
+    control: { planStopAll, runStopAll, ...overrides },
+    planStopAll,
+    runStopAll
+  }
+}
+
+describe('TaskWraithTui Host lease', () => {
+  it('holds a lease while connected', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const { tui, output } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => output.lastFrame.includes('Hello TaskWraith'), 'connected')
+    await waitFor(() => host.explicitHolders === 1, 'the Host counts this TUI as a holder')
+    expect(host.leaseRequests.map((request) => request.action)).toEqual(['acquire'])
+  })
+
+  it('releases on stop, before its socket closes', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const { tui } = startTui(userDataPath)
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    tui.stop()
+    await waitFor(() => host.socketEvents.includes('close:1'), 'socket closed')
+    expect(host.socketEvents).toEqual(['lease:acquire:1', 'lease:release:1', 'close:1'])
+    expect(host.leaseRequests.at(-1)).toEqual({ socket: 1, action: 'release', leaseId: 'lease-1' })
+  })
+
+  it('takes a lease again on every welcome, once, after a reconnect', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const { tui } = startTui(userDataPath, { reconnectBaseDelayMs: 20 })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'first lease held')
+
+    host.dropAllClients()
+    await waitFor(
+      () => host.welcomeCount === 2 && host.explicitHolders === 1,
+      'the reconnected socket holds a lease'
+    )
+    await settle()
+    expect(host.leaseRequests).toEqual([
+      { socket: 1, action: 'acquire' },
+      { socket: 2, action: 'acquire' }
+    ])
+  })
+
+  it('reconnects when a renewal fails, and holds a lease on the new socket', async () => {
+    let failRenewals = false
+    const { host, userDataPath } = await setupLeaseHost({
+      lease: {
+        heartbeatMs: 40,
+        renewError: () => (failRenewals ? 'host_unavailable' : undefined)
+      }
+    })
+    const { tui } = startTui(userDataPath, { reconnectBaseDelayMs: 20 })
+    await tui.start()
+    await waitFor(
+      () => host.leaseRequests.some((request) => request.action === 'renew'),
+      'renewing on its own timer'
+    )
+
+    failRenewals = true
+    await waitFor(() => host.socketEvents.includes('close:1'), 'the failed socket is dropped')
+    failRenewals = false
+    const renewed = host.leaseRequests.findIndex(
+      (request) => request.socket === 1 && request.action === 'renew'
+    )
+    expect(renewed).toBeGreaterThanOrEqual(0)
+    await waitFor(
+      () =>
+        host.leaseRequests.some(
+          (request) => request.socket === 2 && request.action === 'acquire'
+        ) && host.explicitHolders === 1,
+      'reconnected and holding a lease again'
+    )
+    expect(tuiState(tui).notice?.text ?? '').not.toContain('failed')
+  })
+
+  it('stays on a Host from before leases, and /status says a restart upgrades it', async () => {
+    const { host, userDataPath } = await setupHost()
+    const { tui, input } = startTui(userDataPath, {
+      reconnectBaseDelayMs: 20,
+      glyphs: TUI_GLYPHS_UNICODE
+    })
+    await tui.start()
+    await waitFor(() => host.leaseRequests.length === 1, 'asked for a lease once')
+
+    feed(input, '/status\r')
+    await waitFor(
+      () => tuiNotice(tui).includes('Host predates leases · /host restart upgrades it'),
+      'legacy Host named'
+    )
+    await settle(150)
+    expect(host.welcomeCount).toBe(1)
+    expect(host.leaseRequests).toEqual([{ socket: 1, action: 'acquire' }])
+  })
+
+  it('keeps every /status segment it had, and adds pid, uptime, holders and payload after the connection', async () => {
+    const { host, userDataPath } = await setupLeaseHost({
+      hostStatus: ({ explicitHolders }) =>
+        makeHostStatus({
+          lifetime: {
+            phase: 'held',
+            holders: explicitHolders + 1,
+            implicitHolders: 1,
+            declined: 0
+          }
+        }),
+      discoveryPayloadVersion: FAKE_PAYLOAD_VERSION
+    })
+    const { tui, input } = startTui(userDataPath, { glyphs: TUI_GLYPHS_UNICODE })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/status\r')
+    await waitFor(() => tuiNotice(tui).startsWith('Node Host connected'), 'status shown')
+    const segments = tuiNotice(tui).split(' · ')
+    expect(segments.slice(0, 5)).toEqual([
+      'Node Host connected',
+      `pid ${process.pid}`,
+      'up 3h 12m',
+      'holders 2 (1 implicit)',
+      'payload sha256:0123456789ab'
+    ])
+    const withoutS3 = segments
+      .filter((segment) => !/^(pid|up|holders|payload) /.test(segment))
+      .join(' · ')
+    expect(withoutS3).toBe(
+      STATUS_GOLDEN_THREAD_UNICODE.replace('<profile>', userDataPath).replace(
+        '<socket>',
+        taskWraithControlSocketPath(userDataPath)
+      )
+    )
+  })
+})
+
+describe('TaskWraithTui /host', () => {
+  it('opens the Host lens with pid, uptime, holders and this TUI’s lease, and Esc closes it', async () => {
+    const { host, userDataPath } = await setupLeaseHost({
+      hostStatus: ({ explicitHolders }) =>
+        makeHostStatus({
+          lifetime: { phase: 'held', holders: explicitHolders, implicitHolders: 0, declined: 1 },
+          clients: [
+            {
+              clientClass: 'tui',
+              clientId: 'tui-test',
+              connectedForMs: 65_000,
+              lease: 'explicit',
+              capabilities: []
+            }
+          ]
+        }),
+      discoveryPayloadVersion: FAKE_PAYLOAD_VERSION
+    })
+    const { tui, input, output } = startTui(userDataPath, { glyphs: TUI_GLYPHS_UNICODE })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host\r')
+    await waitFor(() => output.lastFrame.includes('holds a lease'), 'Host lens drawn')
+    const frame = output.lastFrame
+    expect(frame).toMatch(new RegExp(`pid\\s+${process.pid}`))
+    expect(frame).toMatch(/uptime\s+3h 12m/)
+    expect(frame).toMatch(/holders\s+1 · 1 declined/)
+    expect(frame).toMatch(/payload\s+sha256:0123456789ab/)
+    expect(frame).toContain('tui · tui-test · lease explicit · 1m 5s')
+
+    feed(input, '\u001b')
+    await waitFor(() => tuiState(tui).overlay === 'none', 'Esc closed the lens')
+  })
+
+  it('refuses /host restart with the reason when this session never launches a Host', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control } = hostControl({
+      restartUnavailable:
+        'This TUI was started with --no-start-host and never launches a Host, so it cannot restart one.'
+    })
+    const { tui, input } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host restart\r')
+    await waitFor(() => tuiNotice(tui).includes('--no-start-host'), 'reason shown')
+  })
+
+  it('restarts at once when nothing is running, and names both pids', async () => {
+    const { host, userDataPath } = await setupLeaseHost({ hostStatus: () => makeHostStatus() })
+    const restart = vi.fn(async (pid: number | null) => ({
+      termination: terminationOutcome('stopped', pid),
+      launch: { kind: 'launched' as const, pid: 777 }
+    }))
+    const { control } = hostControl({ restart })
+    const { tui, input } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host restart\r')
+    await waitFor(() => restart.mock.calls.length === 1, 'restarted')
+    expect(restart).toHaveBeenCalledWith(process.pid)
+    await waitFor(
+      () =>
+        tuiNotice(tui) === `Restarted the TaskWraith Host (was pid ${process.pid}) · now pid 777`,
+      'restart reported'
+    )
+  })
+
+  it('asks before a restart that would end live runs, and only y restarts', async () => {
+    const { host, userDataPath } = await setupLeaseHost({
+      hostStatus: () => makeHostStatus({ liveWork: { runs: 2 } })
+    })
+    const restart = vi.fn(async (pid: number | null) => ({
+      termination: terminationOutcome('stopped', pid),
+      launch: { kind: 'launched' as const, pid: 778 }
+    }))
+    const { control } = hostControl({ restart })
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host restart\r')
+    await waitFor(
+      () => output.lastFrame.includes('y restarts the Host and ends 2 live runs'),
+      'restart confirmation armed'
+    )
+    feed(input, 'n')
+    await waitFor(
+      () => tuiNotice(tui) === 'Restart cancelled · the Host keeps running',
+      'restart cancelled'
+    )
+    expect(tuiState(tui).overlay).toBe('none')
+    expect(restart).not.toHaveBeenCalled()
+
+    feed(input, '/host restart\r')
+    await waitFor(
+      () => output.lastFrame.includes('y restarts the Host and ends 2 live runs'),
+      'restart confirmation armed again'
+    )
+    feed(input, 'y')
+    await waitFor(() => restart.mock.calls.length === 1, 'restarted on y')
+  })
+
+  it('reports a refused restart, launches nothing, and says the Host keeps running', async () => {
+    const { host, userDataPath } = await setupLeaseHost({ hostStatus: () => makeHostStatus() })
+    const restart = vi.fn(async (pid: number | null) => ({
+      termination: terminationOutcome('not_a_host', pid, 'the pid runs something else')
+    }))
+    const { control } = hostControl({ restart })
+    const { tui, input } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host restart\r')
+    await waitFor(
+      () =>
+        tuiNotice(tui) ===
+        `Host restart refused (not_a_host, the pid runs something else) · the Host (pid ${process.pid}) keeps running`,
+      'refusal reported'
+    )
+    expect(host.welcomeCount).toBe(1)
+  })
+
+  it('lists Hosts without a scope and arms nothing', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const listing = stopAllPlan({ scope: { kind: 'list' }, scanArgv: false }, [
+      stopAllHostRow('/profiles/a', 101, { selected: false }),
+      stopAllHostRow('/profiles/b', 102, { selected: false })
+    ])
+    const { control, planStopAll, runStopAll } = hostControl({
+      planStopAll: vi.fn(async () => listing)
+    })
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all\r')
+    await waitFor(() => output.lastFrame.includes('Listed only'), 'listing drawn')
+    expect(control.planStopAll).toHaveBeenCalledWith({ scope: { kind: 'list' }, scanArgv: false })
+    expect(output.lastFrame).toContain('pid 101')
+    expect(output.lastFrame).toContain('pid 102')
+    expect(output.lastFrame).not.toContain('y stops')
+
+    feed(input, 'y')
+    await settle()
+    expect(runStopAll).not.toHaveBeenCalled()
+    expect(planStopAll).not.toHaveBeenCalled()
+  })
+
+  it('shows what --all would stop and stops exactly that plan on an explicit y', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control, planStopAll, runStopAll } = hostControl()
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => output.lastFrame.includes('y stops all 2 Hosts'), 'plan armed')
+    expect(planStopAll).toHaveBeenCalledWith({ scope: { kind: 'all' }, scanArgv: false })
+    const frame = output.lastFrame
+    expect(frame).toContain('pid 101  holders 1+0  /profiles/a')
+    expect(frame).toContain('pid 102  holders 0+1  /profiles/b')
+    expect(frame).toContain('any other key cancels')
+
+    feed(input, 'y')
+    await waitFor(() => runStopAll.mock.calls.length === 1, 'stop-all ran')
+    expect(runStopAll.mock.calls[0]?.[0]).toBe(await planStopAll.mock.results[0]?.value)
+    await waitFor(() => output.lastFrame.includes('Stopped 2 Hosts'), 'results drawn')
+    expect(tuiNotice(tui)).toBe('Stop-all finished')
+  })
+
+  it('cancels an armed stop-all on every key but y: n, Enter, Esc, Ctrl+C, space and any other key', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control, planStopAll, runStopAll } = hostControl()
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    const keys = ['n', '\r', '\u001b', '\u0003', ' ', 'x', 'N']
+    for (const [index, key] of keys.entries()) {
+      feed(input, '/host stop-all --all\r')
+      await waitFor(
+        () => planStopAll.mock.calls.length === index + 1 && output.lastFrame.includes('y stops'),
+        `plan armed before ${JSON.stringify(key)}`
+      )
+      feed(input, key)
+      await waitFor(
+        () => tuiState(tui).overlay === 'none' && !output.lastFrame.includes('y stops'),
+        `${JSON.stringify(key)} cancelled`
+      )
+      expect(tuiNotice(tui)).toBe('Stop-all cancelled · nothing was stopped')
+    }
+    await settle()
+    expect(runStopAll).not.toHaveBeenCalled()
+    // Ctrl+C answered the prompt; it did not quit the TUI.
+    expect((tui as unknown as { stopped: boolean }).stopped).toBe(false)
+  }, 15_000)
+
+  it('cancels an armed stop-all when the terminal is resized', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control, runStopAll } = hostControl()
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => output.lastFrame.includes('y stops all 2 Hosts'), 'plan armed')
+    output.emit('resize')
+    await waitFor(
+      () => tuiNotice(tui).startsWith('Terminal resized · the /host request was cancelled'),
+      'resize cancelled'
+    )
+    feed(input, 'y')
+    await settle()
+    expect(runStopAll).not.toHaveBeenCalled()
+  })
+
+  it('cancels an armed stop-all when the Host connection drops', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const { control, runStopAll } = hostControl()
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => output.lastFrame.includes('y stops all 2 Hosts'), 'plan armed')
+    host.dropAllClients()
+    await waitFor(
+      () => tuiNotice(tui).includes('the /host request was cancelled, nothing was stopped'),
+      'disconnect cancelled'
+    )
+    feed(input, 'y')
+    await settle()
+    expect(runStopAll).not.toHaveBeenCalled()
+  })
+
+  it('never arms a plan that arrives after its lens was closed', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    let deliver: (plan: TuiHostStopAllPlan) => void = () => undefined
+    const shown = stopAllPlan({ scope: { kind: 'all' }, scanArgv: false }, [
+      stopAllHostRow('/profiles/a', 101)
+    ])
+    const { control, runStopAll } = hostControl({
+      planStopAll: () =>
+        new Promise<TuiHostStopAllPlan>((resolve) => {
+          deliver = resolve
+        })
+    })
+    const { tui, input } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => tuiState(tui).overlay === 'host', 'lens open while the plan is read')
+    feed(input, '\u001b')
+    await waitFor(() => tuiState(tui).overlay === 'none', 'lens closed')
+    deliver(shown)
+    await settle()
+    feed(input, 'y')
+    await settle()
+    expect(runStopAll).not.toHaveBeenCalled()
+    expect(tuiState(tui).overlay).toBe('none')
+  })
+
+  it('refuses a stop-all whose registry changed after it was shown, and stops nothing', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control, runStopAll } = hostControl()
+    runStopAll.mockImplementation(async (shown) => ({ kind: 'registry_changed', fresh: shown }))
+    const { tui, input, output } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => output.lastFrame.includes('y stops all 2 Hosts'), 'plan armed')
+    feed(input, 'y')
+    await waitFor(
+      () =>
+        tuiNotice(tui) === 'Stop-all refused · the Host registry changed after the list was shown',
+      'refusal reported'
+    )
+    expect(output.lastFrame).toContain('Nothing was stopped')
+  })
+
+  it('refuses --sweep and never asks for a plan', async () => {
+    const { userDataPath } = await setupLeaseHost()
+    const { control, planStopAll } = hostControl()
+    const { tui, input } = startTui(userDataPath, { hostControl: control })
+    await tui.start()
+    await waitFor(() => tuiState(tui).notice !== undefined, 'connected')
+
+    feed(input, '/host stop-all --all --sweep\r')
+    await waitFor(() => tuiNotice(tui).startsWith('--sweep is not offered here'), 'sweep refused')
+    expect(planStopAll).not.toHaveBeenCalled()
+  })
+
+  it('never relaunches its own Host after /host stop-all stopped it', async () => {
+    const { host, userDataPath } = await setupLeaseHost()
+    const ownProfile = realpathSync(userDataPath)
+    const plan = stopAllPlan({ scope: { kind: 'all' }, scanArgv: false }, [
+      stopAllHostRow(ownProfile, process.pid)
+    ])
+    const reviveHost = vi.fn(async () => ({ kind: 'existing' as const }))
+    const { control, runStopAll } = hostControl({ planStopAll: vi.fn(async () => plan) })
+    runStopAll.mockImplementation(async (shown) => {
+      await host.stop()
+      return {
+        kind: 'done',
+        results: shown.selected.map((row) => ({
+          host: row,
+          outcome: terminationOutcome('stopped', row.pid)
+        }))
+      }
+    })
+    const { tui, input, output } = startTui(userDataPath, {
+      hostControl: control,
+      reconnectBaseDelayMs: 20,
+      reviveFailureThreshold: 1,
+      reviveHost
+    })
+    await tui.start()
+    await waitFor(() => host.explicitHolders === 1, 'lease held')
+
+    feed(input, '/host stop-all --all\r')
+    await waitFor(() => output.lastFrame.includes('y stops this Host'), 'plan armed')
+    expect(output.lastFrame).toContain("This TUI's own Host is included")
+    feed(input, 'y')
+    await waitFor(
+      () => tuiNotice(tui).includes('/host restart starts it again'),
+      'own Host reported stopped'
+    )
+    await settle(400)
+    expect(reviveHost).not.toHaveBeenCalled()
+    expect(tuiNotice(tui)).toContain('/host restart starts it again')
+  }, 10_000)
 })

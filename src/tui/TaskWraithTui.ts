@@ -2,10 +2,14 @@ import { randomUUID } from 'node:crypto'
 import { emitKeypressEvents } from 'node:readline'
 import { isAbsolute } from 'node:path'
 import type { ReadStream, WriteStream } from 'node:tty'
+import { HostLeaseClient } from '../host-client/HostLeaseClient'
+import { HOST_TERMINATION_SUCCESS_KINDS } from '../host-client/HostProcessTermination'
 import {
   HostProjectionClient,
-  HostProjectionIncompatibleProtocolError
+  HostProjectionIncompatibleProtocolError,
+  HostProjectionTransportError
 } from '../host-client/HostProjectionClient'
+import { canonicalHostProfilePath } from '../host-runtime/HostRegistry'
 import {
   HOST_QUESTION_ANSWER_MAX_CHARS,
   type HostDeltasFrame,
@@ -16,7 +20,8 @@ import {
   type HostCommandName,
   type HostCommandReceipt,
   type HostQuestionProjection,
-  type HostSnapshot
+  type HostSnapshot,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
 import type { HostHistoryDeltasFrame, HostHistorySinceResult } from '../shared/hostHistoryProtocol'
 import type {
@@ -115,7 +120,21 @@ import {
 import { matchProviderStatus } from './providerLoginFlow'
 import { projectTuiFullAccessPresence, type TuiFullAccessPresence } from './fullAccessConsent'
 import { classifyHistoryResult, preserveAuthoritativeHistoryRows } from './historyReconcile'
-import type { EnsureTuiHostAvailableResult } from './hostProcessManager'
+import {
+  buildHostStatusPanel,
+  buildRestartConfirmPanel,
+  buildStopAllPlanPanel,
+  buildStopAllResultPanel,
+  hostIdentitySegments,
+  parseTuiHostCommand,
+  type TuiHostLeaseState
+} from './hostLens'
+import type {
+  EnsureTuiHostAvailableResult,
+  TuiHostControl,
+  TuiHostStopAllPlan,
+  TuiHostStopAllRequest
+} from './hostProcessManager'
 import { TUI_MOTION, detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
 import {
   findTuiModelChoiceIndex,
@@ -160,6 +179,8 @@ export interface TaskWraithTuiOptions {
    * itself stays launcher-agnostic; the CLI injects this.
    */
   reviveHost?: () => Promise<EnsureTuiHostAvailableResult>
+  /** `/host restart` and `/host stop-all`, injected by the CLI like `reviveHost`. */
+  hostControl?: TuiHostControl
   /** Opaque launch-bound signer; never persisted or exposed to provider code. */
   fullAccessPresence?: TuiFullAccessPresence
   /** One-shot notice on the first frame, e.g. that a stale Host was restarted. */
@@ -205,6 +226,8 @@ const HOST_REVIVE_FAILURE_THRESHOLD = 5
 const ESCAPE_CANCEL_MAX_RECOVERY_ATTEMPTS = 4
 const ESCAPE_CANCEL_RECOVERY_BASE_MS = 200
 const ANIMATION_INTERVAL_MS = 120
+/** `/status` and `/host status` wait this long for `host.status`, then show what is known. */
+const HOST_STATUS_READ_TIMEOUT_MS = 1_500
 
 /**
  * Whether this timer tick should advance the shared animation frame.
@@ -451,6 +474,22 @@ export class TaskWraithTui {
   private providerLoginReadGeneration = 0
   private fullAccessPresence: TuiFullAccessPresence | null
   private retainHomeForNextThread = false
+  /** This TUI's Host lease: acquired on every welcome, renewed on its own timer. */
+  private readonly hostLease: HostLeaseClient | null
+  private hostLeaseState: TuiHostLeaseState = 'none'
+  /** Consecutive lease failures that forced a reconnect; they lengthen its backoff. */
+  private hostLeaseFailures = 0
+  /** An armed /host confirmation. Only an explicit `y` acts on it; any other input cancels. */
+  private hostConfirmation:
+    | { readonly kind: 'stop-all'; readonly plan: TuiHostStopAllPlan }
+    | { readonly kind: 'restart' }
+    | undefined
+  /** A restart or stop-all is running: the reconnect loop must not relaunch meanwhile. */
+  private hostOperation: 'restart' | 'stop-all' | undefined
+  /** `/host stop-all` stopped this TUI's own Host: reconnect, but never relaunch it unasked. */
+  private hostStoppedByUser = false
+  private hostPanelGeneration = 0
+  private statusReadGeneration = 0
 
   constructor(options: TaskWraithTuiOptions) {
     this.options = {
@@ -497,6 +536,9 @@ export class TaskWraithTui {
           ],
           userDataPath: options.userDataPath ?? defaultTaskWraithUserDataPath()
         })
+    // Built before bindClient() adds the TUI's own listeners, so on every
+    // welcome the lease client has already reset for the new socket.
+    this.hostLease = this.client ? new HostLeaseClient({ client: this.client }) : null
   }
 
   async start(): Promise<void> {
@@ -563,7 +605,13 @@ export class TaskWraithTui {
     this.projectionRefreshTimer = null
     this.animationTimer = null
     this.demoReplyTimer = null
+    this.hostConfirmation = undefined
     this.replaceFullAccessPresence()
+    // One release frame before the socket closes, so the Host counts one holder
+    // fewer at once; it would also notice the close, but this path is synchronous
+    // on purpose (signal and exit handlers call stop()).
+    this.hostLease?.releaseSync()
+    this.hostLease?.dispose()
     this.client?.close()
     this.options.input.off('keypress', this.onKeypress)
     this.options.output.off('resize', this.onResize)
@@ -615,6 +663,7 @@ export class TaskWraithTui {
 
   private bindClient(): void {
     if (!this.client) return
+    this.bindHostLease()
     this.client.on('welcome', (welcome) => {
       this.connectionEpoch += 1
       if (
@@ -628,6 +677,10 @@ export class TaskWraithTui {
       this.everConnected = true
       this.reconnectAttempts = 0
       this.lastError = ''
+      this.hostStoppedByUser = false
+      // Every welcome, including a reconnect to a replaced Host, takes a lease:
+      // while this TUI is connected its Host does not exit at last-lease grace.
+      this.acquireHostLease()
       this.setNotice('Connected to TaskWraith Host', 'good', 1_500)
       this.render()
     })
@@ -643,6 +696,8 @@ export class TaskWraithTui {
     })
     this.client.on('disconnected', (error) => {
       if (this.stopped) return
+      const cancelled = this.cancelHostConfirmation()
+      this.hostLeaseState = 'none'
       // The host was reachable before, so this is a drop-and-retry rather
       // than "the App was never found" — distinct terminal states.
       this.state.connection = this.everConnected ? 'reconnecting' : 'offline'
@@ -650,16 +705,75 @@ export class TaskWraithTui {
       this.lastError = error?.message ?? 'TaskWraith Host disconnected.'
       this.markHostProjectionStale()
       this.setNotice(
-        this.everConnected
-          ? this.revivePending()
-            ? 'TaskWraith Host unreachable · restarting the standalone Host…'
-            : 'TaskWraith Host disconnected · reconnecting'
-          : 'Standalone Host offline · retrying',
+        cancelled
+          ? 'TaskWraith Host disconnected · the /host request was cancelled, nothing was stopped'
+          : (this.hostOperationNotice() ??
+              (this.everConnected
+                ? this.revivePending()
+                  ? 'TaskWraith Host unreachable · restarting the standalone Host…'
+                  : 'TaskWraith Host disconnected · reconnecting'
+                : 'Standalone Host offline · retrying')),
         'warning'
       )
       this.scheduleReconnect()
       this.render()
     })
+  }
+
+  private bindHostLease(): void {
+    const lease = this.hostLease
+    if (!lease) return
+    lease.on('held', () => {
+      this.hostLeaseState = 'held'
+      this.hostLeaseFailures = 0
+    })
+    lease.on('legacy', () => {
+      this.hostLeaseState = 'legacy'
+      this.hostLeaseFailures = 0
+    })
+    // A lapse is answered by the lease client itself: it re-acquires at once.
+    lease.on('lapsed', () => {
+      this.hostLeaseState = 'none'
+    })
+    lease.on('released', () => {
+      this.hostLeaseState = 'none'
+    })
+    lease.on('failed', (error) => this.onHostLeaseFailed(error))
+  }
+
+  private acquireHostLease(): void {
+    const lease = this.hostLease
+    if (!lease || this.stopped) return
+    this.hostLeaseState = 'none'
+    void lease.acquire().catch((error: unknown) => this.onHostLeaseFailed(error))
+  }
+
+  /**
+   * A renewal (or an acquire) that fails while the socket is still open means
+   * the Host may no longer count this TUI as a holder, and a wedged socket
+   * would never recover on its own: take a fresh socket, whose welcome
+   * acquires again. `close()` is client-initiated and fires no 'disconnected',
+   * so this path schedules the reconnect itself; repeated failures back off.
+   */
+  private onHostLeaseFailed(error: unknown): void {
+    const client = this.client
+    if (this.stopped || !client?.connected) return
+    const cancelled = this.cancelHostConfirmation()
+    this.hostLeaseState = 'none'
+    this.hostLeaseFailures += 1
+    client.close()
+    this.state.connection = 'reconnecting'
+    this.reconnectAttempts = Math.max(this.reconnectAttempts, this.hostLeaseFailures)
+    this.lastError = error instanceof Error ? error.message : String(error)
+    this.markHostProjectionStale()
+    this.setNotice(
+      cancelled
+        ? 'Host lease lost · the /host request was cancelled, nothing was stopped'
+        : 'Host lease could not be renewed · reconnecting',
+      'warning'
+    )
+    this.scheduleReconnect()
+    this.render()
   }
 
   private applyHostSnapshot(snapshot: HostSnapshot): TaskWraithControlSnapshot {
@@ -847,11 +961,12 @@ export class TaskWraithTui {
         if (message !== this.lastError) {
           this.lastError = message
           this.setNotice(
-            this.everConnected
-              ? this.revivePending()
-                ? 'TaskWraith Host unreachable · restarting the standalone Host…'
-                : 'TaskWraith Host disconnected · reconnecting'
-              : 'Standalone Host offline · retrying locally',
+            this.hostOperationNotice() ??
+              (this.everConnected
+                ? this.revivePending()
+                  ? 'TaskWraith Host unreachable · restarting the standalone Host…'
+                  : 'TaskWraith Host disconnected · reconnecting'
+                : 'Standalone Host offline · retrying locally'),
             'warning'
           )
         }
@@ -864,8 +979,31 @@ export class TaskWraithTui {
   private revivePending(): boolean {
     const threshold = this.options.reviveFailureThreshold ?? HOST_REVIVE_FAILURE_THRESHOLD
     return (
-      this.everConnected && Boolean(this.options.reviveHost) && this.reconnectAttempts >= threshold
+      this.everConnected &&
+      Boolean(this.options.reviveHost) &&
+      // A /host restart relaunches on its own, and a Host the user stopped
+      // stays stopped until they ask for one.
+      !this.hostOperation &&
+      !this.hostStoppedByUser &&
+      this.reconnectAttempts >= threshold
     )
+  }
+
+  /** What the offline notice says while a /host operation owns the Host's lifecycle. */
+  private hostOperationNotice(): string | undefined {
+    if (this.hostOperation === 'restart') return 'Restarting the TaskWraith Host…'
+    if (this.hostOperation === 'stop-all') return 'Stopping TaskWraith Hosts…'
+    if (this.hostStoppedByUser) return 'TaskWraith Host stopped · /host restart starts it again'
+    return undefined
+  }
+
+  /** Reconnects now instead of waiting out the backoff, when a retry is pending. */
+  private reconnectPromptly(): void {
+    if (this.stopped || !this.client || !this.reconnectTimer) return
+    clearTimeout(this.reconnectTimer)
+    this.reconnectTimer = null
+    this.reconnectAttempts = 0
+    void this.reconnect()
   }
 
   private scheduleReconnect(): void {
@@ -1146,6 +1284,15 @@ export class TaskWraithTui {
   }
 
   private readonly onResize = (): void => {
+    // A resize reflows the lens, so the rows the user was asked about may no
+    // longer be the rows on screen: an armed /host confirmation is cancelled.
+    if (this.cancelHostConfirmation()) {
+      this.setNotice(
+        'Terminal resized · the /host request was cancelled, nothing was stopped',
+        'neutral',
+        5_000
+      )
+    }
     this.render()
   }
 
@@ -1155,6 +1302,13 @@ export class TaskWraithTui {
       key = { ...key, name: 'tab', shift: true }
     }
     if (!key) return
+    // An armed /host confirmation takes the very next key, ahead of every other
+    // binding: `y` acts, anything else (Esc and Ctrl+C included) cancels. A
+    // paste cancels too, then pastes as it otherwise would.
+    if (this.hostConfirmation) {
+      this.answerHostConfirmation(input, key)
+      if (key.name !== 'paste-start') return
+    }
     if (key.name === 'paste-start') {
       this.bracketedPaste = true
       this.bracketedPasteBuffer = ''
@@ -3273,7 +3427,11 @@ export class TaskWraithTui {
       return
     }
     if (command === '/status') {
-      this.showStatus()
+      await this.showStatus()
+      return
+    }
+    if (command === '/host') {
+      await this.runHostCommand(parsed?.argumentText ?? '')
       return
     }
     if (command === '/login') {
@@ -4151,14 +4309,23 @@ export class TaskWraithTui {
     }
   }
 
-  private showStatus(): void {
-    const profilePath = this.options.userDataPath ?? defaultTaskWraithUserDataPath()
+  private async showStatus(): Promise<void> {
+    const generation = ++this.statusReadGeneration
+    const read = await this.readHostStatus()
+    if (generation !== this.statusReadGeneration || this.stopped) return
+    const profilePath = this.profilePath()
     const thread = this.state.thread?.thread
     const capabilities = this.client?.welcome?.capabilities.join(', ') || 'none advertised'
     const model = this.state.pendingSelection?.model ?? thread?.provider.model ?? 'none'
     const reasoning = this.state.pendingSelection?.reasoningEffort ?? thread?.reasoning ?? 'default'
     const status = [
       `Node Host ${this.state.connection}`,
+      // Early in the line: a notice is one header row, cut at terminal width.
+      ...hostIdentitySegments({
+        identity: this.client?.discoveryProcessIdentity ?? null,
+        status: read.status,
+        lease: this.hostLeaseState
+      }),
       `profile ${profilePath}`,
       `socket ${taskWraithControlSocketPath(profilePath)}`,
       thread ? `${thread.provider.displayProvider} / ${model} / ${reasoning}` : 'no thread',
@@ -4166,6 +4333,314 @@ export class TaskWraithTui {
     ].join(` ${this.glyphs.separator} `)
     this.setNotice(status, 'neutral', 6_000)
     this.render()
+  }
+
+  private profilePath(): string {
+    return this.options.userDataPath ?? defaultTaskWraithUserDataPath()
+  }
+
+  /** This TUI's profile as the registry names it, for "is this our Host?". */
+  private ownHostProfile(): string {
+    return canonicalHostProfilePath(this.profilePath())
+  }
+
+  /** `host.status`, bounded: a slow Host costs the reader a short wait, never a hang. */
+  private async readHostStatus(): Promise<{
+    readonly status: HostStatusProjection | null
+    readonly error?: string
+  }> {
+    const client = this.client
+    if (!client?.connected) return { status: null }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    try {
+      const status = await Promise.race([
+        client.getHostStatus(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () => reject(new Error('the Host did not answer in time')),
+            HOST_STATUS_READ_TIMEOUT_MS
+          )
+        })
+      ])
+      return { status }
+    } catch (error) {
+      if (error instanceof HostProjectionTransportError && error.code === 'unknown_request_kind') {
+        return { status: null, error: 'This Host predates host.status; /host restart upgrades it.' }
+      }
+      const message = error instanceof Error ? error.message : String(error)
+      return { status: null, error: `Host status unavailable: ${message}` }
+    } finally {
+      if (timer) clearTimeout(timer)
+    }
+  }
+
+  private async runHostCommand(argumentText: string): Promise<void> {
+    const command = parseTuiHostCommand(argumentText)
+    if (command.verb === 'invalid') {
+      this.setNotice(command.message, 'warning', 6_000)
+      this.render()
+      return
+    }
+    if (command.verb === 'status') {
+      await this.openHostStatus()
+      return
+    }
+    if (this.hostOperation) {
+      this.setNotice('A /host operation is already running.', 'warning', 3_000)
+      this.render()
+      return
+    }
+    if (command.verb === 'restart') {
+      await this.requestHostRestart()
+      return
+    }
+    await this.planHostStopAll(command.request)
+  }
+
+  private async openHostStatus(): Promise<void> {
+    const generation = ++this.hostPanelGeneration
+    this.hostConfirmation = undefined
+    this.state.overlay = 'host'
+    // A placeholder rather than no panel: only a stop-all plan still being
+    // read is a pending request that a resize or a disconnect cancels.
+    this.state.hostPanel = {
+      title: 'Host',
+      fields: [],
+      notes: ['Reading the Host…'],
+      hint: 'Esc close'
+    }
+    this.render()
+    const read = await this.readHostStatus()
+    if (generation !== this.hostPanelGeneration || this.stopped) return
+    this.state.hostPanel = buildHostStatusPanel({
+      profilePath: this.profilePath(),
+      connected: Boolean(this.client?.connected),
+      identity: this.client?.discoveryProcessIdentity ?? null,
+      status: read.status,
+      ...(read.error ? { statusError: read.error } : {}),
+      lease: this.hostLeaseState
+    })
+    this.render()
+  }
+
+  /**
+   * Cancels an armed /host confirmation, or a plan still being read behind the
+   * lens, and closes the lens. True when there was one to cancel.
+   */
+  private cancelHostConfirmation(): boolean {
+    const pending =
+      Boolean(this.hostConfirmation) ||
+      (this.state.overlay === 'host' && this.state.hostPanel === undefined)
+    if (!pending) return false
+    this.hostConfirmation = undefined
+    this.hostPanelGeneration += 1
+    this.state.overlay = 'none'
+    this.state.hostPanel = undefined
+    return true
+  }
+
+  private answerHostConfirmation(input: string, key: Keypress): void {
+    const confirmation = this.hostConfirmation
+    if (!confirmation) return
+    this.hostConfirmation = undefined
+    if (!key.ctrl && !key.meta && (input === 'y' || input === 'Y')) {
+      void (confirmation.kind === 'restart'
+        ? this.restartHost()
+        : this.runHostStopAll(confirmation.plan))
+      return
+    }
+    this.hostPanelGeneration += 1
+    this.state.overlay = 'none'
+    this.state.hostPanel = undefined
+    this.setNotice(
+      confirmation.kind === 'restart'
+        ? 'Restart cancelled · the Host keeps running'
+        : 'Stop-all cancelled · nothing was stopped',
+      'neutral',
+      4_000
+    )
+    this.render()
+  }
+
+  /** Live runs and rounds across every thread, from the Host itself when it answers. */
+  private async liveHostWorkCount(): Promise<number> {
+    const snapshot = this.hostSnapshot
+    const projected = snapshot
+      ? new Set(snapshot.threads.flatMap((thread) => projectedThreadWorkIds(snapshot, thread.id)))
+          .size
+      : 0
+    const read = await this.readHostStatus()
+    return Math.max(projected, read.status?.liveWork.runs ?? 0)
+  }
+
+  private async requestHostRestart(): Promise<void> {
+    if (!this.options.hostControl?.restart) {
+      this.setNotice(
+        this.options.hostControl?.restartUnavailable ??
+          'Host restart is unavailable in this session.',
+        'warning',
+        6_000
+      )
+      this.render()
+      return
+    }
+    const liveRuns = await this.liveHostWorkCount()
+    if (this.stopped) return
+    if (liveRuns === 0) {
+      await this.restartHost()
+      return
+    }
+    this.hostPanelGeneration += 1
+    this.state.hostPanel = buildRestartConfirmPanel({
+      pid: this.client?.discoveryProcessIdentity?.pid ?? null,
+      profilePath: this.profilePath(),
+      liveRuns
+    })
+    this.state.overlay = 'host'
+    this.hostConfirmation = { kind: 'restart' }
+    this.render()
+  }
+
+  private async restartHost(): Promise<void> {
+    const restart = this.options.hostControl?.restart
+    if (!restart || this.hostOperation) return
+    const pid = this.client?.discoveryProcessIdentity?.pid ?? null
+    this.hostOperation = 'restart'
+    this.hostPanelGeneration += 1
+    this.state.overlay = this.state.overlay === 'host' ? 'none' : this.state.overlay
+    this.state.hostPanel = undefined
+    this.setNotice(`Restarting the TaskWraith Host${pid ? ` (pid ${pid})` : ''}…`, 'warning')
+    this.render()
+    try {
+      const result = await restart(pid)
+      if (this.stopped) return
+      const launch = result.launch
+      if (!launch) {
+        const refusal = result.termination.detail
+          ? `${result.termination.kind}, ${result.termination.detail}`
+          : result.termination.kind
+        this.setNotice(
+          `Host restart refused (${refusal}) · the Host${pid ? ` (pid ${pid})` : ''} keeps running`,
+          'error',
+          10_000
+        )
+        return
+      }
+      if (launch.kind === 'launched') this.replaceFullAccessPresence(launch.fullAccessPresence)
+      this.hostStoppedByUser = false
+      const now = launch.kind === 'launched' && launch.pid ? ` · now pid ${launch.pid}` : ''
+      this.setNotice(
+        `Restarted the TaskWraith Host${pid ? ` (was pid ${pid})` : ''}${now}`,
+        'good',
+        6_000
+      )
+    } catch (error) {
+      if (this.stopped) return
+      this.setNotice(
+        `Host restart failed · ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+        10_000
+      )
+    } finally {
+      this.hostOperation = undefined
+      if (!this.stopped) {
+        this.reconnectPromptly()
+        this.render()
+      }
+    }
+  }
+
+  private async planHostStopAll(request: TuiHostStopAllRequest): Promise<void> {
+    const control = this.options.hostControl
+    if (!control) {
+      this.setNotice('Host control is unavailable in this session.', 'warning', 4_000)
+      this.render()
+      return
+    }
+    const generation = ++this.hostPanelGeneration
+    this.hostConfirmation = undefined
+    this.state.overlay = 'host'
+    this.state.hostPanel = undefined
+    this.render()
+    let plan: TuiHostStopAllPlan
+    try {
+      plan = await control.planStopAll(request)
+    } catch (error) {
+      if (generation !== this.hostPanelGeneration || this.stopped) return
+      this.state.hostPanel = {
+        title: 'Stop Hosts',
+        fields: [],
+        notes: [`Could not list Hosts · ${error instanceof Error ? error.message : String(error)}`],
+        hint: 'Esc close'
+      }
+      this.render()
+      return
+    }
+    // Arm only a plan the reader is still looking at: a lens closed while the
+    // registry was read never becomes a live y prompt.
+    if (generation !== this.hostPanelGeneration || this.stopped || this.state.overlay !== 'host') {
+      return
+    }
+    this.state.hostPanel = buildStopAllPlanPanel(plan, this.ownHostProfile())
+    if (plan.request.scope.kind !== 'list' && plan.selected.length > 0) {
+      this.hostConfirmation = { kind: 'stop-all', plan }
+    }
+    this.render()
+  }
+
+  private async runHostStopAll(plan: TuiHostStopAllPlan): Promise<void> {
+    const control = this.options.hostControl
+    if (!control || this.hostOperation) return
+    const generation = ++this.hostPanelGeneration
+    const ownProfile = this.ownHostProfile()
+    this.hostOperation = 'stop-all'
+    this.state.overlay = 'host'
+    this.state.hostPanel = {
+      title: 'Stop Hosts',
+      fields: [],
+      notes: [
+        `Stopping ${plan.selected.length === 1 ? '1 Host' : `${plan.selected.length} Hosts`}…`
+      ],
+      hint: 'Verified termination waits for each Host to finish its own shutdown.'
+    }
+    this.render()
+    try {
+      const outcome = await control.runStopAll(plan)
+      if (this.stopped) return
+      if (
+        outcome.kind === 'done' &&
+        outcome.results.some(
+          (result) =>
+            result.host.profilePath === ownProfile &&
+            HOST_TERMINATION_SUCCESS_KINDS.has(result.outcome.kind)
+        )
+      ) {
+        this.hostStoppedByUser = true
+      }
+      if (generation === this.hostPanelGeneration) {
+        this.state.overlay = 'host'
+        this.state.hostPanel = buildStopAllResultPanel(outcome, ownProfile)
+      }
+      this.setNotice(
+        outcome.kind === 'registry_changed'
+          ? 'Stop-all refused · the Host registry changed after the list was shown'
+          : this.hostStoppedByUser
+            ? "Stop-all finished · this TUI's Host was stopped; /host restart starts it again"
+            : 'Stop-all finished',
+        outcome.kind === 'registry_changed' ? 'warning' : 'good',
+        8_000
+      )
+    } catch (error) {
+      if (this.stopped) return
+      this.setNotice(
+        `Stop-all failed · ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+        10_000
+      )
+    } finally {
+      this.hostOperation = undefined
+      if (!this.stopped) this.render()
+    }
   }
 
   private enqueuePromptDraft(

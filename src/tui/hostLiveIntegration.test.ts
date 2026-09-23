@@ -23,14 +23,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import type { ReadStream, WriteStream } from 'node:tty'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createHostNodeProductionServer } from '../host-node/HostNodeProductionFactory'
 import type { HostNodeProductionServer } from '../host-node/HostNodeProductionServer'
+import { HOST_LEASE_TIMING_ENV } from '../host-runtime/HostLeaseRegistry'
 import { HOST_REGISTRY_ROOT_ENV } from '../host-runtime/HostRegistry'
 import { HOST_SERVER_PRODUCTION_VERSION } from '../host-runtime/HostServerIdentity'
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
-import type { HostCapability } from '../shared/hostProtocol'
+import type { HostCapability, HostStatusProjection } from '../shared/hostProtocol'
 import {
   taskWraithHostAuthorityLeasePath,
   taskWraithHostDiscoveryPath,
@@ -136,7 +137,21 @@ afterEach(async () => {
   rmSync(profileParent, { recursive: true, force: true })
 })
 
-async function startProductionHost(): Promise<HostNodeProductionServer> {
+async function startProductionHost(leaseTiming?: string): Promise<HostNodeProductionServer> {
+  // The server reads the lease timing from process.env when it starts (the
+  // factory forwards `env` to providers only), so a test override is set for
+  // exactly that window and restored at once.
+  const previousTiming = process.env[HOST_LEASE_TIMING_ENV]
+  if (leaseTiming) process.env[HOST_LEASE_TIMING_ENV] = leaseTiming
+  try {
+    return await startProductionHostWithEnvironment()
+  } finally {
+    if (previousTiming === undefined) delete process.env[HOST_LEASE_TIMING_ENV]
+    else process.env[HOST_LEASE_TIMING_ENV] = previousTiming
+  }
+}
+
+async function startProductionHostWithEnvironment(): Promise<HostNodeProductionServer> {
   const started = createHostNodeProductionServer({
     profilePath: userDataPath,
     // The factory publishes no registry entry without an injected publisher;
@@ -352,4 +367,103 @@ describe('Wave 4.6 — TUI against a real Host', () => {
     expect(predicate.test('Connected to TaskWraith Host')).toBe(true)
     expect(predicate.test('CONNECTED')).toBe(true)
   })
+})
+
+/* -------------------------------------------------------------------------
+ * Host-lifetime S3: the TUI's lease against the real Host
+ * ---------------------------------------------------------------------- */
+
+describe('Host-lifetime S3 — the TUI holds the real Host by lease', () => {
+  it('acquires on connect, renews on its own timer, releases on stop, and the Host then exits after grace', async () => {
+    // Short but well inside the knob's bounds (heartbeat >= 100, ttl >= 2x,
+    // grace >= 500). A TTL of ten heartbeats lets a loaded machine delay
+    // renewals without lapsing the lease, and the grace also covers the
+    // window before the first client connects, when nothing holds the Host.
+    const productionHost = await startProductionHost('heartbeat:200,ttl:2000,grace:6000')
+
+    // The probe declines, so the only holder the Host counts is the TUI.
+    const probe = new HostProjectionClient({
+      userDataPath,
+      client: {
+        clientId: 'tui-live-lease-probe',
+        clientClass: 'test',
+        clientVersion: 'tui-live-integration'
+      },
+      capabilities: PRODUCTION_CAPABILITY_FLOOR
+    })
+    let status: HostStatusProjection | null = null
+    const readStatus = async (): Promise<HostStatusProjection | null> => {
+      try {
+        status = await probe.getHostStatus()
+      } catch {
+        status = null
+      }
+      return status
+    }
+    const pollStatus = async (
+      check: (current: HostStatusProjection) => boolean,
+      description: string,
+      timeoutMs = 10_000
+    ): Promise<HostStatusProjection> => {
+      const start = Date.now()
+      while (Date.now() - start < timeoutMs) {
+        const current = await readStatus()
+        if (current && check(current)) return current
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      }
+      throw new Error(`Timed out waiting for: ${description} (last ${JSON.stringify(status)})`)
+    }
+    const renewals = vi.spyOn(HostProjectionClient.prototype, 'renewHostLease')
+    try {
+      await probe.connect()
+      await probe.declineHostLease()
+      const idle = await readStatus()
+      expect(idle?.lifetime).toMatchObject({ holders: 0, implicitHolders: 0 })
+
+      const { input, output } = makeTty()
+      tui = new TaskWraithTui({
+        clientVersion: 'tui-live-integration',
+        userDataPath,
+        colorMode: 'none',
+        animationEnabled: false,
+        input: input as unknown as ReadStream,
+        output: output as unknown as WriteStream
+      })
+      await tui.start()
+
+      const held = await pollStatus(
+        (current) => current.lifetime.holders === 1,
+        'the TUI holds an explicit lease'
+      )
+      expect(held.lifetime).toMatchObject({ phase: 'held', holders: 1, implicitHolders: 0 })
+      expect(held.clients.filter((client) => client.lease === 'explicit')).toEqual([
+        expect.objectContaining({ clientClass: 'tui', lease: 'explicit' })
+      ])
+
+      // Past a full TTL the lease stands only because it was renewed.
+      await waitFor(() => renewals.mock.calls.length >= 3, 'the TUI renewed on its own', 10_000)
+      await new Promise((resolve) => setTimeout(resolve, 2_500))
+      const renewed = await pollStatus(
+        (current) => current.lifetime.holders === 1,
+        'the lease is still held after its TTL'
+      )
+      expect(renewed.clients.some((client) => client.lease === 'explicit')).toBe(true)
+
+      tui.stop()
+      tui = null
+      const released = await pollStatus(
+        (current) => current.lifetime.holders === 0,
+        'the TUI released its lease on stop'
+      )
+      expect(released.lifetime.phase).not.toBe('held')
+
+      // No holder left and nothing running: the Host exits after its grace
+      // and removes what it owns.
+      await waitFor(() => productionHost.phase === 'stopped', 'the Host exited after grace', 20_000)
+      expectOwnedHostArtifactsReleased()
+    } finally {
+      renewals.mockRestore()
+      probe.close()
+    }
+  }, 45_000)
 })

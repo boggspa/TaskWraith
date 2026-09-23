@@ -10,9 +10,13 @@ tw / taskwraith
        └─ profile lease → stable identity → private discovery/token/socket
 ```
 
-The Host is profile-owned, not connection-owned: disconnecting the TUI never
-stops provider work. Its profile lease prevents duplicate owners and its
-persisted `host-runtime/host-install-identity.json` prevents identity churn.
+The Host is lease-owned: disconnecting never cancels provider work; with no
+lease left the Host finishes live work and exits after grace. Each client holds
+one lease per connection; the TUI takes it on every welcome, renews it on its
+own timer, reconnects if a renewal fails, and releases it when it quits.
+`TASKWRAITH_HOST_PERSIST=1` disables the last-lease exit. Its profile authority
+lease prevents duplicate owners and its persisted
+`host-runtime/host-install-identity.json` prevents identity churn.
 Discovery, token, and local transport artifacts are owner-only. The TUI fences
 `node-host-v1` and negotiated production capabilities before treating a Host as
 live. Desktop writer handoff remains a separate cutover concern.
@@ -33,8 +37,12 @@ coherent snapshot. History has its own bounded cursor.
 A reused Host must be running the build the TUI would launch. Every standalone
 Host publishes its payload identity in its discovery record; when that differs
 from the identity of `out/host` (the usual case right after `npm run tui`
-rebuilt it), the TUI stops the stale process, starts the current build, and says
-so in its first frame. A Host that predates payload identity is kept as-is.
+rebuilt it), the TUI stops the stale Host through verified termination, starts
+the current build, and says so in its first frame. Verified termination asks the
+Host to stop first and signals only a pid whose birth identity and command line
+still match the Host's records, so a reused pid is never signalled. A stale Host
+that cannot be proven gone keeps serving, nothing is launched, and the first
+frame says why. A Host that predates payload identity is kept as-is.
 
 ## Cold setup, history, and receipts
 
@@ -166,6 +174,7 @@ control below); it is no longer rejected.
 | `/new [provider]`, `/provider`                  | Start a fresh solo thread, optionally with a provider.                                                                                     |
 | `/login [provider]`                             | Open provider sign-in and setup status.                                                                                                    |
 | `/status`                                       | Show Host, connection and open-thread detail.                                                                                              |
+| `/host [status\|restart\|stop-all]`             | Show the Host, restart it, or stop Hosts machine-wide.                                                                                     |
 | `/context`                                      | Open the context lens for the current thread.                                                                                              |
 | `/goal`                                         | Show the current thread objective.                                                                                                         |
 | `/git [status\|diff\|log] [path]`               | Open the read-only workspace Git lens.                                                                                                     |
@@ -298,6 +307,34 @@ stays the single authority on what is allowed.
 `ensemble` capability is advertised only when the Host can actually serve seat
 control, so a Host that cannot reports unavailable calmly — the same distinction
 `/git` draws between "not offered here" and "the read failed".
+
+### Host lifetime (`/host`)
+
+`/host` (or `/host status`) opens a lens with what the Host reports about
+itself: pid, uptime, lifetime phase, holders, live runs, persist, the payload,
+the connected clients, and whether this TUI holds a lease. `/status` adds the
+pid, uptime, holders and payload to its one-line summary. A Host from before
+leases is named as such; `/host restart` upgrades it.
+
+`/host restart` stops this profile's Host through verified termination and
+starts the current build. With live runs it first says how many would end and
+acts only on `y`. A TUI started with `--no-start-host`, or on an explicit
+`--user-data` profile, never launches a Host, so it says why instead of
+restarting. A stop that is refused launches nothing, and the Host keeps
+running.
+
+`/host stop-all` takes the same scopes as `taskwraith-host stop-all`: with none
+it only lists the Hosts on this machine; `--all`, `--profile <path>` or
+`--payload-root <dir>` choose what to stop and are mutually exclusive, and
+`--scan-argv` adds Hosts found by command line. The lens lists each Host it
+would stop (pid, holders, profile) and states the total; only an explicit `y`
+stops them. Any other key, a terminal resize, or losing the Host connection
+cancels. The registry is read again before anything stops, and any change
+refuses the whole run. Each Host goes through verified termination, which
+removes only that Host's own records. `--sweep` is not offered here, so nothing
+outside the confirmed list is touched; `taskwraith-host stop-all --sweep`
+clears what else is dead. If this TUI's own Host is stopped, the TUI stays
+offline until `/host restart`.
 
 ### Current boundary
 

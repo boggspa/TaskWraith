@@ -1,6 +1,15 @@
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
-import { fstatSync, mkdtempSync, openSync, rmSync } from 'node:fs'
+import {
+  existsSync,
+  fstatSync,
+  mkdirSync,
+  mkdtempSync,
+  openSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PassThrough, Writable } from 'node:stream'
@@ -8,21 +17,69 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { HostProjectionIncompatibleProtocolError } from '../main/host/HostProjectionClient'
 import {
+  terminateHostProcess,
+  type HostTerminationEvidence,
+  type HostTerminationOutcome,
+  type HostTerminationPorts
+} from '../host-client/HostProcessTermination'
+import { stopAllHosts, type HostStopAllOptions } from '../host-client/HostStopAll'
+import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD,
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
   hostFullAccessBootstrapFrame
 } from '../host-runtime/HostFullAccessBootstrap'
 import {
+  HOST_REGISTRY_SCHEMA,
+  hostRegistryEntryPath,
+  type HostRegistryEntry,
+  type HostRegistryListing
+} from '../host-runtime/HostRegistry'
+import type { ProcessBirthObservation } from '../host-runtime/ProcessBirthIdentity'
+import {
   assertTuiStandaloneHostWelcome,
   ensureTuiHostAvailable,
+  planTuiHostStopAll,
   resolveTuiHostLaunchCommand,
+  restartTuiHost,
+  runTuiHostStopAll,
   TuiHostProductionCapabilityError,
   TUI_STANDALONE_HOST_CAPABILITY_FLOOR,
   TUI_STANDALONE_HOST_PRODUCTION_VERSION,
+  type EnsureTuiHostAvailableInput,
   type TuiHostAuthenticatedProbe,
-  type TuiHostLaunchCommand
+  type TuiHostLaunchCommand,
+  type TuiHostStopAllRequest
 } from './hostProcessManager'
 import type { HostBootstrapWelcome } from '../shared/hostProtocol'
+
+const STALE_PAYLOAD = `sha256:${'a'.repeat(64)}`
+const FRESH_PAYLOAD = `sha256:${'b'.repeat(64)}`
+
+/**
+ * The port-call order `ensureTuiHostAvailable` made when it replaced a stale
+ * Host by bare SIGTERM, captured from that implementation at a3f48c3b9, before
+ * verified termination replaced it. The only permitted difference is the stop
+ * itself.
+ */
+const PRE_VERIFICATION_STALE_REPLACEMENT_CALLS = [
+  'probe:/profiles/stale',
+  'resolveLaunchCommand',
+  'resolvePayloadVersion',
+  'stopProcess:4242',
+  'delay',
+  'probe:/profiles/stale',
+  'openHostStderrLog:/profiles/stale',
+  'spawn:/resources/tui-runtime/darwin-arm64/node',
+  'delay',
+  'probe:/profiles/stale'
+]
+
+function outcome(
+  kind: HostTerminationOutcome['kind'],
+  pid: number | null = 4242
+): HostTerminationOutcome {
+  return { kind, pid, steps: [`test:${kind}`], swept: [] }
+}
 
 class FakeChild extends EventEmitter {
   pid = 42
@@ -75,6 +132,117 @@ function command(): TuiHostLaunchCommand {
     cwd: '/resources/host/host-runtime',
     env: {}
   }
+}
+
+function withPayload(pid: number, payloadVersion: string): TuiHostAuthenticatedProbe {
+  const probe = authenticatedProbe(pid)
+  return { ...probe, process: { ...probe.process, payloadVersion } }
+}
+
+/**
+ * The stale-replacement scenario with every port recorded in call order, the
+ * same ports the pre-verification golden was captured through: a Host on an
+ * older payload answers first, is gone on the next probe, and the relaunched
+ * Host answers after that.
+ */
+function recordedStaleReplacement(
+  calls: string[],
+  child: FakeChild,
+  overrides: Partial<EnsureTuiHostAvailableInput> = {}
+): EnsureTuiHostAvailableInput {
+  const answers = [
+    async () => withPayload(4242, STALE_PAYLOAD),
+    async () => {
+      throw new Error('offline')
+    },
+    async () => withPayload(42, FRESH_PAYLOAD)
+  ]
+  let probes = 0
+  return {
+    userDataPath: '/profiles/stale',
+    profile: 'development',
+    probe: async (path) => {
+      calls.push(`probe:${path}`)
+      const answer = answers[Math.min(probes, answers.length - 1)]
+      probes += 1
+      return answer()
+    },
+    spawn: (executable) => {
+      calls.push(`spawn:${executable}`)
+      return child.asChildProcess()
+    },
+    resolveLaunchCommand: async () => {
+      calls.push('resolveLaunchCommand')
+      return command()
+    },
+    resolvePayloadVersion: async () => {
+      calls.push('resolvePayloadVersion')
+      return FRESH_PAYLOAD
+    },
+    openHostStderrLog: (path) => {
+      calls.push(`openHostStderrLog:${path}`)
+      return null
+    },
+    delay: async () => {
+      calls.push('delay')
+    },
+    ...overrides
+  }
+}
+
+const EVIDENCE_STARTED_AT = '2026-08-30T00:00:00.000Z'
+const RECORDED_BIRTH = 'a'.repeat(64)
+
+/** The records a stale Host at pid 4242 left: discovery, authority lease and registry entry. */
+function staleHostEvidence(): HostTerminationEvidence {
+  return {
+    discovery: {
+      pid: 4242,
+      socketPath: '/tmp/twh2-test/taskwraith-host-v2.sock',
+      startedAt: EVIDENCE_STARTED_AT
+    },
+    lease: {
+      pid: 4242,
+      processStartIdentity: RECORDED_BIRTH,
+      processStartedAt: EVIDENCE_STARTED_AT,
+      acquiredAt: EVIDENCE_STARTED_AT
+    },
+    registry: { pid: 4242, birthIdentity: RECORDED_BIRTH, bootEpoch: null }
+  }
+}
+
+/**
+ * Real verified termination over injected observation ports: the socket stop
+ * is refused, so every decision after it rests on what `observe` says the pid
+ * is now. Nothing here touches a real process or the filesystem.
+ */
+function verifiedTermination(
+  observe: (pid: number) => Promise<ProcessBirthObservation>,
+  signal: HostTerminationPorts['signal']
+): EnsureTuiHostAvailableInput['terminateHost'] {
+  let clock = 0
+  return (request) =>
+    terminateHostProcess({
+      ...request,
+      registryRoot: '/registry/unused',
+      ports: {
+        shutdown: async () => {
+          throw new Error('connect ECONNREFUSED')
+        },
+        readEvidence: () => staleHostEvidence(),
+        observe,
+        observeCommand: async () => ({
+          state: 'live',
+          commandLine:
+            '/usr/local/bin/node /repo/out/host/host-runtime/cli.js serve --mode production --profile /profiles/stale',
+          argv: null
+        }),
+        signal,
+        sweep: async () => [],
+        delay: async () => undefined,
+        now: () => (clock += 250)
+      }
+    })
 }
 
 describe('TUI Host process manager', () => {
@@ -291,46 +459,89 @@ describe('TUI Host process manager', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
-  it('replaces a standalone Host whose payload no longer matches the launchable build', async () => {
+  it('verifies identity before replacing a stale Host', async () => {
     // `npm run tui` rebuilds out/host and then reused whatever Host was already
     // listening, so a rebuilt fix never ran until that process died on its own.
-    const stale = authenticatedProbe(4242)
-    const staleProbe: TuiHostAuthenticatedProbe = {
-      ...stale,
-      process: { ...stale.process, payloadVersion: `sha256:${'a'.repeat(64)}` }
-    }
-    const fresh = authenticatedProbe(42)
-    const freshProbe: TuiHostAuthenticatedProbe = {
-      ...fresh,
-      process: { ...fresh.process, payloadVersion: `sha256:${'b'.repeat(64)}` }
-    }
-    const probe = vi
-      .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
-      .mockResolvedValueOnce(staleProbe)
-      .mockRejectedValueOnce(new Error('offline'))
-      .mockResolvedValue(freshProbe)
-    const stopProcess = vi.fn(() => true)
-    const child = new FakeChild()
-    const spawn = vi.fn().mockReturnValue(child.asChildProcess())
-    await expect(
-      ensureTuiHostAvailable({
-        userDataPath: '/profiles/stale',
-        profile: 'development',
-        probe,
-        spawn,
-        stopProcess,
-        resolveLaunchCommand: async () => command(),
-        resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`,
-        delay: async () => undefined
+    // The replacement now goes through verified termination, and nothing else
+    // about the sequence may move.
+    const calls: string[] = []
+    const result = await ensureTuiHostAvailable(
+      recordedStaleReplacement(calls, new FakeChild(), {
+        terminateHost: async (request) => {
+          calls.push(`terminate:${request.profilePath}:${String(request.pid)}`)
+          return outcome('stopped')
+        }
       })
-    ).resolves.toEqual({ kind: 'launched', pid: 42, replacedPid: 4242 })
-    expect(stopProcess).toHaveBeenCalledWith(4242)
-    expect(spawn).toHaveBeenCalledTimes(1)
+    )
+
+    expect(result).toEqual({ kind: 'launched', pid: 42, replacedPid: 4242 })
+    expect(calls).toEqual(
+      PRE_VERIFICATION_STALE_REPLACEMENT_CALLS.map((call) =>
+        call === 'stopProcess:4242' ? 'terminate:/profiles/stale:4242' : call
+      )
+    )
+  })
+
+  it('never signals a stale Host pid whose birth no longer matches its records', async () => {
+    // The pid the probe saw now belongs to a process born an hour later: the
+    // stale Host is already gone and its pid was reused. A bare SIGTERM by pid
+    // would hit that unrelated process.
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    const signal = vi.fn()
+    try {
+      const calls: string[] = []
+      const child = new FakeChild()
+      const result = await ensureTuiHostAvailable(
+        recordedStaleReplacement(calls, child, {
+          terminateHost: verifiedTermination(
+            async () => ({
+              state: 'live',
+              birthIdentity: 'c'.repeat(64),
+              startedAtMs: Date.parse(EVIDENCE_STARTED_AT) + 3_600_000
+            }),
+            signal
+          )
+        })
+      )
+
+      expect(signal).not.toHaveBeenCalled()
+      expect(kill).not.toHaveBeenCalled()
+      // A reused pid proves the stale Host gone, so the current build launches.
+      expect(result).toEqual({ kind: 'launched', pid: 42, replacedPid: 4242 })
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
+  it('keeps a stale Host whose identity cannot be verified, launches nothing, and says so', async () => {
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    const signal = vi.fn()
+    try {
+      const calls: string[] = []
+      const result = await ensureTuiHostAvailable(
+        recordedStaleReplacement(calls, new FakeChild(), {
+          terminateHost: verifiedTermination(
+            async () => ({ state: 'identity_unavailable' }),
+            signal
+          )
+        })
+      )
+
+      expect(result).toEqual({
+        kind: 'existing',
+        staleHost: { pid: 4242, refusal: 'identity_unavailable' }
+      })
+      expect(signal).not.toHaveBeenCalled()
+      expect(kill).not.toHaveBeenCalled()
+      expect(calls.some((call) => call.startsWith('spawn:'))).toBe(false)
+    } finally {
+      kill.mockRestore()
+    }
   })
 
   it('keeps a Host whose payload matches, or that predates payload identity', async () => {
     const spawn = vi.fn()
-    const stopProcess = vi.fn(() => true)
+    const terminateHost = vi.fn(async () => outcome('stopped'))
     const matching = authenticatedProbe(4242)
     await expect(
       ensureTuiHostAvailable({
@@ -341,7 +552,7 @@ describe('TUI Host process manager', () => {
           process: { ...matching.process, payloadVersion: `sha256:${'b'.repeat(64)}` }
         }),
         spawn,
-        stopProcess,
+        terminateHost,
         resolveLaunchCommand: async () => command(),
         resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`
       })
@@ -352,12 +563,12 @@ describe('TUI Host process manager', () => {
         profile: 'development',
         probe: vi.fn().mockResolvedValue(authenticatedProbe(4242)),
         spawn,
-        stopProcess,
+        terminateHost,
         resolveLaunchCommand: async () => command(),
         resolvePayloadVersion: async () => `sha256:${'b'.repeat(64)}`
       })
     ).resolves.toEqual({ kind: 'existing' })
-    expect(stopProcess).not.toHaveBeenCalled()
+    expect(terminateHost).not.toHaveBeenCalled()
     expect(spawn).not.toHaveBeenCalled()
   })
 
@@ -591,5 +802,275 @@ describe('TUI Host process manager', () => {
         rmSync(scratch, { recursive: true, force: true })
       }
     })
+  })
+})
+
+describe('TUI Host restart', () => {
+  it('refuses an explicit profile before stopping anything', async () => {
+    const terminateHost = vi.fn(async () => outcome('stopped'))
+    await expect(
+      restartTuiHost({
+        userDataPath: '/profiles/custom',
+        profile: 'custom',
+        terminateHost,
+        resolveLaunchCommand: async () => command()
+      })
+    ).rejects.toThrow(/explicit user-data profile/)
+    expect(terminateHost).not.toHaveBeenCalled()
+  })
+
+  it('refuses before stopping anything when no Host could be launched afterwards', async () => {
+    const terminateHost = vi.fn(async () => outcome('stopped'))
+    await expect(
+      restartTuiHost({
+        userDataPath: '/profiles/no-runtime',
+        profile: 'production',
+        terminateHost,
+        resolveLaunchCommand: async () => null
+      })
+    ).rejects.toThrow(/Node runtime could not be located/)
+    expect(terminateHost).not.toHaveBeenCalled()
+  })
+
+  it('stops the Host through verified termination, then launches the current build', async () => {
+    const calls: string[] = []
+    const child = new FakeChild()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/restart',
+      profile: 'production',
+      pid: 4242,
+      terminateHost: async (request) => {
+        calls.push(`terminate:${request.profilePath}:${String(request.pid)}`)
+        return outcome('stopped')
+      },
+      probe: vi
+        .fn<() => Promise<TuiHostAuthenticatedProbe | void>>()
+        .mockImplementationOnce(async () => {
+          calls.push('probe')
+          throw new Error('offline')
+        })
+        .mockImplementation(async () => {
+          calls.push('probe')
+          return authenticatedProbe(42)
+        }),
+      resolveLaunchCommand: async () => {
+        calls.push('resolveLaunchCommand')
+        return command()
+      },
+      spawn: () => {
+        calls.push('spawn')
+        return child.asChildProcess()
+      },
+      openHostStderrLog: () => null,
+      delay: async () => undefined
+    })
+
+    expect(calls).toEqual([
+      'resolveLaunchCommand',
+      'terminate:/profiles/restart:4242',
+      'probe',
+      'spawn',
+      'probe'
+    ])
+    expect(result).toEqual({
+      termination: outcome('stopped'),
+      launch: { kind: 'launched', pid: 42 }
+    })
+  })
+
+  it('launches nothing when the stop is refused', async () => {
+    const spawn = vi.fn()
+    const probe = vi.fn()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/refused',
+      profile: 'production',
+      terminateHost: async () => outcome('identity_unavailable'),
+      probe,
+      spawn,
+      resolveLaunchCommand: async () => command()
+    })
+
+    expect(result).toEqual({ termination: outcome('identity_unavailable') })
+    expect(probe).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+})
+
+describe('TUI Host stop-all', () => {
+  const BIRTH = (pid: number): string => pid.toString(16).padStart(64, '0')
+
+  function entry(profilePath: string, pid: number, holders = 1): HostRegistryEntry {
+    return {
+      schema: HOST_REGISTRY_SCHEMA,
+      profilePath,
+      pid,
+      birthIdentity: BIRTH(pid),
+      startedAt: '2026-09-23T10:00:00.000Z',
+      hostId: `host-${pid}`,
+      bootEpoch: null,
+      payloadVersion: FRESH_PAYLOAD,
+      socketPath: `/tmp/twh2-test-${pid}/taskwraith-host-v2.sock`,
+      discoveryPath: `${profilePath}/taskwraith-host-v2.json`,
+      cliPath: `/payloads/${pid}/host-runtime/cli.js`,
+      nodeExecutable: '/usr/local/bin/node',
+      persist: false,
+      leaseMode: 'lease',
+      writtenAt: '2026-09-23T10:00:05.000Z',
+      beatSeq: 1,
+      holders,
+      implicitHolders: 0,
+      lifetimePhase: 'held'
+    }
+  }
+
+  /**
+   * The real stopAllHosts selection over an in-memory registry. Every pid is
+   * observed alive with the birth its entry recorded, so nothing here reads
+   * a real process table or a real registry.
+   */
+  function fakeRegistry(entries: HostRegistryEntry[]) {
+    const listing = (): HostRegistryListing => ({ root: '/registry', entries, unreadable: [] })
+    return (options: HostStopAllOptions) =>
+      stopAllHosts({
+        ...options,
+        ports: {
+          readRegistry: listing,
+          observe: async (pid) => ({ state: 'live', birthIdentity: BIRTH(pid), startedAtMs: 0 }),
+          listProcesses: async () => ({ ok: false, reason: 'unsupported' }),
+          readEvidence: () => ({ discovery: null, lease: null, registry: null }),
+          sweep: async () => {
+            throw new Error('planning never sweeps')
+          },
+          ...options.ports
+        }
+      })
+  }
+
+  const byProfile = (profilePath: string): TuiHostStopAllRequest => ({
+    scope: { kind: 'profile', profilePath },
+    scanArgv: false
+  })
+
+  it('plans with the CLI scope and signals nothing', async () => {
+    const terminate = vi.fn(async () => outcome('stopped'))
+    const plan = await planTuiHostStopAll(byProfile('/profiles/b'), {
+      registryRoot: '/registry',
+      ports: {
+        stopAll: fakeRegistry([entry('/profiles/a', 101), entry('/profiles/b', 202, 2)]),
+        terminate
+      }
+    })
+
+    expect(plan.hosts.map((host) => [host.pid, host.selected])).toEqual([
+      [101, false],
+      [202, true]
+    ])
+    expect(plan.selected).toMatchObject([{ pid: 202, profilePath: '/profiles/b', holders: 2 }])
+    expect(terminate).not.toHaveBeenCalled()
+  })
+
+  it('lists every Host and selects none without a scope', async () => {
+    const plan = await planTuiHostStopAll(
+      { scope: { kind: 'list' }, scanArgv: false },
+      {
+        registryRoot: '/registry',
+        ports: { stopAll: fakeRegistry([entry('/profiles/a', 101), entry('/profiles/b', 202)]) }
+      }
+    )
+    expect(plan.hosts).toHaveLength(2)
+    expect(plan.selected).toEqual([])
+  })
+
+  it('stops exactly the planned Hosts through verified termination', async () => {
+    const registry = fakeRegistry([entry('/profiles/a', 101), entry('/profiles/b', 202)])
+    const terminate = vi.fn(async () => outcome('stopped', 202))
+    const plan = await planTuiHostStopAll(byProfile('/profiles/b'), {
+      registryRoot: '/registry',
+      ports: { stopAll: registry }
+    })
+    const result = await runTuiHostStopAll(plan, { ports: { stopAll: registry, terminate } })
+
+    expect(terminate.mock.calls).toEqual([
+      [{ profilePath: '/profiles/b', registryRoot: '/registry' }]
+    ])
+    expect(result).toEqual({
+      kind: 'done',
+      results: [{ host: plan.selected[0], outcome: outcome('stopped', 202) }]
+    })
+  })
+
+  it('never sweeps: a dead registry entry outside the scope survives /host stop-all', async () => {
+    // /host stop-all requests no sweep: each stopped Host's own verified
+    // termination removes its own records, and a dead Host outside the scope
+    // keeps its entry, whether or not a sweep would stay in scope. TMPDIR is
+    // pinned too, so no sweep could reach the real temporary directory's
+    // socket directories.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'tw-tui-stop-all-')))
+    const previousTmpdir = process.env.TMPDIR
+    process.env.TMPDIR = join(base, 'tmp')
+    try {
+      mkdirSync(join(base, 'tmp'), { recursive: true })
+      const root = join(base, 'hosts')
+      mkdirSync(root, { recursive: true, mode: 0o700 })
+      const inScope = join(base, 'profiles', 'dev')
+      const outOfScope = join(base, 'profiles', 'crashed')
+      // Beyond every platform's pid range, so the entry's Host is certainly gone.
+      const deadPid = 99_999_999
+      for (const record of [entry(inScope, 101), entry(outOfScope, deadPid)]) {
+        writeFileSync(
+          hostRegistryEntryPath(root, record.profilePath),
+          `${JSON.stringify(record)}\n`,
+          {
+            mode: 0o600
+          }
+        )
+      }
+      const observe = async (pid: number): Promise<ProcessBirthObservation> =>
+        pid === deadPid
+          ? { state: 'dead' }
+          : { state: 'live', birthIdentity: BIRTH(pid), startedAtMs: 0 }
+      const stopAll = (options: HostStopAllOptions) =>
+        stopAllHosts({ ...options, ports: { observe, ...options.ports } })
+      const terminate = vi.fn(async () => outcome('stopped', 101))
+
+      const plan = await planTuiHostStopAll(byProfile(inScope), {
+        registryRoot: root,
+        ports: { stopAll }
+      })
+      expect(plan.hosts.map((host) => [host.pid, host.liveness, host.selected])).toEqual(
+        expect.arrayContaining([
+          [101, 'live', true],
+          [deadPid, 'dead', false]
+        ])
+      )
+      const result = await runTuiHostStopAll(plan, { ports: { stopAll, terminate } })
+
+      expect(result.kind).toBe('done')
+      expect(terminate.mock.calls).toEqual([[{ profilePath: inScope, registryRoot: root }]])
+      expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
+    } finally {
+      if (previousTmpdir === undefined) delete process.env.TMPDIR
+      else process.env.TMPDIR = previousTmpdir
+      rmSync(base, { recursive: true, force: true })
+    }
+  })
+
+  it('refuses the whole run when the registry changed after the plan was shown', async () => {
+    const entries = [entry('/profiles/a', 101)]
+    const registry = fakeRegistry(entries)
+    const terminate = vi.fn(async () => outcome('stopped'))
+    const plan = await planTuiHostStopAll(
+      { scope: { kind: 'all' }, scanArgv: false },
+      { registryRoot: '/registry', ports: { stopAll: registry } }
+    )
+    // A Host the user never saw starts before they press y.
+    entries.push(entry('/profiles/new', 303))
+    const result = await runTuiHostStopAll(plan, { ports: { stopAll: registry, terminate } })
+
+    expect(result.kind).toBe('registry_changed')
+    expect(
+      result.kind === 'registry_changed' && result.fresh.selected.map((host) => host.pid)
+    ).toEqual([101, 303])
+    expect(terminate).not.toHaveBeenCalled()
   })
 })

@@ -49,7 +49,14 @@ import {
   buildTaskWraithTuiJsonProjection,
   type TaskWraithTuiJsonProjectionSource
 } from './jsonProjection'
-import { ensureTuiHostAvailable, type EnsureTuiHostAvailableResult } from './hostProcessManager'
+import {
+  ensureTuiHostAvailable,
+  planTuiHostStopAll,
+  restartTuiHost,
+  runTuiHostStopAll,
+  type EnsureTuiHostAvailableResult,
+  type TuiHostControl
+} from './hostProcessManager'
 import { renderTaskWraithTui } from './render'
 import { createTaskWraithTuiDemoState, type TaskWraithTuiState } from './state'
 import { detectTuiUnicode, resolveTuiGlyphs, type TuiGlyphSet } from './theme'
@@ -390,6 +397,47 @@ function serveMcp(command: Extract<OutsideCommand, { kind: 'mcp' }>): void {
   })
 }
 
+/**
+ * `/host restart` and `/host stop-all`. Restart relaunches, so it exists only
+ * where this TUI would launch a Host anyway; stop-all only stops, so a
+ * connect-only session keeps it.
+ */
+function tuiHostControl(options: TaskWraithTuiCliOptions, userDataPath: string): TuiHostControl {
+  const restartUnavailable = !options.startHost
+    ? 'This TUI was started with --no-start-host and never launches a Host, so it cannot restart one.'
+    : options.hostLaunchProfile === 'custom'
+      ? 'This TUI never launches a Host for an explicit --user-data profile, so it cannot restart one.'
+      : undefined
+  return {
+    ...(restartUnavailable
+      ? { restartUnavailable }
+      : {
+          restart: (pid: number | null) =>
+            restartTuiHost({
+              userDataPath,
+              profile: options.hostLaunchProfile,
+              enableFullAccessPresence: true,
+              pid
+            })
+        }),
+    planStopAll: (request) => planTuiHostStopAll(request),
+    runStopAll: (plan) => runTuiHostStopAll(plan)
+  }
+}
+
+function hostStartupNotice(launch: EnsureTuiHostAvailableResult | undefined): string | undefined {
+  if (launch?.kind === 'launched' && launch.replacedPid !== undefined) {
+    return `Restarted the TaskWraith Host (pid ${launch.replacedPid}) so it runs the current build`
+  }
+  if (launch?.kind === 'existing' && launch.staleHost) {
+    return (
+      `The TaskWraith Host (pid ${launch.staleHost.pid}) runs an older build and was not ` +
+      `replaced (${launch.staleHost.refusal}) · /host restart tries again`
+    )
+  }
+  return undefined
+}
+
 async function main(): Promise<void> {
   const outside = parseOutsideCommand(process.argv.slice(2), { cwd: process.cwd() })
   if (outside) {
@@ -444,6 +492,7 @@ async function main(): Promise<void> {
     renderSnapshotState(state, options, await resolveCliTheme(options))
     return
   }
+  const startupNotice = hostStartupNotice(initialHostLaunch)
   activeTui = new TaskWraithTui({
     clientVersion: TUI_VERSION,
     demo: options.demo,
@@ -462,12 +511,9 @@ async function main(): Promise<void> {
       : {}),
     ...(options.threadId ? { initialThreadId: options.threadId } : {}),
     ...(options.userDataPath ? { userDataPath: options.userDataPath } : {}),
-    ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.replacedPid !== undefined
-      ? {
-          startupNotice:
-            `Restarted the TaskWraith Host (pid ${initialHostLaunch.replacedPid}) ` +
-            'so it runs the current build'
-        }
+    ...(startupNotice ? { startupNotice } : {}),
+    ...(!options.demo && options.userDataPath
+      ? { hostControl: tuiHostControl(options, options.userDataPath) }
       : {}),
     ...(initialHostLaunch?.kind === 'launched' && initialHostLaunch.fullAccessPresence
       ? { fullAccessPresence: initialHostLaunch.fullAccessPresence }

@@ -6,10 +6,23 @@ import { dirname, posix, resolve, win32, type PlatformPath } from 'node:path'
 import type { Writable } from 'node:stream'
 
 import {
+  HOST_TERMINATION_SUCCESS_KINDS,
+  terminateHostProcess,
+  type HostTerminationOutcome,
+  type HostTerminationOutcomeKind
+} from '../host-client/HostProcessTermination'
+import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError,
   type HostProjectionDiscoveryProcessIdentity
 } from '../host-client/HostProjectionClient'
+import {
+  stopAllHosts,
+  type HostStopAllHost,
+  type HostStopAllOptions,
+  type HostStopAllReport,
+  type HostStopAllScope
+} from '../host-client/HostStopAll'
 import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD,
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
@@ -17,6 +30,7 @@ import {
 } from '../host-runtime/HostFullAccessBootstrap'
 import { resolveHostPayloadVersion } from '../host-runtime/HostPayloadIdentity'
 import { withoutHostLeaseTestKnobs } from '../host-runtime/HostLeaseRegistry'
+import { resolveHostRegistryRoot } from '../host-runtime/HostRegistry'
 import type { HostBootstrapWelcome, HostCapability } from '../shared/hostProtocol'
 import {
   createTuiFullAccessPresence,
@@ -111,13 +125,39 @@ export interface EnsureTuiHostAvailableInput extends ResolveTuiHostLaunchCommand
   readonly resolvePayloadVersion?: (
     command: TuiHostLaunchCommand
   ) => string | null | Promise<string | null>
-  /** Stops a stale standalone Host; the default sends SIGTERM to its pid. */
-  readonly stopProcess?: (pid: number) => boolean
+  /**
+   * Stops a stale standalone Host. The default is verified termination
+   * (HostProcessTermination): the Host's own authenticated stop first, and a
+   * signal only after the pid's birth identity and command line are verified
+   * again, so a pid that has since been reused is never signalled.
+   */
+  readonly terminateHost?: TuiHostTerminate
+  /** Machine-wide Host registry root; defaults to TASKWRAITH_HOST_REGISTRY_ROOT or ~/.taskwraith/hosts. */
+  readonly registryRoot?: string
   readonly stopTimeoutMs?: number
 }
 
+/** One profile's Host to stop, and the pid the caller judged it by. */
+export interface TuiHostTerminationRequest {
+  readonly profilePath: string
+  readonly pid: number | null
+  readonly registryRoot?: string
+}
+
+export type TuiHostTerminate = (
+  request: TuiHostTerminationRequest
+) => Promise<HostTerminationOutcome>
+
 export type EnsureTuiHostAvailableResult =
-  | { readonly kind: 'existing' }
+  | {
+      readonly kind: 'existing'
+      /**
+       * A Host on an older payload that could not be proven gone: verified
+       * termination refused to signal it, or it outlived SIGKILL. It keeps
+       * serving this profile, and the caller should say so.
+       */
+      readonly staleHost?: { readonly pid: number; readonly refusal: HostTerminationOutcomeKind }
+    }
   | {
       readonly kind: 'launched'
       readonly pid: number | null
@@ -445,13 +485,11 @@ function launchPayloadVersion(command: TuiHostLaunchCommand): string | null {
   }
 }
 
-function defaultStopProcess(pid: number): boolean {
-  try {
-    process.kill(pid, 'SIGTERM')
-    return true
-  } catch {
-    return false
-  }
+function defaultTerminateHost(request: TuiHostTerminationRequest): Promise<HostTerminationOutcome> {
+  return terminateHostProcess({
+    profilePath: request.profilePath,
+    ...(request.registryRoot ? { registryRoot: request.registryRoot } : {})
+  })
 }
 
 /**
@@ -535,7 +573,18 @@ async function ensureTuiHostAvailableOnce(
   if (probed) {
     const stale = probed.value ? await stalePayloadHost(input, probed.value) : null
     if (!stale) return { kind: 'existing' }
-    if (!(input.stopProcess ?? defaultStopProcess)(stale.pid)) return { kind: 'existing' }
+    // Verified termination, never a bare SIGTERM by pid: the pid the probe saw
+    // may belong to another process by now. Only an outcome that proves the
+    // Host gone lets the wait below and the launch after it proceed; a refusal
+    // leaves the stale Host serving, and the caller says so.
+    const termination = await (input.terminateHost ?? defaultTerminateHost)({
+      profilePath: input.userDataPath,
+      pid: stale.pid,
+      ...(input.registryRoot ? { registryRoot: input.registryRoot } : {})
+    })
+    if (!HOST_TERMINATION_SUCCESS_KINDS.has(termination.kind)) {
+      return { kind: 'existing', staleHost: { pid: stale.pid, refusal: termination.kind } }
+    }
     lastProbeError = await awaitHostExit({
       userDataPath: input.userDataPath,
       pid: stale.pid,
@@ -699,4 +748,192 @@ export async function ensureTuiHostAvailable(
   } finally {
     if (inFlightStarts.get(key) === operation) inFlightStarts.delete(key)
   }
+}
+
+export interface RestartTuiHostInput extends EnsureTuiHostAvailableInput {
+  /** The pid this TUI is attached to, for the termination request and the report. */
+  readonly pid?: number | null
+}
+
+export interface RestartTuiHostResult {
+  readonly termination: HostTerminationOutcome
+  /** Absent when the stop was refused: nothing was launched. */
+  readonly launch?: EnsureTuiHostAvailableResult
+}
+
+/**
+ * `/host restart`: verified termination of this profile's Host, then the
+ * ordinary launch path. A restart that cannot launch afterwards must not stop
+ * anything, so an explicit (custom) profile, which the TUI never launches, is
+ * refused and the launch command is resolved before the Host is touched.
+ */
+export async function restartTuiHost(input: RestartTuiHostInput): Promise<RestartTuiHostResult> {
+  if (input.profile === 'custom') throw new Error(launchUnavailableMessage(input.profile))
+  const command = input.resolveLaunchCommand
+    ? await input.resolveLaunchCommand()
+    : await resolveTuiHostLaunchCommand(input)
+  if (!command) throw new Error(launchUnavailableMessage(input.profile))
+  const termination = await (input.terminateHost ?? defaultTerminateHost)({
+    profilePath: input.userDataPath,
+    pid: input.pid ?? null,
+    ...(input.registryRoot ? { registryRoot: input.registryRoot } : {})
+  })
+  if (!HOST_TERMINATION_SUCCESS_KINDS.has(termination.kind)) return { termination }
+  const launch = await ensureTuiHostAvailable({
+    ...input,
+    resolveLaunchCommand: async () => command
+  })
+  return { termination, launch }
+}
+
+/**
+ * `/host stop-all`, scoped exactly as `cli.js stop-all` parses it. There is no
+ * sweep: each stopped Host's verified termination removes exactly that Host's
+ * entry, socket and profile records, and whatever else is dead is left to
+ * `taskwraith-host stop-all --sweep`, so nothing outside the confirmed list is
+ * ever touched from here.
+ */
+export interface TuiHostStopAllRequest {
+  readonly scope: HostStopAllScope
+  readonly scanArgv: boolean
+}
+
+export interface TuiHostStopAllPlan {
+  readonly request: TuiHostStopAllRequest
+  readonly registryRoot: string
+  /** Every Host found, selected or not. */
+  readonly hosts: readonly HostStopAllHost[]
+  /** Exactly the Hosts an explicit `y` stops; empty for a listing. */
+  readonly selected: readonly HostStopAllHost[]
+  readonly unreadableEntries: number
+  /** Why `--scan-argv` could not list processes, when it could not. */
+  readonly scanUnavailable?: string
+  /** What the plan was read from; execution refuses when a fresh read differs. */
+  readonly fingerprint: string
+}
+
+export interface TuiHostStopAllResult {
+  readonly host: HostStopAllHost
+  readonly outcome: HostTerminationOutcome
+}
+
+export type TuiHostStopAllOutcome =
+  | { readonly kind: 'registry_changed'; readonly fresh: TuiHostStopAllPlan }
+  | { readonly kind: 'done'; readonly results: readonly TuiHostStopAllResult[] }
+
+export interface TuiHostStopAllPorts {
+  readonly stopAll?: (options: HostStopAllOptions) => Promise<HostStopAllReport>
+  readonly terminate?: (input: {
+    readonly profilePath: string
+    readonly registryRoot: string
+  }) => Promise<HostTerminationOutcome>
+}
+
+export interface TuiHostStopAllOptions {
+  readonly registryRoot?: string
+  readonly env?: Readonly<NodeJS.ProcessEnv>
+  readonly ports?: TuiHostStopAllPorts
+}
+
+/**
+ * Never shown and never acted on: planning hands stopAllHosts a terminate port
+ * that signals nothing, so its selection is exactly the one an execution with
+ * this scope would make.
+ */
+const PLAN_ONLY_OUTCOME: HostTerminationOutcome = Object.freeze({
+  kind: 'already_gone',
+  pid: null,
+  steps: Object.freeze(['plan-only']),
+  swept: Object.freeze([])
+})
+
+function stopAllFingerprint(
+  hosts: readonly HostStopAllHost[],
+  unreadableEntries: number,
+  scanUnavailable: string | undefined
+): string {
+  const rows = hosts
+    .map((host) =>
+      JSON.stringify([
+        host.source,
+        host.profilePath,
+        host.pid,
+        host.startedAt,
+        host.cliPath,
+        host.payloadVersion,
+        host.liveness,
+        host.selected,
+        host.holders,
+        host.implicitHolders,
+        host.persist
+      ])
+    )
+    .sort()
+  return JSON.stringify({ rows, unreadableEntries, scanUnavailable: scanUnavailable ?? null })
+}
+
+/** Lists what `request` would stop, signalling nothing. */
+export async function planTuiHostStopAll(
+  request: TuiHostStopAllRequest,
+  options: TuiHostStopAllOptions = {}
+): Promise<TuiHostStopAllPlan> {
+  const registryRoot = options.registryRoot ?? resolveHostRegistryRoot(options.env ?? process.env)
+  const report = await (options.ports?.stopAll ?? stopAllHosts)({
+    scope: request.scope,
+    scanArgv: request.scanArgv,
+    registryRoot,
+    ports: { terminate: async () => PLAN_ONLY_OUTCOME }
+  })
+  const hosts = report.hosts.map(({ outcome: _outcome, ...host }) => host)
+  const scanUnavailable = report.scan && !report.scan.ok ? report.scan.reason : undefined
+  return {
+    request,
+    registryRoot,
+    hosts,
+    selected: hosts.filter((host) => host.selected),
+    unreadableEntries: report.unreadableEntries.length,
+    ...(scanUnavailable ? { scanUnavailable } : {}),
+    fingerprint: stopAllFingerprint(hosts, report.unreadableEntries.length, scanUnavailable)
+  }
+}
+
+/**
+ * Stops exactly the Hosts `plan` showed. The registry is read again first and
+ * anything that changed refuses the whole run, so a Host the user never saw is
+ * never stopped; each selected Host then goes through verified termination,
+ * which re-checks its identity before every signal and removes only that
+ * Host's own records afterwards.
+ */
+export async function runTuiHostStopAll(
+  plan: TuiHostStopAllPlan,
+  options: TuiHostStopAllOptions = {}
+): Promise<TuiHostStopAllOutcome> {
+  const fresh = await planTuiHostStopAll(plan.request, {
+    ...options,
+    registryRoot: plan.registryRoot
+  })
+  if (fresh.fingerprint !== plan.fingerprint) return { kind: 'registry_changed', fresh }
+  const terminate =
+    options.ports?.terminate ??
+    ((input: { readonly profilePath: string; readonly registryRoot: string }) =>
+      terminateHostProcess(input))
+  const results = await Promise.all(
+    plan.selected.map(async (host) => ({
+      host,
+      outcome: await terminate({ profilePath: host.profilePath, registryRoot: plan.registryRoot })
+    }))
+  )
+  return { kind: 'done', results }
+}
+
+/**
+ * What the interactive TUI may do to Hosts, injected by the CLI. `restart` is
+ * absent when this session never launches a Host (`--no-start-host`, or an
+ * explicit profile), and `restartUnavailable` says why.
+ */
+export interface TuiHostControl {
+  readonly restart?: (pid: number | null) => Promise<RestartTuiHostResult>
+  readonly restartUnavailable?: string
+  readonly planStopAll: (request: TuiHostStopAllRequest) => Promise<TuiHostStopAllPlan>
+  readonly runStopAll: (plan: TuiHostStopAllPlan) => Promise<TuiHostStopAllOutcome>
 }

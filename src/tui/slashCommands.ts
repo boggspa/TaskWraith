@@ -16,6 +16,7 @@ export type TuiSlashCommandName =
   | '/goal'
   | '/help'
   | '/history'
+  | '/host'
   | '/login'
   | '/missions'
   | '/model'
@@ -86,6 +87,15 @@ export const TUI_SLASH_COMMANDS: readonly TuiSlashCommandDefinition[] = [
     aliases: [],
     usage: '/status',
     description: 'Show Host, connection and open-thread detail.',
+    destructive: false
+  },
+  {
+    // Bare `/host` only opens the status lens; `restart` and `stop-all` are
+    // typed out and act only on an explicit y.
+    name: '/host',
+    aliases: [],
+    usage: '/host [status|restart|stop-all]',
+    description: 'Show the Host, restart it, or stop Hosts machine-wide.',
     destructive: false
   },
   {

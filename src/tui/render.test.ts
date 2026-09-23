@@ -12,11 +12,13 @@ import {
   resolveGhostBanner
 } from './ghostBanner'
 import { renderTaskWraithTui } from './render'
+import { TUI_SLASH_COMMANDS } from './slashCommands'
 import { resolveTuiTheme } from './palette'
 import {
   createTaskWraithTuiDemoState,
   type TaskWraithTuiState,
-  type TuiConnectionState
+  type TuiConnectionState,
+  type TuiHostPanel
 } from './state'
 import { TUI_GLYPHS_ASCII, TUI_GLYPHS_UNICODE } from './theme'
 
@@ -1280,7 +1282,8 @@ describe('TaskWraith TUI renderer', () => {
 
     const scrolled = createTaskWraithTuiDemoState(now)
     scrolled.overlay = 'help'
-    scrolled.overlayIndex = 19
+    // The second-to-last command, wherever the registry now ends.
+    scrolled.overlayIndex = TUI_SLASH_COMMANDS.length - 2
     const scrolledLines = renderTaskWraithTui(scrolled, {
       width: 80,
       height: 12,
@@ -1717,5 +1720,120 @@ describe('TaskWraith TUI renderer', () => {
     })
     expect(empty).toContain('no durable goal')
     expect(empty).not.toContain('Ship the standalone goal lens.')
+  })
+
+  describe('the /host lens', () => {
+    const DEEP_PROFILE =
+      '/Users/someone/Library/Application Support/TaskWraith/profiles/very/deep/nesting/that/goes/on/profiles/zeta'
+
+    function renderedHostLens(
+      width: number,
+      height: number,
+      panel: TuiHostPanel | undefined,
+      glyphs = TUI_GLYPHS_UNICODE
+    ): string[] {
+      const now = Date.UTC(2026, 8, 23, 18, 0, 0)
+      const state = createTaskWraithTuiDemoState(now)
+      state.overlay = 'host'
+      state.hostPanel = panel
+      return renderTaskWraithTui(state, {
+        width,
+        height,
+        ansi: new Ansi('none'),
+        now,
+        animationEnabled: false,
+        glyphs
+      })
+        .split('\n')
+        .map(stripAnsi)
+    }
+
+    function stopPanel(count: number): TuiHostPanel {
+      return {
+        title: 'Stop Hosts',
+        fields: [{ label: 'scope', value: 'every Host (--all)' }],
+        hostsHeading: `Stops ${count} Hosts`,
+        hosts: Array.from({ length: count }, (_, index) => ({
+          pid: `pid ${101 + index}`,
+          holders: 'holders 1+0',
+          profile: index === 0 ? DEEP_PROFILE : `/profiles/p${index}`
+        })),
+        notes: ['1 other Host outside this scope keeps running.'],
+        prompt: `y stops all ${count} Hosts · any other key cancels`,
+        hint: 'Nothing is stopped unless you press y.'
+      }
+    }
+
+    it('draws Host rows with pid and holders whole and a long profile cut in the middle', () => {
+      const lines = renderedHostLens(60, 24, stopPanel(2))
+      const output = lines.join('\n')
+      expect(output).toContain('Stop Hosts')
+      expect(output).toContain('Stops 2 Hosts')
+      const deep = lines.find((line) => line.includes('pid 101'))
+      expect(deep).toBeDefined()
+      expect(deep).toContain('pid 101  holders 1+0  /Users')
+      expect(deep).toContain('…')
+      expect(deep).toContain('profiles/zeta')
+      expect(output).toContain('pid 102  holders 1+0  /profiles/p1')
+      expect(output).toContain('y stops all 2 Hosts · any other key cancels')
+      for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(60)
+    })
+
+    it('counts the Host rows past the viewport and keeps the prompt that states the total', () => {
+      const lines = renderedHostLens(80, 16, stopPanel(30))
+      const output = lines.join('\n')
+      const drawn = lines.filter((line) => /pid 1\d\d {2}holders/.test(line)).length
+      expect(drawn).toBeGreaterThan(0)
+      expect(drawn).toBeLessThan(30)
+      expect(output).toContain(`+${30 - drawn} more, not shown`)
+      expect(output).toContain('y stops all 30 Hosts · any other key cancels')
+      expect(output).toContain('Nothing is stopped unless you press y.')
+      expect(lines.length).toBeLessThanOrEqual(16)
+    })
+
+    it('keeps an armed prompt on screen at the smallest terminal, dropping notes first', () => {
+      const panel = stopPanel(30)
+      const lines = renderedHostLens(80, 8, {
+        ...panel,
+        notes: [
+          '1 registry entry could not be read.',
+          '2 other Hosts outside this scope keep running.',
+          "This TUI's own Host is included; the TUI stays offline until /host restart."
+        ]
+      })
+      const output = lines.join('\n')
+      expect(output).toContain('y stops all 30 Hosts · any other key cancels')
+      expect(output).toMatch(/\+\d+ more, not shown/)
+    })
+
+    it('never lets a long note take more than half of a Host row from the profile', () => {
+      const panel = stopPanel(1)
+      const lines = renderedHostLens(80, 24, {
+        ...panel,
+        hosts: panel.hosts?.map((host) => ({
+          ...host,
+          note: 'inconsistent (a record naming the pid is not contradicted by the process now at it)'
+        }))
+      })
+      const row = lines.find((line) => line.includes('pid 101'))
+      expect(row).toContain('pid 101  holders 1+0  ')
+      expect(row).toContain('profiles/zeta')
+      expect(row).toContain('inconsistent')
+    })
+
+    it('degrades to ASCII under --ascii, separators and ellipses included', () => {
+      const lines = renderedHostLens(60, 24, stopPanel(2), TUI_GLYPHS_ASCII)
+      const lens = lines.filter((line) => line.startsWith('+') || line.startsWith('|'))
+      expect(lens.join('\n')).toContain('y stops all 2 Hosts . any other key cancels')
+      for (const line of lens) {
+        expect([...line].filter((character) => (character.codePointAt(0) ?? 0) > 126)).toEqual([])
+      }
+    })
+
+    it('says it is reading the Host until a panel arrives', () => {
+      const output = renderedHostLens(80, 24, undefined).join('\n')
+      expect(output).toContain('Reading the Host…')
+      expect(output).not.toContain('y stops')
+    })
   })
 })

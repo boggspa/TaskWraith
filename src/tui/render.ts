@@ -2145,6 +2145,83 @@ function renderProviderLoginOverlay(
   return lines.slice(0, Math.max(1, height))
 }
 
+/** Shortens from the middle, keeping a path's root and its unique tail. */
+function truncateMiddle(value: string, width: number, ellipsis: string): string {
+  const characters = Array.from(value)
+  if (characters.length <= width) return value
+  const keep = Math.max(0, width - Array.from(ellipsis).length)
+  const head = Math.floor(keep / 4)
+  return `${characters.slice(0, head).join('')}${ellipsis}${characters
+    .slice(characters.length - (keep - head))
+    .join('')}`
+}
+
+/**
+ * The /host lens. The title, an armed `y` prompt, the hint and pid + holders on
+ * every Host row are never cut; fields and notes yield first, and Host rows past
+ * the viewport are counted, never silently dropped.
+ */
+function renderHostOverlay(
+  state: TaskWraithTuiState,
+  width: number,
+  height: number,
+  ansi: Ansi,
+  glyphs: TuiGlyphSet
+): string[] {
+  const panel = state.hostPanel
+  // The builders write ' · ' and '…'; under --ascii they degrade like the chrome.
+  const text = (value: string): string =>
+    terminalLabel(value).split(' · ').join(` ${glyphs.separator} `).split('…').join(glyphs.ellipsis)
+  const title = borderTitle(text(panel?.title ?? 'Host'), width, ansi, glyphs)
+  const line = (content: string): string => borderedLine(content, width, ansi, glyphs)
+  if (!panel) {
+    return [title, line(ansi.dim(text('Reading the Host…'))), borderBottom(width, ansi, glyphs)]
+  }
+  const hosts = panel.hosts ?? []
+  const closing = [
+    ...(panel.prompt ? [line(tone(ansi, ansi.bold(text(panel.prompt)), 'warning'))] : []),
+    line(ansi.dim(text(panel.hint))),
+    borderBottom(width, ansi, glyphs)
+  ]
+  // Notes yield first, so an armed prompt stays on screen however short the lens.
+  const noteRoom = Math.max(0, height - 1 - (hosts.length ? 1 : 0) - closing.length)
+  const footer = [
+    ...(panel.notes ?? []).slice(0, noteRoom).map((note) => line(ansi.dim(text(note)))),
+    ...closing
+  ]
+  // With Hosts to list, the head always leaves at least the "+N more" line.
+  const reserve = footer.length + (hosts.length ? 1 : 0)
+  const head = [
+    title,
+    ...panel.fields.map((field) =>
+      overlayValue(
+        field.label,
+        text(field.value),
+        width,
+        ansi,
+        glyphs,
+        field.tone ? tones(ansi)[field.tone] : undefined
+      )
+    ),
+    ...(panel.hostsHeading ? [line(ansi.bold(text(panel.hostsHeading)))] : [])
+  ].slice(0, Math.max(1, height - reserve))
+  const room = Math.max(0, height - head.length - footer.length)
+  const shown = hosts.length > room ? Math.max(0, room - 1) : hosts.length
+  const rows = hosts.slice(0, shown).map((host) => {
+    const fixed = `${text(host.pid)}  ${text(host.holders)}  `
+    const note = host.note ? `  ${text(host.note)}` : ''
+    // A long note (a refusal's detail) is cut at the edge before the profile
+    // loses more than half the row: its tail is what tells two Hosts apart.
+    const available = Math.max(8, width - 4 - visibleWidth(fixed))
+    const profileWidth = Math.max(Math.ceil(available / 2), available - visibleWidth(note))
+    const profile = truncateMiddle(terminalLabel(host.profile), profileWidth, glyphs.ellipsis)
+    const row = `${fixed}${profile}${note}`
+    return line(host.tone ? tone(ansi, row, host.tone) : row)
+  })
+  if (shown < hosts.length) rows.push(line(ansi.dim(`+${hosts.length - shown} more, not shown`)))
+  return [...head, ...rows, ...footer].slice(0, Math.max(1, height))
+}
+
 function renderOverlay(
   state: TaskWraithTuiState,
   width: number,
@@ -2152,6 +2229,9 @@ function renderOverlay(
   ansi: Ansi,
   glyphs: TuiGlyphSet
 ): string[] {
+  if (state.overlay === 'host') {
+    return renderHostOverlay(state, width, height, ansi, glyphs)
+  }
   if (state.overlay === 'context') {
     return renderContextOverlay(state, width, height, ansi, glyphs)
   }

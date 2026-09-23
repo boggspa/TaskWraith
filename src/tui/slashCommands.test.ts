@@ -19,6 +19,7 @@ describe('TaskWraith TUI slash-command registry', () => {
         '/goal',
         '/help',
         '/history',
+        '/host',
         '/login',
         '/missions',
         '/model',
@@ -104,5 +105,20 @@ describe('TaskWraith TUI slash-command registry', () => {
     expect(resolveTuiSlashCommand('/q')?.command.name).toBe('/quit')
     expect(resolveTuiSlashCommand('/mod')).toBeNull()
     expect(resolveTuiSlashCommand('say /model')).toBeNull()
+  })
+
+  it('resolves /host with its verb and a profile path that contains spaces', () => {
+    expect(resolveTuiSlashCommand('/host')).toMatchObject({
+      command: { name: '/host', destructive: false },
+      argumentText: ''
+    })
+    expect(
+      resolveTuiSlashCommand('/HOST stop-all --profile /Users/a/Library/Application Support/TW')
+    ).toMatchObject({
+      command: { name: '/host' },
+      argumentText: 'stop-all --profile /Users/a/Library/Application Support/TW'
+    })
+    expect(resolveTuiSlashCommand('/hos')).toBeNull()
+    expect(filterTuiSlashCommands('/host restart')[0]?.name).toBe('/host')
   })
 })
