@@ -52,7 +52,8 @@ import {
   session,
   Tray,
   systemPreferences,
-  net
+  net,
+  Notification
 } from 'electron'
 import type { BrowserWindowConstructorOptions, IpcMainInvokeEvent } from 'electron'
 import { DesktopWindowRegistry } from './DesktopWindowRegistry'
@@ -1094,6 +1095,9 @@ import { createHostProjectionBroker } from './host/HostProjectionBroker'
 import { HostChannelAdminCommandClient } from './host/HostChannelAdminCommandClient'
 import { HostLifecycleController } from './host/HostLifecycleController'
 import { createHostExternalLifecycleAdapter } from './host/HostExternalLifecycleAdapter'
+import { releaseExternalHostBootHold } from './host/HostExternalBootHold'
+import { startDesktopHostLease, type DesktopHostLeaseWiring } from './host/HostLeaseReasons'
+import { createHostPoisonDetector, type HostPoisonDetector } from './host/HostPoisonDetector'
 import { consumePreparedExternalHost } from './host/HostExternalRuntimeState'
 import { getInProcessProfileAuthority } from './host/HostInProcessProfileAuthorityState'
 import { reapAbandonedChats } from './AbandonedChatReaper'
@@ -2106,6 +2110,7 @@ import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { registerHostProjectionHandlers } from './ipc/hostProjectionHandlers'
 import {
   HOST_LIFECYCLE_CHANGED_CHANNEL,
+  createHostRestartAction,
   registerHostLifecycleHandlers
 } from './ipc/hostLifecycleHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
@@ -54882,18 +54887,25 @@ if (isGeminiMcpBridgeProcess) {
     const inProcessProfileAuthority = preparedExternalHost
       ? null
       : getInProcessProfileAuthority(externalHostProfilePath)
+    // Bound once the lifecycle exists (below): main's Host lease and the
+    // poisoned-session guard fed by this broker's typed Host errors.
+    let desktopHostLeaseRef: DesktopHostLeaseWiring | null = null
+    let hostPoisonDetectorRef: HostPoisonDetector | null = null
     const desktopHostBroker = createHostProjectionBroker({
       userDataPath: app.getPath('userData'),
-      appVersion: app.getVersion()
+      appVersion: app.getVersion(),
+      onTransportError: (report) => hostPoisonDetectorRef?.report(report)
     })
     /**
      * Wake-up Host re-check. Registered here rather than beside the power
      * assertions above because it needs the broker, and reads better next to
-     * the thing it probes. See `ResumeHostHealthCheck` for why it probes and
-     * nudges instead of restarting anything: the lifecycle controller's
-     * contract reserves start() for app startup and explicit user action.
+     * the thing it probes. See `ResumeHostHealthCheck`: it renews main's Host
+     * lease first, then probes and nudges. It never starts a Host itself; a
+     * lease that is gone is repaired by the lease module's bounded
+     * `ensure('lease-reacquire')`, which never starts a Host the user stopped.
      */
     const resumeHostHealthCheck = createResumeHostHealthCheck({
+      renewLease: async () => desktopHostLeaseRef?.lease.renewNow(),
       probeHost: async () => {
         const projected = await desktopHostBroker.snapshot()
         return projected.ok ? { ok: true } : { ok: false, error: projected.error }
@@ -56614,6 +56626,18 @@ if (isGeminiMcpBridgeProcess) {
       onOffline: () => desktopHostBroker.close(),
       log: (line) => console.log(line)
     })
+    // Main's lease on an external Host (Host-lifetime D6, phase 1): held for
+    // `app` from the app start until will-quit releases it.
+    const desktopHostLease = preparedExternalHost
+      ? startDesktopHostLease({
+          profilePath: externalHostProfilePath,
+          appVersion: app.getVersion(),
+          lifecycle: hostLifecycle,
+          releaseBootHold: (profilePath) => releaseExternalHostBootHold(profilePath),
+          log: (line) => console.log(line)
+        })
+      : null
+    desktopHostLeaseRef = desktopHostLease
     void hostLifecycle.start('app-start').then(
       (result) => {
         if (!result.ok) {
@@ -56624,6 +56648,7 @@ if (isGeminiMcpBridgeProcess) {
         console.error('[host] production Host lifecycle failed unexpectedly', error)
       }
     )
+    desktopHostLease?.reasons.hold('app')
     tuiHeadlessHostSession.startMonitoring({
       getConnectedClientCount: () => hostLifecycle.getConnectedClientCount(),
       hasActiveWork: () =>
@@ -56675,6 +56700,9 @@ if (isGeminiMcpBridgeProcess) {
       tuiHeadlessHostSession.dispose()
       void studioProductionLifecycleRef?.dispose()
       studioProductionLifecycleRef = null
+      // The lease release is written before the lifecycle detaches, so the
+      // Host starts its grace now instead of reading this quit as a crash.
+      desktopHostLease?.releaseSync()
       hostLifecycle.stopSync()
       desktopHostBroker.close()
       void simulatorHostService.dispose()
@@ -57325,6 +57353,24 @@ if (isGeminiMcpBridgeProcess) {
           }
         : {})
     })
+    // Host-lifetime D10: a confirmed poisoned Desktop session restarts the
+    // Host, loop-guarded; the broker's typed Host errors feed it.
+    hostPoisonDetectorRef = desktopHostLease
+      ? createHostPoisonDetector({
+          profilePath: externalHostProfilePath,
+          appVersion: app.getVersion(),
+          lifecycle: hostLifecycle,
+          readHostStatus: () => desktopHostLease.readHostStatus(),
+          isUpdateRestartPending: () => updateService.snapshot().restartPending === true,
+          notify: (message) => {
+            console.warn(`[host] ${message}`)
+            if (Notification.isSupported()) {
+              new Notification({ title: 'TaskWraith Host', body: message }).show()
+            }
+          },
+          log: (line) => console.log(line)
+        })
+      : null
 
     // Local Servers — detect dev servers/watchers running under the user's
     // workspaces (and the ones our agents spawned) so the user can see + stop
@@ -57383,7 +57429,8 @@ if (isGeminiMcpBridgeProcess) {
       controller: hostLifecycle,
       assertMainRendererSender,
       publishChanged: (snapshot) =>
-        desktopWindows.broadcast(HOST_LIFECYCLE_CHANGED_CHANNEL, snapshot)
+        desktopWindows.broadcast(HOST_LIFECYCLE_CHANGED_CHANNEL, snapshot),
+      ...(desktopHostLease ? { inspect: desktopHostLease } : {})
     })
     const pluginHost = new PluginHost({
       userDataPath: app.getPath('userData'),
@@ -64217,10 +64264,17 @@ if (isGeminiMcpBridgeProcess) {
       updateService,
       openExternal: openSafeShellTargetDetached
     })
+    const restartHostFromMenu = createHostRestartAction({
+      controller: hostLifecycle,
+      readHostStatus: async () => (await desktopHostLease?.readHostStatus()) ?? null,
+      snapshot: () => desktopHostBroker.snapshot(),
+      log: (line) => console.log(line)
+    })
     refreshApplicationMenu = installApplicationMenu({
       windows: desktopWindows,
       createWindow,
       openUpdates: () => updateDialog.open(),
+      restartHost: () => void restartHostFromMenu(),
       getKeyBindings: () => AppStore.getSettings().keyCommandBindings
     })
     const openedForDeferredSecondInstance = startupWindowGate.release(createWindow)

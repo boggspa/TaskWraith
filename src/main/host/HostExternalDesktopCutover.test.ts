@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import { isDesktopExternalHostEnabled } from './DesktopExternalHostPolicy'
 
 const source = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
@@ -103,5 +105,94 @@ describe('Desktop external Host cutover', () => {
     expect(cleanup.indexOf('externalHostPreparation?.cleanup()')).toBeLessThan(
       cleanup.indexOf('releaseInProcessHostLease()')
     )
+  })
+})
+
+/** Host-lifetime S2: main's lease, its quit order, and what feeds the restart paths. */
+describe('Desktop Host lease wiring', () => {
+  const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
+  const calleeOf = (call: ts.CallExpression): string => probe.text(call.expression)
+
+  it("writes main's lease release before the lifecycle detaches at quit", () => {
+    const teardowns = probe
+      .callsTo(probe.source, 'on')
+      .filter((call) => call.arguments.length === 2 && probe.argText(call, 0) === "'will-quit'")
+      .map((call) => call.arguments[1])
+      .filter((handler) => probe.callsTo(handler, 'stopSync').length > 0)
+    expect(teardowns).toHaveLength(1)
+    const [teardown] = teardowns
+    const releases = probe.callsTo(teardown, 'releaseSync')
+    const stops = probe.callsTo(teardown, 'stopSync')
+    expect(releases.map(calleeOf)).toEqual(['desktopHostLease?.releaseSync'])
+    expect(stops.map(calleeOf)).toEqual(['hostLifecycle.stopSync'])
+    expect(releases[0].getStart(probe.source)).toBeLessThan(stops[0].getStart(probe.source))
+  })
+
+  it('holds the lease for the app from app start, on an external Host only', () => {
+    const lease = probe.binding('desktopHostLease')
+    if (!ts.isConditionalExpression(lease)) throw new Error('desktopHostLease is not conditional')
+    expect(probe.text(lease.condition)).toBe('preparedExternalHost')
+    expect(probe.text(lease.whenFalse)).toBe('null')
+    const [start] = probe.callsTo(lease.whenTrue, 'startDesktopHostLease')
+    expect(probe.propText(start, 0, 'profilePath')).toBe('externalHostProfilePath')
+    expect(probe.propText(start, 0, 'lifecycle')).toBe('hostLifecycle')
+    expect(probe.propText(start, 0, 'releaseBootHold')).toBe(
+      '(profilePath) => releaseExternalHostBootHold(profilePath)'
+    )
+
+    const holds = probe
+      .callsTo(probe.source, 'hold')
+      .filter((call) => calleeOf(call) === 'desktopHostLease?.reasons.hold')
+    expect(holds.map((call) => probe.argText(call, 0))).toEqual(["'app'"])
+    const appStart = probe
+      .callsTo(probe.source, 'start')
+      .filter(
+        (call) =>
+          calleeOf(call) === 'hostLifecycle.start' && probe.argText(call, 0) === "'app-start'"
+      )
+    expect(appStart).toHaveLength(1)
+    expect(appStart[0].getStart(probe.source)).toBeLessThan(holds[0].getStart(probe.source))
+  })
+
+  it("renews main's lease first on resume", () => {
+    const [resume] = probe.callsTo(probe.source, 'createResumeHostHealthCheck')
+    expect(probe.propText(resume, 0, 'renewLease')).toBe(
+      'async () => desktopHostLeaseRef?.lease.renewNow()'
+    )
+    expect(probe.assignmentsTo(probe.source, 'desktopHostLeaseRef')).toEqual(['desktopHostLease'])
+  })
+
+  it("feeds the broker's typed Host errors to the poison guard, which restarts through the lifecycle", () => {
+    const broker = probe.binding('desktopHostBroker')
+    if (!ts.isCallExpression(broker)) throw new Error('desktopHostBroker is not a call')
+    expect(calleeOf(broker)).toBe('createHostProjectionBroker')
+    expect(probe.propText(broker, 0, 'onTransportError')).toBe(
+      '(report) => hostPoisonDetectorRef?.report(report)'
+    )
+    const [assigned] = probe.assignmentsTo(probe.source, 'hostPoisonDetectorRef')
+    expect(assigned.startsWith('desktopHostLease ? createHostPoisonDetector({')).toBe(true)
+    const [detector] = probe.callsTo(probe.source, 'createHostPoisonDetector')
+    expect(probe.propText(detector, 0, 'lifecycle')).toBe('hostLifecycle')
+    expect(probe.propText(detector, 0, 'readHostStatus')).toBe(
+      '() => desktopHostLease.readHostStatus()'
+    )
+    expect(probe.propText(detector, 0, 'isUpdateRestartPending')).toBe(
+      '() => updateService.snapshot().restartPending === true'
+    )
+  })
+
+  it("answers the inspect channel from main's lease, and routes the menu's Restart Host to a confirmed restart", () => {
+    const [register] = probe.callsTo(probe.source, 'registerHostLifecycleHandlers')
+    const inspect = probe
+      .objectLiterals(register)
+      .filter((literal) => probe.propOf(literal, 'inspect') === 'desktopHostLease')
+    expect(inspect).toHaveLength(1)
+
+    const action = probe.binding('restartHostFromMenu')
+    if (!ts.isCallExpression(action)) throw new Error('restartHostFromMenu is not a call')
+    expect(calleeOf(action)).toBe('createHostRestartAction')
+    expect(probe.propText(action, 0, 'controller')).toBe('hostLifecycle')
+    const [menu] = probe.callsTo(probe.source, 'installApplicationMenu')
+    expect(probe.propText(menu, 0, 'restartHost')).toBe('() => void restartHostFromMenu()')
   })
 })
