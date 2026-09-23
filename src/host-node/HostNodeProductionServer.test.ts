@@ -1419,31 +1419,32 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     expect(registry.port.remove).toHaveBeenCalledOnce()
   })
 
-  it('stops after two consecutive missing or foreign self-checks and never on unreadable', async () => {
+  it('stops on the second missing or foreign self-check since the entry was last present, never on unreadable', async () => {
     const clock = steppedLeaseClock()
     const registry = fakeRegistryPort([
-      'missing',
+      'unreadable',
       'unreadable',
       'missing',
-      'unreadable',
-      'foreign',
       'present',
-      'missing',
-      'foreign'
+      'foreign',
+      'unreadable',
+      'missing'
     ])
     const h = harness({ environment: {}, leasePorts: clock.ports, registry: registry.port })
     await h.server.start()
     const leases = leasesOf(h)
     leases.authenticated(1)
-    for (let check = 1; check <= 7; check += 1) {
+    for (let check = 1; check <= 6; check += 1) {
       clock.advance(leases, 60_000)
       expect(h.server.phase, `after check ${check}`).toBe('running')
     }
-    // The eighth check is the second consecutive missing/foreign verdict.
+    // The seventh check is the second strike since `present`. The unreadable
+    // read between the two is no information: it neither counted nor reset.
     clock.advance(leases, 60_000)
+    expect(h.server.phase).not.toBe('running')
     await h.server.waitForShutdown()
     expect(h.server.phase).toBe('stopped')
-    expect(registry.port.check).toHaveBeenCalledTimes(8)
+    expect(registry.port.check).toHaveBeenCalledTimes(7)
     expect(registry.port.remove).toHaveBeenCalledOnce()
   })
 
@@ -1482,6 +1483,59 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
       await expect(h.server.waitForShutdown()).rejects.toThrow('runtime cleanup failed')
       expect(h.server.phase).toBe('failed')
       expect(h.lease.release).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  // S1a re-review R3: a stop that never settles, not only one that fails.
+  it('reports a lifetime stop that never finishes, keeps the profile authority, and fails the shutdown', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      const clock = steppedLeaseClock()
+      const h = harness({ environment: {}, leasePorts: clock.ports, lifetimeStopDeadlineMs: 50 })
+      // A cleanup step waiting on something that will never settle it.
+      h.composition.shutdown.mockImplementationOnce(() => new Promise<void>(() => {}))
+      await h.server.start()
+      clock.advance(leasesOf(h), HOST_LAST_LEASE_GRACE_MS)
+      const outcome = await Promise.race([
+        h.server.waitForShutdown().then(
+          () => 'stopped',
+          (error: Error) => error.message
+        ),
+        new Promise<string>((resolve) => setTimeout(() => resolve('still pending'), 2_000))
+      ])
+      expect(outcome).toBe('stopping after the last client lease did not finish within 50 ms')
+      // Runtime output, not a source pin: the whole stderr line, terminator included.
+      expect(write.mock.calls.map(([text]) => String(text))).toEqual(
+        expect.arrayContaining([
+          'taskwraith-host: stopping after the last client lease did not finish within 50 ms, profile authority retained\n'
+        ])
+      )
+      expect(h.server.phase).toBe('stopping')
+      expect(h.lease.release).not.toHaveBeenCalled()
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('stands the stop deadline down once a lifetime stop settles, either way', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      for (const fails of [false, true]) {
+        const clock = steppedLeaseClock()
+        const h = harness({ environment: {}, leasePorts: clock.ports, lifetimeStopDeadlineMs: 50 })
+        if (fails)
+          h.composition.shutdown.mockRejectedValueOnce(new Error('claim compaction refused'))
+        await h.server.start()
+        clock.advance(leasesOf(h), HOST_LAST_LEASE_GRACE_MS)
+        await h.server.waitForShutdown().catch(() => undefined)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        const late = write.mock.calls
+          .map(([text]) => String(text))
+          .filter((line) => line.includes('did not finish'))
+        expect(late, fails ? 'after a failed stop' : 'after a clean stop').toEqual([])
+      }
     } finally {
       write.mockRestore()
     }

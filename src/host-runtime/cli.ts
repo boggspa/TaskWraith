@@ -70,6 +70,9 @@ export async function runHostProductionCli(
   createProduction: typeof createHostNodeProductionFactory = createHostNodeProductionFactory,
   runtime: HostProductionCliRuntime = {}
 ): Promise<void> {
+  // Every entry point that serves a production Host, not only this module's
+  // main(): the npm `taskwraith-host` bin calls this directly. Idempotent.
+  installHostStdioGuard()
   const command = parseHostProductionCli(argv)
   if (command.command !== 'serve') throw new HostProductionCliError('Expected serve command.')
   const terminalLauncher = providerTerminalLauncher(runtime)

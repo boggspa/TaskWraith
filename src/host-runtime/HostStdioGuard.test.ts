@@ -26,6 +26,25 @@ describe('HostStdioGuard', () => {
     expect(() => stdout.emit('error', epipe())).not.toThrow()
   })
 
+  it('guards stdout as well as stderr when installed as the CLI installs it, with no arguments', () => {
+    // Recorded, not attached: the test worker's own streams stay as they were.
+    const stdout = vi.spyOn(process.stdout, 'on').mockImplementation(() => process.stdout)
+    const stderr = vi.spyOn(process.stderr, 'on').mockImplementation(() => process.stderr)
+    try {
+      installHostStdioGuard()
+      for (const on of [stdout, stderr]) {
+        // `on` is overloaded per event; the spy types only the last overload.
+        const calls = on.mock.calls as unknown as [string, (error: Error) => void][]
+        const guard = calls.find(([event]) => event === 'error')?.[1]
+        expect(guard).toBeTypeOf('function')
+        expect(() => guard!(epipe())).not.toThrow()
+      }
+    } finally {
+      stdout.mockRestore()
+      stderr.mockRestore()
+    }
+  })
+
   it('guards each stream once however often it is installed', () => {
     const stderr = new EventEmitter()
     installHostStdioGuard([stderr])

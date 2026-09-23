@@ -111,6 +111,18 @@ export interface HostNodeProductionListener {
  */
 export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 
+/**
+ * How long a stop the Host decides on its own (the last lease went, or its
+ * registry entry did) may take before it is reported as stuck. By then the
+ * listener is closed and may be all that held the event loop, so a cleanup
+ * step that waits only on unref'd timers (a history worker that cannot start
+ * backs off on one) would let the process run dry and exit 0 halfway, with
+ * the profile authority and registry entry still held. The deadline's timer
+ * keeps the process alive until the stop settles; if it expires first, the
+ * stop is reported and waitForShutdown fails, so the CLI exits non-zero.
+ */
+export const HOST_LIFETIME_STOP_DEADLINE_MS = 60_000
+
 export interface HostNodePermissionConsentAuthority extends HostPermissionConsentAuthorityPort {
   dispose(): void
 }
@@ -169,6 +181,8 @@ export interface HostNodeProductionServerOptions {
   readonly registry?: HostRegistryPublisherPort
   /** Lease registry clock/scheduler seam for tests; production uses the defaults. */
   readonly leasePorts?: HostLeaseRegistryPorts
+  /** Seam for tests; production uses HOST_LIFETIME_STOP_DEADLINE_MS. */
+  readonly lifetimeStopDeadlineMs?: number
 }
 
 function deferred(): {
@@ -891,15 +905,28 @@ export class HostNodeProductionServer {
    * entry is. Nobody retries it the way a second SIGTERM retries a signalled
    * stop, so a cleanup failure must not end in a silent exit 0 with the profile
    * authority left behind: name what failed, and settle waitForShutdown as a
-   * failure, which the CLI turns into a non-zero exit.
+   * failure, which the CLI turns into a non-zero exit. The same goes for a stop
+   * that never finishes (HOST_LIFETIME_STOP_DEADLINE_MS).
    */
   private stopForLifetime(action: string): void {
-    void this.stop().catch((error: unknown) => {
+    const deadlineMs = this.options.lifetimeStopDeadlineMs ?? HOST_LIFETIME_STOP_DEADLINE_MS
+    // Ref'd on purpose: it is what keeps the process alive until the stop settles.
+    const deadline = setTimeout(() => {
       writeHostStderr(
-        `taskwraith-host: ${action} failed, profile authority retained: ${describeFailure(error)}\n`
+        `taskwraith-host: ${action} did not finish within ${deadlineMs} ms, profile authority retained\n`
       )
-      this.shutdown.reject(asError(error))
-    })
+      this.shutdown.reject(new Error(`${action} did not finish within ${deadlineMs} ms`))
+    }, deadlineMs)
+    void this.stop().then(
+      () => clearTimeout(deadline),
+      (error: unknown) => {
+        clearTimeout(deadline)
+        writeHostStderr(
+          `taskwraith-host: ${action} failed, profile authority retained: ${describeFailure(error)}\n`
+        )
+        this.shutdown.reject(asError(error))
+      }
+    )
   }
 
   private onLeaseTick(info: HostLeaseTickInfo): void {
@@ -928,15 +955,17 @@ export class HostNodeProductionServer {
       this.registrySelfCheckStrikes += 1
       if (this.registrySelfCheckStrikes >= HOST_REGISTRY_SELF_CHECK_STRIKES) {
         writeHostStderr(
-          `taskwraith-host: registry entry ${verdict} on ${this.registrySelfCheckStrikes} consecutive checks; stopping\n`
+          `taskwraith-host: registry entry ${verdict} on ${this.registrySelfCheckStrikes} checks since it was last present; stopping\n`
         )
         this.stopForLifetime('stopping after the registry self-check')
       }
       return
     }
-    // `present` clears the streak; `unreadable` breaks it too — a flaky disk
-    // or a rename race must never take a healthy Host down.
-    this.registrySelfCheckStrikes = 0
+    // Only `present` clears the streak. `unreadable` is no information: it is
+    // never a strike, so a flaky disk alone cannot take a Host down, and it
+    // never breaks a streak either: a streak means the entry was already seen
+    // deleted or taken over, which a read that failed cannot contradict.
+    if (verdict === 'present') this.registrySelfCheckStrikes = 0
   }
 
   private publishRegistryEntry(): void {

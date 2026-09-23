@@ -44,9 +44,10 @@ export interface HostRegistryEntryRefresh {
 /**
  * Self-check verdicts. `missing` (ENOENT) and `foreign` (readable, but the
  * pid, birth identity or boot epoch name another process) are the two that
- * may stop the Host — and only on two consecutive checks. `unreadable` (EIO,
- * EACCES, malformed) never stops it: a flaky disk or a rename race must not
- * take a healthy Host down.
+ * may stop the Host — on the second such check since the entry was last seen
+ * `present`. `unreadable` (EIO, EACCES, malformed) is no information: it never
+ * counts toward a stop, so a flaky disk alone cannot take a healthy Host down,
+ * and it never clears a streak either.
  */
 export type HostRegistryCheckResult = 'present' | 'missing' | 'foreign' | 'unreadable'
 

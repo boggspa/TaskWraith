@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -9,7 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
 
@@ -66,10 +67,10 @@ async function waitForAsync(
   throw new Error(`Timed out waiting for ${label}`)
 }
 
-function waitForExit(child: ChildProcess): Promise<void> {
+function waitForExit(child: ChildProcess, timeoutMs = 10_000): Promise<void> {
   return new Promise((resolve, reject) => {
     if (child.exitCode !== null || child.signalCode !== null) return resolve()
-    const timer = setTimeout(() => reject(new Error('production Host did not exit')), 10_000)
+    const timer = setTimeout(() => reject(new Error('production Host did not exit')), timeoutMs)
     timer.unref?.()
     child.once('exit', () => {
       clearTimeout(timer)
@@ -368,6 +369,7 @@ describe('production Host CLI subprocess: lease lifetime', () => {
   const GRACE_MS = 1_500
   const TIMING = `heartbeat:200,ttl:1000,grace:${GRACE_MS}`
   const spawned: ChildProcess[] = []
+  const hostProfiles: string[] = []
 
   afterEach(async () => {
     for (const child of spawned.splice(0)) {
@@ -383,10 +385,18 @@ describe('production Host CLI subprocess: lease lifetime', () => {
       // Reaped: the pid no longer names a process this test started.
       expect(() => process.kill(child.pid!, 0)).toThrow()
     }
+    // A Host that died without cleaning up (a regression these tests catch)
+    // leaves its socket directory in the OS temp dir; every Host here is gone.
+    for (const profile of hostProfiles.splice(0)) {
+      if (!existsSync(profile)) continue
+      rmSync(dirname(taskWraithHostSocketPath(realpathSync(profile))), {
+        recursive: true,
+        force: true
+      })
+    }
   })
 
-  function buildCli(root: string): string {
-    const outDir = join(root, 'out')
+  function buildCli(root: string, outDir = join(root, 'out'), historyWorkers = true): string {
     const compile = spawnSync(
       process.execPath,
       [
@@ -399,6 +409,7 @@ describe('production Host CLI subprocess: lease lifetime', () => {
       { cwd: process.cwd(), encoding: 'utf8' }
     )
     expect(compile.status, compile.stdout).toBe(0)
+    if (!historyWorkers) return join(outDir, 'host-runtime', 'cli.js')
     const workers = spawnSync(
       process.execPath,
       [
@@ -415,9 +426,11 @@ describe('production Host CLI subprocess: lease lifetime', () => {
   function spawnHost(
     cli: string,
     profile: string,
-    extraEnv: Record<string, string>
+    extraEnv: Record<string, string>,
+    extraArgs: readonly string[] = []
   ): { child: ChildProcess; stderr: () => string } {
     mkdirSync(profile, { recursive: true })
+    hostProfiles.push(profile)
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       PATH: '',
@@ -430,7 +443,7 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     }
     const child = spawn(
       process.execPath,
-      [cli, 'serve', '--mode', 'production', '--profile', profile],
+      [cli, 'serve', '--mode', 'production', '--profile', profile, ...extraArgs],
       { env, stdio: ['ignore', 'ignore', 'pipe'] }
     )
     spawned.push(child)
@@ -469,7 +482,9 @@ describe('production Host CLI subprocess: lease lifetime', () => {
   function expectArtefactsGone(profile: string): void {
     expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
     expect(existsSync(taskWraithHostTokenPath(profile))).toBe(false)
-    expect(existsSync(taskWraithHostSocketPath(profile))).toBe(false)
+    // The socket path hashes the canonical profile path, as the Host names it
+    // (the OS temp dir is behind a symlink on macOS).
+    expect(existsSync(taskWraithHostSocketPath(realpathSync(profile)))).toBe(false)
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
   }
 
@@ -599,12 +614,13 @@ describe('production Host CLI subprocess: lease lifetime', () => {
    * write into a pipe with no reader. An unguarded stderr turned the first one
    * into an uncaught EPIPE: exit 1, no cleanup, runs orphaned.
    */
-  it('outlives a stderr reader that has gone: every lease line after it is dropped, and it still stops cleanly', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'host-epipe-subprocess-'))
-    paths.push(root)
-    const cli = buildCli(root)
-    const profile = join(root, 'orphaned')
+  async function outlivesAGoneStderrReader(
+    root: string,
+    profile: string,
+    entry: readonly string[]
+  ): Promise<void> {
     mkdirSync(profile, { recursive: true })
+    hostProfiles.push(profile)
     // A longer grace than the rest of this block: the relaunch below must land inside it.
     const graceMs = 3_000
     const env: NodeJS.ProcessEnv = {
@@ -616,11 +632,12 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     delete env[HOST_PERSIST_ENV]
     delete env[HOST_LEASE_DISABLED_ENV]
     // HostExternalSupervisor's spawn shape.
-    const child = spawn(
-      process.execPath,
-      [cli, 'serve', '--mode', 'production', '--profile', profile],
-      { env, detached: true, stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true }
-    )
+    const child = spawn(process.execPath, [...entry], {
+      env,
+      detached: true,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      windowsHide: true
+    })
     spawned.push(child)
     const app = await connect(profile, 'tui-epipe-app')
 
@@ -649,5 +666,179 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     expect(child.exitCode).toBe(0)
     expect(Date.now() - leftAt).toBeGreaterThanOrEqual(graceMs - 300)
     expectArtefactsGone(profile)
+  }
+
+  it('outlives a stderr reader that has gone: every lease line after it is dropped, and it still stops cleanly', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-epipe-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root)
+    const profile = join(root, 'orphaned')
+    await outlivesAGoneStderrReader(root, profile, [
+      cli,
+      'serve',
+      '--mode',
+      'production',
+      '--profile',
+      profile
+    ])
   }, 90_000)
+
+  // S1a re-review R2: the published package's `taskwraith-host` command calls
+  // runHostProductionCli directly, not through cli.js's main().
+  it('outlives a gone stderr reader through the npm taskwraith-host bin as well', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-epipe-bin-subprocess-'))
+    paths.push(root)
+    // The package layout scripts/prepare-cli-package.cjs produces: bin/ beside dist/host/.
+    const packageRoot = join(root, 'package')
+    buildCli(root, join(packageRoot, 'dist', 'host'))
+    const bin = join(packageRoot, 'bin', 'taskwraith-host.cjs')
+    mkdirSync(join(packageRoot, 'bin'))
+    copyFileSync(join(process.cwd(), 'packages', 'cli', 'bin', 'taskwraith-host.cjs'), bin)
+    const profile = join(root, 'orphaned')
+    await outlivesAGoneStderrReader(root, profile, [bin, '--profile', profile])
+  }, 90_000)
+
+  /**
+   * S1a re-review R3 on the real binary, by the reviewer's reproduction: a
+   * Host whose history worker cannot start (built without the stage-3 worker
+   * bundles) reaches its idle exit. The catalogue dispose in its cleanup then
+   * waits only on unref'd timers, and with the listener closed nothing else
+   * held the event loop: the process ran dry halfway and exited 0 with the
+   * profile authority and its registry entry left behind.
+   */
+  it("finishes a lifetime stop that waits only on unref'd timers, instead of exiting halfway", async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-partial-stop-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root, join(root, 'out'), false)
+    const profile = join(root, 'partial')
+    const graceMs = 2_000
+    const host = spawnHost(cli, profile, {
+      [HOST_LEASE_TIMING_ENV]: `heartbeat:200,ttl:1000,grace:${graceMs}`
+    })
+    const holder = await connect(profile, 'tui-partial-holder')
+    // The worker fails at once and restarts on a doubling backoff (250 ms to
+    // 8 s). Its sixth restart is due about 16.7 s in: holding for 9.5 s puts
+    // the stop, one grace after the close, in that eight-second gap, where no
+    // restarting worker is alive to keep the process up by accident.
+    await new Promise((resolve) => setTimeout(resolve, 9_500))
+    holder.close()
+    await waitForExit(host.child, 45_000)
+    expect(host.child.exitCode, host.stderr()).toBe(0)
+    expect(host.stderr()).toContain('stopping after the last client lease (idle)')
+    expect(host.stderr()).not.toContain('did not finish')
+    expectArtefactsGone(profile)
+    expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('missing')
+  }, 90_000)
+
+  /**
+   * S1a re-review R1 on the real binary. The app quits with a run in flight,
+   * so the grace expires with the run live and the Host drains. The app is
+   * reopened during the drain, the run finishes under it, and its socket drops
+   * once. The reconnect 1.8 s later (the TUI's first retry) must find the
+   * Host, which still leaves one grace after the client does.
+   */
+  it.skipIf(process.platform === 'win32')(
+    'keeps a draining Host for a client that came back, saw the run finish and dropped once',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'host-drain-return-subprocess-'))
+      paths.push(root)
+      const cli = buildCli(root)
+      const profile = join(root, 'draining')
+      const workspace = join(root, 'workspace')
+      mkdirSync(workspace)
+      const graceMs = 4_000
+      // @portability-ok: a POSIX fake Muse (skipped on win32) whose run outlives the grace.
+      const muse = join(root, 'muse')
+      writeFileSync(
+        muse,
+        '#!/bin/sh\n/bin/sleep 6\nprintf \'%s\\n\' \'{"schema_version":1,"id":"33333333-3333-3333-3333-333333333333","stream":{"kind":"session","id":"subprocess-slow-muse-session"},"sequence":1,"recorded_at":1780531400000000,"record_type":"event","payload_type":"run.terminal.completed","payload":{"kind":"run_terminal_completed","terminal":"completed","text":"subprocess slow muse completed"}}\'\n'
+      )
+      chmodSync(muse, 0o700)
+      const host = spawnHost(
+        cli,
+        profile,
+        {
+          [HOST_LEASE_TIMING_ENV]: `heartbeat:200,ttl:1000,grace:${graceMs}`,
+          META_API_KEY: 'subprocess-test-key'
+        },
+        ['--muse-binary', muse]
+      )
+
+      // The app starts the run and quits.
+      await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
+      const app = new HostProjectionClient({
+        userDataPath: profile,
+        // The identity command() stamps as the actor.
+        client: { clientId: 'subprocess-client', clientClass: 'test', clientVersion: '1.0' },
+        capabilities: [
+          'bootstrap',
+          'commands',
+          'receipts',
+          'setup',
+          'provider-catalog',
+          'provider-auth',
+          'history',
+          'health'
+        ]
+      })
+      await app.connect()
+      const ws = await app.submitCommand(
+        command('workspace.register', 'cmd-ws', {}, { path: workspace })
+      )
+      const workspaceId = ws.resultRef?.kind === 'workspace' ? ws.resultRef.workspaceId : ''
+      const thread = await app.submitCommand(
+        command('thread.create', 'cmd-thread', {}, { scope: 'workspace', workspaceId })
+      )
+      const threadId = thread.resultRef?.kind === 'thread' ? thread.resultRef.threadId : ''
+      const offers = await app.getProviderOffers('muse')
+      await expect(
+        app.submitCommand(
+          command(
+            'thread.configure',
+            'cmd-config',
+            { threadId },
+            {
+              providerId: 'muse',
+              modelId: 'muse-spark-1.2',
+              postureId: 'default',
+              offerRevision: offers.offerRevision
+            }
+          )
+        )
+      ).resolves.toMatchObject({ status: 'succeeded' })
+      await expect(
+        app.submitCommand(command('composer.send', 'cmd-send', { threadId }, { text: 'slow' }))
+      ).resolves.toMatchObject({ status: 'succeeded' })
+      app.close()
+      await waitFor(() => host.stderr().includes('draining (cap'), 'the drain', 15_000)
+
+      // Reopened during the drain; the run finishes while it is attached.
+      const reopened = await connect(profile, 'tui-drain-reopened')
+      await waitForAsync(
+        async () => (await reopened.getHostStatus()).liveWork.runs === 0,
+        'the run to finish',
+        15_000
+      )
+      // One drop, and the reconnect 1.8 s later.
+      reopened.close()
+      await new Promise((resolve) => setTimeout(resolve, 1_800))
+      expect(host.child.exitCode, host.stderr()).toBeNull()
+      const back = await connect(profile, 'tui-drain-back')
+      await expect(back.getHostStatus()).resolves.toMatchObject({
+        pid: host.child.pid,
+        lifetime: { phase: 'held', holders: 1 }
+      })
+
+      // It quits for good: the Host leaves one grace later, and cleanly.
+      back.close()
+      const leftAt = Date.now()
+      await waitForExit(host.child)
+      expect(host.child.exitCode, host.stderr()).toBe(0)
+      expect(Date.now() - leftAt).toBeGreaterThanOrEqual(graceMs - 300)
+      expect(host.stderr()).toContain('draining resumes')
+      expect(host.stderr()).toContain('exit requested: drained')
+      expectArtefactsGone(profile)
+    },
+    90_000
+  )
 })
