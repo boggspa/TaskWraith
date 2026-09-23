@@ -1,6 +1,15 @@
 import { EventEmitter } from 'node:events'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import { declineHostLease } from '../../host-client/HostLeaseClient'
+import type { HostAuthority } from '../../host-runtime/HostAuthority'
+import { HostLeaseRegistry } from '../../host-runtime/HostLeaseRegistry'
+import { HostLocalServer } from '../../host-runtime/HostLocalServer'
+import { HostSession } from '../../host-runtime/HostSession'
 
 import type {
   HostBootstrapWelcome,
@@ -11,9 +20,10 @@ import type {
   HostSnapshotFrame
 } from '../../shared/hostProtocol'
 import { createEmptyHostSnapshot } from '../../shared/hostProtocol'
-import type {
+import {
   HostProjectionClient,
-  HostProjectionClientOptions
+  HostProjectionTransportError,
+  type HostProjectionClientOptions
 } from '../host/HostProjectionClient'
 import {
   PAIRED_HOST_PROJECTION_METHODS,
@@ -88,16 +98,25 @@ function receipt(commandId = 'command-1'): HostCommandReceipt {
 class FakeHostClient extends EventEmitter {
   connected = false
   welcome: HostBootstrapWelcome | null = null
+  /** Every Host call and phone send, in order. */
+  readonly order: string[] = []
   readonly connect = vi.fn(async () => {
+    this.order.push('connect')
     this.connected = true
     this.welcome = welcome()
     return this.welcome
+  })
+  readonly declineHostLease = vi.fn(async () => {
+    this.order.push('decline')
   })
   readonly close = vi.fn(() => {
     this.connected = false
     this.welcome = null
   })
-  readonly getSnapshot = vi.fn(async () => snapshotFrame())
+  readonly getSnapshot = vi.fn(async () => {
+    this.order.push('snapshot')
+    return snapshotFrame()
+  })
   readonly getDeltasSince = vi.fn(async (position: { generation: number; cursor: number }) => ({
     type: 'host.deltas',
     protocolVersion: 2,
@@ -167,7 +186,10 @@ function harness() {
       deviceKey: DEVICE_KEY,
       clientId: CLIENT_ID,
       displayName: 'My iPhone',
-      send: (method, params) => sent.push({ method, params })
+      send: (method, params) => {
+        sent.push({ method, params })
+        fake.order.push(`send:${method}`)
+      }
     })
   return { gateway, fake, sent, retries, createClient, attach }
 }
@@ -375,5 +397,146 @@ describe('PairedHostProjectionGateway', () => {
     expect(h.retries).toHaveLength(1)
     h.gateway.detach(DEVICE_KEY)
     expect(h.retries[0]?.cancelled).toBe(true)
+  })
+
+  /** Host-lifetime S2 (S1a note 5(b)): a phone never counts as holding the Host. */
+  it('declines the lease on its Host socket before anything reaches the phone or is asked for it', async () => {
+    const h = harness()
+    await h.attach()
+    expect(h.fake.declineHostLease).toHaveBeenCalledOnce()
+    expect(h.fake.order).toEqual([
+      `send:${PAIRED_HOST_PROJECTION_METHODS.state}`,
+      'connect',
+      'decline',
+      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`,
+      'snapshot',
+      `send:${PAIRED_HOST_PROJECTION_METHODS.snapshot}`,
+      `send:${PAIRED_HOST_PROJECTION_METHODS.state}`
+    ])
+  })
+
+  it('declines again on every reconnect, and never twice on one socket', async () => {
+    const h = harness()
+    await h.attach()
+    // A new phone epoch on the same Host socket: nothing to decline again.
+    await h.attach()
+    expect(h.fake.declineHostLease).toHaveBeenCalledOnce()
+
+    h.fake.disconnect()
+    h.fake.order.length = 0
+    h.retries[0]!.callback()
+    await vi.waitFor(() => expect(h.fake.getSnapshot).toHaveBeenCalledTimes(3))
+    expect(h.fake.declineHostLease).toHaveBeenCalledTimes(2)
+    expect(h.fake.order.slice(0, 4)).toEqual([
+      'connect',
+      'decline',
+      `send:${PAIRED_HOST_PROJECTION_METHODS.welcome}`,
+      'snapshot'
+    ])
+  })
+
+  it('closes a socket whose decline failed, and declines on the next connect', async () => {
+    const h = harness()
+    h.fake.declineHostLease.mockRejectedValueOnce(new Error('Timed out waiting for the Host.'))
+    await expect(h.attach()).rejects.toThrow('Timed out waiting for the Host.')
+    expect(h.fake.close).toHaveBeenCalledOnce()
+    expect(h.fake.getSnapshot).not.toHaveBeenCalled()
+    expect(h.sent.map((entry) => entry.params)).toEqual([
+      { phase: 'connecting' },
+      { phase: 'unavailable' }
+    ])
+    expect(h.retries).toHaveLength(1)
+
+    h.retries[0]!.callback()
+    await vi.waitFor(() => expect(h.fake.getSnapshot).toHaveBeenCalledOnce())
+    expect(h.fake.declineHostLease).toHaveBeenCalledTimes(2)
+    expect(h.sent.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 4 })
+  })
+
+  it('serves a phone from a Host that predates leases', async () => {
+    const h = harness()
+    h.fake.declineHostLease.mockRejectedValueOnce(
+      new HostProjectionTransportError('unknown_request_kind')
+    )
+    await h.attach()
+    expect(h.fake.close).not.toHaveBeenCalled()
+    expect(h.sent.at(-1)?.params).toEqual({ phase: 'live', generation: 3, cursor: 4 })
+  })
+})
+
+/** The listener's own lease accounting, as `host.status` reports it. */
+describe('PairedHostProjectionGateway on a real Host listener', () => {
+  const cleanups: Array<() => unknown> = []
+  afterEach(async () => {
+    while (cleanups.length) await cleanups.pop()!()
+  })
+
+  it('never counts a connected phone as a holder', async () => {
+    const profile = mkdtempSync(join(tmpdir(), 'paired-gateway-lease-'))
+    const server = new HostLocalServer({
+      userDataPath: profile,
+      hostId: 'paired-gateway-host',
+      hostVersion: 'node-host-v1',
+      session: new HostSession({
+        host: { hostId: 'paired-gateway-host', hostVersion: 'node-host-v1' },
+        runtime: { getPosition: () => ({ generation: 3, cursor: 4 }) },
+        hostCapabilityOffer: [
+          'bootstrap',
+          'snapshot',
+          'deltas',
+          'model-offers',
+          'commands',
+          'receipts',
+          'health'
+        ]
+      }),
+      authority: {
+        snapshot: vi.fn(async () => ({ ok: true, value: snapshotFrame().snapshot })),
+        health: vi.fn(async () => ({
+          ok: true,
+          value: { hostStatus: 'ok', connectionPhase: 'live', supervised: false, freshness: 'live' }
+        }))
+      } as unknown as HostAuthority,
+      leases: new HostLeaseRegistry({
+        onExit: () => undefined,
+        ports: { monotonicNowNs: () => 0n, wallNowMs: () => 0, schedule: () => () => {} }
+      })
+    })
+    await server.start()
+    cleanups.push(async () => {
+      await server.stop()
+      rmSync(profile, { recursive: true, force: true })
+    })
+
+    const gateway = new PairedHostProjectionGateway({
+      userDataPath: profile,
+      clientVersion: '1.9.4'
+    })
+    cleanups.push(() => gateway.dispose())
+    const sent: string[] = []
+    await gateway.attach({
+      deviceKey: DEVICE_KEY,
+      clientId: CLIENT_ID,
+      displayName: 'My iPhone',
+      send: (method) => sent.push(method)
+    })
+    expect(sent).toContain(PAIRED_HOST_PROJECTION_METHODS.snapshot)
+
+    const reader = new HostProjectionClient({
+      userDataPath: profile,
+      client: { clientId: 'tui-status-reader', clientClass: 'tui', clientVersion: '1.0.0' },
+      capabilities: ['bootstrap', 'health'],
+      connectTimeoutMs: 2_000,
+      requestTimeoutMs: 2_000
+    })
+    cleanups.push(() => reader.close())
+    await reader.connect()
+    await declineHostLease(reader)
+    const status = await reader.getHostStatus()
+    expect(status.lifetime).toMatchObject({ holders: 0, implicitHolders: 0, declined: 2 })
+    expect(status.clients).toContainEqual(
+      expect.objectContaining({ clientClass: 'ios', lease: 'declined' })
+    )
+    expect(server.leaseSummary()).toMatchObject({ holders: 0, explicitHolders: 0 })
   })
 })

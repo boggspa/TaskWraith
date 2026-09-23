@@ -6,6 +6,12 @@
  * stores, or fabricates lifecycle state: it connects to the already-supervised
  * local Host, forwards its versioned frames, and sends governed commands back
  * through that same Host authority path.
+ *
+ * A phone never keeps the Host alive. Every socket the gateway opens declines
+ * the Host lease right after it connects, before anything is forwarded to the
+ * phone or requested for it, reconnects included; a socket whose decline fails
+ * is closed rather than left counting as a holder. The phone's own `host.lease`
+ * and `host.status` requests are refused.
  */
 
 import {
@@ -23,6 +29,7 @@ import {
   type HostLocalTransportRequest,
   type HostLocalTransportSuccessResult
 } from '../../shared/hostProtocolTransport'
+import { declineHostLease } from '../../host-client/HostLeaseClient'
 import {
   HostProjectionClient,
   type HostProjectionClientOptions
@@ -391,6 +398,8 @@ export class PairedHostProjectionGateway {
         let welcome: HostBootstrapWelcome | null = session.client.welcome
         if (!session.client.connected) {
           welcome = await session.client.connect()
+          if (!this.isCurrent(session)) return
+          await this.declineLease(session)
         }
         if (!this.isCurrent(session)) return
         if (!welcome) throw new PairedHostProjectionRequestError('host_unavailable')
@@ -418,6 +427,20 @@ export class PairedHostProjectionGateway {
       await work
     } finally {
       if (session.connecting === work) session.connecting = null
+    }
+  }
+
+  /**
+   * Declares this socket a non-holder for its lifetime. A Host that predates
+   * leases has nothing to decline. Any other failure closes the socket: an
+   * undeclined phone socket would count as holding the Host.
+   */
+  private async declineLease(session: PairedHostProjectionSession): Promise<void> {
+    try {
+      await declineHostLease(session.client)
+    } catch (error) {
+      session.client.close()
+      throw error
     }
   }
 
