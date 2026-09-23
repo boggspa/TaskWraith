@@ -10,6 +10,7 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
+import { createConnection } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -728,6 +729,98 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     expect(host.stderr()).not.toContain('did not finish')
     expectArtefactsGone(profile)
     expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('missing')
+  }, 90_000)
+
+  /**
+   * S1a confirmation C1 on the real binary: a stop that outlasts its deadline
+   * but finishes is late, not failed. A connection that never says hello and
+   * never closes its side holds the listener's client drain for one full
+   * drain timeout (1 s), three times the 300 ms deadline `stop:` sets here.
+   * The held drain comes from half-closing a Unix-domain socket, so this runs
+   * where the Host listens on one; the unit suite pins the logic everywhere.
+   */
+  it.skipIf(process.platform === 'win32')(
+    'exits 0 from a lifetime stop that finishes after its deadline, and says it was late',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'host-late-stop-subprocess-'))
+      paths.push(root)
+      const cli = buildCli(root)
+      const profile = join(root, 'late')
+      const host = spawnHost(cli, profile, {
+        [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500,stop:300'
+      })
+      await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
+      expect(host.stderr()).toContain('grace 1500ms, stop deadline 300ms')
+      // Unauthenticated, so no holder: the grace still runs out on schedule.
+      const halfOpen = createConnection({
+        path: taskWraithHostSocketPath(realpathSync(profile)),
+        allowHalfOpen: true
+      })
+      try {
+        await new Promise<void>((resolve, reject) => {
+          halfOpen.once('connect', resolve)
+          halfOpen.once('error', reject)
+        })
+        halfOpen.on('error', () => undefined)
+        await waitForExit(host.child, 15_000)
+      } finally {
+        halfOpen.destroy()
+      }
+      expect(host.child.exitCode, host.stderr()).toBe(0)
+      expect(host.stderr()).toContain(
+        'stopping after the last client lease has not finished within 300 ms, profile authority still held'
+      )
+      expect(host.stderr()).toContain(
+        'stopping after the last client lease finished after its 300 ms deadline, profile authority released'
+      )
+      expect(host.stderr()).not.toContain('did not finish')
+      expectArtefactsGone(profile)
+      expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('missing')
+    },
+    90_000
+  )
+
+  /**
+   * The stuck half of the same deadline, by the reviewer's reproduction: the
+   * Host with no history worker bundles, its stop landed in the worker's
+   * eight-second restart gap (the R3 test above explains it), where only
+   * unref'd timers are left. Past the 1 s deadline `stop:` sets, nothing holds
+   * the process: it must exit 1 then, with the profile authority and registry
+   * entry kept, not wait out the gap.
+   */
+  it('exits 1 at the deadline from a lifetime stop that leaves nothing to run, keeping the profile authority', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-stuck-stop-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root, join(root, 'out'), false)
+    const profile = join(root, 'stuck')
+    const host = spawnHost(cli, profile, {
+      [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:2000,stop:1000'
+    })
+    const holder = await connect(profile, 'tui-stuck-holder')
+    await new Promise((resolve) => setTimeout(resolve, 9_500))
+    holder.close()
+    await waitFor(
+      () => host.stderr().includes('stopping after the last client lease (idle)'),
+      'the lifetime stop',
+      10_000
+    )
+    const stopAt = Date.now()
+    await waitForExit(host.child, 15_000)
+    const elapsed = Date.now() - stopAt
+    expect(host.child.exitCode, host.stderr()).toBe(1)
+    // Held to the deadline, and no further: the worker's next restart, which
+    // would have let the stop finish, is seconds away.
+    expect(elapsed).toBeGreaterThanOrEqual(900)
+    expect(elapsed).toBeLessThan(3_000)
+    expect(host.stderr()).toContain(
+      'stopping after the last client lease has not finished within 1000 ms, profile authority still held'
+    )
+    expect(host.stderr()).toContain(
+      'stopping after the last client lease did not finish within 1000 ms, profile authority retained'
+    )
+    expect(host.stderr()).not.toContain('finished after')
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
+    expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('present')
   }, 90_000)
 
   /**

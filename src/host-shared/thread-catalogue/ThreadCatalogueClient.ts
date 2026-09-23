@@ -27,6 +27,17 @@ export type {
 export const THREAD_CATALOGUE_REQUEST_TIMEOUT_MS = 150_000
 
 /**
+ * How long dispose() waits for the worker to answer `close`. This, the
+ * termination bound and the restart backoff's ceiling are summed into a
+ * production Host's lifetime-stop deadline (HOST_LIFETIME_STOP_DEADLINE_MS).
+ */
+export const THREAD_CATALOGUE_CLOSE_TIMEOUT_MS = 2_000
+/** How long a worker's termination may go unconfirmed before it is an error. */
+export const THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS = 5_000
+/** The longest wait before the next restart of a worker that keeps failing. */
+export const THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS = 10_000
+
+/**
  * Which lane a request takes inside the worker.
  *
  * `background` is an opt-in for whole-corpus repair, whose only caller today is
@@ -197,7 +208,7 @@ export class ThreadCatalogueClient {
     if (this.stopping || !this.options.restart || this.restartFlight) return
     const old = this.port
     const delay = Math.min(
-      10_000,
+      THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS,
       (this.options.restartDelayMs ?? 250) * 2 ** Math.min(6, this.restartAttempts++)
     )
     let cancel!: () => void
@@ -236,7 +247,7 @@ export class ThreadCatalogueClient {
         new Promise<never>((_, reject) => {
           timer = setTimeout(
             () => reject(new Error('History worker termination is unconfirmed')),
-            5000
+            THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS
           )
           timer.unref?.()
         })
@@ -261,7 +272,7 @@ export class ThreadCatalogueClient {
     }
     const flight = this.restartFlight
     try {
-      if (!this.closed) await this.call({ method: 'close' }, 2000)
+      if (!this.closed) await this.call({ method: 'close' }, THREAD_CATALOGUE_CLOSE_TIMEOUT_MS)
     } catch {
       /* The disposable reader still terminates below. Canonical writers drain separately. */
     } finally {

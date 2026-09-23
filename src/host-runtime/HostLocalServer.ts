@@ -127,7 +127,13 @@ const MAX_HANDSHAKE_STALL_EXTENSIONS = 2
  * a write backlog already bounded by MAX_SOCKET_WRITE_BACKLOG_BYTES.
  */
 const MAX_CLIENTS_DEFAULT = 32
-const SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT = 1_000
+/**
+ * The default bound on each of stop()'s three drains, run one after another:
+ * the in-flight requests, the clients closing after `host.closing`, and the
+ * clients left after a forced close. A production Host's lifetime-stop
+ * deadline is summed from it (HOST_LIFETIME_STOP_DEADLINE_MS).
+ */
+export const HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS = 1_000
 const MAX_LINE_BYTES = 256_000
 // Snapshot collections are independently bounded by the Host protocol, but a
 // coherent snapshot can legitimately exceed the ordinary request/response
@@ -404,7 +410,8 @@ export class HostLocalServer {
       ...options,
       platform: options.platform ?? process.platform,
       maxClients: options.maxClients ?? MAX_CLIENTS_DEFAULT,
-      shutdownDrainTimeoutMs: options.shutdownDrainTimeoutMs ?? SHUTDOWN_DRAIN_TIMEOUT_MS_DEFAULT,
+      shutdownDrainTimeoutMs:
+        options.shutdownDrainTimeoutMs ?? HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS,
       handshakeTimeoutMs: options.handshakeTimeoutMs ?? HANDSHAKE_TIMEOUT_MS,
       now: options.now ?? (() => Date.now())
     }

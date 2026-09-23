@@ -115,6 +115,24 @@ describe('resolveHostLeaseTiming', () => {
     })
   })
 
+  it('carries a stop deadline only when the override names one', () => {
+    const plain = resolveHostLeaseTiming({
+      [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:800,grace:1500'
+    })
+    expect(plain).not.toHaveProperty('stopDeadlineMs')
+    for (const raw of [
+      'heartbeat:200,ttl:800,grace:1500,stop:300',
+      'stop:300,heartbeat:200,ttl:800,grace:1500'
+    ]) {
+      expect(resolveHostLeaseTiming({ [HOST_LEASE_TIMING_ENV]: raw }), raw).toEqual({
+        source: 'environment',
+        raw,
+        timing: plain.timing,
+        stopDeadlineMs: 300
+      })
+    }
+  })
+
   it('rejects an override that extends, under-bounds, or misspells the timing', () => {
     for (const [raw, reason] of [
       [`heartbeat:${HOST_LEASE_HEARTBEAT_MS + 1},ttl:${HOST_LEASE_TTL_MS},grace:1500`, /shorten/],
@@ -123,6 +141,9 @@ describe('resolveHostLeaseTiming', () => {
       ['heartbeat:500,ttl:800,grace:1500', /twice the heartbeat/],
       ['heartbeat:200,ttl:800,grace:499', /grace must be at least 500/],
       ['heartbeat:200,ttl:800', /all required/],
+      ['heartbeat:200,ttl:800,stop:300', /all required/],
+      ['heartbeat:200,ttl:800,grace:1500,stop:99', /stop must be at least 100/],
+      ['heartbeat:200,ttl:800,grace:1500,stop:300,stop:300', /duplicate/],
       ['heartbeat:200,ttl:800,grace:1500,busy:1', /unrecognised segment/],
       ['heartbeat:200,heartbeat:200,ttl:800,grace:1500', /duplicate/]
     ] as const) {

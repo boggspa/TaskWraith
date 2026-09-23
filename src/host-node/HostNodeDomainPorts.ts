@@ -127,6 +127,14 @@ const HOST_PERSISTED_START_GRACE_MS = 2_000
 const HOST_PERSISTED_START_POLL_MS = 5
 
 /**
+ * The default bound on each of shutdown()'s two waits, one after the other:
+ * the queued dispatches, then the provider runs' completions. A wait that
+ * runs out fails the shutdown. A production Host's lifetime-stop deadline is
+ * summed from it (HOST_LIFETIME_STOP_DEADLINE_MS).
+ */
+export const HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS = 30_000
+
+/**
  * Build a bounded cold-session prompt for providers whose native session cannot
  * be resumed. The transcript is already Host-owned data; this fallback keeps a
  * follow-up useful without pretending that a new provider process has native
@@ -1935,7 +1943,7 @@ export class HostNodeDomainPorts {
   }
 
   private async awaitWithinShutdownTimeout(completion: Promise<unknown>): Promise<void> {
-    const timeoutMs = this.options.shutdownTimeoutMs ?? 30_000
+    const timeoutMs = this.options.shutdownTimeoutMs ?? HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1) {
       throw new Error('Host shutdown timeout must be a positive integer')
     }

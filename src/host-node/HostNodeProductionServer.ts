@@ -6,13 +6,21 @@ import { randomUUID } from 'node:crypto'
 import { chmodSync, lstatSync, mkdirSync } from 'node:fs'
 import { createHostThreadCatalogue } from './ThreadCatalogueHostClient'
 import { ThreadCatalogueMirror } from '../host-shared/thread-catalogue/ThreadCatalogueMirror'
-import type { ThreadCatalogueClient } from '../host-shared/thread-catalogue/ThreadCatalogueClient'
+import {
+  THREAD_CATALOGUE_CLOSE_TIMEOUT_MS,
+  THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS,
+  THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS,
+  type ThreadCatalogueClient
+} from '../host-shared/thread-catalogue/ThreadCatalogueClient'
 import {
   hostCatalogueSummaries,
   projectHostCatalogueThread,
   queryHostCatalogue
 } from './ThreadCatalogueHostMirror'
-import { ThreadCatalogueSourcePublisher } from '../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
+import {
+  THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS,
+  ThreadCatalogueSourcePublisher
+} from '../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
 import { ThreadCatalogueRecoveryController } from '../host-shared/thread-catalogue/ThreadCatalogueRecoveryController'
 import type {
   ThreadCatalogueMaintenanceQuery,
@@ -34,7 +42,10 @@ import type {
 import type { HostCapability, HostHealthProjection } from '../shared/hostProtocol'
 import { isAbsolute, join } from 'node:path'
 import type { HostLocalServerOptions } from '../host-runtime/HostLocalServer'
-import { HostLocalServer } from '../host-runtime/HostLocalServer'
+import {
+  HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS,
+  HostLocalServer
+} from '../host-runtime/HostLocalServer'
 import {
   HOST_LEASE_DISABLED_ENV,
   HOST_LEASE_TIMING_ENV,
@@ -65,6 +76,7 @@ import {
 import { createHostPerfInstrumentation } from '../host-runtime/HostPerfSnapshot'
 import type { HostSessionHostIdentity } from '../host-runtime/HostSession'
 import {
+  HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS,
   HostNodeDomainPorts,
   isHostQueuedStartEnabled,
   type HostNodeDomainPortsOptions
@@ -112,16 +124,49 @@ export interface HostNodeProductionListener {
 export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 
 /**
- * How long a stop the Host decides on its own (the last lease went, or its
- * registry entry did) may take before it is reported as stuck. By then the
- * listener is closed and may be all that held the event loop, so a cleanup
- * step that waits only on unref'd timers (a history worker that cannot start
- * backs off on one) would let the process run dry and exit 0 halfway, with
- * the profile authority and registry entry still held. The deadline's timer
- * keeps the process alive until the stop settles; if it expires first, the
- * stop is reported and waitForShutdown fails, so the CLI exits non-zero.
+ * What HOST_LIFETIME_STOP_DEADLINE_MS keeps over the bounds it sums, for the
+ * stop steps with no bound of their own: the providers' and the composition's
+ * shutdowns, resource disposal and artefact removal, which normally take well
+ * under a second.
  */
-export const HOST_LIFETIME_STOP_DEADLINE_MS = 60_000
+export const HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS = 10_000
+
+/**
+ * When a stop the Host decides on its own (the last lease went, or its
+ * registry entry did) is reported overdue. It is summed from the bounds its
+ * cleanup steps run under, one after another, plus the margin, so a stop that
+ * runs every bounded step out to its bound still finishes inside it:
+ *   - the listener's three drains, HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS
+ *     each;
+ *   - the domain's queued dispatches, then its provider runs' completions,
+ *     HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS each;
+ *   - the history mirror's last read, waiting on a history worker restart
+ *     that is due, THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS;
+ *   - the history writers' drain, THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS;
+ *   - the history worker's `close`, then its termination,
+ *     THREAD_CATALOGUE_CLOSE_TIMEOUT_MS and THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS.
+ * Not covered: the mirror's read itself, up to THREAD_CATALOGUE_REQUEST_TIMEOUT_MS.
+ * Only a live history worker can take that long, and a live worker holds the
+ * process up by itself, so such a stop finishes after the deadline and says so.
+ *
+ * The deadline reports; it never cuts a stop short. Its timer is ref'd, so
+ * the process stays up until the stop settles or the deadline passes: by then
+ * the listener is closed and may be all that held the event loop, and a step
+ * waiting only on unref'd timers (a history worker restart's backoff) would
+ * otherwise let the process run dry and exit 0 halfway, with the profile
+ * authority and registry entry still held. A stop still running at the
+ * deadline may yet finish, and then exits 0. One that leaves the process
+ * nothing to run past it is stuck: it is reported, and waitForShutdown fails,
+ * so the CLI exits non-zero.
+ */
+export const HOST_LIFETIME_STOP_DEADLINE_MS =
+  3 * HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS +
+  2 * HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS +
+  THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS +
+  THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS +
+  THREAD_CATALOGUE_CLOSE_TIMEOUT_MS +
+  THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS +
+  HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS
 
 export interface HostNodePermissionConsentAuthority extends HostPermissionConsentAuthorityPort {
   dispose(): void
@@ -130,6 +175,15 @@ export interface HostNodePermissionConsentAuthority extends HostPermissionConsen
 export interface HostNodeProductionSignalTarget {
   once(signal: NodeJS.Signals, listener: () => void): unknown
   removeListener(signal: NodeJS.Signals, listener: () => void): unknown
+}
+
+/**
+ * The process's `beforeExit`, emitted once nothing is left to keep the event
+ * loop alive: how a lifetime stop past its deadline learns it cannot finish.
+ */
+export interface HostNodeProductionExitTarget {
+  once(event: 'beforeExit', listener: () => void): unknown
+  removeListener(event: 'beforeExit', listener: () => void): unknown
 }
 
 export interface HostNodeProductionServerOptions {
@@ -181,8 +235,13 @@ export interface HostNodeProductionServerOptions {
   readonly registry?: HostRegistryPublisherPort
   /** Lease registry clock/scheduler seam for tests; production uses the defaults. */
   readonly leasePorts?: HostLeaseRegistryPorts
-  /** Seam for tests; production uses HOST_LIFETIME_STOP_DEADLINE_MS. */
+  /**
+   * Seam for tests. Production uses HOST_LIFETIME_STOP_DEADLINE_MS, or a
+   * shorter `stop:` in TASKWRAITH_HOST_LEASE_TIMING.
+   */
   readonly lifetimeStopDeadlineMs?: number
+  /** Seam for tests; production uses the process itself. */
+  readonly exitTarget?: HostNodeProductionExitTarget
 }
 
 function deferred(): {
@@ -319,8 +378,10 @@ function resolveHostPerfSnapshotFile(
  * its own entry gone.
  */
 export class HostNodeProductionServer {
-  private readonly options: Required<Pick<HostNodeProductionServerOptions, 'signalTarget'>> &
-    Omit<HostNodeProductionServerOptions, 'signalTarget'>
+  private readonly options: Required<
+    Pick<HostNodeProductionServerOptions, 'signalTarget' | 'exitTarget'>
+  > &
+    Omit<HostNodeProductionServerOptions, 'signalTarget' | 'exitTarget'>
   private readonly shutdown = deferred()
   private readonly signals = new Map<NodeJS.Signals, () => void>()
   private startPromise: Promise<void> | null = null
@@ -333,6 +394,7 @@ export class HostNodeProductionServer {
   private registryPublished = false
   private registryLastRefreshAwakeMs = 0
   private registrySelfCheckStrikes = 0
+  private lifetimeStopDeadlineMs = HOST_LIFETIME_STOP_DEADLINE_MS
   private lease: HostNodeProductionLease | null = null
   private domain: HostNodeDomainPorts | null = null
   private composition: HostStandaloneComposition | null = null
@@ -361,7 +423,11 @@ export class HostNodeProductionServer {
     if (typeof options.resolveIdentity !== 'function') {
       throw new Error('HostNodeProductionServer requires resolveIdentity')
     }
-    this.options = { ...options, signalTarget: options.signalTarget ?? process }
+    this.options = {
+      ...options,
+      signalTarget: options.signalTarget ?? process,
+      exitTarget: options.exitTarget ?? process
+    }
     // Startup failure may precede any caller waiting for shutdown. Observe the
     // rejection here while retaining the original promise for explicit callers.
     void this.shutdown.promise.catch(() => undefined)
@@ -861,8 +927,18 @@ export class HostNodeProductionServer {
     if (timing.source === 'rejected') {
       log(`[host-lease] ${HOST_LEASE_TIMING_ENV}=${timing.raw} ignored: ${timing.reason}`)
     } else if (timing.source === 'environment') {
+      // Like the lease timing, it may only shorten the deadline.
+      if (timing.stopDeadlineMs !== undefined) {
+        this.lifetimeStopDeadlineMs = Math.min(
+          timing.stopDeadlineMs,
+          HOST_LIFETIME_STOP_DEADLINE_MS
+        )
+      }
       log(
-        `[host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat ${timing.timing.heartbeatMs}ms, ttl ${timing.timing.ttlMs}ms, grace ${timing.timing.graceMs}ms`
+        `[host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat ${timing.timing.heartbeatMs}ms, ttl ${timing.timing.ttlMs}ms, grace ${timing.timing.graceMs}ms` +
+          (timing.stopDeadlineMs === undefined
+            ? ''
+            : `, stop deadline ${this.lifetimeStopDeadlineMs}ms`)
       )
     }
     if (persist) log(`[host-lease] ${HOST_PERSIST_ENV}=1: the last-lease grace exit is disabled`)
@@ -905,22 +981,48 @@ export class HostNodeProductionServer {
    * entry is. Nobody retries it the way a second SIGTERM retries a signalled
    * stop, so a cleanup failure must not end in a silent exit 0 with the profile
    * authority left behind: name what failed, and settle waitForShutdown as a
-   * failure, which the CLI turns into a non-zero exit. The same goes for a stop
-   * that never finishes (HOST_LIFETIME_STOP_DEADLINE_MS).
+   * failure, which the CLI turns into a non-zero exit. A stop still running at
+   * its deadline (HOST_LIFETIME_STOP_DEADLINE_MS) is reported then and settles
+   * on whatever happens first: it finishes, late and said so, and exits 0; it
+   * fails; or the process runs out of work with the stop unfinished, which is
+   * a failure too.
    */
   private stopForLifetime(action: string): void {
-    const deadlineMs = this.options.lifetimeStopDeadlineMs ?? HOST_LIFETIME_STOP_DEADLINE_MS
-    // Ref'd on purpose: it is what keeps the process alive until the stop settles.
-    const deadline = setTimeout(() => {
+    const deadlineMs = this.options.lifetimeStopDeadlineMs ?? this.lifetimeStopDeadlineMs
+    const exitTarget = this.options.exitTarget
+    let overdue = false
+    // Past the deadline, nothing is left to keep the event loop alive and the
+    // stop has not finished: the process is about to exit with it halfway.
+    const onRunDry = () => {
       writeHostStderr(
         `taskwraith-host: ${action} did not finish within ${deadlineMs} ms, profile authority retained\n`
       )
       this.shutdown.reject(new Error(`${action} did not finish within ${deadlineMs} ms`))
+    }
+    // Ref'd on purpose: until the stop settles or this fires, it is what keeps
+    // the process alive.
+    const deadline = setTimeout(() => {
+      overdue = true
+      writeHostStderr(
+        `taskwraith-host: ${action} has not finished within ${deadlineMs} ms, profile authority still held\n`
+      )
+      exitTarget.once('beforeExit', onRunDry)
     }, deadlineMs)
+    const standDown = () => {
+      clearTimeout(deadline)
+      if (overdue) exitTarget.removeListener('beforeExit', onRunDry)
+    }
     void this.stop().then(
-      () => clearTimeout(deadline),
+      () => {
+        standDown()
+        if (overdue) {
+          writeHostStderr(
+            `taskwraith-host: ${action} finished after its ${deadlineMs} ms deadline, profile authority released\n`
+          )
+        }
+      },
       (error: unknown) => {
-        clearTimeout(deadline)
+        standDown()
         writeHostStderr(
           `taskwraith-host: ${action} failed, profile authority retained: ${describeFailure(error)}\n`
         )

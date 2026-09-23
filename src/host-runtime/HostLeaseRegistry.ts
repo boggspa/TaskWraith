@@ -62,13 +62,17 @@ export const HOST_LAST_LEASE_GRACE_MS = 45_000
 export const HOST_LEASE_BUSY_CAP_MS = 1_800_000
 export const HOST_LEASE_MIN_HEARTBEAT_MS = 100
 export const HOST_LEASE_MIN_GRACE_MS = 500
+export const HOST_LEASE_MIN_STOP_DEADLINE_MS = 100
 
 /**
- * Diagnostic-only timing override: `heartbeat:<ms>,ttl:<ms>,grace:<ms>`. Each
- * value is bounded below (heartbeat >= 100, ttl >= 2 x heartbeat, grace >=
- * 500) and can only SHORTEN the defaults, never extend them. Meant for the
- * subprocess suites; the production server logs whatever it resolves, and the
- * production launchers strip it (`withoutHostLeaseTestKnobs`).
+ * Diagnostic-only timing override: `heartbeat:<ms>,ttl:<ms>,grace:<ms>`, and
+ * optionally `stop:<ms>`. Each value is bounded below (heartbeat >= 100, ttl
+ * >= 2 x heartbeat, grace >= 500, stop >= 100) and can only SHORTEN the
+ * defaults, never extend them. `stop` is the deadline at which a stop the Host
+ * decides on its own is reported overdue; the production server owns that
+ * default (HOST_LIFETIME_STOP_DEADLINE_MS), so it applies the ceiling itself.
+ * Meant for the subprocess suites; the production server logs whatever it
+ * resolves, and the production launchers strip it (`withoutHostLeaseTestKnobs`).
  */
 export const HOST_LEASE_TIMING_ENV = 'TASKWRAITH_HOST_LEASE_TIMING'
 /** `1` disables the last-lease grace exit only. */
@@ -118,7 +122,13 @@ export const HOST_LEASE_DEFAULT_TIMING: HostLeaseTiming = Object.freeze({
 
 export type HostLeaseTimingResolution =
   | { readonly source: 'default'; readonly timing: HostLeaseTiming }
-  | { readonly source: 'environment'; readonly timing: HostLeaseTiming; readonly raw: string }
+  | {
+      readonly source: 'environment'
+      readonly timing: HostLeaseTiming
+      readonly raw: string
+      /** Present only when the override names `stop`. */
+      readonly stopDeadlineMs?: number
+    }
   | {
       readonly source: 'rejected'
       readonly timing: HostLeaseTiming
@@ -219,7 +229,7 @@ export function resolveHostLeaseTiming(
   })
   const values = new Map<string, number>()
   for (const part of raw.split(',')) {
-    const match = /^(heartbeat|ttl|grace):(\d{1,9})$/.exec(part.trim())
+    const match = /^(heartbeat|ttl|grace|stop):(\d{1,9})$/.exec(part.trim())
     if (!match) return rejected(`unrecognised segment ${JSON.stringify(part.trim())}`)
     if (values.has(match[1])) return rejected(`duplicate key ${match[1]}`)
     values.set(match[1], Number(match[2]))
@@ -236,6 +246,10 @@ export function resolveHostLeaseTiming(
   if (ttlMs < 2 * heartbeatMs) return rejected('ttl must be at least twice the heartbeat')
   if (graceMs < HOST_LEASE_MIN_GRACE_MS) {
     return rejected(`grace must be at least ${HOST_LEASE_MIN_GRACE_MS} ms`)
+  }
+  const stopDeadlineMs = values.get('stop')
+  if (stopDeadlineMs !== undefined && stopDeadlineMs < HOST_LEASE_MIN_STOP_DEADLINE_MS) {
+    return rejected(`stop must be at least ${HOST_LEASE_MIN_STOP_DEADLINE_MS} ms`)
   }
   if (
     heartbeatMs > HOST_LEASE_HEARTBEAT_MS ||
@@ -254,7 +268,8 @@ export function resolveHostLeaseTiming(
       tickMs: Math.min(HOST_LEASE_TICK_MS, heartbeatMs),
       suspendGapMs: HOST_LEASE_SUSPEND_GAP_MS,
       busyCapMs: HOST_LEASE_BUSY_CAP_MS
-    }
+    },
+    ...(stopDeadlineMs === undefined ? {} : { stopDeadlineMs })
   }
 }
 

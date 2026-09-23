@@ -10,6 +10,13 @@ import { threadCatalogueWriteGate } from './ThreadCatalogueWriteGate'
 
 export type ThreadCataloguePublication = ThreadCatalogueTicket & { untracked?: true }
 
+/**
+ * How long drain() waits for the history source writers before it fails. A
+ * production Host's lifetime-stop deadline is summed from it
+ * (HOST_LIFETIME_STOP_DEADLINE_MS).
+ */
+export const THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS = 30_000
+
 /** Runs beside the existing source writer; it never opens the query database. */
 export class ThreadCatalogueSourcePublisher<
   TRecord extends { appChatId: string } = { appChatId: string }
@@ -304,7 +311,7 @@ export class ThreadCatalogueSourcePublisher<
 
   async drain(chatIds?: readonly string[]): Promise<void> {
     const scope = chatIds ? new Set(chatIds) : null
-    const deadline = Date.now() + 30_000
+    const deadline = Date.now() + THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS
     for (;;) {
       const pending = [...new Set([...this.active.values(), ...this.repairing.keys()])].filter(
         (id) => !scope || scope.has(id)
