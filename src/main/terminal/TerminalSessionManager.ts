@@ -165,6 +165,7 @@ export class TerminalSessionManager extends EventEmitter {
     try {
       const resolved = await this.resolveCli(cliId)
       if (this.sessions.get(sessionId) !== session) return
+      // An agy pick is deliberately ungated by consent: user-started (Chris, 2026-09-23).
       this.write(sessionId, `${resolved.launchCommand}\r`)
     } catch (error) {
       this.writeDiagnostic(sessionId, error instanceof Error ? error.message : String(error))

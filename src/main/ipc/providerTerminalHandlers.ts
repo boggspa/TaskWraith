@@ -192,6 +192,7 @@ export async function openProviderAuthTerminal(
         commandParts = [resolved.binaryPath || 'kimi', 'login']
       }
     } else if (provider === 'antigravity') {
+      // Deliberately ungated by AntiGravity consent: user-started (Chris, 2026-09-23).
       if (action === 'logout') {
         return {
           ok: false,

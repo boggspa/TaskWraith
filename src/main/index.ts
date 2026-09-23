@@ -38302,8 +38302,9 @@ async function runAntigravityAgyProvider(
         // monitor). Read it again, live, with nothing awaited before the spawn.
         launchRefusal: () => antigravityLaunchConsentRefusal(AppStore.getSettings()),
         // Keyed by the run's own cwd, which is what agy records. The temporary
-        // native permission overlay is separately serialized because official
-        // agy exposes only one global settings path.
+        // native permission overlay is shared, not serialized: official agy has
+        // one global settings path, so concurrent runs refcount one overlay and
+        // never wait on each other (the run-length queue went on 2026-08-19).
         resolveExitSessionId: async () => {
           const learned = await readAgyConversationReceipt(payload.workspace)
           // If a fresh project failed before agy allocated a conversation, its

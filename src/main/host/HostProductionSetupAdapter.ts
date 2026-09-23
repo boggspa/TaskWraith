@@ -498,6 +498,7 @@ export function createHostProductionSetupAdapter(
       }
     },
     providerAuth: {
+      // An agy sign-in here is deliberately ungated by consent: user-started (Chris, 2026-09-23).
       begin: async (input) => {
         const provider = await findProvider(options, input.providerId)
         if (input.flowId !== `${provider.providerId}:login`)
