@@ -481,6 +481,11 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
     isCanvasDockPanelOpen,
     isAppDriveDockPanelOpen,
     appDriveDockStatus,
+    handleAppDriveAttach,
+    handleAppDriveOpenBrowser,
+    appDriveAttachUnavailableReason,
+    appDriveControlUnavailableReason,
+    appDriveAttaching,
     handleAppDrivePause,
     handleAppDriveResume,
     handleAppDriveTakeOver,
@@ -2890,17 +2895,20 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   />
                 )}
 
-                {activeRightDockTab === 'appdrive' &&
-                  isAppDriveDockPanelOpen &&
-                  appDriveDockStatus && (
-                    <AppDriveDockPanel
-                      status={appDriveDockStatus}
-                      onPause={handleAppDrivePause}
-                      onResume={handleAppDriveResume}
-                      onTakeOver={handleAppDriveTakeOver}
-                      onStop={handleAppDriveStop}
-                    />
-                  )}
+                {activeRightDockTab === 'appdrive' && isAppDriveDockPanelOpen && currentChat && (
+                  <AppDriveDockPanel
+                    status={appDriveDockStatus}
+                    onAttach={handleAppDriveAttach}
+                    onOpenBrowser={handleAppDriveOpenBrowser}
+                    attachUnavailableReason={appDriveAttachUnavailableReason}
+                    controlUnavailableReason={appDriveControlUnavailableReason}
+                    attaching={appDriveAttaching}
+                    onPause={handleAppDrivePause}
+                    onResume={handleAppDriveResume}
+                    onTakeOver={handleAppDriveTakeOver}
+                    onStop={handleAppDriveStop}
+                  />
+                )}
 
                 {activeRightDockTab === 'canvas' && isCanvasDockPanelOpen && currentChat && (
                   <CanvasDockPanel chatId={currentChat.appChatId} />

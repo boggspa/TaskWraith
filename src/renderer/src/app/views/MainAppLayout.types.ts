@@ -563,6 +563,11 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isCanvasDockPanelOpen: any
   isAppDriveDockPanelOpen: boolean
   appDriveDockStatus: AppDriveDockStatus | null
+  handleAppDriveAttach: () => void
+  handleAppDriveOpenBrowser: () => void
+  appDriveAttachUnavailableReason: string | null
+  appDriveControlUnavailableReason: string | null
+  appDriveAttaching: boolean
   handleAppDrivePause: () => void
   handleAppDriveResume: () => void
   handleAppDriveTakeOver: () => void

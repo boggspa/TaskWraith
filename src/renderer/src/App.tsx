@@ -2694,6 +2694,7 @@ function App(): React.JSX.Element {
   const {
     ensembleConcurrentLanesAvailable,
     ensembleConcurrentWriteLanesAvailable,
+    appDriveUnavailableReason,
     screenWatchUnavailableReason: nativeScreenWatchUnavailableReason
   } = useNativeCapabilities()
   const screenWatchUnavailableReason = isChatPopoutWindow
@@ -27164,7 +27165,10 @@ function App(): React.JSX.Element {
     showOfficeSuite,
     isCanvasDockPanelOpen,
     isAppDriveDockPanelOpen: Boolean(
-      appDriveDockStatus?.observation || appDriveDockStatus?.control
+      currentChat &&
+        (isAppDriveDockPanelOpen ||
+          (appDriveDockStatus?.chatId === currentChat.appChatId &&
+            (appDriveDockStatus?.observation || appDriveDockStatus?.control)))
     ),
     hasWorkspaceContext,
     isChatMediaPanelOpen,
@@ -27284,11 +27288,11 @@ function App(): React.JSX.Element {
     },
     {
       id: 'appdrive',
-      label: 'Drive',
+      label: 'Computer',
       icon: <ScreenWatchSymbolIcon />,
-      enabled: Boolean(appDriveDockStatus?.observation || appDriveDockStatus?.control),
+      enabled: Boolean(currentChat),
       group: 'work',
-      hint: 'Foreground App Drive status & controls'
+      hint: 'Computer Use: browser, app windows & controls'
     },
     {
       id: 'canvas',
@@ -27389,8 +27393,7 @@ function App(): React.JSX.Element {
         if (currentChat) setIsCanvasDockPanelOpen(true)
         break
       case 'appdrive':
-        if (currentChat && (appDriveDockStatus?.observation || appDriveDockStatus?.control))
-          setIsAppDriveDockPanelOpen(true)
+        if (currentChat) setIsAppDriveDockPanelOpen(true)
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -32762,7 +32765,16 @@ function App(): React.JSX.Element {
     showOfficeSuite,
     isCanvasDockPanelOpen,
     isAppDriveDockPanelOpen,
-    appDriveDockStatus,
+    appDriveDockStatus:
+      appDriveDockStatus?.chatId === currentChat?.appChatId ? appDriveDockStatus : null,
+    handleAppDriveAttach: () => void handleAttachWindow(),
+    handleAppDriveOpenBrowser: () => {
+      setIsCanvasDockPanelOpen(true)
+      setRightDockTab('canvas')
+    },
+    appDriveAttachUnavailableReason: screenWatchUnavailableReason,
+    appDriveControlUnavailableReason: appDriveUnavailableReason,
+    appDriveAttaching: Boolean(attachingWindowChatId),
     handleAppDrivePause: () => void handleAppDriveSessionAction('pause'),
     handleAppDriveResume: () => void handleAppDriveSessionAction('resume'),
     handleAppDriveTakeOver: () => void handleAppDriveSessionAction('takeover'),

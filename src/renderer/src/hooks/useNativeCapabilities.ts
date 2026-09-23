@@ -26,6 +26,7 @@ export function useNativeCapabilities(): {
   ensembleConcurrentLanesAvailable: boolean
   ensembleConcurrentWriteLanesAvailable: boolean
   screenWatchUnavailableReason: string | null
+  appDriveUnavailableReason: string | null
 } {
   const [nativeCapabilities, setNativeCapabilities] = useState<NativeCapabilitySnapshot | null>(
     null
@@ -48,6 +49,17 @@ export function useNativeCapabilities(): {
     ensembleConcurrentLanesAvailable: deriveEnsembleConcurrentLanesAvailable(nativeCapabilities),
     ensembleConcurrentWriteLanesAvailable:
       deriveEnsembleConcurrentWriteLanesAvailable(nativeCapabilities),
-    screenWatchUnavailableReason: deriveScreenWatchUnavailableReason(nativeCapabilities)
+    screenWatchUnavailableReason: deriveScreenWatchUnavailableReason(nativeCapabilities),
+    appDriveUnavailableReason: deriveAppDriveUnavailableReason(nativeCapabilities)
   }
+}
+
+/** Structural support only; window consent and Accessibility are checked by main. */
+export function deriveAppDriveUnavailableReason(
+  nativeCapabilities: NativeCapabilitySnapshot | null
+): string | null {
+  const capability = nativeCapabilities?.appDrive
+  return capability && !capability.available
+    ? capability.reason || 'Native window control is unavailable on this device.'
+    : null
 }

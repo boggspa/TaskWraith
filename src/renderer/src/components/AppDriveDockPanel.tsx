@@ -30,7 +30,12 @@ import {
 import './AppDriveDockPanel.css'
 
 export interface AppDriveDockPanelProps {
-  readonly status: AppDriveDockStatus
+  readonly status: AppDriveDockStatus | null
+  readonly onAttach?: () => void
+  readonly onOpenBrowser?: () => void
+  readonly attachUnavailableReason?: string | null
+  readonly controlUnavailableReason?: string | null
+  readonly attaching?: boolean
   /** Wall clock for expiry formatting in tests. */
   readonly nowMs?: number
   readonly onPause?: () => void
@@ -40,13 +45,26 @@ export interface AppDriveDockPanelProps {
 }
 
 export function AppDriveDockPanel({
-  status,
+  status: providedStatus,
+  onAttach,
+  onOpenBrowser,
+  attachUnavailableReason,
+  controlUnavailableReason,
+  attaching = false,
   nowMs,
   onPause,
   onResume,
   onTakeOver,
   onStop
 }: AppDriveDockPanelProps): ReactNode {
+  const status: AppDriveDockStatus = providedStatus ?? {
+    chatId: '',
+    observation: null,
+    control: null,
+    lifecycle: 'idle',
+    mode: 'foreground',
+    virtualCursor: null
+  }
   const attachment = { observation: status.observation, control: status.control }
   const actions = lifecycleActionAvailability(status.lifecycle, attachment)
   const hasAttachment = Boolean(status.observation || status.control)
@@ -67,10 +85,10 @@ export function AppDriveDockPanel({
   const anyControlVisible = showPause || showResume || showTakeOver || showStop
 
   return (
-    <div className="appdrive-dock-panel" aria-label="App Drive panel">
+    <div className="appdrive-dock-panel" aria-label="Computer Use panel">
       <header className="appdrive-dock-header">
         <div className="appdrive-dock-title-row">
-          <span className="appdrive-dock-title">App Drive</span>
+          <span className="appdrive-dock-title">Computer Use</span>
           <span
             className="appdrive-dock-mode-chip"
             data-testid="appdrive-mode-chip"
@@ -113,10 +131,48 @@ export function AppDriveDockPanel({
         </div>
       </header>
 
+      <section className="appdrive-dock-entry" aria-label="Computer Use surfaces">
+        <p>Work with a website in Canvas, or share an app window with your agent.</p>
+        <div className="appdrive-dock-entry-actions">
+          {onOpenBrowser ? (
+            <button type="button" onClick={onOpenBrowser} data-testid="appdrive-browser">
+              Open browser
+            </button>
+          ) : null}
+          {onAttach ? (
+            <button
+              type="button"
+              onClick={onAttach}
+              disabled={Boolean(attachUnavailableReason) || attaching}
+              aria-describedby={attachUnavailableReason ? 'appdrive-attach-unavailable' : undefined}
+              data-testid="appdrive-attach"
+            >
+              {attaching ? 'Choosing window…' : hasAttachment ? 'Change window' : 'Pick a window'}
+            </button>
+          ) : null}
+        </div>
+        {attachUnavailableReason ? (
+          <p id="appdrive-attach-unavailable" className="appdrive-dock-honesty">
+            {attachUnavailableReason}
+          </p>
+        ) : null}
+        {controlUnavailableReason ? (
+          <p className="appdrive-dock-honesty" data-testid="appdrive-control-unavailable">
+            {controlUnavailableReason} Window sharing and browser control have separate
+            availability.
+          </p>
+        ) : null}
+        <p className="appdrive-dock-honesty">
+          Choose a model that accepts images for visual tasks. The agent can inspect the page,
+          perform an allowed action, and check the updated view.
+        </p>
+      </section>
+
       {!hasAttachment ? (
         <div className="appdrive-dock-empty" data-testid="appdrive-empty">
-          No App Drive target attached. Use Screen Watch, then approve View &amp; Control for the
-          current launch when you want the agent to drive.
+          No App Drive target attached. Pick a window to start Screen Watch. Control is available
+          for a current managed app launch after you approve View &amp; Control and macOS
+          Accessibility access. Other windows remain view-only.
         </div>
       ) : (
         <>

@@ -72,7 +72,7 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
     { id: 'canvas' as const, label: 'Canvas', available: input.isCanvasDockPanelOpen },
     {
       id: 'appdrive' as const,
-      label: 'Drive',
+      label: 'Computer',
       available: Boolean(input.isAppDriveDockPanelOpen)
     },
     { id: 'media' as const, label: 'Media', available: input.isChatMediaPanelOpen },

@@ -52,7 +52,7 @@ describe('rightDockState', () => {
         { id: 'files', label: 'Files' },
         { id: 'office', label: 'Office' },
         { id: 'canvas', label: 'Canvas' },
-        { id: 'appdrive', label: 'Drive' },
+        { id: 'appdrive', label: 'Computer' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
         { id: 'logins', label: 'Logins' },
@@ -195,7 +195,7 @@ describe('rightDockState', () => {
       expect(buildRightDockTabs({ ...allClosed })).toEqual([])
       expect(buildRightDockTabs({ ...allClosed, isAppDriveDockPanelOpen: false })).toEqual([])
       expect(buildRightDockTabs({ ...allClosed, isAppDriveDockPanelOpen: true })).toEqual([
-        { id: 'appdrive', label: 'Drive' }
+        { id: 'appdrive', label: 'Computer' }
       ])
     })
   })

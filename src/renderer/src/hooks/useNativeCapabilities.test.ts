@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { NativeCapabilitySnapshot } from '../../../main/NativeCapabilities'
 import {
+  deriveAppDriveUnavailableReason,
   deriveEnsembleConcurrentLanesAvailable,
   deriveEnsembleConcurrentWriteLanesAvailable,
   deriveScreenWatchUnavailableReason
@@ -22,6 +23,21 @@ const baseSnapshot = (overrides: Partial<NativeCapabilitySnapshot> = {}): Native
     },
     ...overrides
   }) as NativeCapabilitySnapshot
+
+describe('deriveAppDriveUnavailableReason', () => {
+  it('reports structural failures without guessing Accessibility consent', () => {
+    expect(deriveAppDriveUnavailableReason(null)).toBeNull()
+    expect(deriveAppDriveUnavailableReason(baseSnapshot())).toBeNull()
+    expect(
+      deriveAppDriveUnavailableReason(baseSnapshot({ appDrive: { available: true } }))
+    ).toBeNull()
+    expect(
+      deriveAppDriveUnavailableReason(
+        baseSnapshot({ appDrive: { available: false, reason: 'Requires macOS 15.2.' } })
+      )
+    ).toBe('Requires macOS 15.2.')
+  })
+})
 
 describe('deriveEnsembleConcurrentLanesAvailable', () => {
   it('defaults to true when capabilities are unknown', () => {

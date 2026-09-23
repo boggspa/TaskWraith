@@ -20,6 +20,40 @@
   flex-shrink: 0;
 }
 
+.appdrive-dock-entry {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.appdrive-dock-entry p {
+  margin: 0;
+}
+
+.appdrive-dock-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.appdrive-dock-entry-actions button {
+  padding: 7px 10px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+  cursor: pointer;
+}
+
+.appdrive-dock-entry-actions button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 .appdrive-dock-title-row {
   display: flex;
   align-items: center;
