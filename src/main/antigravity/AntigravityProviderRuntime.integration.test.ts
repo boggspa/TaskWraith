@@ -350,4 +350,52 @@ describe('AntiGravity S3 runtime integration', () => {
     // Nothing between the read and the spawn may wait.
     expect(launch.tryBlock.statements.slice(0, spawnAt + 1).some(containsAwait)).toBe(false)
   })
+
+  // The official ACP lane reads consent on entry and then waits: on the binary
+  // resolve (up to 60 s of download and 120 s of extraction) and, for a
+  // broker-attached seat, the broker start. The run can be stopped or consent
+  // withdrawn meanwhile, so the decision that counts is the one after the last
+  // wait. index.antigravityAcpLaunchFence.test.ts runs the lane around each wait.
+  it('fences the official ACP launch after its last await, with nothing awaited before runTurn', () => {
+    const lane = probe.fn('runAntigravityOfficialAcpProvider')
+    if (!ts.isBlock(lane)) throw new Error('runAntigravityOfficialAcpProvider has no block body')
+    const statements = [...lane.statements]
+    const containsAwait = (node: ts.Node): boolean => {
+      if (ts.isAwaitExpression(node)) return true
+      return ts.forEachChild(node, containsAwait) ?? false
+    }
+    const conditionOf = (statement: ts.Statement): string | null =>
+      ts.isIfStatement(statement) ? probe.text(statement.expression).replace(/\s+/g, ' ') : null
+    const returnsAfter = (statement: ts.Statement, call: string): boolean => {
+      if (!ts.isIfStatement(statement) || !ts.isBlock(statement.thenStatement)) return false
+      const body = statement.thenStatement.statements
+      return (
+        probe.callsTo(statement.thenStatement, call).length === 1 &&
+        ts.isReturnStatement(body.at(-1)!)
+      )
+    }
+
+    const runTurnAt = statements.findIndex(
+      (statement) => probe.callsTo(statement, 'runTurn').length > 0
+    )
+    expect(runTurnAt).toBeGreaterThan(0)
+    const fenceAt = statements.findIndex(
+      (statement) =>
+        conditionOf(statement) ===
+        "!providerTransportLaunchAuthorized('antigravity', payload, route)"
+    )
+    expect(fenceAt).toBeGreaterThan(0)
+    expect(returnsAfter(statements[fenceAt], 'settleDeniedProviderTransportLaunch')).toBe(true)
+    // The live read right behind it: a fresh settings read, never a snapshot.
+    expect(conditionOf(statements[fenceAt + 1])).toBe(
+      '!isAntigravityOptInEnabled(AppStore.getSettings())'
+    )
+    expect(returnsAfter(statements[fenceAt + 1], 'failVisible')).toBe(true)
+
+    // The waits come before the fence, and nothing between it and the spawn
+    // inside runTurn may wait.
+    expect(statements.slice(0, fenceAt).some(containsAwait)).toBe(true)
+    expect(fenceAt).toBeLessThan(runTurnAt)
+    expect(statements.slice(fenceAt, runTurnAt + 1).some(containsAwait)).toBe(false)
+  })
 })

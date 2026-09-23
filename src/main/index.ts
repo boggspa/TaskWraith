@@ -37312,8 +37312,9 @@ async function runAntigravityProvider(
     },
     runAgyProvider: runAntigravityAgyProvider,
     // S5: the official-ACP third arm. The switch dep is read fresh per run and
-    // makes the S4 gate live; the provider re-checks the two-part opt-in at
-    // spawn time and fails closed, so wiring it unconditionally is safe.
+    // makes the S4 gate live; the provider checks the two-part opt-in on entry
+    // and again, live, after its last await and immediately before the spawn,
+    // failing closed, so wiring it unconditionally is safe.
     isAcpTransportEnabled: () => AppStore.getSettings().antigravityUseAcp === true,
     runOfficialAcpProvider: runAntigravityOfficialAcpProvider
   })
@@ -37353,7 +37354,9 @@ function antigravityAcpBrokerToolRequested(request: {
  * ordering) stays in AntigravityCombinedModeDispatch; resolver/client
  * invariants stay in their own modules with their own tests.
  *
- * Launch authority: the two-part opt-in is re-checked HERE, at spawn time —
+ * Launch authority: the two-part opt-in is checked HERE, on entry and again
+ * after the last await (the binary resolve can download and extract for
+ * minutes), together with the launch fence, immediately before the spawn —
  * the Settings transport switch alone is never sufficient to launch. Every
  * refusal settles the already-registered run visibly and returns without
  * throwing, so the dispatch lane's generic recovery never overwrites the
@@ -37374,10 +37377,10 @@ async function runAntigravityOfficialAcpProvider(
       fallback: false
     })
   }
+  const optInRequired =
+    'AntiGravity is not enabled. Accept the AntiGravity opt-in in Settings -> Providers before using the official ACP transport. The binary was not launched.'
   if (!isAntigravityOptInEnabled(AppStore.getSettings())) {
-    failVisible(
-      'AntiGravity is not enabled. Accept the AntiGravity opt-in in Settings -> Providers before using the official ACP transport. The binary was not launched.'
-    )
+    failVisible(optInRequired)
     return
   }
   const cwd = typeof payload.workspace === 'string' ? payload.workspace.trim() : ''
@@ -37477,6 +37480,18 @@ async function runAntigravityOfficialAcpProvider(
       // still runs toolless rather than failing the participant.
       antigravityAcpMcpServers = []
     }
+  }
+  // The last await is behind us: the binary resolve (up to 60 s of download
+  // and 120 s of extraction) and the broker start. The run may have been
+  // stopped, its history cleared or consent withdrawn meanwhile, and nothing
+  // awaits between here and the spawn inside client.runTurn (Chris, 2026-09-23).
+  if (!providerTransportLaunchAuthorized('antigravity', payload, route)) {
+    settleDeniedProviderTransportLaunch(route)
+    return
+  }
+  if (!isAntigravityOptInEnabled(AppStore.getSettings())) {
+    failVisible(optInRequired)
+    return
   }
   const client = createAntigravityAcpClient({
     appVersion: app.getVersion(),
