@@ -9,7 +9,7 @@ import {
   statSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -138,20 +138,31 @@ describe('HostRegistry root and naming', () => {
   it('builds the production publisher on the env override root, never on HOME when it is set', () => {
     const root = join(scratch('host-registry-env-'), 'hosts')
     const profile = scratch('host-registry-profile-env-')
-    const registry = createHostRegistryPublisherFromEnvironment({
-      profilePath: profile,
-      env: { [HOST_REGISTRY_ROOT_ENV]: root },
-      cliPath: '/repo/out/host/host-runtime/cli.js',
-      nodeExecutable: process.execPath
-    })
-    registry.publish(input(profile, process.pid))
-    expect(registry.entryPath).toBe(hostRegistryEntryPath(root, profile))
-    expect(readHostRegistryEntry(root, profile)).toMatchObject({
-      kind: 'present',
-      entry: { cliPath: '/repo/out/host/host-runtime/cli.js', nodeExecutable: process.execPath }
-    })
-    registry.remove()
-    expect(existsSync(hostRegistryEntryPath(root, profile))).toBe(false)
+    // A stand-in HOME, so a publisher that ignored the override still could
+    // never write into the real ~/.taskwraith/hosts.
+    const home = scratch('host-registry-home-')
+    vi.stubEnv('HOME', home)
+    vi.stubEnv('USERPROFILE', home)
+    try {
+      expect(homedir()).toBe(home)
+      const registry = createHostRegistryPublisherFromEnvironment({
+        profilePath: profile,
+        env: { [HOST_REGISTRY_ROOT_ENV]: root },
+        cliPath: '/repo/out/host/host-runtime/cli.js',
+        nodeExecutable: process.execPath
+      })
+      registry.publish(input(profile, process.pid))
+      expect(registry.entryPath).toBe(hostRegistryEntryPath(root, profile))
+      expect(readHostRegistryEntry(root, profile)).toMatchObject({
+        kind: 'present',
+        entry: { cliPath: '/repo/out/host/host-runtime/cli.js', nodeExecutable: process.execPath }
+      })
+      expect(existsSync(join(home, '.taskwraith'))).toBe(false)
+      registry.remove()
+      expect(existsSync(hostRegistryEntryPath(root, profile))).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+    }
   })
 
   it('names the entry by the exact suffix the socket directory uses', () => {
