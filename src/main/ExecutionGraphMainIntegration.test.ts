@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_NOTE,
@@ -15,6 +16,32 @@ function between(start: string, end: string): string {
   expect(startIndex).toBeGreaterThanOrEqual(0)
   expect(endIndex).toBeGreaterThan(startIndex)
   return source.slice(startIndex, endIndex)
+}
+
+/** The single call to `name` inside `scope`; a missing or duplicated call reds. */
+function onlyCall(scope: ts.Node, name: string): ts.CallExpression {
+  const calls = probe.callsTo(scope, name)
+  expect(
+    calls.map((call) => probe.text(call).slice(0, 80)),
+    `calls to ${name}`
+  ).toHaveLength(1)
+  return calls[0]
+}
+
+/** Nearest ancestor of `node` that `test` accepts; throws when there is none. */
+function enclosing<T extends ts.Node>(
+  node: ts.Node,
+  test: (candidate: ts.Node) => candidate is T
+): T {
+  for (let current = node.parent; current; current = current.parent) {
+    if (test(current)) return current
+  }
+  throw new Error(`${probe.text(node).slice(0, 80)} has no enclosing ${test.name}`)
+}
+
+/** A dependency's initializer on a `new X({ ... })` or `f({ ... })`, whitespace removed. */
+function dep(call: ts.CallExpression | ts.NewExpression, name: string): string | undefined {
+  return probe.propText(call, 0, name)?.replace(/\s+/g, '')
 }
 
 describe('execution graph main integration', () => {
@@ -171,52 +198,96 @@ describe('execution graph main integration', () => {
   })
 
   it('keeps graph diagnostics available across initialization and recovery failures', () => {
-    const initialization = between(
-      'executionGraphComposedPayloads.clear()',
-      '// Phase C5 scaffold: APNs wake-on-approval.'
-    )
-    const diagnosticsRegistration = initialization.indexOf(
-      'registerExecutionGraphDiagnosticsHandler({'
-    )
-    const repositoryInitialization = initialization.indexOf(
-      'const executionGraphRepository = new ExecutionGraphRepository('
-    )
+    // Initialization: the diagnostics query, and the retry/archive commands
+    // beside it, register before the repository is constructed, so a throw
+    // there leaves them answering with the reason instead of no handler.
+    const [repository] = probe.construction('ExecutionGraphRepository')
+    const diagnosticsQuery = onlyCall(probe.source, 'registerExecutionGraphDiagnosticsHandler')
+    const recoveryCommands = onlyCall(probe.source, 'registerExecutionGraphRecoveryHandlers')
+    expect(diagnosticsQuery.getStart()).toBeLessThan(repository.getStart())
+    expect(recoveryCommands.getStart()).toBeLessThan(repository.getStart())
+    expect(dep(diagnosticsQuery, 'getSnapshot')).toBe('getExecutionGraphDiagnosticsSnapshot')
+    expect(dep(recoveryCommands, 'getSnapshot')).toBe('getExecutionGraphDiagnosticsSnapshot')
 
-    expect(diagnosticsRegistration).toBeGreaterThanOrEqual(0)
-    expect(repositoryInitialization).toBeGreaterThan(diagnosticsRegistration)
-    expect(initialization).toContain('executionGraphRepositoryRef?.listRepositoryDiagnostics()')
-    expect(initialization).toContain("code: 'initialization_failed'")
+    // The snapshot reads the repository through its nullable ref, and the
+    // recovery and service lists from the two `let`s everything else writes.
+    const [snapshot] = probe.objectLiterals(probe.fn('getExecutionGraphDiagnosticsSnapshot'))
+    expect(probe.propOf(snapshot, 'repositoryDiagnostics')?.replace(/\s+/g, '')).toBe(
+      'executionGraphRepositoryRef?.listRepositoryDiagnostics()??[]'
+    )
+    expect(probe.propOf(snapshot, 'recoveryDiagnostics')).toBe('executionGraphRecoveryDiagnostics')
+    expect(probe.propOf(snapshot, 'serviceDiagnostics')).toBe('executionGraphServiceDiagnostics')
 
-    // Anchored on a form tolerant of extra `&& !<name>` conjuncts. The 1.9.2 arc
-    // widened this gate to also demand `!workspaceLockStartupRecoveryBlockedReason`;
-    // an added conjunct strictly narrows when recovery runs, so it cannot weaken
-    // what this test protects, and a literal has broken here twice already.
-    const recoveryGate =
-      /if\s*\(\s*!historyDeletionStartupRecoveryBlockedReason(\s*&&\s*![A-Za-z]+)*\s*\)\s*\{\s*const startupRecoveryRecords/
-    const recoveryStart = source.search(recoveryGate)
-    expect(recoveryStart).toBeGreaterThanOrEqual(0)
-    const recoveryEnd = source.indexOf(
-      'AppStore.recoverInterruptedScheduledTasksAfterStartup()',
-      recoveryStart
+    // An initialization failure nulls the coordinator ref (which the recovery
+    // controller reads, so the launch pass falls back to nothing paused) and
+    // records the reason on the service list.
+    const initializationFailure = enclosing(repository, ts.isTryStatement).catchClause
+    expect(initializationFailure).toBeDefined()
+    expect(probe.assignmentsTo(initializationFailure!, 'executionGraphCoordinatorRef')).toEqual([
+      'null'
+    ])
+    expect(
+      probe.assignmentsTo(initializationFailure!, 'executionGraphServiceDiagnostics').join(' ')
+    ).toContain("code: 'initialization_failed'")
+
+    // Recovery runs from the owner-metadata starter's timer, out of reach of
+    // the try/catch around the starter (which covers only a synchronous
+    // throw). The controller's launch pass is the recover callback, and the
+    // controller keeps the paused set in the snapshot's recovery list and
+    // reports a pass that fails as a whole on its service list; its own suite
+    // proves that report through the real starter.
+    const starter = onlyCall(probe.source, 'startCatalogueExecutionRecovery')
+    expect(dep(starter, 'recover')).toBe(
+      '()=>{executionGraphRecoveryController.runStartupRecovery()}'
     )
-    expect(recoveryEnd).toBeGreaterThan(recoveryStart)
-    const recovery = source.slice(recoveryStart, recoveryEnd)
-    expect(recovery).toContain(
-      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
+    expect(
+      probe
+        .assignmentsTo(
+          enclosing(starter, ts.isTryStatement).catchClause!,
+          'executionGraphServiceDiagnostics'
+        )
+        .join(' ')
+    ).toContain("code: 'startup_recovery_failed'")
+    const [controller] = probe.construction('ExecutionGraphRecoveryController')
+    expect(dep(controller, 'coordinator')).toBe('()=>executionGraphCoordinatorRef')
+    expect(dep(controller, 'readDiagnostics')).toBe('()=>executionGraphRecoveryDiagnostics')
+    expect(dep(controller, 'writeDiagnostics')).toBe(
+      '(next)=>{executionGraphRecoveryDiagnostics=next}'
     )
-    expect(recovery).toContain("code: 'startup_recovery_failed'")
+    expect(dep(controller, 'reportServiceDiagnostic')).toBe(
+      '(diagnostic)=>{executionGraphServiceDiagnostics=[...executionGraphServiceDiagnostics,diagnostic]}'
+    )
   })
 
   it('recovers the ordinary queue before the graph coordinator at startup', () => {
-    const queueRecovery = source.indexOf(
-      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()'
-    )
-    const graphRecovery = source.indexOf(
-      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
-    )
+    const recovery = probe.fn('runDeferredWorkspaceLockRecovery')
+    const queueRecovery = onlyCall(recovery, 'recoverRunQueueAfterStartup')
+    const starter = onlyCall(recovery, 'startCatalogueExecutionRecovery')
 
-    expect(queueRecovery).toBeGreaterThanOrEqual(0)
-    expect(graphRecovery).toBeGreaterThan(queueRecovery)
+    // Queue recovery is synchronous and has settled before the starter is
+    // even called; the starter only schedules the graph's launch pass.
+    expect(queueRecovery.getStart()).toBeLessThan(starter.getStart())
+
+    // One gate for both, so no launch runs graph recovery after skipping the
+    // queue recovery it depends on. The gate may gain `&& !<reason>`
+    // conjuncts; each only narrows when recovery runs.
+    const gate = enclosing(queueRecovery, ts.isIfStatement)
+    expect(enclosing(starter, ts.isIfStatement).getStart()).toBe(gate.getStart())
+    expect(probe.text(gate.expression)).toContain('!historyDeletionStartupRecoveryBlockedReason')
+
+    // And that starter is the only way in: the launch pass is called from its
+    // recover callback and nowhere else, and nothing here drives the graph
+    // coordinator's recovery around the controller. (Other services have
+    // their own `recover` methods, so the receiver is what is checked.)
+    expect(probe.callsTo(starter, 'runStartupRecovery')).toHaveLength(1)
+    expect(probe.callsTo(probe.source, 'runStartupRecovery')).toHaveLength(1)
+    const direct = [
+      ...probe.callsTo(probe.source, 'recover'),
+      ...probe.callsTo(probe.source, 'recoverExecutions')
+    ]
+      .map((call) => probe.text(call))
+      .filter((call) => call.includes('executionGraphCoordinator'))
+    expect(direct).toEqual([])
   })
 
   it('delivers committed predecessor results as exact named data inputs before composition', () => {

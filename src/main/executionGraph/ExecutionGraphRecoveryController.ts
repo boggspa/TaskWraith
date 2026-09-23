@@ -1,4 +1,5 @@
 import { isExecutionRunTerminal, type ExecutionRunProjection } from './ExecutionGraphRun'
+import type { ExecutionGraphServiceDiagnostic } from '../ipc/executionGraphHandlers'
 import type {
   ExecutionGraphCoordinator,
   ExecutionGraphRecoveryDiagnostic
@@ -20,6 +21,13 @@ export interface ExecutionGraphRecoveryControllerDeps {
    */
   readDiagnostics: () => readonly ExecutionGraphRecoveryDiagnostic[]
   writeDiagnostics: (next: readonly ExecutionGraphRecoveryDiagnostic[]) => void
+  /**
+   * The snapshot's service channel, for a launch pass that fails as a whole.
+   * One stack refusing is a paused diagnostic, never a throw; a throw means the
+   * pass itself failed, and it runs later from a timer, past the launch
+   * sequence's own try/catch, so it is reported here or nowhere.
+   */
+  reportServiceDiagnostic: (diagnostic: ExecutionGraphServiceDiagnostic) => void
   /** Injected for tests; defaults to `setTimeout` with the timer unref'd. */
   schedule?: (callback: () => void, delayMs: number) => void
   automaticRetryDelayMs?: number
@@ -57,6 +65,7 @@ function defaultSchedule(callback: () => void, delayMs: number): void {
  */
 export class ExecutionGraphRecoveryController {
   private automaticRetryArmed = false
+  private startupFailureReported = false
   private readonly schedule: (callback: () => void, delayMs: number) => void
   private readonly automaticRetryDelayMs: number
   private readonly log: (message: string) => void
@@ -72,10 +81,27 @@ export class ExecutionGraphRecoveryController {
    * The launch pass. Records every refusal, then arms ONE automatic retry for
    * the paused set; a second launch pass in the same process (a deferred
    * workspace-lock replay) records again but never arms another.
+   *
+   * A pass that throws as a whole is reported on the service channel once per
+   * process (a replay that fails again adds nothing new) and is not rethrown:
+   * the owner-metadata starter that calls this would file it as a deferred
+   * owner lookup and silently retry it every 2 s. The paused set stays as the
+   * last good pass recorded it, since this pass recovered nothing.
    */
   runStartupRecovery(): readonly ExecutionGraphRecoveryDiagnostic[] {
     const coordinator = this.deps.coordinator()
-    const diagnostics = coordinator ? coordinator.recover() : []
+    let diagnostics: readonly ExecutionGraphRecoveryDiagnostic[]
+    try {
+      diagnostics = coordinator ? coordinator.recover() : []
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error).slice(0, 2_048)
+      this.log(`[ExecutionGraph] startup recovery failed: ${message}`)
+      if (!this.startupFailureReported) {
+        this.startupFailureReported = true
+        this.deps.reportServiceDiagnostic({ code: 'startup_recovery_failed', message })
+      }
+      return this.deps.readDiagnostics()
+    }
     this.deps.writeDiagnostics(diagnostics)
     for (const diagnostic of diagnostics) {
       this.log(

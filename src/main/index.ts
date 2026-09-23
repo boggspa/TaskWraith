@@ -9284,12 +9284,16 @@ let listUltraTaskModelsRef: ((provider: ProviderId) => Promise<unknown[]>) | nul
 let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
 // Retry and archive for stacks whose startup recovery was refused; the paused
-// diagnostics stay in the `let` above so the IPC snapshot keeps one source.
+// diagnostics stay in the `let` above so the IPC snapshot keeps one source,
+// and a launch pass that fails as a whole lands in the service list beside it.
 const executionGraphRecoveryController = new ExecutionGraphRecoveryController({
   coordinator: () => executionGraphCoordinatorRef,
   readDiagnostics: () => executionGraphRecoveryDiagnostics,
   writeDiagnostics: (next) => {
     executionGraphRecoveryDiagnostics = next
+  },
+  reportServiceDiagnostic: (diagnostic) => {
+    executionGraphServiceDiagnostics = [...executionGraphServiceDiagnostics, diagnostic]
   }
 })
 
