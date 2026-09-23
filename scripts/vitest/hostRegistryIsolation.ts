@@ -1,12 +1,29 @@
 import { execFileSync } from 'node:child_process'
-import { lstatSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import {
+  lstatSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  watch as watchDirectory
+} from 'node:fs'
 import { homedir, tmpdir, userInfo } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
+import { isHostServeCommandFor } from '../../src/host-client/HostProcessTermination'
 import {
   HOST_REGISTRY_ROOT_ENV,
   hostRegistryDefaultRoot
 } from '../../src/host-runtime/HostRegistry'
+import {
+  PROCESS_BIRTH_START_TOLERANCE_MS,
+  isProcessBirthIdentityDigest,
+  observeProcessBirthIdentitySync,
+  parseProcCmdline,
+  type ProcessBirthObservation,
+  type ProcessCommandLineObservation
+} from '../../src/host-runtime/ProcessBirthIdentity'
 
 /**
  * Vitest global setup: Host registry isolation for every test run.
@@ -18,36 +35,54 @@ import {
  * suite that needs its own root still sets one explicitly.
  *
  * The guard watches the real registry (`~/.taskwraith/hosts`, the root a
- * Host uses when the variable is absent) for the whole run and fails it —
- * exit code 1 after the summary — when an entry there was written, rewritten
- * or removed by this run: a Host whose spawn environment dropped the variable,
- * or a test that swept the real root. It watches that root under both HOME and
- * the password database's home directory: a child spawned with a scrubbed
- * environment and no HOME resolves the latter. Polling sees a Host's entry
- * for its whole life, not only what is left at the end, so a Host that stops
- * cleanly and removes its entry is still caught.
+ * Host uses when the variable is absent, under both HOME and the password
+ * database's home directory) for the whole run, strictly read-only. Every
+ * poll snapshots each file there (name, inode, size, mtime, mode and a hash
+ * of its bytes) and diffs it against the last one; a directory watch adds the
+ * names a poll would miss, so an entry written and removed between two polls
+ * is still seen. Any creation, rewrite or removal fails the run (exit code 1
+ * after the summary) unless it is provably a real Host's own lifecycle,
+ * judged by the process, never by the pid an entry merely names:
  *
- * Writes by processes that are not descendants of this run are exempt: a
- * real Host (the app, a /verify instance, another agent's Host) keeps
- * publishing and refreshing during a test run. An entry is attributed by the
- * pid it names, walked up the process table to this vitest process while it
- * is still alive. Anything that cannot be attributed (a dead writer, a
- * malformed file, no process table on Windows) counts against the run: the
- * guard would rather be loud than let a test write into a user's registry.
+ * - an entry is created or rewritten by a Host outside the run: the process
+ *   it names is alive with exactly the birth identity it records, its command
+ *   line is a Host serving the entry's profile, it does not run under this
+ *   test run, and it either started before the run or has an ancestor (other
+ *   than init) that did, as a Host the app starts mid-run does;
+ * - a rewrite that changes whose entry it is replaces a Host that is gone;
+ * - an entry disappears as its Host exits: removal is judged after a grace,
+ *   and a Host still running with the same birth then means someone else
+ *   deleted a live Host's entry — the kill switch that stops it.
+ *
+ * Anything else — an entry naming init or a dead pid, a malformed file, a
+ * removed baseline entry, a name that came and went between polls, no process
+ * table (Windows) — counts against the run: the guard would rather be loud
+ * than let a test write into a user's registry. One limitation: on linux an
+ * orphan is re-parented to a subreaper, which can predate the run, so an
+ * orphaned Host that verifies as a real one is read as outside the run; on
+ * darwin every orphan goes to launchd, which never counts.
  */
 
 const POLL_INTERVAL_MS = 250
+/** How long a verified outside Host may take to exit after its entry disappears. */
+const REMOVAL_GRACE_MS = 10_000
 const RUN_ROOT_PREFIX = 'taskwraith-vitest-host-registry-'
 /** The publisher's rename-into-place temporaries: `.<entry>.<pid>.<uuid>.tmp`. */
 const PUBLISH_TEMPORARY = /^\..*\.tmp$/
 
-export interface RegistryFileState {
-  /** File identity, compared before any re-read. */
-  readonly stamp: string
-  /** Null when the path is not a readable regular file. */
-  readonly content: string | null
-  /** The pid the file names, when it names one. */
+/** What an entry file names, when it parses as a JSON object. */
+export interface RegistryEntryRecord {
   readonly pid: number | null
+  readonly birthIdentity: string | null
+  readonly profilePath: string | null
+}
+
+export interface RegistryFileState {
+  /** Device, inode, size, mtime and mode. */
+  readonly stamp: string
+  /** sha256 of the bytes; null when the path is not a readable regular file. */
+  readonly hash: string | null
+  readonly record: RegistryEntryRecord | null
 }
 
 /** Null means the root does not exist. */
@@ -57,13 +92,39 @@ export type ProcessParents = ReadonlyMap<number, number>
 
 export type RegistryWriterAttribution = 'this-run' | 'other' | 'unknown'
 
+/**
+ * Whose entry a violation is about: one running under this run, a live
+ * process outside it that is not a verifiable Host, nothing observable, an
+ * entry that was already there and inert, or a verified outside Host.
+ */
+export type RegistryIsolationAttribution =
+  | 'this-run'
+  | 'unverified'
+  | 'unknown'
+  | 'baseline-stale'
+  | 'outside-host'
+
 export interface RegistryIsolationViolation {
   readonly name: string
-  readonly change: 'created' | 'rewritten' | 'removed' | 'root-created'
+  readonly change: 'created' | 'rewritten' | 'removed' | 'transient' | 'root-created'
   readonly pid: number | null
-  readonly attribution: RegistryWriterAttribution | 'baseline-stale'
+  readonly attribution: RegistryIsolationAttribution
   readonly detail: string
 }
+
+/** The process facts the guard judges a writer by; all synchronous. */
+export interface RegistryGuardProcessPorts {
+  /** Every pid's parent; null where no table is available. */
+  readonly readParents: () => ProcessParents | null
+  readonly observeBirth: (pid: number) => ProcessBirthObservation
+  readonly observeCommand: (pid: number) => ProcessCommandLineObservation
+}
+
+/** A directory watch; returns null when the platform cannot watch it. */
+export type RegistryDirectoryWatch = (
+  path: string,
+  onChange: (name: string | null) => void
+) => { close(): void } | null
 
 function isErrno(error: unknown, codes: readonly string[]): boolean {
   return Boolean(
@@ -74,36 +135,31 @@ function isErrno(error: unknown, codes: readonly string[]): boolean {
   )
 }
 
-function pidOf(content: string | null): number | null {
-  if (content === null) return null
+function recordOf(bytes: Buffer | null): RegistryEntryRecord | null {
+  if (bytes === null) return null
+  let parsed: unknown
   try {
-    const parsed = JSON.parse(content) as { pid?: unknown }
-    return typeof parsed.pid === 'number' && Number.isSafeInteger(parsed.pid) && parsed.pid > 0
-      ? parsed.pid
-      : null
+    parsed = JSON.parse(bytes.toString('utf8'))
   } catch {
     return null
   }
-}
-
-function profileOf(content: string | null): string | null {
-  if (content === null) return null
-  try {
-    const parsed = JSON.parse(content) as { profilePath?: unknown }
-    return typeof parsed.profilePath === 'string' ? parsed.profilePath : null
-  } catch {
-    return null
+  if (!parsed || typeof parsed !== 'object') return null
+  const value = parsed as { pid?: unknown; birthIdentity?: unknown; profilePath?: unknown }
+  return {
+    pid:
+      typeof value.pid === 'number' && Number.isSafeInteger(value.pid) && value.pid > 0
+        ? value.pid
+        : null,
+    birthIdentity: typeof value.birthIdentity === 'string' ? value.birthIdentity : null,
+    profilePath: typeof value.profilePath === 'string' ? value.profilePath : null
   }
 }
 
 /**
  * Every file in the root except the publisher's short-lived temporaries,
- * re-reading only files whose identity changed since `previous`.
+ * each read and hashed afresh. A symbolic link is stamped, never followed.
  */
-export function readRegistrySnapshot(
-  root: string,
-  previous: RegistrySnapshot = null
-): Map<string, RegistryFileState> | null {
+export function readRegistrySnapshot(root: string): Map<string, RegistryFileState> | null {
   let names: string[]
   try {
     names = readdirSync(root)
@@ -116,24 +172,27 @@ export function readRegistrySnapshot(
     if (PUBLISH_TEMPORARY.test(name)) continue
     const path = join(root, name)
     let stamp: string
+    let regular: boolean
     try {
       const stat = lstatSync(path)
       stamp = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.mode}`
+      regular = stat.isFile()
     } catch {
       continue
     }
-    const known = previous?.get(name)
-    if (known && known.stamp === stamp) {
-      snapshot.set(name, known)
-      continue
+    let bytes: Buffer | null = null
+    if (regular) {
+      try {
+        bytes = readFileSync(path)
+      } catch {
+        bytes = null
+      }
     }
-    let content: string | null = null
-    try {
-      content = readFileSync(path, 'utf8')
-    } catch {
-      content = null
-    }
-    snapshot.set(name, { stamp, content, pid: pidOf(content) })
+    snapshot.set(name, {
+      stamp,
+      hash: bytes ? createHash('sha256').update(bytes).digest('hex') : null,
+      record: recordOf(bytes)
+    })
   }
   return snapshot
 }
@@ -163,6 +222,39 @@ export function readProcessParents(
   return parents
 }
 
+/**
+ * A pid's command line, synchronously: exact argv from /proc on linux, the
+ * joined line from ps on darwin. ESRCH is `dead`; anything unreadable is
+ * `identity_unavailable`, which never verifies a Host.
+ */
+export function readProcessCommandSync(
+  pid: number,
+  platform: NodeJS.Platform = process.platform
+): ProcessCommandLineObservation {
+  try {
+    if (platform === 'linux') {
+      const argv = parseProcCmdline(readFileSync(`/proc/${pid}/cmdline`, 'utf8'))
+      if (argv) return { state: 'live', commandLine: argv.join(' '), argv }
+    } else if (platform === 'darwin') {
+      const line = execFileSync('/bin/ps', ['-o', 'command=', '-p', String(pid)], {
+        encoding: 'utf8',
+        env: { LC_ALL: 'C' },
+        timeout: 2_000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      }).trim()
+      if (line) return { state: 'live', commandLine: line, argv: null }
+    }
+  } catch {
+    // Fall through to the existence probe.
+  }
+  try {
+    process.kill(pid, 0)
+  } catch (error) {
+    if (isErrno(error, ['ESRCH'])) return { state: 'dead' }
+  }
+  return { state: 'identity_unavailable' }
+}
+
 /** Whether `pid` is `ancestor` or runs under it, judged from one process table. */
 export function attributeRegistryWriter(
   pid: number | null,
@@ -180,34 +272,90 @@ export function attributeRegistryWriter(
   return 'other'
 }
 
+const DEFAULT_PROCESS_PORTS: RegistryGuardProcessPorts = {
+  readParents: () => readProcessParents(),
+  observeBirth: (pid) => observeProcessBirthIdentitySync(pid),
+  observeCommand: (pid) => readProcessCommandSync(pid)
+}
+
+/** fs.watch without keeping the run alive; a directory it cannot watch is polled only. */
+export const watchRegistryDirectory: RegistryDirectoryWatch = (path, onChange) => {
+  try {
+    const watcher = watchDirectory(path, { persistent: false }, (_event, name) =>
+      onChange(typeof name === 'string' ? name : null)
+    )
+    watcher.on('error', () => undefined)
+    return watcher
+  } catch {
+    return null
+  }
+}
+
 export interface RegistryIsolationGuardOptions {
   /** The registry a Host uses without the override. */
   readonly realRoot: string
   /** This vitest process: writers under it belong to the run. */
   readonly ancestorPid: number
-  readonly readParents?: () => ProcessParents | null
+  readonly ports?: Partial<RegistryGuardProcessPorts>
+  /** When the run began; a Host started after it needs an ancestor that did not. */
+  readonly runStartedAtMs?: number
+  readonly removalGraceMs?: number
+  readonly now?: () => number
+  /** Watches the root (or its parent while the root is absent) between polls. */
+  readonly watch?: RegistryDirectoryWatch
+  /** Called on every watch event, so the owner can poll at once. */
+  readonly onWatchEvent?: () => void
+}
+
+type EntryOwner =
+  | { readonly kind: 'outside-host'; readonly pid: number; readonly birthIdentity: string }
+  | { readonly kind: 'baseline-stale' }
+  | { readonly kind: 'flagged' }
+
+type Verification =
+  | { readonly ok: true; readonly pid: number; readonly birthIdentity: string }
+  | {
+      readonly ok: false
+      readonly attribution: RegistryIsolationAttribution
+      readonly reason: string
+    }
+
+interface PendingRemoval {
+  readonly pid: number
+  readonly birthIdentity: string
+  readonly profilePath: string | null
+  readonly deadline: number
 }
 
 /**
- * Tracks the real registry against a baseline. `poll()` is cheap (one
- * readdir, re-reads only changed files) and runs on an interval for the whole
- * test run; `violations()` is the verdict.
+ * Tracks the real registry against a baseline. `poll()` runs on an interval
+ * and on every watch event for the whole test run; `violations()` is the
+ * verdict once `pendingRemovals()` is zero or has timed out.
  */
 export class RegistryIsolationGuard {
   private readonly options: RegistryIsolationGuardOptions
-  private readonly readParents: () => ProcessParents | null
+  private readonly ports: RegistryGuardProcessPorts
+  private readonly now: () => number
+  private readonly runStartedAtMs: number
   private readonly rootExistedAtStart: boolean
   /** A root nobody here can list cannot be written by this run's Hosts either. */
   private readonly unlistableAtStart: boolean
   private known: RegistrySnapshot
-  /** Last attribution per entry name; baseline entries start as `other` or `baseline-stale`. */
-  private readonly owners = new Map<string, RegistryIsolationViolation['attribution']>()
+  private readonly owners = new Map<string, EntryOwner>()
+  private readonly pending = new Map<string, PendingRemoval>()
+  /** Names a watch reported since the last poll. */
+  private readonly noted = new Set<string>()
+  /** Every name any snapshot held: a late watch event for one is never transient. */
+  private readonly everSeen = new Set<string>()
   private readonly found: RegistryIsolationViolation[] = []
   private exemptWriterSeen = false
+  private watched: { readonly key: string; readonly handle: { close(): void } } | null = null
 
   constructor(options: RegistryIsolationGuardOptions) {
     this.options = options
-    this.readParents = options.readParents ?? (() => readProcessParents())
+    this.ports = { ...DEFAULT_PROCESS_PORTS, ...options.ports }
+    this.now = options.now ?? Date.now
+    this.runStartedAtMs = options.runStartedAtMs ?? this.now()
     let baseline: RegistrySnapshot = null
     let unlistable = false
     try {
@@ -216,75 +364,78 @@ export class RegistryIsolationGuard {
       unlistable = true
     }
     this.known = baseline
+    for (const name of baseline?.keys() ?? []) this.everSeen.add(name)
     this.unlistableAtStart = unlistable
     this.rootExistedAtStart = unlistable || baseline !== null
     if (this.known && this.known.size > 0) {
-      const parents = this.readParents()
+      const table = this.memoizedParents()
       for (const [name, state] of this.known) {
-        const attribution = attributeRegistryWriter(state.pid, options.ancestorPid, parents)
-        // A baseline entry naming a live process outside the run is a real
+        // A baseline entry that is a live Host's own record belongs to that
         // Host; anything else (a dead pid, a malformed file) is inert and
         // must still be there, unchanged, when the run ends.
-        this.owners.set(name, attribution === 'other' ? 'other' : 'baseline-stale')
+        const verified = this.verifyOutsideHost(state.record, table, false)
+        this.owners.set(
+          name,
+          verified.ok
+            ? { kind: 'outside-host', pid: verified.pid, birthIdentity: verified.birthIdentity }
+            : { kind: 'baseline-stale' }
+        )
       }
+    }
+    this.rearmWatch()
+  }
+
+  /** A watch event: remember the name, so one that is gone by the next poll still counts. */
+  note(name: string | null): void {
+    if (name && !PUBLISH_TEMPORARY.test(name) && !name.includes('/') && !name.includes('\\')) {
+      this.noted.add(name)
     }
   }
 
   poll(): void {
     let current: RegistrySnapshot
     try {
-      current = readRegistrySnapshot(this.options.realRoot, this.known)
+      current = readRegistrySnapshot(this.options.realRoot)
     } catch (error) {
       if (this.unlistableAtStart) return
-      if (!this.found.some((violation) => violation.name === '(root)')) {
-        this.record({
-          name: '(root)',
-          change: 'rewritten',
-          pid: null,
-          attribution: 'unknown',
-          detail: `the real registry root became unlistable during the run: ${String(error)}`
-        })
-      }
+      this.record({
+        name: '(root)',
+        change: 'rewritten',
+        pid: null,
+        attribution: 'unknown',
+        detail: `the real registry root became unlistable during the run: ${String(error)}`
+      })
       return
     }
     const before = this.known ?? new Map<string, RegistryFileState>()
     const after = current ?? new Map<string, RegistryFileState>()
-    let parents: ProcessParents | null | undefined
-    const table = (): ProcessParents | null => {
-      if (parents === undefined) parents = this.readParents()
-      return parents
-    }
-    for (const [name, state] of after) {
-      const previous = before.get(name)
-      if (previous && previous.stamp === state.stamp) continue
-      const attribution = attributeRegistryWriter(state.pid, this.options.ancestorPid, table())
-      this.owners.set(name, attribution)
-      if (attribution === 'other') {
-        this.exemptWriterSeen = true
-        continue
-      }
+    const table = this.memoizedParents()
+
+    for (const name of after.keys()) this.everSeen.add(name)
+    for (const name of this.noted) {
+      if (this.everSeen.has(name)) continue
       this.record({
         name,
-        change: previous ? 'rewritten' : 'created',
-        pid: state.pid,
-        attribution,
-        detail: this.describe(state)
+        change: 'transient',
+        pid: null,
+        attribution: 'unknown',
+        detail:
+          'a file appeared in the real registry and was gone before the next poll could read it'
       })
+    }
+    this.noted.clear()
+
+    for (const [name, state] of after) {
+      const previous = before.get(name)
+      if (previous && previous.stamp === state.stamp && previous.hash === state.hash) continue
+      this.judgeWrite(name, previous ?? null, state, table)
     }
     for (const [name, state] of before) {
       if (after.has(name)) continue
-      const owner = this.owners.get(name)
-      this.owners.delete(name)
-      if (owner === 'other') continue
-      if (owner === 'this-run' || owner === 'unknown') continue // recorded when it appeared
-      this.record({
-        name,
-        change: 'removed',
-        pid: state.pid,
-        attribution: owner ?? 'unknown',
-        detail: `an entry that was already in the real registry disappeared (${this.describe(state)})`
-      })
+      this.judgeRemoval(name, state)
     }
+    this.settlePending()
+
     if (!this.rootExistedAtStart && current !== null && !this.exemptWriterSeen) {
       if (!this.found.some((violation) => violation.change === 'root-created')) {
         this.record({
@@ -297,23 +448,251 @@ export class RegistryIsolationGuard {
       }
     }
     this.known = current
+    this.rearmWatch()
+  }
+
+  /** Removals still inside their grace: the verdict is not final until this is zero. */
+  pendingRemovals(): number {
+    return this.pending.size
   }
 
   violations(): readonly RegistryIsolationViolation[] {
     return this.found
   }
 
-  private describe(state: RegistryFileState): string {
-    const profile = profileOf(state.content)
+  close(): void {
+    this.watched?.handle.close()
+    this.watched = null
+  }
+
+  private judgeWrite(
+    name: string,
+    previous: RegistryFileState | null,
+    state: RegistryFileState,
+    table: () => ProcessParents | null
+  ): void {
+    const owner = this.owners.get(name)
+    const record = state.record
+    // A refresh by the Host already verified as this entry's owner keeps its
+    // standing even if the ancestor that anchored it has since exited.
+    const sameOwner =
+      owner?.kind === 'outside-host' &&
+      record?.pid === owner.pid &&
+      record.birthIdentity === owner.birthIdentity
+    const verified = this.verifyOutsideHost(record, table, !sameOwner)
+    if (verified.ok) {
+      if (
+        sameOwner ||
+        owner?.kind !== 'outside-host' ||
+        this.gone(owner.pid, owner.birthIdentity)
+      ) {
+        this.owners.set(name, {
+          kind: 'outside-host',
+          pid: verified.pid,
+          birthIdentity: verified.birthIdentity
+        })
+        this.exemptWriterSeen = true
+        return
+      }
+      this.owners.set(name, { kind: 'flagged' })
+      this.record({
+        name,
+        change: 'rewritten',
+        pid: verified.pid,
+        attribution: 'outside-host',
+        detail: `the entry of pid ${owner.pid}, still running, was replaced by one for pid ${verified.pid}`
+      })
+      return
+    }
+    this.owners.set(name, { kind: 'flagged' })
+    this.record({
+      name,
+      change: previous ? 'rewritten' : 'created',
+      pid: record?.pid ?? null,
+      attribution: verified.attribution,
+      detail: `${this.describe(record)}: ${verified.reason}`
+    })
+  }
+
+  private judgeRemoval(name: string, state: RegistryFileState): void {
+    const owner = this.owners.get(name)
+    this.owners.delete(name)
+    if (owner?.kind === 'outside-host') {
+      this.pending.set(name, {
+        pid: owner.pid,
+        birthIdentity: owner.birthIdentity,
+        profilePath: state.record?.profilePath ?? null,
+        deadline: this.now() + (this.options.removalGraceMs ?? REMOVAL_GRACE_MS)
+      })
+      return
+    }
+    // A flagged entry was reported when it appeared.
+    if (owner?.kind === 'flagged') return
+    this.record({
+      name,
+      change: 'removed',
+      pid: state.record?.pid ?? null,
+      attribution: 'baseline-stale',
+      detail: `an entry that was already in the real registry disappeared (${this.describe(state.record)})`
+    })
+  }
+
+  /** A verified Host's entry is gone: fine once that Host has exited, a violation if it outlives the grace. */
+  private settlePending(): void {
+    for (const [name, removal] of this.pending) {
+      if (this.gone(removal.pid, removal.birthIdentity)) {
+        this.pending.delete(name)
+        continue
+      }
+      if (this.now() < removal.deadline) continue
+      this.pending.delete(name)
+      this.record({
+        name,
+        change: 'removed',
+        pid: removal.pid,
+        attribution: 'outside-host',
+        detail:
+          `the entry of Host pid ${removal.pid}${removal.profilePath ? ` (profile ${removal.profilePath})` : ''} ` +
+          'was deleted while that Host kept running: it stops itself on the missing entry'
+      })
+    }
+  }
+
+  private gone(pid: number, birthIdentity: string): boolean {
+    const observation = this.ports.observeBirth(pid)
+    return (
+      observation.state === 'dead' ||
+      (observation.state === 'live' && observation.birthIdentity !== birthIdentity)
+    )
+  }
+
+  /**
+   * Whether `record` is the live entry of a Host outside this run: the pid is
+   * alive with exactly the recorded birth, runs a Host serving the recorded
+   * profile, is not under this run and — when `anchored` — started before
+   * the run or has a non-init ancestor that did.
+   */
+  private verifyOutsideHost(
+    record: RegistryEntryRecord | null,
+    table: () => ProcessParents | null,
+    anchored: boolean
+  ): Verification {
+    if (!record) return { ok: false, attribution: 'unknown', reason: 'not a readable entry' }
+    const pid = record.pid
+    if (pid === null) return { ok: false, attribution: 'unknown', reason: 'it names no pid' }
+    const parents = table()
+    if (attributeRegistryWriter(pid, this.options.ancestorPid, parents) === 'this-run') {
+      return { ok: false, attribution: 'this-run', reason: `pid ${pid} runs under this test run` }
+    }
+    const birth = this.ports.observeBirth(pid)
+    if (birth.state === 'dead') {
+      return { ok: false, attribution: 'unknown', reason: `pid ${pid} is not running` }
+    }
+    if (birth.state !== 'live') {
+      return { ok: false, attribution: 'unknown', reason: `pid ${pid} cannot be observed` }
+    }
+    if (parents === null) {
+      return { ok: false, attribution: 'unknown', reason: 'no process table to place its writer' }
+    }
+    if (
+      !isProcessBirthIdentityDigest(record.birthIdentity) ||
+      record.birthIdentity !== birth.birthIdentity
+    ) {
+      return {
+        ok: false,
+        attribution: 'unverified',
+        reason: `pid ${pid} is not the process the entry records`
+      }
+    }
+    if (
+      !record.profilePath ||
+      !isHostServeCommandFor(this.ports.observeCommand(pid), record.profilePath)
+    ) {
+      return {
+        ok: false,
+        attribution: 'unverified',
+        reason: `pid ${pid} is not a Host serving the entry's profile`
+      }
+    }
+    if (anchored && !this.predatesRun(birth) && !this.hasAncestorOutsideRun(pid, parents)) {
+      return {
+        ok: false,
+        attribution: 'unverified',
+        reason: `pid ${pid} started during this run and no ancestor outside it did`
+      }
+    }
+    return { ok: true, pid, birthIdentity: birth.birthIdentity }
+  }
+
+  private predatesRun(birth: ProcessBirthObservation): boolean {
+    return (
+      birth.state === 'live' &&
+      birth.startedAtMs !== null &&
+      birth.startedAtMs < this.runStartedAtMs - PROCESS_BIRTH_START_TOLERANCE_MS
+    )
+  }
+
+  private hasAncestorOutsideRun(pid: number, parents: ProcessParents): boolean {
+    const seen = new Set<number>([pid])
+    let current = parents.get(pid)
+    // Init (and the kernel) adopt every orphan: never an anchor.
+    while (current !== undefined && current > 1 && !seen.has(current)) {
+      if (current === this.options.ancestorPid) return false
+      seen.add(current)
+      if (this.predatesRun(this.ports.observeBirth(current))) return true
+      current = parents.get(current)
+    }
+    return false
+  }
+
+  private memoizedParents(): () => ProcessParents | null {
+    let parents: ProcessParents | null | undefined
+    return () => {
+      if (parents === undefined) parents = this.ports.readParents()
+      return parents
+    }
+  }
+
+  /** Watch the root, or its parent while the root is absent; re-armed when either changes. */
+  private rearmWatch(): void {
+    const watch = this.options.watch
+    if (!watch) return
+    const root = this.options.realRoot
+    let target: string | null = null
+    let key = ''
+    for (const candidate of [root, dirname(root)]) {
+      try {
+        const stat = lstatSync(candidate)
+        if (!stat.isDirectory()) continue
+        target = candidate
+        key = `${candidate}:${stat.dev}:${stat.ino}`
+        break
+      } catch {
+        // Absent: try the parent.
+      }
+    }
+    if (this.watched?.key === key) return
+    this.close()
+    if (!target) return
+    const watching = target
+    const handle = watch(watching, (name) => {
+      if (watching === root) this.note(name)
+      this.options.onWatchEvent?.()
+    })
+    if (handle) this.watched = { key, handle }
+  }
+
+  private describe(record: RegistryEntryRecord | null): string {
+    if (!record) return 'not a readable entry'
     return [
-      state.pid === null ? 'no pid' : `pid ${state.pid}`,
-      profile ? `profile ${profile}` : state.content === null ? 'not a readable file' : null
+      record.pid === null ? 'no pid' : `pid ${record.pid}`,
+      record.profilePath ? `profile ${record.profilePath}` : null
     ]
       .filter(Boolean)
       .join(', ')
   }
 
-  /** One line per entry and writer: a Host refreshing its entry is one finding, not one per minute. */
+  /** One line per entry and pid: a Host refreshing its entry is one finding, not one per minute. */
   private record(violation: RegistryIsolationViolation): void {
     const duplicate = this.found.some(
       (existing) => existing.name === violation.name && existing.pid === violation.pid
@@ -327,13 +706,13 @@ export function formatRegistryIsolationViolations(
   violations: readonly RegistryIsolationViolation[]
 ): string {
   const lines = [
-    `[host-registry-isolation] FAILED: this test run wrote into the real Host registry ${realRoot}.`,
+    `[host-registry-isolation] FAILED: this test run changed the real Host registry ${realRoot}.`,
     ...violations.map(
       (violation) =>
         `  ${violation.change} ${violation.name} (${violation.attribution}): ${violation.detail}`
     ),
     `  Spawn Hosts with the inherited environment (it carries ${HOST_REGISTRY_ROOT_ENV}) or set`,
-    '  that variable to a temporary directory explicitly; never publish into or sweep the real root.'
+    '  that variable to a temporary directory explicitly; never publish into, edit or sweep the real root.'
   ]
   return `${lines.join('\n')}\n`
 }
@@ -360,37 +739,67 @@ export interface HostRegistryIsolationOptions {
   readonly realRoots?: readonly string[]
   readonly temporaryDirectory?: string
   readonly ancestorPid?: number
-  readonly readParents?: () => ProcessParents | null
+  readonly ports?: Partial<RegistryGuardProcessPorts>
+  readonly runStartedAtMs?: number
   readonly pollIntervalMs?: number
+  readonly removalGraceMs?: number
+  /** fs.watch by default; null polls only. */
+  readonly watch?: RegistryDirectoryWatch | null
   readonly report?: (text: string) => void
   /** Marks the run failed; the summary has already printed by then. */
   readonly fail?: () => void
 }
 
 /** Starts the per-run root and the guard; the returned teardown gives the verdict. */
-export function startHostRegistryIsolation(options: HostRegistryIsolationOptions = {}): () => void {
+export function startHostRegistryIsolation(
+  options: HostRegistryIsolationOptions = {}
+): () => Promise<void> {
   const env = options.env ?? process.env
   const runRoot = mkdtempSync(join(options.temporaryDirectory ?? tmpdir(), RUN_ROOT_PREFIX))
   // The per-run root every worker and every Host they spawn inherits.
   env[HOST_REGISTRY_ROOT_ENV] = runRoot
-  const guards = (options.realRoots ?? realHostRegistryRoots()).map(
-    (realRoot) =>
-      [
+  const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS
+  const removalGraceMs = options.removalGraceMs ?? REMOVAL_GRACE_MS
+  const runStartedAtMs = options.runStartedAtMs ?? Date.now()
+  const watch = options.watch === undefined ? watchRegistryDirectory : options.watch
+  const guards: Array<readonly [string, RegistryIsolationGuard]> = []
+  let scheduled = false
+  const pollAll = (): void => {
+    for (const [, guard] of guards) guard.poll()
+  }
+  const pollSoon = (): void => {
+    if (scheduled) return
+    scheduled = true
+    setImmediate(() => {
+      scheduled = false
+      pollAll()
+    })
+  }
+  for (const realRoot of options.realRoots ?? realHostRegistryRoots()) {
+    guards.push([
+      realRoot,
+      new RegistryIsolationGuard({
         realRoot,
-        new RegistryIsolationGuard({
-          realRoot,
-          ancestorPid: options.ancestorPid ?? process.pid,
-          ...(options.readParents ? { readParents: options.readParents } : {})
-        })
-      ] as const
-  )
-  const timer = setInterval(() => {
-    for (const [, guard] of guards) guard.poll()
-  }, options.pollIntervalMs ?? POLL_INTERVAL_MS)
+        ancestorPid: options.ancestorPid ?? process.pid,
+        runStartedAtMs,
+        removalGraceMs,
+        ...(options.ports ? { ports: options.ports } : {}),
+        ...(watch ? { watch, onWatchEvent: pollSoon } : {})
+      })
+    ])
+  }
+  const timer = setInterval(pollAll, pollIntervalMs)
   timer.unref()
-  return () => {
+  return async () => {
     clearInterval(timer)
-    for (const [, guard] of guards) guard.poll()
+    pollAll()
+    // A removal is judged only once its Host has had its grace to exit.
+    const settleBy = Date.now() + removalGraceMs + pollIntervalMs
+    while (guards.some(([, guard]) => guard.pendingRemovals() > 0) && Date.now() < settleBy) {
+      await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+      pollAll()
+    }
+    for (const [, guard] of guards) guard.close()
     rmSync(runRoot, { recursive: true, force: true })
     const reports = guards
       .filter(([, guard]) => guard.violations().length > 0)
@@ -407,6 +816,6 @@ export function startHostRegistryIsolation(options: HostRegistryIsolationOptions
 }
 
 /** Vitest `globalSetup` entry. */
-export default function setupHostRegistryIsolation(): () => void {
+export default function setupHostRegistryIsolation(): () => Promise<void> {
   return startHostRegistryIsolation()
 }
