@@ -230,17 +230,14 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
+    // Every live provider now renders its sourced brand logo: Devin gained its
+    // official mark on 2026-09-01 and Muse the vendored Meta mark on
+    // 2026-09-19 (47d0da5fc), so no row falls back to the TaskWraith glyph.
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      if (provider === 'muse') {
-        // No sourced brand logo asset — the TaskWraith glyph fallback renders.
-        // (Devin gained its official mark on 2026-09-01 and renders the logo.)
-        expect(html).toContain(`provider-glyph-${provider}`)
-        expect(html).not.toContain(`data-provider-logo="${provider}"`)
-      } else {
-        expect(html).toContain(`data-provider-logo="${provider}"`)
-        expect(html).not.toContain(`provider-glyph-${provider}`)
-      }
+      expect(html).toContain(`data-provider-logo="${provider}"`)
+      expect(html).not.toContain(`provider-glyph-${provider}`)
     }
+    expect(html).toContain('provider-logo-meta.png')
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).toContain('Claude')
   })
