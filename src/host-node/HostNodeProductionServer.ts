@@ -132,10 +132,11 @@ export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 export const HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS = 10_000
 
 /**
- * How long a stop the Host decides on its own (the last lease went, or its
- * registry entry did) may run. It is summed from the bounds its cleanup steps
- * run under, one after another, plus the margin, so a stop that runs every
- * bounded step out to its bound still finishes inside it:
+ * How long a stop nobody retries may run: one the Host decides on its own (the
+ * last lease went, or its registry entry did), or one a client requested over
+ * the listener, which the stop closes first. It is summed from the bounds its
+ * cleanup steps run under, one after another, plus the margin, so a stop that
+ * runs every bounded step out to its bound still finishes inside it:
  *   - the listener's three drains, HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS
  *     each;
  *   - the domain's queued dispatches, then its provider runs' completions,
@@ -149,14 +150,14 @@ export const HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS = 10_000
  * Only a history worker that is alive but wedged takes that long, and such a
  * stop ends at the deadline like any other.
  *
- * Nothing retries a stop the Host decided on, so the deadline is a hard one:
- * a stop still running when it passes is reported and ends the process, the
- * way a stop that fails does (stopForLifetime). Until then the deadline's
- * timer is ref'd and keeps the process alive: by then the listener is closed
- * and may be all that held the event loop, and a step waiting only on unref'd
- * timers (a history worker restart's backoff) would otherwise let the process
- * run dry and exit 0 halfway, with the profile authority and registry entry
- * still held.
+ * Nothing retries such a stop, so the deadline is a hard one: a stop still
+ * running when it passes is reported and ends the process, the way a stop
+ * that fails does (stopWithoutRetry). Until then the deadline's timer is ref'd
+ * and keeps the process alive: by then the listener is closed and may be all
+ * that held the event loop, and a step waiting only on unref'd timers (a
+ * history worker restart's backoff) would otherwise let the process run dry
+ * and exit 0 halfway, with the profile authority and registry entry still
+ * held.
  */
 export const HOST_LIFETIME_STOP_DEADLINE_MS =
   3 * HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS +
@@ -231,8 +232,8 @@ export interface HostNodeProductionServerOptions {
    */
   readonly lifetimeStopDeadlineMs?: number
   /**
-   * Ends the process after a stop the Host decided on has failed or run out of
-   * time (stopForLifetime). The CLI's Host passes one; an in-process embedder
+   * Ends the process after a stop nobody retries has failed or run out of time
+   * (stopWithoutRetry). The CLI's Host passes one; an in-process embedder
    * (most tests) does not, and then such a stop only fails waitForShutdown.
    */
   readonly endProcess?: (code: number) => void
@@ -785,7 +786,7 @@ export class HostNodeProductionServer {
           command.target.threadId && this.threadRecovery
             ? this.threadRecovery.admit(command.target.threadId, execute)
             : execute(),
-        onAuthenticatedShutdown: () => this.stop(),
+        onAuthenticatedShutdown: () => this.stopWithoutRetry('stopping on request'),
         subscribeDeltas: (listener) =>
           this.composition!.subscribeDeltas((event) => listener(event.record.envelope)),
         ...(this.leases ? { leases: this.leases } : { leaseProtocol: 'disabled' as const })
@@ -803,7 +804,7 @@ export class HostNodeProductionServer {
         this.shutdown.reject(asError(cleanupError))
         // Nothing retries a start, and the signals are gone: whatever the
         // cleanup left live must not hold the process, and the profile
-        // authority with it, for good (see stopForLifetime).
+        // authority with it, for good (see stopWithoutRetry).
         this.options.endProcess?.(1)
         throw cleanupError
       }
@@ -965,22 +966,26 @@ export class HostNodeProductionServer {
 
   private onLeaseExit(reason: HostLeaseExitReason): void {
     writeHostStderr(`taskwraith-host: stopping after the last client lease (${reason})\n`)
-    this.stopForLifetime('stopping after the last client lease')
+    this.stopWithoutRetry('stopping after the last client lease')
   }
 
   /**
-   * A stop the Host decides on its own: the last lease is gone, or its registry
-   * entry is. Nobody retries it the way a second SIGTERM retries a signalled
-   * stop, so it must never leave the process up with its listener closed and
-   * the profile authority held, where every relaunch finds no Host. It has
-   * until its deadline (HOST_LIFETIME_STOP_DEADLINE_MS). If it fails, or is
-   * still running then, the Host names why on stderr, fails waitForShutdown,
-   * and ends the process through `endProcess`, live handles or not. That is
-   * crash-equivalent: the cleanup it could do has run, and the authority lease
-   * names this pid and its birth, so the next Host takes the profile over
-   * once this process is gone.
+   * A stop nobody retries. The Host decides on one when its last lease is gone
+   * or its registry entry is. A client requests one over the listener
+   * (`host.shutdown`, from `cli.js stop` or the Desktop's HostShutdownClient),
+   * and the stop closes that listener first, so the request cannot be sent
+   * again. Only a signalled stop has a retry: a failed one re-arms SIGINT and
+   * SIGTERM for the sender's next signal. So this stop must never leave the
+   * process up with its listener closed and the profile authority held, where
+   * every relaunch finds no Host. It has until its deadline
+   * (HOST_LIFETIME_STOP_DEADLINE_MS). If it fails, or is still running then,
+   * the Host names why on stderr, fails waitForShutdown, and ends the process
+   * through `endProcess`, live handles or not. That is crash-equivalent: the
+   * cleanup it could do has run, and the authority lease names this pid and
+   * its birth, so the next Host takes the profile over once this process is
+   * gone.
    */
-  private stopForLifetime(action: string): void {
+  private stopWithoutRetry(action: string): void {
     const deadlineMs = this.options.lifetimeStopDeadlineMs ?? this.lifetimeStopDeadlineMs
     let settled = false
     const giveUp = (line: string, error: Error): void => {
@@ -1043,7 +1048,7 @@ export class HostNodeProductionServer {
         writeHostStderr(
           `taskwraith-host: registry entry ${verdict} on ${this.registrySelfCheckStrikes} checks since it was last present; stopping\n`
         )
-        this.stopForLifetime('stopping after the registry self-check')
+        this.stopWithoutRetry('stopping after the registry self-check')
       }
       return
     }

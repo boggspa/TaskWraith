@@ -60,13 +60,13 @@ export interface HostRegistryPublisherInput {
 const HOST_END_PROCESS_FLUSH_MS = 1_000
 
 /**
- * Ends this Host's process after a stop it decided on has failed or run out of
- * time. Nothing retries such a stop, and whatever it left live (a history
- * worker, a provider's pipes) would otherwise keep the process, and with it
- * the profile authority, up for good. It waits for the current turn, so the
- * failure has settled everywhere, then for stderr to flush, but never longer
- * than HOST_END_PROCESS_FLUSH_MS: a reader that stopped reading cannot hold
- * the exit.
+ * Ends this Host's process after a stop nobody retries (one it decided on, or
+ * one requested over its listener) has failed or run out of time. Whatever it
+ * left live (a history worker, a provider's pipes) would otherwise keep the
+ * process, and with it the profile authority, up for good. It waits for the
+ * current turn, so the failure has settled everywhere, then for stderr to
+ * flush, but never longer than HOST_END_PROCESS_FLUSH_MS: a reader that
+ * stopped reading cannot hold the exit.
  */
 export function endHostProcess(code: number): void {
   setImmediate(() => {

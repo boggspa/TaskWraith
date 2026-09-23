@@ -61,9 +61,10 @@ export interface HostNodeProductionFactoryOptions {
   /** Lease clock/scheduler seam for tests; production uses the defaults. */
   readonly leasePorts?: HostLeaseRegistryPorts
   /**
-   * How the process ends after a stop the Host decided on has failed or run
-   * out of time. The `cli.js serve` path supplies it; an in-process embedder
-   * (most tests) does not, and its process is never ended from here.
+   * How the process ends after a stop nobody retries (one the Host decided on,
+   * or one requested over its listener) has failed or run out of time. The
+   * `cli.js serve` path supplies it; an in-process embedder (most tests) does
+   * not, and its process is never ended from here.
    */
   readonly endProcess?: (code: number) => void
 }

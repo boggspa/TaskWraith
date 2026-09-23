@@ -858,6 +858,54 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     await takesTheProfileOver(cli, profile, root)
   }, 90_000)
 
+  // The same for a stop requested over the socket. `cli.js stop` and the
+  // Desktop's HostShutdownClient reach the Host through the listener the stop
+  // closes first, so nothing can request it again.
+  it('ends the process when a requested stop fails, and a second Host takes the profile', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-failed-request-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root)
+    const profile = join(root, 'requested')
+    const host = spawnHost(
+      cli,
+      profile,
+      // A grace longer than the test: only the request stops this Host.
+      { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:40000,stop:5000' },
+      [],
+      ['--require', writersDrainHook(root, cli, 'fail')]
+    )
+    let tail = ''
+    host.child.stderr?.on('data', (chunk: string) => {
+      tail = (tail + chunk).slice(-4_096)
+    })
+    await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
+    const requestedAt = Date.now()
+    const stop = spawn(process.execPath, [cli, 'stop', '--profile', realpathSync(profile)], {
+      env: { ...process.env, PATH: '' },
+      stdio: ['ignore', 'ignore', 'pipe']
+    })
+    spawned.push(stop)
+    let stopStderr = ''
+    stop.stderr?.setEncoding('utf8')
+    stop.stderr?.on('data', (chunk: string) => {
+      stopStderr += chunk
+    })
+    await waitForExit(host.child, 15_000)
+    expect(host.child.exitCode, tail).toBe(1)
+    expect(Date.now() - requestedAt).toBeLessThan(5_000)
+    expect(tail).toContain(
+      'stopping on request failed, profile authority retained: ' +
+        'History source writers have not drained'
+    )
+    // The request was acknowledged, but the authority it waits to see go
+    // names a process that is gone: `cli.js stop` says the stop did not finish.
+    await waitForExit(stop, 15_000)
+    expect(stop.exitCode, stopStderr).toBe(1)
+    expect(stopStderr).toContain('ownership artifacts remain')
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
+    await takesTheProfileOver(cli, profile, root)
+  }, 90_000)
+
   it('ends the process at its deadline while a stop step still holds it open, and a second Host takes the profile', async () => {
     const root = mkdtempSync(join(tmpdir(), 'host-hung-stop-subprocess-'))
     paths.push(root)

@@ -413,6 +413,8 @@ describe('HostNodeProductionServer', () => {
       'composition.shutdown',
       'lease.release'
     ])
+    // A clean stop leaves the process to exit on its own.
+    expect(h.ended()).toEqual([])
   })
 
   it('derives approvals/questions capability from constructed domain flags', async () => {
@@ -1600,7 +1602,7 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     }
   })
 
-  it('never ends the process for an explicit stop that fails: the next signal retries it', async () => {
+  it('never ends the process for a signalled stop that fails: the next signal retries it', async () => {
     const h = harness({ environment: {} })
     h.composition.shutdown.mockRejectedValueOnce(new Error('transient runtime failure'))
     await h.server.start()
@@ -1612,6 +1614,49 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     await h.server.waitForShutdown()
     expect(h.server.phase).toBe('stopped')
     expect(h.ended()).toEqual([])
+  })
+
+  // A stop requested over the listener (`cli.js stop`, the Desktop's
+  // HostShutdownClient) closes that listener first, so nothing can send the
+  // request again: it ends the way a lifetime stop does, not a signalled one.
+  it('ends the process when a requested stop fails or is still running at its deadline: nothing can request it again', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      for (const settle of ['fails', 'never settles'] as const) {
+        write.mockClear()
+        const h = harness({ environment: {}, lifetimeStopDeadlineMs: 50 })
+        if (settle === 'fails') {
+          h.composition.shutdown.mockRejectedValueOnce(new Error('claim compaction refused'))
+        } else {
+          h.composition.shutdown.mockImplementationOnce(() => new Promise<void>(() => {}))
+        }
+        await h.server.start()
+        let outcome = 'pending'
+        void h.server.waitForShutdown().then(
+          () => (outcome = 'stopped'),
+          (error: Error) => (outcome = error.message)
+        )
+        // As the listener calls it, once it has acknowledged the request: a
+        // failure it sees is only logged.
+        void Promise.resolve()
+          .then(() => h.authenticatedShutdown()?.())
+          .catch(() => undefined)
+        const line =
+          settle === 'fails'
+            ? 'taskwraith-host: stopping on request failed, profile authority retained: ' +
+              'Production Host runtime cleanup failed; retaining profile authority. <- claim compaction refused\n'
+            : 'taskwraith-host: stopping on request did not finish within 50 ms, profile authority retained\n'
+        await vi.waitFor(() =>
+          expect(stderrLines(write), settle).toEqual(expect.arrayContaining([line]))
+        )
+        await vi.waitFor(() => expect(outcome, settle).not.toBe('pending'))
+        expect(outcome, settle).not.toBe('stopped')
+        expect(h.ended(), settle).toEqual([1])
+        expect(h.lease.release, settle).not.toHaveBeenCalled()
+      }
+    } finally {
+      write.mockRestore()
+    }
   })
 
   it('only fails waitForShutdown when no process-ending port is given, as for an in-process embedder', async () => {
