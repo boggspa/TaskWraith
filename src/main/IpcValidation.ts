@@ -375,6 +375,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // action validation and main-window authorization live in its handler.
   'host-lifecycle:status': [],
   'host-lifecycle:set': ['object'],
+  'host-lifecycle:inspect': [],
   'set-appearance-mode': ['any'],
   'appearance:get-system-accent-color': [],
   'get-host-weather': [],

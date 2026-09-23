@@ -1345,11 +1345,12 @@ const api = {
     ipcRenderer.invoke('host-projection:command-submit', command),
   hostProjectionReceiptLookup: (params: { commandId: string }) =>
     ipcRenderer.invoke('host-projection:receipt-lookup', params),
-  // Host remains an in-process app capability: these channels expose its
-  // visible start/stop state without granting the renderer a process handle.
+  // The Host lifecycle as the app sees it: visible start/stop/restart state
+  // and a live inspect, without granting the renderer a process handle.
   hostLifecycleStatus: () => ipcRenderer.invoke('host-lifecycle:status'),
-  hostLifecycleSet: (request: { action: 'start' | 'stop' }) =>
+  hostLifecycleSet: (request: { action: 'start' | 'stop' | 'restart' }) =>
     ipcRenderer.invoke('host-lifecycle:set', request),
+  hostLifecycleInspect: () => ipcRenderer.invoke('host-lifecycle:inspect'),
   onHostLifecycleChanged: (callback: (snapshot: unknown) => void) => {
     const wrapped = (_event: unknown, snapshot: unknown) => callback(snapshot)
     ipcRenderer.on('host-lifecycle:changed', wrapped)

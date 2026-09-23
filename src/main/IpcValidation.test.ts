@@ -136,6 +136,9 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('host-lifecycle:set', [{ action: 'start' }])).not.toThrow()
     expect(() => validateIpcArgs('host-lifecycle:set', [])).toThrow(/object/)
     expect(() => validateIpcArgs('host-lifecycle:set', ['stop'])).toThrow(/object/)
+    expect(() => validateIpcArgs('host-lifecycle:set', [{ action: 'restart' }])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:inspect', [])).not.toThrow()
+    expect(() => validateIpcArgs('host-lifecycle:inspect', [{}])).toThrow(/too many arguments/)
   })
 
   it('shape-gates opening an owned video asset in Studio', () => {

@@ -130,6 +130,7 @@ import type {
 import type {
   HostLifecycleActionRequest,
   HostLifecycleActionResult,
+  HostLifecycleInspectResult,
   HostLifecycleSnapshot,
   HostLifecycleStatusResult
 } from '../shared/hostLifecycle'
@@ -1500,9 +1501,11 @@ declare global {
       hostProjectionReceiptLookup: (params: {
         commandId: string
       }) => Promise<{ ok: true; receipt: HostCommandReceipt } | { ok: false; error: string }>
-      /** Visible lifecycle of Host inside the current TaskWraith process. */
+      /** Visible lifecycle of the Host this TaskWraith process is attached to. */
       hostLifecycleStatus: () => Promise<HostLifecycleStatusResult>
       hostLifecycleSet: (request: HostLifecycleActionRequest) => Promise<HostLifecycleActionResult>
+      /** Live inspect: the snapshot, the Host's own status, and main's lease. Main window only. */
+      hostLifecycleInspect: () => Promise<HostLifecycleInspectResult>
       onHostLifecycleChanged: (handler: (snapshot: HostLifecycleSnapshot) => void) => () => void
       setAppearanceMode: (
         payload: { mode?: string; reduceTransparency?: boolean } | string

@@ -405,9 +405,11 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'host-projection:command-submit',
   'host-projection:receipt-lookup',
   // Process-wide Host lifecycle is visible and mutable only from the primary
-  // app surface. Popouts never gain an independent start/stop authority.
+  // app surface. Popouts never gain an independent start/stop authority, and
+  // the live inspect (pid, payload, clients) is the same privileged surface.
   'host-lifecycle:status',
   'host-lifecycle:set',
+  'host-lifecycle:inspect',
   // Studio effect-preview state is process-wide and durable. Loading opens a
   // main-owned native file chooser, while clear/state mutate or project that
   // same privileged surface; popouts receive no independent LUT authority.
