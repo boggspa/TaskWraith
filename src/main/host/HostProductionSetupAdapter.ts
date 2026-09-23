@@ -498,7 +498,8 @@ export function createHostProductionSetupAdapter(
       }
     },
     providerAuth: {
-      // An agy sign-in here is deliberately ungated by consent: user-started (Chris, 2026-09-23).
+      // An agy sign-in here skips the live consent re-read before launch because it is
+      // user-started (Chris, 2026-09-23). AntiGravity must still be admitted to reach it.
       begin: async (input) => {
         const provider = await findProvider(options, input.providerId)
         if (input.flowId !== `${provider.providerId}:login`)
