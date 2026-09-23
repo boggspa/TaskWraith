@@ -145,7 +145,11 @@ function mockCatalog(
     disabled?: boolean
     disabledReason?: string
   }>,
-  options: { localReachable?: boolean; cloudAuthenticated?: boolean | null } = {}
+  options: {
+    localReachable?: boolean
+    cloudAuthenticated?: boolean | null
+    cloudFromMemory?: boolean
+  } = {}
 ) {
   const projected = models.map((model) => ({
     id: model.id,
@@ -167,6 +171,7 @@ function mockCatalog(
       supported: options.cloudAuthenticated !== undefined,
       enabled: true,
       authenticated: options.cloudAuthenticated ?? null,
+      ...(options.cloudFromMemory ? { authenticatedFromMemory: true as const } : {}),
       models: projected.filter((model) => model.source === 'cloud')
     },
     localReachable: options.localReachable ?? true
@@ -224,6 +229,48 @@ describe('HostNodeOllamaProvider status and auth', () => {
       mockCatalog([{ id: OLLAMA_MODEL_ID }], { cloudAuthenticated: true })
     )
     expect((await provider().getAuthStatus()).state).toBe('authenticated')
+  })
+
+  // The remembered `ollama signin` stands in when the daemon's account probe
+  // goes unanswered. The TUI and remote auth rows must not present that as a
+  // live verification.
+  it('says when the Cloud account answer is remembered rather than verified live', async () => {
+    const cloudRow = { id: 'minimax-m3:cloud', source: 'cloud' as const }
+    const cases = [
+      {
+        catalog: mockCatalog([{ id: OLLAMA_MODEL_ID }], { cloudAuthenticated: true }),
+        auth: 'Ollama Cloud account verified.',
+        ready: 'Local Ollama and authenticated Cloud models are available.'
+      },
+      {
+        catalog: mockCatalog([cloudRow], { localReachable: false, cloudAuthenticated: true }),
+        auth: 'Ollama Cloud account verified.',
+        ready: 'Authenticated Ollama Cloud models are available.'
+      },
+      {
+        catalog: mockCatalog([{ id: OLLAMA_MODEL_ID }], {
+          cloudAuthenticated: true,
+          cloudFromMemory: true
+        }),
+        auth: 'Ollama Cloud account remembered from your last Ollama sign-in.',
+        ready: 'Local Ollama models are available, and Cloud models from your last Ollama sign-in.'
+      },
+      {
+        catalog: mockCatalog([cloudRow], {
+          localReachable: false,
+          cloudAuthenticated: true,
+          cloudFromMemory: true
+        }),
+        auth: 'Ollama Cloud account remembered from your last Ollama sign-in.',
+        ready: 'Ollama Cloud models are available from your last Ollama sign-in.'
+      }
+    ]
+    for (const { catalog, auth, ready } of cases) {
+      mockFetchCatalog.mockResolvedValue(catalog)
+      const instance = provider()
+      expect(await instance.getAuthStatus()).toMatchObject({ state: 'authenticated', detail: auth })
+      expect(await instance.getStatus()).toMatchObject({ status: 'ready', detail: ready })
+    }
   })
 
   it('rejects a non-canonical auth operation id', async () => {
@@ -1068,5 +1115,91 @@ describe('HostNodeOllamaProvider tool trajectory memory', () => {
       .messages.find((message) => message.role === 'system')
     expect(systemMessage?.content).toContain('list_dir')
     expect(systemMessage?.content).toContain('read_file')
+  })
+})
+
+// Offers keep an unproven Cloud row present but unavailable. A thread saved on
+// such a row must be refused before its run records a prompt, and a row the
+// remembered sign-in made available must still run. Both directions go
+// through the real catalog, so the remembered sign-in is applied exactly as
+// in production.
+describe('HostNodeOllamaProvider admission of an unproven Cloud row', () => {
+  const cloudModelId = 'minimax-m3:cloud'
+  const remembered = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+
+  function cloudThread(): HostProviderRunThread {
+    const { reasoningId: _unused, ...thread } = threadFixture({ modelId: cloudModelId })
+    return thread
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    const daemonClient = await vi.importActual<
+      typeof import('../host-shared/ollama/OllamaDaemonClient')
+    >('../host-shared/ollama/OllamaDaemonClient')
+    mockFetchCatalog.mockImplementation(daemonClient.fetchOllamaModelCatalog)
+    // The daemon lists a pulled Cloud tag, then refuses every account request.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (String(input).endsWith('/api/tags')) {
+          return new Response(
+            JSON.stringify({
+              models: [{ model: 'qwen3.5:9b' }, { model: cloudModelId, remote_host: 'ollama.com' }]
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          )
+        }
+        throw new TypeError('fetch failed')
+      })
+    )
+    mockRunChatLoop.mockResolvedValue({
+      content: 'done',
+      thinking: '',
+      toolCalls: [],
+      toolResults: []
+    })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mockFetchCatalog.mockReset()
+  })
+
+  it('refuses a thread on an unavailable Cloud row before the run records its prompt', async () => {
+    const runPort = new FakeRunPort()
+    runPort.thread = cloudThread()
+    const instance = provider(resourcePort(), runPort)
+
+    const offers = await instance.getOffers()
+    expect(offers.models.find((model) => model.modelId === cloudModelId)).toMatchObject({
+      available: false,
+      detail: 'Ollama Cloud account status is unavailable.'
+    })
+    await expect(
+      instance.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'hello', target: TARGET })
+    ).rejects.toThrow('Ollama Cloud account status is unavailable.')
+    expect(runPort.begins).toEqual([])
+    expect(runPort.transcripts).toEqual([])
+  })
+
+  it('admits a Cloud row the remembered sign-in made available', async () => {
+    const runPort = new FakeRunPort()
+    runPort.thread = cloudThread()
+    const instance = provider(resourcePort(), runPort, { rememberedCliSignIn: () => remembered })
+
+    const offers = await instance.getOffers()
+    expect(offers.models.find((model) => model.modelId === cloudModelId)).toMatchObject({
+      available: true
+    })
+    const result = await instance.run({
+      runId: 'run-1',
+      threadId: 'thread-1',
+      prompt: 'hello',
+      target: TARGET
+    })
+    expect(result.status).toBe('completed')
+    expect(runPort.begins).toEqual([expect.objectContaining({ modelId: cloudModelId })])
+    expect(runPort.transcripts[0]).toMatchObject({ role: 'user', text: 'hello' })
   })
 })

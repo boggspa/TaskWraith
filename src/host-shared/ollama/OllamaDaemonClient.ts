@@ -561,6 +561,8 @@ export function mergeOllamaLocalAndCloudModels(
     supported: boolean
     enabled: boolean
     authenticated: boolean | null
+    /** `authenticated` came from the remembered CLI sign-in, not a live answer. */
+    authenticatedFromMemory?: true
     models: OllamaModelInfo[]
   },
   defaultModel?: string | null,

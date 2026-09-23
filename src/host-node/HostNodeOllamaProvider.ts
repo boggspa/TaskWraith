@@ -120,6 +120,32 @@ function joinOllamaAssistantSegments(segments: readonly string[]): string {
   return segments.filter((segment) => segment.trim()).join('\n\n')
 }
 
+interface OllamaCloudAccountView {
+  readonly cloud: {
+    readonly authenticated: boolean | null
+    readonly authenticatedFromMemory?: true
+  }
+  readonly localReachable: boolean
+}
+
+/**
+ * Ready detail that says where the Cloud account answer came from: the
+ * daemon just now, or the remembered `ollama signin` standing in for an
+ * account probe that went unanswered. A remembered answer is never presented
+ * as a fresh verification.
+ */
+function ollamaReadyDetail({ cloud, localReachable }: OllamaCloudAccountView): string {
+  if (cloud.authenticated !== true) return 'Local Ollama models are available.'
+  if (cloud.authenticatedFromMemory === true) {
+    return localReachable
+      ? 'Local Ollama models are available, and Cloud models from your last Ollama sign-in.'
+      : 'Ollama Cloud models are available from your last Ollama sign-in.'
+  }
+  return localReachable
+    ? 'Local Ollama and authenticated Cloud models are available.'
+    : 'Authenticated Ollama Cloud models are available.'
+}
+
 export class HostNodeOllamaValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -253,12 +279,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
       providerId: OLLAMA_PROVIDER_ID,
       status: 'ready',
       label: 'Ollama',
-      detail:
-        status.catalog.cloud.authenticated === true
-          ? status.catalog.localReachable
-            ? 'Local Ollama and authenticated Cloud models are available.'
-            : 'Authenticated Ollama Cloud models are available.'
-          : 'Local Ollama models are available.'
+      detail: ollamaReadyDetail(status.catalog)
     }
   }
 
@@ -276,9 +297,11 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
               ? 'unknown'
               : 'unavailable',
       detail:
-        authenticated === true
-          ? 'Ollama Cloud account verified.'
-          : 'Local models do not require an account; Cloud models require `ollama signin` or OLLAMA_API_KEY.'
+        authenticated !== true
+          ? 'Local models do not require an account; Cloud models require `ollama signin` or OLLAMA_API_KEY.'
+          : status.catalog?.cloud.authenticatedFromMemory === true
+            ? 'Ollama Cloud account remembered from your last Ollama sign-in.'
+            : 'Ollama Cloud account verified.'
     }
   }
 
@@ -330,6 +353,15 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     const model = this.currentOffers.models.find((entry) => entry.modelId === normalized.modelId)
     if (!model) {
       throw new HostNodeOllamaValidationError('Ollama model is not offered by the Host catalog.')
+    }
+    // An unproven Cloud row is offered as present but unavailable. Refuse it
+    // here, before the run records a prompt, as when such rows were left out
+    // of the offers; its own detail says why. A row the remembered sign-in
+    // made available is offered as available and passes.
+    if (!model.available) {
+      throw new HostNodeOllamaValidationError(
+        model.detail ?? `Ollama model ${normalized.modelId} is not available.`
+      )
     }
     if (
       normalized.reasoningId !== undefined &&
