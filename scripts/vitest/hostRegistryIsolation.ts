@@ -65,22 +65,23 @@ import {
  * too. Anything else — an entry naming init or a dead pid, a malformed entry,
  * a removed baseline entry, an entry that came and went between polls, no
  * process table (Windows) — counts against the run: the guard would rather be
- * loud than let a test write into a user's registry. Teardown lets the watch
- * deliver before its last poll (TEARDOWN_SETTLE_MS), so an entry written and
- * removed in the run's final moments is still seen when the watch reports it
- * in that time. One limitation: on linux an orphan is re-parented to a
- * subreaper, which can predate the run, so an orphaned Host that verifies as
- * a real one is read as outside the run; on darwin every orphan goes to
- * launchd, which never counts.
+ * loud than let a test write into a user's registry. Before its last poll,
+ * teardown waits until the root's latest change is TEARDOWN_SETTLE_MS old, so
+ * an entry written and removed in the run's final moments is still seen when
+ * the watch reports it in that time; a root that changed no more recently
+ * than that costs no wait at all. One limitation: on linux an orphan is
+ * re-parented to a subreaper, which can predate the run, so an orphaned Host
+ * that verifies as a real one is read as outside the run; on darwin every
+ * orphan goes to launchd, which never counts.
  */
 
 const POLL_INTERVAL_MS = 250
 /** How long a verified outside Host may take to exit after its entry disappears. */
 const REMOVAL_GRACE_MS = 10_000
 /**
- * How long teardown lets the watch deliver before its last poll: FSEvents and
- * inotify report asynchronously (about 30-50 ms here), so an entry written
- * and removed as a run's last act would otherwise land after the verdict.
+ * How long a change to the root may take to reach the watch: FSEvents and
+ * inotify report asynchronously (23-51 ms here), so an entry written and
+ * removed as a run's last act would otherwise land after the verdict.
  */
 const TEARDOWN_SETTLE_MS = 250
 const RUN_ROOT_PREFIX = 'taskwraith-vitest-host-registry-'
@@ -338,6 +339,28 @@ export function temporaryRoots(): readonly string[] {
 function isUnderAny(path: string, roots: readonly string[]): boolean {
   const spelling = resolve(path)
   return roots.some((root) => spelling.startsWith(`${root}${sep}`))
+}
+
+/**
+ * How long teardown still waits for the watch before its last poll: until the
+ * root's latest change, `changedAtMs` (its mtime), is `settleMs` old. A root
+ * idle for that long is not waited for. A filesystem that keeps whole seconds
+ * may have changed up to a second after what it records; a change stamped in
+ * the future (a clock step) waits the whole window.
+ */
+export function watchDrainDelayMs(changedAtMs: number, settleMs: number, nowMs: number): number {
+  const windowMs = settleMs + (changedAtMs % 1000 === 0 ? 1000 : 0)
+  const ageMs = nowMs - changedAtMs
+  return ageMs < 0 ? windowMs : Math.max(0, windowMs - ageMs)
+}
+
+/** A root's latest create, remove or rename (its mtime); a root it cannot read never changed. */
+function lastChangeOf(root: string): number {
+  try {
+    return lstatSync(root).mtimeMs
+  } catch {
+    return Number.NEGATIVE_INFINITY
+  }
 }
 
 export interface RegistryIsolationGuardOptions {
@@ -825,7 +848,7 @@ export interface HostRegistryIsolationOptions {
   readonly removalGraceMs?: number
   /** fs.watch by default; null polls only. */
   readonly watch?: RegistryDirectoryWatch | null
-  /** How long teardown lets the watch deliver before its last poll (TEARDOWN_SETTLE_MS). */
+  /** How old the root's latest change must be before teardown's last poll (TEARDOWN_SETTLE_MS). */
   readonly teardownSettleMs?: number
   readonly report?: (text: string) => void
   /** Marks the run failed; the summary has already printed by then. */
@@ -877,11 +900,18 @@ export function startHostRegistryIsolation(
     clearInterval(timer)
     if (watch) {
       // Drain the watch: its events arrive asynchronously, so an entry written
-      // and removed as the run's last act is only noted after a moment. The
-      // settle ends in a setImmediate, which runs only once the loop has
-      // handled pending I/O: an event that fell due with the settle timer
-      // (timers run first) is still delivered before the last poll.
-      await new Promise((resolve) => setTimeout(resolve, teardownSettleMs))
+      // and removed as the run's last act is only noted after a moment. Wait
+      // only while a root changed within the settle, then end in a
+      // setImmediate, which runs once the loop has handled pending I/O: an
+      // event that fell due with the wait's timer (timers run first) is still
+      // delivered before the last poll.
+      const now = Date.now()
+      const delayMs = guards.reduce(
+        (longest, [realRoot]) =>
+          Math.max(longest, watchDrainDelayMs(lastChangeOf(realRoot), teardownSettleMs, now)),
+        0
+      )
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
       await new Promise((resolve) => setImmediate(resolve))
     }
     pollAll()

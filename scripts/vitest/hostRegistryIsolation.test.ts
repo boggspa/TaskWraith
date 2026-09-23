@@ -32,6 +32,7 @@ import {
   realHostRegistryRoots,
   startHostRegistryIsolation,
   temporaryRoots,
+  watchDrainDelayMs,
   watchRegistryDirectory,
   type ProcessParents,
   type RegistryGuardProcessPorts,
@@ -87,7 +88,8 @@ interface FakeProcess {
  * parent is gone, serving a temporary profile: an orphaned test Host adopted
  * by init. 960 is the app relaunched mid-run and 940 its Host, and 930 a Host
  * whose `tw` exited before it published, adopted by init: both serve real
- * profiles. 47878 is dead.
+ * profiles, as does 935, an orphan whose profile only begins like /tmp.
+ * 47878 is dead.
  */
 function processTable(): Map<number, FakeProcess> {
   const born = (pid: number) => `${pid}`.padStart(64, 'b')
@@ -105,7 +107,8 @@ function processTable(): Map<number, FakeProcess> {
     entry(920, 1, DURING_RUN, hostCommand(TEMPORARY_PROFILE)),
     entry(960, 1, DURING_RUN, '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'),
     entry(940, 960, DURING_RUN, hostCommand('/profiles/relaunched')),
-    entry(930, 1, DURING_RUN, hostCommand('/profiles/tui'))
+    entry(930, 1, DURING_RUN, hostCommand('/profiles/tui')),
+    entry(935, 1, DURING_RUN, hostCommand('/tmp2/profile'))
   ])
 }
 
@@ -394,6 +397,26 @@ describe('RegistryIsolationGuard', () => {
     ])
   })
 
+  it('reads a profile as temporary only inside a temporary root, never beside one sharing its prefix (D3)', () => {
+    const root = join(scratch('host-registry-isolation-'), 'hosts')
+    mkdirSync(root)
+    const guard = guardFor(root)
+    // /tmp2 begins like /tmp but lies outside it: the orphan's profile is real.
+    entry(root, '6', 935, { profile: '/tmp2/profile' })
+    guard.poll()
+    expect(guard.violations()).toEqual([])
+
+    // The same orphan, with /tmp2 itself a temporary root, is a test Host.
+    const strictRoot = join(scratch('host-registry-isolation-'), 'hosts')
+    mkdirSync(strictRoot)
+    const strict = guardFor(strictRoot, processTable(), undefined, { temporaryRoots: ['/tmp2'] })
+    entry(strictRoot, '6', 935, { profile: '/tmp2/profile' })
+    strict.poll()
+    expect(
+      strict.violations().map(({ change, pid, attribution }) => [change, pid, attribution])
+    ).toEqual([['created', 935, 'unverified']])
+  })
+
   it('never counts a name that is not an entry: a Finder .DS_Store or a stray file created, rewritten or removed (C3)', () => {
     const root = join(scratch('host-registry-isolation-'), 'hosts')
     mkdirSync(root)
@@ -669,14 +692,14 @@ describe('startHostRegistryIsolation', () => {
     }
   })
 
-  /** A guard over a scratch "real" root, watched through fs.watch, with every event recorded. */
-  function watchedIsolation(realRoot: string) {
+  /** A guard over scratch "real" roots, watched through fs.watch, with every event recorded. */
+  function watchedIsolation(...realRoots: string[]) {
     const events: Array<string | null> = []
     const reports: string[] = []
     const verdict = { failed: 0 }
     const teardown = startHostRegistryIsolation({
       env: {},
-      realRoots: [realRoot],
+      realRoots,
       temporaryDirectory: scratch('host-registry-isolation-tmp-'),
       // No interval poll lands inside these tests: only the watch can see it.
       pollIntervalMs: 60_000,
@@ -722,7 +745,14 @@ describe('startHostRegistryIsolation', () => {
     async () => {
       const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
       mkdirSync(realRoot)
-      const { events, reports, verdict, teardown } = watchedIsolation(realRoot)
+      // Roots idle for long on either side: teardown waits for the busiest.
+      const idle = [1, 2].map((index) => {
+        const root = join(scratch(`host-registry-isolation-idle-${index}-`), 'hosts')
+        mkdirSync(root)
+        utimesSync(root, 1_700_000_000, 1_700_000_000)
+        return root
+      })
+      const { events, reports, verdict, teardown } = watchedIsolation(idle[0], realRoot, idle[1])
       // Wait until the watch is live, through a name that is no entry.
       await vi.waitFor(
         () => {
@@ -741,6 +771,41 @@ describe('startHostRegistryIsolation', () => {
     },
     30_000
   )
+
+  it('waits at teardown until a change the watch reports late has arrived, whichever root changed (D4)', async () => {
+    // A busy root between two idle ones, and a watch that reports each change
+    // 100 ms late: teardown waits until the busy root's change is 250 ms old.
+    const roots = ['idle-1', 'busy', 'idle-2'].map((name) => {
+      const root = join(scratch(`host-registry-isolation-${name}-`), 'hosts')
+      mkdirSync(root)
+      if (name !== 'busy') utimesSync(root, 1_700_000_000, 1_700_000_000)
+      return root
+    })
+    const deliver = new Map<string, (name: string | null) => void>()
+    const reports: string[] = []
+    let failed = 0
+    const teardown = startHostRegistryIsolation({
+      env: {},
+      realRoots: roots,
+      temporaryDirectory: scratch('host-registry-isolation-tmp-'),
+      pollIntervalMs: 60_000,
+      teardownSettleMs: 250,
+      watch: (path, onChange) => {
+        deliver.set(path, onChange)
+        return { close: () => undefined }
+      },
+      report: (text) => reports.push(text),
+      fail: () => {
+        failed += 1
+      }
+    })
+    const name = `${'4'.repeat(16)}.json`
+    unlinkSync(entry(roots[1], '4', process.pid))
+    setTimeout(() => deliver.get(roots[1])?.(name), 100)
+    await teardown()
+    expect(failed).toBe(1)
+    expect(reports[0]).toContain(`transient ${name} (unknown)`)
+  })
 
   it('still delivers a watch event that fell due with the settle timer before the last poll (C5)', async () => {
     const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
@@ -790,6 +855,50 @@ describe('startHostRegistryIsolation', () => {
     expect(failed).toBe(1)
     expect(reports[0]).toContain(`transient ${name} (unknown)`)
   })
+
+  it("waits at teardown only until the root's latest change is the settle old (D4)", () => {
+    const now = 1_790_000_000_600
+    // A root it cannot read, or nothing recent: no wait at all.
+    expect(watchDrainDelayMs(Number.NEGATIVE_INFINITY, 250, now)).toBe(0)
+    expect(watchDrainDelayMs(now - 10_000.5, 250, now)).toBe(0)
+    expect(watchDrainDelayMs(now - 250.5, 250, now)).toBe(0)
+    // A recent change: what is left of the settle.
+    expect(watchDrainDelayMs(now - 100.5, 250, now)).toBe(149.5)
+    expect(watchDrainDelayMs(now - 0.5, 250, now)).toBe(249.5)
+    // Whole seconds only: the change may be up to a second later than stamped.
+    expect(watchDrainDelayMs(1_790_000_000_000, 250, now)).toBe(650)
+    expect(watchDrainDelayMs(1_790_000_000_000, 250, now + 1_000)).toBe(0)
+    // Stamped in the future (a clock step): the whole window.
+    expect(watchDrainDelayMs(now + 5_000.5, 250, now)).toBe(250)
+    expect(watchDrainDelayMs(1_790_000_005_000, 250, now)).toBe(1_250)
+  })
+
+  it('costs a run no wait at teardown when no root has changed within the settle (D4)', async () => {
+    const realRoot = join(scratch('host-registry-isolation-real-'), 'hosts')
+    mkdirSync(realRoot)
+    // The root last changed long ago, as a real registry mostly has; the
+    // second does not exist.
+    utimesSync(realRoot, 1_700_000_000, 1_700_000_000)
+    const absentRoot = join(scratch('host-registry-isolation-absent-'), 'hosts')
+    const reports: string[] = []
+    let failed = 0
+    const teardown = startHostRegistryIsolation({
+      env: {},
+      realRoots: [realRoot, absentRoot],
+      temporaryDirectory: scratch('host-registry-isolation-tmp-'),
+      pollIntervalMs: 60_000,
+      // A settle this long would outlast the test: only no wait lets it pass.
+      teardownSettleMs: 600_000,
+      watch: () => ({ close: () => undefined }),
+      report: (text) => reports.push(text),
+      fail: () => {
+        failed += 1
+      }
+    })
+    await teardown()
+    expect(reports).toEqual([])
+    expect(failed).toBe(0)
+  }, 10_000)
 
   it('watches ~/.taskwraith/hosts under HOME and the password database home, never the override', () => {
     const home = scratch('host-registry-isolation-home-')
