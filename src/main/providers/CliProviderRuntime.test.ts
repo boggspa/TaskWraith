@@ -1,5 +1,7 @@
-import { promises as fs } from 'fs'
-import { describe, it, expect, vi } from 'vitest'
+import { mkdirSync, mkdtempSync, promises as fs, realpathSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { delimiter, dirname, join } from 'path'
+import { afterAll, beforeAll, describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
   createCliEnv,
@@ -705,13 +707,68 @@ describe('Kimi status admission', () => {
 })
 
 describe('Devin credential status', () => {
+  /**
+   * The status resolves the Devin CLI through this process's PATH, then
+   * common directories under HOME, and runs its `--version`. The stat mocks
+   * below answer only for a `devin` in this block's own stub directory,
+   * which goes first on PATH, so the version probe runs that failing stub and
+   * never an installed CLI: an installed devin first on PATH used to run with
+   * no HOME in its environment and fall back to the real home. HOME and the
+   * XDG roots point into the same temporary directory while these cases run.
+   */
+  const HERMETIC_VARIABLES = [
+    'PATH',
+    'HOME',
+    'USERPROFILE',
+    'XDG_CONFIG_HOME',
+    'XDG_CACHE_HOME',
+    'XDG_DATA_HOME',
+    'XDG_STATE_HOME'
+  ] as const
+  const realEnvironment = new Map<string, string | undefined>()
+  let hermeticRoot = ''
+  let devinStubs = ''
+  beforeAll(() => {
+    hermeticRoot = realpathSync(mkdtempSync(join(tmpdir(), 'cli-runtime-devin-')))
+    devinStubs = join(hermeticRoot, 'bin')
+    mkdirSync(devinStubs)
+    // @portability-ok: a POSIX stub that only has to be found; on win32 it
+    // cannot run, which fails the version probe the same way.
+    writeFileSync(join(devinStubs, 'devin'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+    const home = join(hermeticRoot, 'home')
+    const values: Record<(typeof HERMETIC_VARIABLES)[number], string> = {
+      PATH: [devinStubs, process.env.PATH].filter(Boolean).join(delimiter),
+      HOME: home,
+      USERPROFILE: home,
+      XDG_CONFIG_HOME: join(home, '.config'),
+      XDG_CACHE_HOME: join(home, '.cache'),
+      XDG_DATA_HOME: join(home, '.local', 'share'),
+      XDG_STATE_HOME: join(home, '.local', 'state')
+    }
+    for (const name of HERMETIC_VARIABLES) {
+      realEnvironment.set(name, process.env[name])
+      process.env[name] = values[name]
+    }
+  })
+  afterAll(() => {
+    for (const [name, value] of realEnvironment) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+    rmSync(hermeticRoot, { recursive: true, force: true })
+  })
+
   it('reports the credential lane a launch would use, without spawning `devin auth status`', async () => {
     const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
       // Platform-correct binary match: Windows searches PATH with backslash
       // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
-      // the basename rather than a '/devin' suffix.
+      // the basename rather than a '/devin' suffix — and only in the stub
+      // directory, so no installed devin can ever be resolved and run.
       const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
-      if (/^devin(\.[a-z0-9]+)?$/i.test(candidateName)) {
+      if (
+        dirname(String(candidate)) === devinStubs &&
+        /^devin(\.[a-z0-9]+)?$/i.test(candidateName)
+      ) {
         return {
           isFile: () => true,
           isSymbolicLink: () => false
@@ -762,9 +819,13 @@ describe('Devin credential status', () => {
     const stat = vi.spyOn(fs, 'stat').mockImplementation(async (candidate) => {
       // Platform-correct binary match: Windows searches PATH with backslash
       // separators and PATHEXT variants (devin.exe, devin.cmd, ...), so match
-      // the basename rather than a '/devin' suffix.
+      // the basename rather than a '/devin' suffix — and only in the stub
+      // directory, so no installed devin can ever be resolved and run.
       const candidateName = String(candidate).split(/[\\/]/).pop() ?? ''
-      if (/^devin(\.[a-z0-9]+)?$/i.test(candidateName)) {
+      if (
+        dirname(String(candidate)) === devinStubs &&
+        /^devin(\.[a-z0-9]+)?$/i.test(candidateName)
+      ) {
         return { isFile: () => true, isSymbolicLink: () => false } as any
       }
       throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
