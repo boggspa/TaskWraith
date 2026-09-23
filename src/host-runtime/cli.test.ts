@@ -1,5 +1,16 @@
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { expect, it, vi } from 'vitest'
-import { runHostProductionCli, runHostShutdownCli } from './cli'
+import type { HostStopAllOptions, HostStopAllReport } from '../host-client/HostStopAll'
+import {
+  runHostCli,
+  runHostProductionCli,
+  runHostShutdownCli,
+  runHostStatusCli,
+  runHostStopAllCli
+} from './cli'
+import { HOST_REGISTRY_ROOT_ENV } from './HostRegistry'
 
 const PAYLOAD_VERSION = `sha256:${'a'.repeat(64)}`
 const resolvePayloadVersion = () => PAYLOAD_VERSION
@@ -144,4 +155,86 @@ it('dispatches stop through an injected authenticated shutdown client', async ()
   const shutdown = vi.fn(async () => 'stopping' as const)
   await runHostShutdownCli(['stop', '--profile', CLI_PROFILE], () => ({ shutdown }))
   expect(shutdown).toHaveBeenCalledOnce()
+})
+
+function stopAllReport(
+  options: HostStopAllOptions,
+  profilePaths: readonly string[] = [CLI_PROFILE]
+): HostStopAllReport {
+  return {
+    registryRoot: '/registry',
+    scope: options.scope,
+    scanArgv: options.scanArgv === true,
+    hosts: profilePaths.map((profilePath, index) => ({
+      source: 'registry',
+      profilePath,
+      pid: 900 + index,
+      cliPath: null,
+      payloadVersion: null,
+      startedAt: null,
+      holders: 1,
+      implicitHolders: 0,
+      persist: false,
+      liveness: 'live',
+      selected: options.scope.kind !== 'list'
+    })),
+    unreadableEntries: [],
+    exitCode: options.scope.kind === 'list' ? 3 : 0
+  }
+}
+
+it('dispatches stop-all with the parsed scope and returns its exit code', async () => {
+  const stopAll = vi.fn(async (options: HostStopAllOptions) => stopAllReport(options))
+  const write = vi.fn()
+  await expect(
+    runHostStopAllCli(['stop-all', '--profile', CLI_PROFILE, '--sweep'], { stopAll, write })
+  ).resolves.toBe(0)
+  expect(stopAll).toHaveBeenCalledWith(
+    expect.objectContaining({
+      scope: { kind: 'profile', profilePath: CLI_PROFILE },
+      scanArgv: false,
+      sweep: true
+    })
+  )
+  expect(write.mock.calls[0][0]).toContain(`pid 900 · live · registry · ${CLI_PROFILE}`)
+  await expect(runHostStopAllCli(['stop-all', '--json'], { stopAll, write })).resolves.toBe(3)
+  expect(JSON.parse(write.mock.calls[1][0])).toMatchObject({
+    scope: { kind: 'list' },
+    exitCode: 3
+  })
+})
+
+it('reports status as a listing that exits 0 and narrows to one profile', async () => {
+  const other = process.platform === 'win32' ? 'C:\\other-profile' : '/tmp/other-profile'
+  const stopAll = vi.fn(async (options: HostStopAllOptions) =>
+    stopAllReport(options, [CLI_PROFILE, other])
+  )
+  const write = vi.fn()
+  await expect(
+    runHostStatusCli(['status', '--profile', other, '--json'], { stopAll, write })
+  ).resolves.toBe(0)
+  expect(stopAll).toHaveBeenCalledWith(expect.objectContaining({ scope: { kind: 'list' } }))
+  const report = JSON.parse(write.mock.calls[0][0]) as HostStopAllReport
+  expect(report.exitCode).toBe(0)
+  expect(report.hosts.map((host) => host.profilePath)).toEqual([other])
+})
+
+it('routes status and stop-all ahead of the diagnostic fallback, on the registry root from the environment', async () => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), 'host-cli-registry-')))
+  vi.stubEnv(HOST_REGISTRY_ROOT_ENV, root)
+  const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+  try {
+    await expect(runHostCli(['status', '--json'])).resolves.toBe(0)
+    // No scope: stop-all lists and stops nothing.
+    await expect(runHostCli(['stop-all', '--json'])).resolves.toBe(3)
+    const reports = stdout.mock.calls.map(([chunk]) => JSON.parse(String(chunk)))
+    expect(reports).toMatchObject([
+      { registryRoot: root, hosts: [], exitCode: 0 },
+      { registryRoot: root, hosts: [], exitCode: 3, scope: { kind: 'list' } }
+    ])
+  } finally {
+    stdout.mockRestore()
+    vi.unstubAllEnvs()
+    rmSync(root, { recursive: true, force: true })
+  }
 })

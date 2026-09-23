@@ -6,6 +6,9 @@ import { describe, expect, it } from 'vitest'
 
 const REPO_ROOT = resolve(process.cwd())
 const HOST_RUNTIME_ROOT = resolve(REPO_ROOT, 'src/host-runtime')
+// Shared by Electron main, the TUI and the paired gateway, and reached by the
+// Host CLI (`stop`, `stop-all`), so it carries the same boundary.
+const HOST_CLIENT_ROOT = resolve(REPO_ROOT, 'src/host-client')
 const FORBIDDEN_SOURCE_ROOTS = [
   resolve(REPO_ROOT, 'src/main'),
   resolve(REPO_ROOT, 'src/renderer'),
@@ -45,7 +48,9 @@ const REQUIRED_RUNTIME_MODULES = [
   'HostProfileDomainProjection.ts',
   'HostStandaloneComposition.ts',
   'HostServerIdentity.ts',
-  'HostProductionCli.ts'
+  'HostProductionCli.ts',
+  'ProcessBirthIdentity.ts',
+  'HostRegistry.ts'
 ] as const
 const LEGACY_MAIN_HOST_MODULES = REQUIRED_RUNTIME_MODULES.map((name) =>
   resolve(REPO_ROOT, 'src/main/host', name)
@@ -84,6 +89,12 @@ const AUTHENTICATED_TRANSPORT_CORE = [
   resolve(HOST_RUNTIME_ROOT, 'HostAuthority.ts'),
   resolve(HOST_RUNTIME_ROOT, 'HostSession.ts'),
   resolve(HOST_RUNTIME_ROOT, 'HostLocalServer.ts')
+]
+const HOST_CLIENT_MODULES = [
+  resolve(HOST_CLIENT_ROOT, 'HostProjectionClient.ts'),
+  resolve(HOST_CLIENT_ROOT, 'HostShutdownClient.ts'),
+  resolve(HOST_CLIENT_ROOT, 'HostProcessTermination.ts'),
+  resolve(HOST_CLIENT_ROOT, 'HostStopAll.ts')
 ]
 const DIAGNOSTIC_HOST_RUNTIME = [
   resolve(HOST_RUNTIME_ROOT, 'HostDiagnosticAuthority.ts'),
@@ -159,6 +170,24 @@ describe('standalone Host runtime boundary', () => {
 
   it('does not import Electron or presentation/composition roots', async () => {
     const files = await productionHostRuntimeFiles(HOST_RUNTIME_ROOT)
+    const violations = (
+      await Promise.all(
+        files.map(async (file) => {
+          const source = await readFile(file, 'utf8')
+          return runtimeModuleSpecifiers(file, source)
+            .filter((specifier) => forbiddenImport(file, specifier))
+            .map((specifier) => `${relative(REPO_ROOT, file)} -> ${specifier}`)
+        })
+      )
+    ).flat()
+
+    expect(violations).toEqual([])
+  })
+
+  it('keeps the shared host-client free of Electron and presentation/composition roots', async () => {
+    const files = await productionHostRuntimeFiles(HOST_CLIENT_ROOT)
+    // Pin the audited set first: a scan that found nothing would pass vacuously.
+    expect(files).toEqual(expect.arrayContaining(HOST_CLIENT_MODULES))
     const violations = (
       await Promise.all(
         files.map(async (file) => {

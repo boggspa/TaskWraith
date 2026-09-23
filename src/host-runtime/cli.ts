@@ -8,8 +8,15 @@ import { createHostNodeTerminalWindowLauncher } from '../host-node/HostNodeTermi
 import type { HostNodeMuseTerminalLauncher } from '../host-node/HostNodeMuseAuthHandoff'
 import { parseHostProductionCli, HostProductionCliError } from './HostProductionCli'
 import { HostShutdownClient } from '../host-client/HostShutdownClient'
+import {
+  formatHostStopAllReport,
+  stopAllHosts,
+  type HostStopAllOptions,
+  type HostStopAllReport
+} from '../host-client/HostStopAll'
 import { resolve } from 'node:path'
 import { resolveHostPayloadVersion } from './HostPayloadIdentity'
+import { canonicalHostProfilePath } from './HostRegistry'
 import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD,
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
@@ -104,8 +111,91 @@ export async function runHostShutdownCli(
   await createShutdown({ profilePath: command.profilePath }).shutdown()
 }
 
-export async function runHostCli(argv: readonly string[] = process.argv.slice(2)): Promise<void> {
+export interface HostRegistryCliRuntime {
+  readonly stopAll?: (options: HostStopAllOptions) => Promise<HostStopAllReport>
+  readonly write?: (text: string) => void
+  readonly log?: (line: string) => void
+  readonly env?: NodeJS.ProcessEnv
+}
+
+function registryCliIo(runtime: HostRegistryCliRuntime): {
+  readonly stopAll: (options: HostStopAllOptions) => Promise<HostStopAllReport>
+  readonly write: (text: string) => void
+} {
+  return {
+    stopAll: runtime.stopAll ?? stopAllHosts,
+    write: runtime.write ?? ((text) => void process.stdout.write(text))
+  }
+}
+
+function writeReport(
+  report: HostStopAllReport,
+  json: boolean,
+  write: (text: string) => void
+): void {
+  write(json ? `${JSON.stringify(report, null, 2)}\n` : formatHostStopAllReport(report))
+}
+
+/**
+ * `status`: the machine-wide registry (and, with --scan-argv, the Hosts that
+ * predate it). It never stops anything.
+ */
+export async function runHostStatusCli(
+  argv: readonly string[] = process.argv.slice(2),
+  runtime: HostRegistryCliRuntime = {}
+): Promise<number> {
+  const command = parseHostProductionCli(argv)
+  if (command.command !== 'status') throw new HostProductionCliError('Expected status command.')
+  const { stopAll, write } = registryCliIo(runtime)
+  const report = await stopAll({
+    scope: { kind: 'list' },
+    scanArgv: command.scanArgv,
+    env: runtime.env ?? process.env
+  })
+  const profilePath = command.profilePath
+  const narrowed: HostStopAllReport = profilePath
+    ? {
+        ...report,
+        hosts: report.hosts.filter(
+          (host) =>
+            canonicalHostProfilePath(host.profilePath) === canonicalHostProfilePath(profilePath)
+        )
+      }
+    : report
+  // A listing is the whole point of status, so it exits 0 where stop-all exits 3.
+  writeReport({ ...narrowed, exitCode: 0 }, command.json, write)
+  return 0
+}
+
+/**
+ * `stop-all`: verified termination of every Host the scope selects. No scope
+ * lists only and exits 3; a refusal or failure exits 1.
+ */
+export async function runHostStopAllCli(
+  argv: readonly string[] = process.argv.slice(2),
+  runtime: HostRegistryCliRuntime = {}
+): Promise<number> {
+  const command = parseHostProductionCli(argv)
+  if (command.command !== 'stop-all') throw new HostProductionCliError('Expected stop-all command.')
+  const { stopAll, write } = registryCliIo(runtime)
+  const log = runtime.log ?? ((line: string) => void process.stderr.write(`${line}\n`))
+  const report = await stopAll({
+    scope: command.scope,
+    scanArgv: command.scanArgv,
+    sweep: command.sweep,
+    env: runtime.env ?? process.env,
+    log
+  })
+  writeReport(report, command.json, write)
+  return report.exitCode
+}
+
+export async function runHostCli(
+  argv: readonly string[] = process.argv.slice(2)
+): Promise<void | number> {
   if (argv[0] === 'stop') return runHostShutdownCli(argv)
+  if (argv[0] === 'status') return runHostStatusCli(argv)
+  if (argv[0] === 'stop-all') return runHostStopAllCli(argv)
   const modeIndex = argv.indexOf('--mode')
   const mode = modeIndex >= 0 ? argv[modeIndex + 1] : undefined
   if (mode === 'production') return runHostProductionCli(argv)
@@ -114,7 +204,8 @@ export async function runHostCli(argv: readonly string[] = process.argv.slice(2)
 
 async function main(): Promise<void> {
   try {
-    await runHostCli()
+    const exitCode = await runHostCli()
+    if (typeof exitCode === 'number') process.exitCode = exitCode
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`taskwraith-host: ${message}\n`)

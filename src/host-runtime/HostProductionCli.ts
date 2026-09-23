@@ -1,7 +1,11 @@
 import { isAbsolute, parse, resolve } from 'node:path'
 
-export const HOST_PRODUCTION_USAGE =
-  'Usage: taskwraith-host serve --profile <absolute canonical non-root path> --mode production [--muse-binary <absolute canonical path>]\n       taskwraith-host stop --profile <absolute canonical non-root path>'
+export const HOST_PRODUCTION_USAGE = [
+  'Usage: taskwraith-host serve --profile <absolute canonical non-root path> --mode production [--muse-binary <absolute canonical path>]',
+  '       taskwraith-host stop --profile <absolute canonical non-root path>',
+  '       taskwraith-host status [--profile <absolute canonical non-root path>] [--scan-argv] [--json]',
+  '       taskwraith-host stop-all [--all | --profile <absolute canonical non-root path> | --payload-root <absolute canonical non-root path>] [--scan-argv] [--sweep] [--json]'
+].join('\n')
 
 export interface HostProductionServeCommand {
   readonly command: 'serve'
@@ -15,7 +19,37 @@ export interface HostProductionStopCommand {
   readonly profilePath: string
 }
 
-export type HostProductionCommand = HostProductionServeCommand | HostProductionStopCommand
+/** Lists the machine-wide Host registry; `--profile` narrows the listing to one profile. */
+export interface HostProductionStatusCommand {
+  readonly command: 'status'
+  readonly profilePath?: string
+  readonly scanArgv: boolean
+  readonly json: boolean
+}
+
+/**
+ * What `stop-all` may stop. No scope lists only (exit 3); the three scopes are
+ * mutually exclusive so a typo can never widen `--profile` into `--all`.
+ */
+export type HostProductionStopAllScope =
+  | { readonly kind: 'list' }
+  | { readonly kind: 'all' }
+  | { readonly kind: 'profile'; readonly profilePath: string }
+  | { readonly kind: 'payload-root'; readonly payloadRoot: string }
+
+export interface HostProductionStopAllCommand {
+  readonly command: 'stop-all'
+  readonly scope: HostProductionStopAllScope
+  readonly scanArgv: boolean
+  readonly sweep: boolean
+  readonly json: boolean
+}
+
+export type HostProductionCommand =
+  | HostProductionServeCommand
+  | HostProductionStopCommand
+  | HostProductionStatusCommand
+  | HostProductionStopAllCommand
 
 export class HostProductionCliError extends Error {
   constructor(message: string) {
@@ -47,7 +81,68 @@ function canonicalPath(value_: string, option: string, forbidRoot: boolean): str
   return result
 }
 
+function parseRegistryCommand(
+  command: 'status' | 'stop-all',
+  argv: readonly string[]
+): HostProductionStatusCommand | HostProductionStopAllCommand {
+  let profilePath: string | undefined
+  let payloadRoot: string | undefined
+  let all = false
+  let scanArgv = false
+  let sweep = false
+  let json = false
+  const once = (seen: boolean, option: string): void => {
+    if (seen) throw new HostProductionCliError(`${option} may appear once.`)
+  }
+  for (let index = 1; index < argv.length; index += 1) {
+    const option = argv[index]
+    if (option === '--profile') {
+      once(profilePath !== undefined, option)
+      profilePath = canonicalPath(value(argv, index, option), option, true)
+      index += 1
+    } else if (option === '--payload-root' && command === 'stop-all') {
+      once(payloadRoot !== undefined, option)
+      payloadRoot = canonicalPath(value(argv, index, option), option, true)
+      index += 1
+    } else if (option === '--all' && command === 'stop-all') {
+      once(all, option)
+      all = true
+    } else if (option === '--sweep' && command === 'stop-all') {
+      once(sweep, option)
+      sweep = true
+    } else if (option === '--scan-argv') {
+      once(scanArgv, option)
+      scanArgv = true
+    } else if (option === '--json') {
+      once(json, option)
+      json = true
+    } else if (option === '--parent-pid') {
+      throw new HostProductionCliError('--parent-pid is unavailable in production mode.')
+    } else if (option === '--mode' || option === '--muse-binary') {
+      throw new HostProductionCliError(`${option} is unavailable for ${command}.`)
+    } else
+      throw new HostProductionCliError(
+        `Unknown argument ${JSON.stringify(option)}. ${HOST_PRODUCTION_USAGE}`
+      )
+  }
+  if (command === 'status') {
+    return { command, ...(profilePath ? { profilePath } : {}), scanArgv, json }
+  }
+  const scopes = [all, profilePath !== undefined, payloadRoot !== undefined].filter(Boolean)
+  if (scopes.length > 1)
+    throw new HostProductionCliError('--all, --profile and --payload-root are mutually exclusive.')
+  const scope: HostProductionStopAllScope = all
+    ? { kind: 'all' }
+    : profilePath
+      ? { kind: 'profile', profilePath }
+      : payloadRoot
+        ? { kind: 'payload-root', payloadRoot }
+        : { kind: 'list' }
+  return { command, scope, scanArgv, sweep, json }
+}
+
 export function parseHostProductionCli(argv: readonly string[]): HostProductionCommand {
+  if (argv[0] === 'status' || argv[0] === 'stop-all') return parseRegistryCommand(argv[0], argv)
   if (argv[0] !== 'serve' && argv[0] !== 'stop')
     throw new HostProductionCliError(HOST_PRODUCTION_USAGE)
   const command = argv[0]
