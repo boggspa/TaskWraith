@@ -73,8 +73,8 @@ interface WorkerIpcMessage {
   instanceId?: string
   leaseId?: string
   fenceHeld?: boolean
-  fencePartition?: string
-  leasePartition?: string
+  fencePartitions?: string[]
+  leasePartitions?: string[]
   atMs?: number
   outcome?: WorkspaceLockPeriodicRecoveryOutcome
   holderLiveness?: Record<string, WorkspaceLockHolderLiveness>
@@ -457,8 +457,8 @@ async function startLeaseHolderAndReclaimer(
     holderInstanceId: acquired.instanceId!,
     holderPid: acquired.pid!,
     leaseId: acquired.leaseId!,
-    fencePartition: acquired.fencePartition,
-    leasePartition: acquired.leasePartition
+    fencePartitions: acquired.fencePartitions,
+    leasePartitions: acquired.leasePartitions
   }
 }
 
@@ -655,13 +655,15 @@ describe.skipIf(HOLDER_LEASE_SKIP !== null)(
       const h = makeHarness()
       // Absent at admission, so its planned identity becomes dev:ino once the
       // holder creates it: the executor's same-run sibling case. The holder
-      // keeps the fence on the planned partition while its replaced lease
-      // names the dev:ino one, which no fence record names.
+      // keeps the fence on the planned object partition while its replaced
+      // lease's object partition is the dev:ino one, which no fence record
+      // names; only the location partition is shared.
       const targetPath = path.join(h.workspace, 'src', 'created-mid-commit.ts')
       const s = await startLeaseHolderAndReclaimer(h, { holdCommitFence: true, targetPath })
-      expect(s.fencePartition).toMatch(/^mutation-target:[0-9a-f]{64}$/)
-      expect(s.leasePartition).toMatch(/^mutation-target:[0-9a-f]{64}$/)
-      expect(s.leasePartition).not.toBe(s.fencePartition)
+      const partition = expect.stringMatching(/^mutation-target:[0-9a-f]{64}$/)
+      expect(s.fencePartitions).toEqual([partition, partition])
+      expect(s.leasePartitions).toEqual([partition, partition])
+      expect(s.leasePartitions!.filter((key) => !s.fencePartitions!.includes(key))).toHaveLength(1)
 
       s.holder.child.kill('SIGSTOP')
       await sleep(DESIGNED_RECLAIM_BOUND_MS)

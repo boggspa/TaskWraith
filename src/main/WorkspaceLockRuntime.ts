@@ -1433,6 +1433,19 @@ function canonicalWorkspaceIdentity(inputPath: string): string {
  * partition, so disjoint hunk leases re-read and commit serially without
  * blocking unrelated files. Broad claims are rejected again at this boundary
  * so a stale or version-skewed caller cannot revive a workspace-wide fence.
+ *
+ * Every exact claim takes two partitions:
+ * - its object (dev:ino, or the planned object under the deepest existing
+ *   ancestor), which two paths to one inode share;
+ * - its location (the canonical target path), which one path keeps while the
+ *   object under it changes.
+ * Callers fence the partitions of their ADMISSION claims and refresh the
+ * claims afterwards. A file created, deleted or atomically replaced between
+ * two same-run admissions gives them different objects, and same-owner leases
+ * never conflict, so only the shared location keeps them serial. The object
+ * key is derived exactly as before, so a record an older build holds still
+ * blocks this build on the same object. Every caller acquires the sorted set
+ * at once, which keeps one global acquisition order.
  */
 export function mutationFencePartitionKeys(
   claims: readonly CanonicalWorkspaceLockClaim[]
@@ -1446,10 +1459,14 @@ export function mutationFencePartitionKeys(
     }
     const domain = claim.worktreeObjectIdentity || claim.worktreeIdentity
     const target = claim.objectIdentity || claim.comparisonTargetPath
-    const scope = `file\0${domain}\0${target}`
-    keys.add(`mutation-target:${createHash('sha256').update(scope, 'utf8').digest('hex')}`)
+    keys.add(mutationFencePartitionKey(`file\0${domain}\0${target}`))
+    keys.add(mutationFencePartitionKey(`location\0${claim.comparisonTargetPath}`))
   }
   return Object.freeze([...keys].sort())
+}
+
+function mutationFencePartitionKey(scope: string): string {
+  return `mutation-target:${createHash('sha256').update(scope, 'utf8').digest('hex')}`
 }
 
 const COMMIT_FENCE_PARTITION_RECORD = /^fence-[0-9a-f]{64}\.json$/

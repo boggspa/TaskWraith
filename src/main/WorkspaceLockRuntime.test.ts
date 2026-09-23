@@ -10,6 +10,7 @@ import {
   createCommitFenceOwnerReader,
   createWorkspaceExternalMutationAuthorityReceipt,
   listCommitFenceOwners,
+  mutationFencePartitionKeys,
   workspaceLockAuthorityRootForHome
 } from './WorkspaceLockRuntime'
 import {
@@ -17,6 +18,7 @@ import {
   WorkspaceMutationCommitFence
 } from './workLocks/WorkspaceMutationCommitFence'
 import type {
+  CanonicalWorkspaceLockClaim,
   WorkspaceLockLease,
   WorkspaceLockProcessObservation,
   WorkspaceLockSnapshot
@@ -373,6 +375,75 @@ describe('listCommitFenceOwners', () => {
       }
     }
   )
+})
+
+describe('mutationFencePartitionKeys', () => {
+  const claim: CanonicalWorkspaceLockClaim = {
+    workspaceIdentity: '/ws',
+    worktreeCanonicalPath: '/ws',
+    worktreeIdentity: '/ws',
+    worktreeObjectIdentity: 'dev:1:ino:10',
+    targetCanonicalPath: '/ws/src/a.ts',
+    comparisonTargetPath: '/ws/src/a.ts',
+    objectIdentity: 'dev:1:ino:20',
+    physicalTargetIdentity: '/ws/src/a.ts',
+    displayWorkspacePath: '/ws',
+    displayWorktreePath: '/ws',
+    relativeTargetPath: 'src/a.ts',
+    kind: 'file',
+    mode: 'write'
+  }
+  /** Derived as every earlier build derives it, from the worktree and the object. */
+  const OBJECT_KEY =
+    'mutation-target:1a5be236e4b1ef19600ea73c924dcea3f045fbc061b0c8cfcc6e5ce65e0c85f3'
+
+  it('fences an exact claim by its object and by its location', () => {
+    const keys = mutationFencePartitionKeys([claim])
+    expect(keys).toHaveLength(2)
+    expect(keys).toContain(OBJECT_KEY)
+    const [location] = keys.filter((key) => key !== OBJECT_KEY)
+
+    // The location outlives the object under the path: created, replaced, deleted.
+    for (const objectIdentity of ['planned:dev:1:ino:11:a.ts', 'dev:1:ino:21']) {
+      const moved = mutationFencePartitionKeys([{ ...claim, objectIdentity }])
+      expect(moved).toContain(location)
+      expect(moved).not.toContain(OBJECT_KEY)
+    }
+    // A hard link shares the object and not the location.
+    const link = mutationFencePartitionKeys([
+      {
+        ...claim,
+        targetCanonicalPath: '/ws/src/a-link.ts',
+        comparisonTargetPath: '/ws/src/a-link.ts',
+        physicalTargetIdentity: '/ws/src/a-link.ts',
+        relativeTargetPath: 'src/a-link.ts'
+      }
+    ])
+    expect(link).toContain(OBJECT_KEY)
+    expect(link).not.toContain(location)
+    // A hunk of the same file takes the same two.
+    const hunk = {
+      ...claim,
+      kind: 'hunk' as const,
+      hunk: { baseline: 'x', startLine: 1, endLine: 2 }
+    }
+    expect(mutationFencePartitionKeys([claim, hunk])).toEqual(keys)
+  })
+
+  it('returns one sorted, deduplicated set, the single order every caller acquires in', () => {
+    const other: CanonicalWorkspaceLockClaim = {
+      ...claim,
+      targetCanonicalPath: '/ws/src/b.ts',
+      comparisonTargetPath: '/ws/src/b.ts',
+      objectIdentity: 'dev:1:ino:30',
+      physicalTargetIdentity: '/ws/src/b.ts',
+      relativeTargetPath: 'src/b.ts'
+    }
+    const forward = mutationFencePartitionKeys([claim, other])
+    expect(forward).toHaveLength(4)
+    expect(mutationFencePartitionKeys([other, claim, other])).toEqual(forward)
+    expect([...forward]).toEqual([...forward].sort())
+  })
 })
 
 describe('createCommitFenceOwnerReader', () => {

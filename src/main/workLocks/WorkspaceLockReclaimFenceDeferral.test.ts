@@ -3,11 +3,13 @@
  *
  * The executor fences the partitions of its ADMISSION claims, then replaces
  * its lease with fresh claims, verifies, and writes. A target that comes into
- * existence in between moves the replaced lease from its planned identity to
- * dev:ino, so the lease names another partition than the one the holder sits
- * in. A holder stopped there after its final verification must keep its lease:
- * a peer that took it could enter the free dev:ino partition and write, and
- * the resumed holder would then write over it.
+ * existence in between moves the replaced lease's object partition from its
+ * planned identity to dev:ino, out of the set the holder sits in; only its
+ * location partition stays shared. A holder stopped there after its final
+ * verification must keep its lease: a peer that took it and fenced only the
+ * object (an older build on the shared root does) or reached the inode by
+ * another path would enter a free partition and write, and the resumed holder
+ * would then write over it.
  *
  * Driven in the executor's exact order through the real authority, the real
  * WorkspaceMutationCommitFence, the real partition function and the runtime's
@@ -28,9 +30,11 @@ import { NodeWorkspaceLockPersistence } from './NodeWorkspaceLockPersistence'
 import { WorkspaceLockAuthority } from './WorkspaceLockAuthority'
 import {
   WorkspaceMutationCommitFence,
-  WorkspaceMutationCommitFenceBusyError
+  WorkspaceMutationCommitFenceBusyError,
+  type WorkspaceMutationCommitFenceOwner
 } from './WorkspaceMutationCommitFence'
 import type {
+  CanonicalWorkspaceLockClaim,
   WorkspaceLockAuthorityDependencies,
   WorkspaceLockClaimRequest,
   WorkspaceLockOwner,
@@ -133,6 +137,16 @@ async function world() {
     kind: 'file',
     targetPath: path.join(workspace, 'src', file)
   })
+  const partitions = (leases: readonly { claim: CanonicalWorkspaceLockClaim }[]) =>
+    mutationFencePartitionKeys(leases.map((lease) => lease.claim))
+  /** The executor's fence: every partition of its admission claims, in order. */
+  const fenceAll = async (who: typeof H, runId: string, keys: readonly string[]) => {
+    const owners: WorkspaceMutationCommitFenceOwner[] = []
+    for (const key of keys) owners.push(await fence.acquire(fenceOwner(who, runId), key))
+    return owners
+  }
+  const releaseAll = (owners: readonly WorkspaceMutationCommitFenceOwner[]): boolean =>
+    [...owners].reverse().every((owner) => fence.release(owner))
   /** The holder never beats again: stale after 91 s of wall time, lapsed after 181 s more of grace. */
   const lapseHolder = async () => {
     wallMs += 91_000
@@ -157,6 +171,9 @@ async function world() {
     owner,
     fenceOwner,
     request,
+    partitions,
+    fenceAll,
+    releaseAll,
     lapseHolder,
     status,
     dispose: () => {
@@ -178,28 +195,27 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
       const sibling = await w.holder.acquire(ownerH, request, { transitionId: 'sibling-acquire' })
       const call = await w.holder.acquire(ownerH, request, { transitionId: 'call-acquire' })
       if (!sibling.ok || !call.ok) throw new Error('admission failed')
-      const [planned] = mutationFencePartitionKeys(call.leases.map((lease) => lease.claim))
-      expect(mutationFencePartitionKeys(sibling.leases.map((lease) => lease.claim))).toEqual([
-        planned
-      ])
-      const siblingFence = await w.fence.acquire(w.fenceOwner(H, 'run-h'), planned)
-      await expect(w.fence.acquire(w.fenceOwner(H, 'run-h'), planned)).rejects.toBeInstanceOf(
+      const fenced = w.partitions(call.leases)
+      expect(w.partitions(sibling.leases)).toEqual(fenced)
+      const siblingFence = await w.fenceAll(H, 'run-h', fenced)
+      await expect(w.fence.acquire(w.fenceOwner(H, 'run-h'), fenced[0])).rejects.toBeInstanceOf(
         WorkspaceMutationCommitFenceBusyError
       )
       fs.writeFileSync(request.targetPath!, 'created by the sibling\n')
-      w.fence.release(siblingFence)
+      expect(w.releaseAll(siblingFence)).toBe(true)
       const siblingRelease = await w.holder.release(sibling.tokens[0], {
         transitionId: 'sibling-release'
       })
       expect(siblingRelease.ok).toBe(true)
 
-      // The call gets the planned partition, then replaces onto dev:ino.
-      const callFence = await w.fence.acquire(w.fenceOwner(H, 'run-h'), planned)
+      // The call fences its admission partitions, then replaces onto dev:ino:
+      // the object partition moves out of the fenced set, which no record names.
+      const callFence = await w.fenceAll(H, 'run-h', fenced)
       const replaced = await w.holder.replaceAcquisition(ownerH, call.transitionId, [request])
       if (!replaced.ok) throw new Error('replace failed')
-      const [leasePartition] = mutationFencePartitionKeys(replaced.leases.map((l) => l.claim))
-      expect(leasePartition).not.toBe(planned)
-      expect(w.fence.readFence(leasePartition)).toBeNull()
+      const moved = w.partitions(replaced.leases).filter((key) => !fenced.includes(key))
+      expect(moved).toHaveLength(1)
+      expect(w.fence.readFence(moved[0])).toBeNull()
       expect((await w.holder.verifyAcquisitionForMutation(ownerH, replaced.transitionId)).ok).toBe(
         true
       )
@@ -221,7 +237,7 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
       expect((await w.holder.verifyAcquisitionForMutation(ownerH, replaced.transitionId)).ok).toBe(
         true
       )
-      w.fence.release(callFence)
+      expect(w.releaseAll(callFence)).toBe(true)
     } finally {
       w.dispose()
     }
@@ -235,15 +251,15 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
       const admitted = await w.holder.acquire(ownerH, request)
       if (!admitted.ok) throw new Error('admission failed')
       expect(admitted.leases[0].claim.objectIdentity?.startsWith('planned:')).toBe(true)
-      const [admission] = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))
-      const holderFence = await w.fence.acquire(w.fenceOwner(H, 'run-h'), admission)
+      const fenced = w.partitions(admitted.leases)
+      const holderFence = await w.fenceAll(H, 'run-h', fenced)
 
       // A native provider write or an editor's atomic save lands first.
       fs.writeFileSync(request.targetPath!, 'outside writer\n')
       const replaced = await w.holder.replaceAcquisition(ownerH, admitted.transitionId, [request])
       if (!replaced.ok) throw new Error('replace failed')
-      const [leasePartition] = mutationFencePartitionKeys(replaced.leases.map((l) => l.claim))
-      expect(leasePartition).not.toBe(admission)
+      const moved = w.partitions(replaced.leases).filter((key) => !fenced.includes(key))
+      expect(moved).toHaveLength(1)
       // Final commit-boundary verification passes; the holder stops right after it.
       expect((await w.holder.verifyAcquisitionForMutation(ownerH, replaced.transitionId)).ok).toBe(
         true
@@ -262,13 +278,13 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
         ok: false,
         reason: 'conflict'
       })
-      expect(w.fence.readFence(leasePartition)).toBeNull()
+      expect(w.fence.readFence(moved[0])).toBeNull()
       expect((await w.holder.verifyAcquisitionForMutation(ownerH, replaced.transitionId)).ok).toBe(
         true
       )
 
       // The deferral ends with the commit: out of every fence, the lapse retires it.
-      expect(w.fence.release(holderFence)).toBe(true)
+      expect(w.releaseAll(holderFence)).toBe(true)
       expect(await w.reclaimer.runPeriodicRecovery()).toMatchObject({
         skipped: false,
         decisions: [
@@ -291,11 +307,11 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
       const request = w.request('existing.ts')
       const admitted = await w.holder.acquire(ownerH, request)
       if (!admitted.ok) throw new Error('admission failed')
-      const [admission] = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))
-      const holderFence = await w.fence.acquire(w.fenceOwner(H, 'run-h'), admission)
+      const fenced = w.partitions(admitted.leases)
+      const holderFence = await w.fenceAll(H, 'run-h', fenced)
       const replaced = await w.holder.replaceAcquisition(ownerH, admitted.transitionId, [request])
       if (!replaced.ok) throw new Error('replace failed')
-      expect(mutationFencePartitionKeys(replaced.leases.map((l) => l.claim))).toEqual([admission])
+      expect(w.partitions(replaced.leases)).toEqual(fenced)
 
       const pass = await w.lapseHolder()
       expect(pass).toMatchObject({
@@ -307,11 +323,11 @@ describe('periodic reclaim vs a live holder inside its commit fence', () => {
         ok: false,
         reason: 'conflict'
       })
-      // Even with no deferral, the live holder's partition stays Busy.
-      await expect(w.fence.acquire(w.fenceOwner(C, 'run-c'), admission)).rejects.toBeInstanceOf(
+      // Even with no deferral, the live holder's partitions stay Busy.
+      await expect(w.fence.acquire(w.fenceOwner(C, 'run-c'), fenced[0])).rejects.toBeInstanceOf(
         WorkspaceMutationCommitFenceBusyError
       )
-      w.fence.release(holderFence)
+      expect(w.releaseAll(holderFence)).toBe(true)
     } finally {
       w.dispose()
     }

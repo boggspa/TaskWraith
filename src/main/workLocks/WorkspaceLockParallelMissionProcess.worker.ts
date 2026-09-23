@@ -15,11 +15,12 @@
  *   --heartbeatIntervalMs, --heartbeatTtlMs, --reclaimGraceMs, --scanIntervalMs,
  *   --suspendGapMs        (lease-holder and reclaimer: holder-lease timings)
  *   --holdCommitFence=1   (lease-holder only: stop the way an executor mid-commit
- *                          does: fence the ADMISSION claim's partition, create
- *                          the target if it is absent, then replace the lease
- *                          with fresh claims. A target absent at admission moves
- *                          from its planned identity to dev:ino, so the lease
- *                          names another partition than the one held.)
+ *                          does: fence every partition of the ADMISSION claim,
+ *                          create the target if it is absent, then replace the
+ *                          lease with fresh claims. A target absent at admission
+ *                          moves its object partition from planned to dev:ino,
+ *                          out of the fenced set; only its location partition
+ *                          stays shared.)
  *
  * `holder`/`contender` use production WorkspaceLockAuthority +
  * NodeWorkspaceLockPersistence with a registry stand-in for process-birth
@@ -105,10 +106,10 @@ interface WorkerMessage {
   instanceId?: string
   leaseId?: string
   fenceHeld?: boolean
-  /** Partition the holder's commit fence was taken on (the admission claim's). */
-  fencePartition?: string
-  /** Partition the holder's current lease claim maps to, after any replace. */
-  leasePartition?: string
+  /** Partitions the holder's commit fence was taken on (the admission claim's). */
+  fencePartitions?: string[]
+  /** Partitions the holder's current lease claim maps to, after any replace. */
+  leasePartitions?: string[]
   /** Worker wall clock when the reported event happened. */
   atMs?: number
   /** One periodic pass run on request (the timer runs the same pass). */
@@ -612,22 +613,26 @@ async function runLeaseHolder(
     throw new Error(`lease-holder acquire failed: ${admitted.reason} ${admitted.message}`)
   }
   let current = admitted
-  let fencePartition: string | undefined
+  let fencePartitions: readonly string[] | undefined
   if (args.holdCommitFence) {
-    // The executor's order (WorkspaceLockMcpExecutionCoordinator): fence the
-    // ADMISSION claims' partitions, then replace the lease with fresh claims,
-    // then commit. A target that appears in between keeps the fence on its
-    // planned partition while the replaced lease names the dev:ino one.
-    fencePartition = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))[0]
-    await createCommitFence(args, identity).acquire(
-      {
-        lockOwnerId: owner.lockOwnerId,
-        runId: owner.runId,
-        pid: owner.pid,
-        processBirthIdentity
-      },
-      fencePartition
-    )
+    // The executor's order (WorkspaceLockMcpExecutionCoordinator): fence every
+    // partition of the ADMISSION claims, then replace the lease with fresh
+    // claims, then commit. A target that appears in between keeps the fence on
+    // its planned object partition while the replaced lease's object partition
+    // is the dev:ino one; only the location partition is shared.
+    fencePartitions = mutationFencePartitionKeys(admitted.leases.map((lease) => lease.claim))
+    const commitFence = createCommitFence(args, identity)
+    for (const partition of fencePartitions) {
+      await commitFence.acquire(
+        {
+          lockOwnerId: owner.lockOwnerId,
+          runId: owner.runId,
+          pid: owner.pid,
+          processBirthIdentity
+        },
+        partition
+      )
+    }
     if (!fs.existsSync(args.targetPath)) fs.writeFileSync(args.targetPath, 'written mid-commit\n')
     const replaced = await authority.replaceAcquisition(owner, admitted.transitionId, [request], {
       transitionId: `lease-holder-replace-${args.runId}`
@@ -670,8 +675,8 @@ async function runLeaseHolder(
     instanceId,
     leaseId: held.leases[0].leaseId,
     fenceHeld: args.holdCommitFence,
-    ...(fencePartition ? { fencePartition } : {}),
-    leasePartition: mutationFencePartitionKeys(held.leases.map((lease) => lease.claim))[0],
+    ...(fencePartitions ? { fencePartitions: [...fencePartitions] } : {}),
+    leasePartitions: [...mutationFencePartitionKeys(held.leases.map((lease) => lease.claim))],
     atMs: Date.now()
   })
 }
