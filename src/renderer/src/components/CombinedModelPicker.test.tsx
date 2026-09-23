@@ -675,7 +675,12 @@ describe('CombinedModelPicker', () => {
       expect(paused).toContain('aria-label="Grok · paused"')
       expect(paused).toContain('class="composer-combined-picker-provider-tab is-paused"')
       expect(paused).toContain('composer-combined-picker-provider-tab-paused')
-      expect(paused).toContain('title="Grok · paused\nPaused until 16:00\nRerouting to Codex"')
+      // The tooltip stacks one line per fact; read it back as lines, not bytes.
+      expect(paused.match(/ title="(Grok[^"]*)"/)?.[1].split('\n')).toEqual([
+        'Grok · paused',
+        'Paused until 16:00',
+        'Rerouting to Codex'
+      ])
     })
   })
 
