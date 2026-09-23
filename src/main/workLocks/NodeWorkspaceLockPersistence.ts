@@ -5,6 +5,13 @@ import { join, resolve } from 'node:path'
 import type { WorkspaceLockAuthorityFence } from './WorkspaceLockTypes'
 import { isRuntimeMarkerName } from './RuntimeMarkerPattern'
 import {
+  decodeWorkspaceLockHolderHeartbeat,
+  encodeWorkspaceLockHolderHeartbeat,
+  workspaceLockHolderHeartbeatFilename,
+  type WorkspaceLockHolderHeartbeat,
+  type WorkspaceLockHolderKey
+} from './WorkspaceLockHolderHeartbeat'
+import {
   ensureRuntimeMarkerExcluded,
   type WorkspaceMarkerExcludeOutcome
 } from './WorkspaceMarkerGitExclude'
@@ -20,6 +27,10 @@ export const WORKSPACE_LOCK_INSTANCE_FENCE_FILENAME = 'instance-fence.json'
 export const WORKSPACE_LOCK_RECLAIM_GUARD_FILENAME = 'instance-fence.reclaim-guard.json'
 export const WORKSPACE_LOCK_CHECKPOINT_FILENAME = 'checkpoint.json'
 export const WORKSPACE_LOCK_ARCHIVE_DIRECTORY = 'archive'
+/** Holder heartbeat sidecars; a subdirectory older builds never read. */
+export const WORKSPACE_LOCK_HOLDERS_DIRECTORY = 'holders'
+/** Append-only audit of every periodic reclaim and the evidence behind it. */
+export const WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME = 'reclaims.jsonl'
 
 const PRIVATE_DIRECTORY_MODE = 0o700
 const PRIVATE_FILE_MODE = 0o600
@@ -64,6 +75,32 @@ export interface NodeWorkspaceLockPersistenceFs {
   linkSync(existingPath: string, newPath: string): void
   renameSync(oldPath: string, newPath: string): void
   unlinkSync(path: string): void
+  /** Optional only so constrained test substitutes keep compiling; production has it. */
+  readdirSync?(path: string): string[]
+}
+
+/**
+ * Asynchronous seam for the holder heartbeat and its reclaim audit. These are
+ * the only writes the authority performs outside the transition mutex, and
+ * deliberately the only ones without an fsync: a lost beat costs one late
+ * heartbeat, while a synchronous fsync every ten seconds on a stalled disk
+ * would block the main thread the sidecar exists to protect.
+ */
+export interface NodeWorkspaceLockPersistenceAsyncFs {
+  /** Never recursive: a beat must not recreate an authority root removed underneath it. */
+  mkdir(path: string, options: { mode: number }): Promise<unknown>
+  writeFile(path: string, data: string, options: { mode: number; flag: 'wx' }): Promise<void>
+  rename(oldPath: string, newPath: string): Promise<void>
+  unlink(path: string): Promise<void>
+  appendFile(path: string, data: string, options: { mode: number }): Promise<void>
+}
+
+const productionAsyncFs: NodeWorkspaceLockPersistenceAsyncFs = {
+  mkdir: (path, options) => nodeFs.promises.mkdir(path, options),
+  writeFile: (path, data, options) => nodeFs.promises.writeFile(path, data, options),
+  rename: (oldPath, newPath) => nodeFs.promises.rename(oldPath, newPath),
+  unlink: (path) => nodeFs.promises.unlink(path),
+  appendFile: (path, data, options) => nodeFs.promises.appendFile(path, data, options)
 }
 
 const productionFs: NodeWorkspaceLockPersistenceFs = {
@@ -106,6 +143,14 @@ export interface NodeWorkspaceLockPersistenceOptions {
    */
   ensureMarkerExcluded?: (worktreeRoot: string) => WorkspaceMarkerExcludeOutcome
   fs?: NodeWorkspaceLockPersistenceFs
+  /** Async seam for heartbeat/audit writes; tests substitute a recording fake. */
+  asyncFs?: NodeWorkspaceLockPersistenceAsyncFs
+}
+
+export interface WorkspaceLockHolderHeartbeatReadResult {
+  heartbeats: WorkspaceLockHolderHeartbeat[]
+  /** Unreadable or malformed sidecars are reported, never treated as evidence. */
+  errors: string[]
 }
 
 export interface WorkspaceLockEventSnapshot {
@@ -143,6 +188,7 @@ interface WorkspaceLockReclaimGuard {
  */
 export class NodeWorkspaceLockPersistence {
   private readonly fs: NodeWorkspaceLockPersistenceFs
+  private readonly asyncFs: NodeWorkspaceLockPersistenceAsyncFs
   private readonly platform: NodeJS.Platform
   private readonly root: string
   private readonly authorityDirectory: string
@@ -164,6 +210,7 @@ export class NodeWorkspaceLockPersistence {
       throw new Error('Workspace-lock authority directory name is unsafe.')
     }
     this.fs = options.fs || productionFs
+    this.asyncFs = options.asyncFs || productionAsyncFs
     this.platform = options.platform || process.platform
     this.root = resolve(options.userDataRoot)
     this.authorityDirectory = join(this.root, directoryName)
@@ -646,6 +693,107 @@ export class NodeWorkspaceLockPersistence {
     return truncatedByteLength
   }
 
+  /**
+   * Holder heartbeat: same-directory temp + rename, private mode, no fsync and
+   * no transition mutex. Loss of one beat is the accepted failure; blocking the
+   * main thread on a stalled disk is not.
+   */
+  async writeHolderHeartbeat(record: WorkspaceLockHolderHeartbeat): Promise<void> {
+    const content = encodeWorkspaceLockHolderHeartbeat(record)
+    const directory = await this.ensureHoldersDirectory()
+    const temporaryPath = join(directory, `.${randomUUID()}.tmp`)
+    try {
+      await this.asyncFs.writeFile(temporaryPath, content, { mode: PRIVATE_FILE_MODE, flag: 'wx' })
+      await this.asyncFs.rename(temporaryPath, this.holderHeartbeatPath(record))
+    } catch (error) {
+      try {
+        await this.asyncFs.unlink(temporaryPath)
+      } catch {
+        // The temp inode was never published; a leftover is inert.
+      }
+      throw error
+    }
+  }
+
+  /**
+   * Every readable sidecar under `holders/`. A malformed or vanishing file is
+   * reported and skipped: it is never liveness evidence in either direction.
+   */
+  readHolderHeartbeats(): WorkspaceLockHolderHeartbeatReadResult {
+    const directory = this.holdersDirectory()
+    if (typeof this.fs.readdirSync !== 'function') {
+      return { heartbeats: [], errors: ['holder heartbeats are unreadable: no directory listing'] }
+    }
+    let names: string[]
+    try {
+      const stat = this.fs.lstatSync(directory)
+      if (!stat.isDirectory() || stat.isSymbolicLink()) {
+        return { heartbeats: [], errors: [`holders: not a real directory: ${directory}`] }
+      }
+      names = this.fs.readdirSync(directory)
+    } catch (error) {
+      if (isErrno(error, 'ENOENT')) return { heartbeats: [], errors: [] }
+      return { heartbeats: [], errors: [`holders: ${errorText(error)}`] }
+    }
+    const heartbeats: WorkspaceLockHolderHeartbeat[] = []
+    const errors: string[] = []
+    for (const name of [...names].sort()) {
+      if (name.startsWith('.') || !name.endsWith('.json')) continue
+      const path = join(directory, name)
+      try {
+        const snapshot = this.readOptionalRegularFile(path)
+        if (!snapshot) continue
+        heartbeats.push(decodeWorkspaceLockHolderHeartbeat(snapshot.raw))
+      } catch (error) {
+        errors.push(`${name}: ${errorText(error)}`)
+      }
+    }
+    return { heartbeats, errors }
+  }
+
+  /** Removes exactly this holder's sidecar; absent is not an error. */
+  removeHolderHeartbeat(key: WorkspaceLockHolderKey): boolean {
+    const path = this.holderHeartbeatPath(key)
+    try {
+      const stat = this.fs.lstatSync(path)
+      assertRegularFile(stat, path)
+      this.fs.unlinkSync(path)
+      return true
+    } catch (error) {
+      if (isErrno(error, 'ENOENT') || isErrno(error, 'ENOTDIR')) return false
+      throw error
+    }
+  }
+
+  /** One JSONL audit line per periodic reclaim; async and unfsynced like the beat. */
+  async appendHolderReclaimAudit(serializedLineWithNewline: string): Promise<void> {
+    validateJsonlFrame(serializedLineWithNewline)
+    const directory = await this.ensureHoldersDirectory()
+    await this.asyncFs.appendFile(
+      join(directory, WORKSPACE_LOCK_RECLAIM_AUDIT_FILENAME),
+      serializedLineWithNewline,
+      { mode: PRIVATE_FILE_MODE }
+    )
+  }
+
+  holdersDirectory(): string {
+    return join(this.authorityDirectory, WORKSPACE_LOCK_HOLDERS_DIRECTORY)
+  }
+
+  private async ensureHoldersDirectory(): Promise<string> {
+    const directory = this.holdersDirectory()
+    try {
+      await this.asyncFs.mkdir(directory, { mode: PRIVATE_DIRECTORY_MODE })
+    } catch (error) {
+      if (!isErrno(error, 'EEXIST')) throw error
+    }
+    return directory
+  }
+
+  private holderHeartbeatPath(key: WorkspaceLockHolderKey): string {
+    return join(this.holdersDirectory(), workspaceLockHolderHeartbeatFilename(key))
+  }
+
   private checkpointPath(): string {
     return join(this.authorityDirectory, WORKSPACE_LOCK_CHECKPOINT_FILENAME)
   }
@@ -1126,6 +1274,10 @@ function isOpaqueId(value: unknown): value is string {
 
 function isIsoTimestamp(value: unknown): value is string {
   return typeof value === 'string' && Number.isFinite(Date.parse(value))
+}
+
+function errorText(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function isErrno(error: unknown, code: string): boolean {

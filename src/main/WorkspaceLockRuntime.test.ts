@@ -7,9 +7,15 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   WorkspaceLockRuntime,
   createWorkspaceExternalMutationAuthorityReceipt,
+  mutationFencePartitionKeys,
+  readCommitFenceOwnerForClaim,
   workspaceLockAuthorityRootForHome
 } from './WorkspaceLockRuntime'
-import type { WorkspaceLockLease, WorkspaceLockSnapshot } from './workLocks/WorkspaceLockTypes'
+import type {
+  CanonicalWorkspaceLockClaim,
+  WorkspaceLockLease,
+  WorkspaceLockSnapshot
+} from './workLocks/WorkspaceLockTypes'
 
 function emptySnapshot(): WorkspaceLockSnapshot {
   return {
@@ -160,7 +166,8 @@ function harness() {
   }
   const mutationFence = {
     acquire: vi.fn(),
-    release: vi.fn(() => true)
+    release: vi.fn(() => true),
+    readFence: vi.fn(() => null)
   }
   const processIdentity = {
     currentProcessIdentity: vi.fn(() => 'main-birth'),
@@ -180,6 +187,78 @@ function harness() {
 }
 
 describe('WorkspaceLockRuntime', () => {
+  it('reads the commit-fence owner for an exact claim through the read-only port only', () => {
+    const claim: CanonicalWorkspaceLockClaim = {
+      workspaceIdentity: '/workspace',
+      worktreeCanonicalPath: '/workspace',
+      worktreeIdentity: '/workspace',
+      worktreeObjectIdentity: 'dev:1:ino:1',
+      targetCanonicalPath: '/workspace/src/a.ts',
+      comparisonTargetPath: '/workspace/src/a.ts',
+      objectIdentity: 'dev:1:ino:2',
+      physicalTargetIdentity: '/workspace/src/a.ts',
+      displayWorkspacePath: '/workspace',
+      displayWorktreePath: '/workspace',
+      relativeTargetPath: 'src/a.ts',
+      kind: 'file',
+      mode: 'write'
+    }
+    const readFence = vi.fn((partitionKey?: string) => ({
+      lockOwnerId: 'owner',
+      runId: 'run',
+      pid: 77,
+      processBirthIdentity: 'birth-77',
+      ...(partitionKey ? { partitionKey } : {}),
+      fenceId: 'fence-1',
+      acquiredAt: '2026-09-23T10:00:00.000Z'
+    }))
+
+    expect(readCommitFenceOwnerForClaim({ readFence }, claim)).toEqual({
+      pid: 77,
+      processBirthIdentity: 'birth-77'
+    })
+    expect(readFence).toHaveBeenCalledTimes(1)
+    expect(readFence).toHaveBeenCalledWith(mutationFencePartitionKeys([claim])[0])
+
+    readFence.mockReturnValueOnce(null as never)
+    expect(readCommitFenceOwnerForClaim({ readFence }, claim)).toBeNull()
+
+    // A broad claim has no exact partition and therefore nothing to defer on.
+    expect(readCommitFenceOwnerForClaim({ readFence }, { ...claim, kind: 'workspace' })).toBeNull()
+    expect(readFence).toHaveBeenCalledTimes(2)
+  })
+
+  it('projects holder liveness per lease and never a process identity', () => {
+    const h = harness()
+    h.authority.snapshot.mockReturnValue({
+      ...emptySnapshot(),
+      leases: [
+        projectedLease('lapsed-peer', 'orphan_live', '2026-07-29T00:00:00.000Z'),
+        projectedLease('mine', 'held', '2026-07-29T00:00:01.000Z')
+      ],
+      holderLiveness: {
+        'lapsed-peer': {
+          instanceScope: 'other',
+          liveness: 'lapsed',
+          heartbeatAgeMs: 91_000,
+          generation: 3
+        }
+      }
+    })
+
+    const locks = h.runtime.snapshot().locks
+    expect(locks.map((lock) => lock.lockId)).toEqual(['lapsed-peer', 'mine'])
+    expect(locks[0].holder).toEqual({
+      instanceScope: 'other',
+      liveness: 'lapsed',
+      heartbeatAgeMs: 91_000,
+      generation: 3
+    })
+    expect(locks[1].holder).toBeUndefined()
+    expect(JSON.stringify(h.runtime.snapshot())).not.toContain('main-birth')
+    expect(JSON.stringify(h.runtime.snapshot())).not.toContain('"pid"')
+  })
+
   it('uses one profile-independent authority root for a local OS user', () => {
     const homePath = '/Users/example'
     const releaseUserData = '/Users/example/Library/Application Support/TaskWraith'

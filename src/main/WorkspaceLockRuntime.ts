@@ -38,6 +38,8 @@ import type {
   WorkspaceLockAuthorityFence,
   CanonicalWorkspaceLockClaim,
   WorkspaceLockClaimRequest,
+  WorkspaceLockCommitFenceOwnerIdentity,
+  WorkspaceLockHolderLiveness,
   WorkspaceLockLease,
   WorkspaceLockOwner,
   WorkspaceLockProcessObservation,
@@ -247,6 +249,8 @@ interface WorkspaceLockAuthorityLike {
 interface WorkspaceMutationCommitFenceLike {
   acquire(owner: WorkspaceLockOwner, partitionKey?: string): Promise<WorkspaceMutationCommitFenceOwner>
   release(owner: WorkspaceMutationCommitFenceOwner): boolean
+  /** Read-only; the periodic reclaim consults it and never takes or drops it. */
+  readFence(partitionKey?: string): WorkspaceMutationCommitFenceOwner | null
 }
 
 export interface WorkspaceMutationCommitFenceAcquisition {
@@ -310,6 +314,10 @@ export class WorkspaceLockRuntime {
     }
     const validateHunkBaseline = (claim: CanonicalWorkspaceLockClaim): Promise<boolean> =>
       validateCurrentHunkBaseline(claim)
+    const mutationFence = new WorkspaceMutationCommitFence({
+      userDataRoot: options.userDataRoot,
+      observeProcess
+    })
     const authority = await WorkspaceLockAuthority.open({
       persistence,
       dependencies: {
@@ -321,16 +329,13 @@ export class WorkspaceLockRuntime {
           resolveCanonicalWorkspaceLockPath({ rootPath, targetPath }),
         verifyTargetPath: (expected) => verifyCanonicalWorkspaceLockPath(expected),
         validateHunkBaseline,
+        readCommitFenceOwner: (claim) => readCommitFenceOwnerForClaim(mutationFence, claim),
         instance: {
           instanceId: options.instanceId,
           pid: process.pid,
           processBirthIdentity: mainProcessBirthIdentity
         }
       }
-    })
-    const mutationFence = new WorkspaceMutationCommitFence({
-      userDataRoot: options.userDataRoot,
-      observeProcess
     })
     return new WorkspaceLockRuntime(authority, mutationFence, options.processIdentity, process.pid)
   }
@@ -1437,6 +1442,26 @@ export function mutationFencePartitionKeys(
   return Object.freeze([...keys].sort())
 }
 
+/**
+ * The one seam through which the periodic reclaim sees the commit fence: a
+ * plain read of the partition a claim would commit under. It takes nothing,
+ * releases nothing, and reclaims nothing; a claim with no exact partition has
+ * no fence to defer on.
+ */
+export function readCommitFenceOwnerForClaim(
+  fence: Pick<WorkspaceMutationCommitFenceLike, 'readFence'>,
+  claim: CanonicalWorkspaceLockClaim
+): WorkspaceLockCommitFenceOwnerIdentity | null {
+  let partitionKey: string
+  try {
+    partitionKey = mutationFencePartitionKeys([claim])[0]
+  } catch {
+    return null
+  }
+  const owner = fence.readFence(partitionKey)
+  return owner ? { pid: owner.pid, processBirthIdentity: owner.processBirthIdentity } : null
+}
+
 function exactMutationClaimFailure(
   claims: readonly WorkspaceLockClaimRequest[]
 ): Extract<WorkspaceLockRuntimeAcquireResult, { ok: false }> | null {
@@ -1493,11 +1518,13 @@ function projectAuthoritySnapshot(
   return createWorkLockProjectionSnapshot({
     generation: snapshot.sequence,
     sampledAt: new Date(sampledAtMs).toISOString(),
-    locks: [...active, ...recovered].map(projectLease)
+    locks: [...active, ...recovered].map((lease) =>
+      projectLease(lease, snapshot.holderLiveness?.[lease.leaseId])
+    )
   })
 }
 
-function projectLease(lease: WorkspaceLockLease) {
+function projectLease(lease: WorkspaceLockLease, holder?: WorkspaceLockHolderLiveness) {
   const relativePath = lease.claim.relativeTargetPath || '.'
   const target =
     lease.claim.kind === 'workspace'
@@ -1538,7 +1565,19 @@ function projectLease(lease: WorkspaceLockLease) {
     target,
     acquiredAt: lease.acquiredAt,
     statusChangedAt: lease.statusChangedAt,
-    ...(lease.status === 'recovered' ? { recoveredAt: lease.statusChangedAt } : {})
+    ...(lease.status === 'recovered' ? { recoveredAt: lease.statusChangedAt } : {}),
+    ...(holder
+      ? {
+          holder: {
+            instanceScope: holder.instanceScope,
+            liveness: holder.liveness,
+            ...(holder.heartbeatAgeMs !== undefined
+              ? { heartbeatAgeMs: holder.heartbeatAgeMs }
+              : {}),
+            generation: holder.generation
+          }
+        }
+      : {})
   }
 }
 

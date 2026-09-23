@@ -235,6 +235,28 @@ export type WorkspaceLockProcessObservation =
   | { state: 'live'; processBirthIdentity: string }
   | { state: 'identity_unavailable' }
 
+/** Exact incarnation currently holding a mutation commit-fence partition. */
+export interface WorkspaceLockCommitFenceOwnerIdentity {
+  pid: number
+  processBirthIdentity: string
+}
+
+/**
+ * Renderer-safe liveness of the process behind a lease, as last observed by
+ * this authority's periodic pass. Pids and birth identities stay out on purpose.
+ */
+export interface WorkspaceLockHolderLiveness {
+  /** `this` only for a lease issued by the running authority (same instance and generation). */
+  instanceScope: 'this' | 'other'
+  liveness: 'live' | 'lapsed' | 'dead' | 'unknown'
+  /**
+   * Wall age of the holder's last heartbeat at the last scan; absent for this
+   * incarnation's own leases and for a holder that never wrote one.
+   */
+  heartbeatAgeMs?: number
+  generation: number
+}
+
 export interface WorkspaceLockAuthorityDependencies {
   nowIso: () => string
   nextId: (kind: 'fence' | 'lease' | 'transition') => string
@@ -249,6 +271,17 @@ export interface WorkspaceLockAuthorityDependencies {
   ) => CanonicalWorkspaceLockPathVerification
   /** Required before the authority grants a hunk claim. */
   validateHunkBaseline?: (claim: CanonicalWorkspaceLockClaim) => boolean | Promise<boolean>
+  /** Monotonic milliseconds for lapse grace; defaults to process.hrtime. */
+  monotonicNowMs?: () => number
+  /**
+   * Current owner of the commit-fence partition guarding one claim, read
+   * without taking, releasing, or reclaiming it. The periodic reclaim defers
+   * while a lapsed holder still owns the partition. Absent, a lapsed but
+   * live holder is never reclaimed: nothing shows it has left the fence.
+   */
+  readCommitFenceOwner?: (
+    claim: CanonicalWorkspaceLockClaim
+  ) => WorkspaceLockCommitFenceOwnerIdentity | null
   instance: {
     instanceId: string
     pid: number
@@ -262,6 +295,8 @@ export interface WorkspaceLockSnapshot {
   lastTransitionId: string
   leases: WorkspaceLockLease[]
   projectionErrors: string[]
+  /** Keyed by leaseId; absent until the first periodic pass has observed holders. */
+  holderLiveness?: Record<string, WorkspaceLockHolderLiveness>
 }
 
 export interface WorkspaceLockMutationCapability {
