@@ -29,6 +29,7 @@ import { createConnection, type Socket } from 'node:net'
 import {
   HOST_PROTOCOL_VERSION,
   HOST_PROJECTION_VERSION,
+  decodeHostStatusProjection,
   type HostBootstrapHello,
   type HostBootstrapWelcome,
   type HostCapability,
@@ -40,7 +41,8 @@ import {
   type HostHealthFrame,
   type HostProjectionFreshness,
   type HostSnapshot,
-  type HostSnapshotFrame
+  type HostSnapshotFrame,
+  type HostStatusProjection
 } from '../shared/hostProtocol'
 import type { TaskWraithControlThreadOffers } from '../shared/taskWraithControlProtocol'
 import type {
@@ -158,6 +160,23 @@ export interface HostProjectionCachedSnapshot {
 export interface HostProjectionTwMissionExport {
   readonly bundle: TwMissionBundle
   readonly bytes: Uint8Array
+}
+
+/** A lease held on THIS socket; it is released the instant the socket drops. */
+export interface HostLeaseAcquired {
+  readonly leaseId: string
+  /** The cadence the Host expects renewals at. */
+  readonly heartbeatMs: number
+  /** Awake time the Host allows between renewals before the lease lapses. */
+  readonly ttlMs: number
+  /** Host monotonic ms, display only. */
+  readonly hostNowMs: number
+}
+
+export interface HostLeaseRenewed {
+  readonly leaseId: string
+  readonly expiresInMs: number
+  readonly hostNowMs: number
 }
 
 export interface HostProjectionClientEvents {
@@ -642,6 +661,77 @@ export class HostProjectionClient extends EventEmitter<HostProjectionClientEvent
       throw new Error('TaskWraith Host returned an unexpected health result kind.')
     }
     return result.frame
+  }
+
+  /**
+   * `host.status` (needs the `health` capability). An old Host answers
+   * `unknown_request_kind`, surfaced as a HostProjectionTransportError.
+   */
+  async getHostStatus(): Promise<HostStatusProjection> {
+    const result = await this.request('host.status', {})
+    if (result.kind !== 'host.status') {
+      throw new Error('TaskWraith Host returned an unexpected status result kind.')
+    }
+    const decoded = decodeHostStatusProjection(result.status)
+    if (!decoded.ok) {
+      throw new Error(`TaskWraith Host returned an invalid status projection: ${decoded.error}`)
+    }
+    return decoded.value
+  }
+
+  async acquireHostLease(): Promise<HostLeaseAcquired> {
+    const result = await this.request('host.lease', { action: 'acquire' })
+    if (result.kind !== 'host.lease' || result.action !== 'acquire') {
+      throw new Error('TaskWraith Host returned an unexpected lease result kind.')
+    }
+    return {
+      leaseId: result.leaseId,
+      heartbeatMs: result.heartbeatMs,
+      ttlMs: result.ttlMs,
+      hostNowMs: result.hostNowMs
+    }
+  }
+
+  async renewHostLease(leaseId: string): Promise<HostLeaseRenewed> {
+    const result = await this.request('host.lease', { action: 'renew', leaseId })
+    if (result.kind !== 'host.lease' || result.action !== 'renew') {
+      throw new Error('TaskWraith Host returned an unexpected lease result kind.')
+    }
+    return { leaseId: result.leaseId, expiresInMs: result.expiresInMs, hostNowMs: result.hostNowMs }
+  }
+
+  async releaseHostLease(leaseId: string): Promise<void> {
+    const result = await this.request('host.lease', { action: 'release', leaseId })
+    if (result.kind !== 'host.lease' || result.action !== 'release') {
+      throw new Error('TaskWraith Host returned an unexpected lease result kind.')
+    }
+  }
+
+  async declineHostLease(): Promise<void> {
+    const result = await this.request('host.lease', { action: 'decline' })
+    if (result.kind !== 'host.lease' || result.action !== 'decline') {
+      throw new Error('TaskWraith Host returned an unexpected lease result kind.')
+    }
+  }
+
+  /**
+   * Fire-and-forget release for a teardown that cannot await (Electron's
+   * `will-quit`). Writes exactly one request frame and registers no pending
+   * response; returns false when there is no live socket to write to.
+   */
+  releaseHostLeaseSync(leaseId: string): boolean {
+    const socket = this.socket
+    if (!socket || socket.destroyed || !socket.writable || !this.welcome) return false
+    const encoded = encodeHostLocalTransportClientFrame({
+      type: 'request',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: randomUUID(),
+      kind: 'host.lease',
+      params: { action: 'release', leaseId }
+    })
+    if (!encoded.ok) return false
+    socket.write(`${JSON.stringify(encoded.value)}\n`)
+    return true
   }
 
   async submitCommand(command: HostCommand): Promise<HostCommandReceipt> {

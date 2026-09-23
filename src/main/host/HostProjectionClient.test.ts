@@ -24,7 +24,8 @@ import {
   type HostDeltasFrame,
   type HostHealthFrame,
   type HostSnapshot,
-  type HostSnapshotFrame
+  type HostSnapshotFrame,
+  type HostStatusProjection
 } from '../../shared/hostProtocol'
 import {
   HOST_LOCAL_TRANSPORT_VERSION,
@@ -888,6 +889,196 @@ describe('HostProjectionClient', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(sawDisconnect).toBe(false)
     expect(client.connected).toBe(false)
+  })
+
+  it('routes host.status through the strict status decoder', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const status: HostStatusProjection = {
+      pid: 4242,
+      startedAt: '2026-09-23T00:00:00.000Z',
+      uptimeMs: 60_000,
+      hostId: 'test-host',
+      payloadVersion: `sha256:${'a'.repeat(64)}`,
+      profilePath: '/profiles/one',
+      persist: false,
+      lifetime: { phase: 'held', holders: 1, implicitHolders: 0, declined: 1 },
+      liveWork: { runs: 0 },
+      clients: [
+        {
+          clientClass: 'desktop',
+          clientId: 'desktop-1',
+          connectedForMs: 10,
+          lease: 'explicit',
+          capabilities: ['bootstrap', 'health']
+        }
+      ]
+    }
+    const pending = client.getHostStatus()
+    const request = await readLine(hostSocket)
+    expect(request).toMatchObject({ type: 'request', kind: 'host.status', params: {} })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(request.id),
+      ok: true,
+      result: {
+        kind: 'host.status',
+        status: { ...status, token: 'dropped' } as HostStatusProjection
+      }
+    })
+    await expect(pending).resolves.toEqual(status)
+
+    // The transport only shape-checks the record; an out-of-bounds status is
+    // refused here without costing the connection.
+    const invalid = client.getHostStatus()
+    const invalidRequest = await readLine(hostSocket)
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(invalidRequest.id),
+      ok: true,
+      result: { kind: 'host.status', status: { ...status, pid: 0 } }
+    })
+    await expect(invalid).rejects.toThrow(/invalid status projection/)
+    expect(client.connected).toBe(true)
+  })
+
+  it('speaks the four host.lease actions and refuses a mismatched answer', async () => {
+    const { hostSocket, client } = await connectedPair()
+    const answer = async (
+      expected: Record<string, unknown>,
+      result: Extract<HostLocalTransportHostFrame, { type: 'response'; ok: true }>['result']
+    ) => {
+      const request = await readLine(hostSocket)
+      expect(request).toMatchObject({ type: 'request', kind: 'host.lease', params: expected })
+      expect(Object.keys(request.params as object).sort()).toEqual(Object.keys(expected).sort())
+      writeFrame(hostSocket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: String(request.id),
+        ok: true,
+        result
+      })
+    }
+
+    const acquired = client.acquireHostLease()
+    await answer(
+      { action: 'acquire' },
+      {
+        kind: 'host.lease',
+        action: 'acquire',
+        leaseId: 'lease-1',
+        heartbeatMs: 5_000,
+        ttlMs: 20_000,
+        hostNowMs: 7
+      }
+    )
+    await expect(acquired).resolves.toEqual({
+      leaseId: 'lease-1',
+      heartbeatMs: 5_000,
+      ttlMs: 20_000,
+      hostNowMs: 7
+    })
+
+    const renewed = client.renewHostLease('lease-1')
+    await answer(
+      { action: 'renew', leaseId: 'lease-1' },
+      { kind: 'host.lease', action: 'renew', leaseId: 'lease-1', expiresInMs: 20_000, hostNowMs: 9 }
+    )
+    await expect(renewed).resolves.toEqual({
+      leaseId: 'lease-1',
+      expiresInMs: 20_000,
+      hostNowMs: 9
+    })
+
+    const released = client.releaseHostLease('lease-1')
+    await answer(
+      { action: 'release', leaseId: 'lease-1' },
+      { kind: 'host.lease', action: 'release', released: true }
+    )
+    await expect(released).resolves.toBeUndefined()
+
+    const declined = client.declineHostLease()
+    await answer({ action: 'decline' }, { kind: 'host.lease', action: 'decline', declined: true })
+    await expect(declined).resolves.toBeUndefined()
+
+    const mismatched = client.acquireHostLease()
+    await answer({ action: 'acquire' }, { kind: 'host.lease', action: 'decline', declined: true })
+    await expect(mismatched).rejects.toThrow(/unexpected lease result/)
+    expect(client.connected).toBe(true)
+  })
+
+  it("surfaces an old Host's unknown_request_kind for the lease kinds and keeps the connection", async () => {
+    const { hostSocket, client } = await connectedPair()
+    for (const ask of [() => client.acquireHostLease(), () => client.getHostStatus()]) {
+      const pending = ask()
+      const request = await readLine(hostSocket)
+      writeFrame(hostSocket, {
+        type: 'response',
+        transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+        id: String(request.id),
+        ok: false,
+        error: { code: 'unknown_request_kind' }
+      })
+      await expect(pending).rejects.toMatchObject({ code: 'unknown_request_kind' })
+    }
+    expect(client.connected).toBe(true)
+  })
+
+  it('releaseHostLeaseSync writes exactly one release frame and waits for no answer', async () => {
+    const { hostSocket, client } = await connectedPair()
+    // Every line the Host receives, in order: readLine() alone would drop a
+    // second frame that arrived in the same chunk as the first.
+    const received: Array<Record<string, unknown>> = []
+    let buffer = ''
+    hostSocket.on('data', (chunk: Buffer | string) => {
+      buffer += chunk.toString()
+      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
+        received.push(JSON.parse(buffer.slice(0, newline)) as Record<string, unknown>)
+        buffer = buffer.slice(newline + 1)
+      }
+    })
+    expect(client.releaseHostLeaseSync('lease-1')).toBe(true)
+    const health = client.getHealth()
+    await vi.waitFor(() => expect(received.length).toBeGreaterThanOrEqual(2))
+    expect(received[0]).toMatchObject({
+      type: 'request',
+      kind: 'host.lease',
+      params: { action: 'release', leaseId: 'lease-1' }
+    })
+    // The very next frame on the wire is the next request, not a second release.
+    expect(received[1]).toMatchObject({ kind: 'health.get' })
+    // The release's own answer matches nothing pending and is dropped.
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(received[0].id),
+      ok: true,
+      result: { kind: 'host.lease', action: 'release', released: true }
+    })
+    writeFrame(hostSocket, {
+      type: 'response',
+      transportVersion: HOST_LOCAL_TRANSPORT_VERSION,
+      id: String(received[1].id),
+      ok: true,
+      result: {
+        kind: 'health.get',
+        frame: {
+          type: 'host.health',
+          protocolVersion: HOST_PROTOCOL_VERSION,
+          health: {
+            hostStatus: 'ok',
+            connectionPhase: 'live',
+            supervised: false,
+            freshness: 'live'
+          }
+        }
+      }
+    })
+    await expect(health).resolves.toMatchObject({ type: 'host.health' })
+    expect(received).toHaveLength(2)
+    client.close()
+    expect(client.releaseHostLeaseSync('lease-1')).toBe(false)
   })
 
   it('rejects a request immediately when not connected', async () => {
