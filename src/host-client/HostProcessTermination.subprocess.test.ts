@@ -171,8 +171,11 @@ function publishLegacyLease(profile: string, process_: Tracked, startOffsetMs = 
   })
 }
 
-/** Discovery and token naming `process_`, its listener started a few seconds after it. */
-function publishDiscovery(profile: string, process_: Tracked): void {
+/**
+ * Discovery and token naming `process_`, its listener started `startOffsetMs`
+ * after it (before it, when negative: a dead Host's discovery).
+ */
+function publishDiscovery(profile: string, process_: Tracked, startOffsetMs = 4_000): void {
   writeFileSync(taskWraithHostTokenPath(profile), `${'7'.repeat(64)}\n`, { mode: 0o600 })
   writeFileSync(
     taskWraithHostDiscoveryPath(profile),
@@ -181,7 +184,7 @@ function publishDiscovery(profile: string, process_: Tracked): void {
       socketPath: taskWraithHostSocketPath(profile),
       tokenPath: taskWraithHostTokenPath(profile),
       pid: process_.pid,
-      startedAt: new Date((process_.birth.startedAtMs ?? Date.now()) + 4_000).toISOString(),
+      startedAt: new Date((process_.birth.startedAtMs ?? Date.now()) + startOffsetMs).toISOString(),
       hostId: 'fake-host',
       hostVersion: 'node-host-v1'
     })}\n`,
@@ -585,11 +588,75 @@ describe.skipIf(process.platform === 'win32')(
         'verify:mismatch',
         'evidence:inconsistent'
       ])
+      expect(outcome.detail).toBe(
+        'a record naming the pid is not contradicted by the process now at it: the discovery ' +
+          `${taskWraithHostDiscoveryPath(profile)}. If pid ${host.pid} is neither this profile's ` +
+          `Host (host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove ` +
+          'that file and stop again'
+      )
       expect(alive(host.pid)).toBe(true)
       expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
       // Still the profile's owner: no contender takes the lease from it.
       expect(contenderAcquires(profile)).toBe(false)
     }, 30_000)
+
+    it('D1: stop-all --profile refuses a reused pid beside a registry entry without a birth while that process lives, and clears once the file it names is removed', async () => {
+      const base = scratch('host-termination-d1-')
+      const root = join(base, 'hosts')
+      const profile = scratch('host-termination-d1-profile-')
+      // A Host died uncleanly and a long-lived process that is no Host took its
+      // pid. Its lease and discovery predate that process; its registry entry
+      // recorded no birth, so only that process's exit could prove it stale.
+      const decoy = await startDecoy([])
+      publishLegacyLease(profile, decoy, -60_000)
+      publishDiscovery(profile, decoy, -60_000)
+      publishRegistryEntry(profile, root, decoy, { registryBirth: null })
+      const entryPath = hostRegistryEntryPath(root, profile)
+      const lines: string[] = []
+      const stop = () =>
+        stopAllHosts({
+          scope: { kind: 'profile', profilePath: profile },
+          registryRoot: root,
+          ports: {
+            terminate: (input) =>
+              terminateHostProcess({
+                ...input,
+                timings: FAST,
+                ports: { log: (line) => lines.push(line) }
+              })
+          }
+        })
+
+      const refusal =
+        'a record naming the pid is not contradicted by the process now at it: the registry ' +
+        `entry ${entryPath}. If pid ${decoy.pid} is neither this profile's Host ` +
+        `(host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove that ` +
+        'file and stop again'
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const report = await stop()
+        expect(report.exitCode).toBe(1)
+        expect(report.hosts).toMatchObject([
+          { pid: decoy.pid, outcome: { kind: 'inconsistent', swept: [], detail: refusal } }
+        ])
+        expect(lines.at(-1)).toContain(`inconsistent (${refusal}) after`)
+        expect(alive(decoy.pid)).toBe(true)
+        expect(existsSync(entryPath)).toBe(true)
+        expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+        // The nonce lease is held while its pid lives: the profile stays blocked.
+        expect(contenderAcquires(profile)).toBe(false)
+      }
+
+      // The operator confirms the pid runs no Host, removes that file, stops again.
+      rmSync(entryPath)
+      const cleared = await stop()
+      expect(cleared.exitCode).toBe(0)
+      expect(cleared.hosts).toMatchObject([
+        { pid: decoy.pid, outcome: { kind: 'pid_reused', swept: ['discovery', 'token', 'lease'] } }
+      ])
+      expect(alive(decoy.pid)).toBe(true)
+      expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
+      expect(contenderAcquires(profile)).toBe(true)
+    }, 60_000)
 
     it("N12-e/i: a registry entry naming another profile's Host is refused, and a legacy lease beside the Host's own digest is stopped", async () => {
       const base = scratch('host-termination-n12ei-')

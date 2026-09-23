@@ -4,6 +4,7 @@ import { dirname, posix, win32 } from 'node:path'
 
 import {
   canonicalHostProfilePath,
+  hostRegistryEntryPath,
   hostSocketIsLive,
   readHostRegistryEntry,
   removeHostRegistryEntryFor,
@@ -64,15 +65,18 @@ import { HostShutdownClient } from './HostShutdownClient'
  * between TERM and KILL aborts the escalation the same way. When a fresh
  * observation of that pid still contradicts none of the birth one record
  * carries, the records disagree about whose pid it is: that is refused as
- * `inconsistent`, and nothing is swept. After death the
- * socket file and directory, discovery, token, lease and registry entry are
- * removed — each only while it still carries exactly the record read before
- * termination (never by pid alone: a successor may have been handed the same
- * pid), only once that record is proven stale (its pid is dead, or the process
- * now at that pid contradicts the record's own birth), and the profile-side
- * artefacts only while no other owner holds the profile's authority lease —
- * so the next launch neither waits on a stale socket nor loses a successor's
- * or a live owner's state.
+ * `inconsistent`, and nothing is swept. The refusal names each such record's
+ * file: only that process's exit can prove a registry entry that recorded no
+ * birth stale, so an operator who confirms the process is neither this
+ * profile's Host nor the TaskWraith app removes the file and stops again.
+ * After death the socket file and directory, discovery, token, lease and
+ * registry entry are removed — each only while it still carries exactly the
+ * record read before termination (never by pid alone: a successor may have
+ * been handed the same pid), only once that record is proven stale (its pid
+ * is dead, or the process now at that pid contradicts the record's own
+ * birth), and the profile-side artefacts only while no other owner holds the
+ * profile's authority lease — so the next launch neither waits on a stale
+ * socket nor loses a successor's or a live owner's state.
  *
  * Electron-free: shared by Electron main, the TUI, `cli.js stop-all` and the
  * build script.
@@ -309,6 +313,47 @@ function leaseExpectation(lease: HostTerminationLeaseEvidence): HostTerminationE
 }
 
 type HostTerminationRecord = 'registry' | 'lease' | 'discovery'
+
+const RECORDS: readonly HostTerminationRecord[] = ['registry', 'lease', 'discovery']
+
+const RECORD_NOUNS: Readonly<Record<HostTerminationRecord, string>> = {
+  registry: 'registry entry',
+  lease: 'authority lease',
+  discovery: 'discovery'
+}
+
+function recordFile(
+  record: HostTerminationRecord,
+  profilePath: string,
+  registryRoot: string
+): string {
+  if (record === 'registry') return hostRegistryEntryPath(registryRoot, profilePath)
+  return record === 'lease'
+    ? taskWraithHostAuthorityLeasePath(profilePath)
+    : taskWraithHostDiscoveryPath(profilePath)
+}
+
+/**
+ * Why a reused pid is refused, and how an operator clears it: each record the
+ * process now at the pid cannot contradict, by file. The in-process lane
+ * records the TaskWraith app's own pid, so the app is excluded as well.
+ */
+function survivorRefusal(
+  pid: number,
+  survivors: readonly HostTerminationRecord[],
+  profilePath: string,
+  registryRoot: string
+): string {
+  const named = survivors
+    .map((record) => `the ${RECORD_NOUNS[record]} ${recordFile(record, profilePath, registryRoot)}`)
+    .join(' and ')
+  const files = survivors.length === 1 ? 'that file' : 'those files'
+  return (
+    `a record naming the pid is not contradicted by the process now at it: ${named}. ` +
+    `If pid ${pid} is neither this profile's Host (host-runtime/cli.js serve --profile ` +
+    `${profilePath}) nor the TaskWraith app, remove ${files} and stop again`
+  )
+}
 
 const NO_EVIDENCE: HostTerminationEvidence = Object.freeze({
   discovery: null,
@@ -784,26 +829,27 @@ export async function terminateHostProcess(
    * the way in, and each record the observation proves stale — all of them
    * once the pid is dead; while another process lives at it, only those
    * contradicting their own birth. A record that cannot be proven stale is
-   * never swept. `surviving` says a live process at the pid contradicts none
-   * of the birth one record carries: that record may be its own.
+   * never swept. `refusal` names each record whose birth a live process at
+   * the pid contradicts not at all (each may be its own), or is null.
    */
   const finalJudgement = async (): Promise<{
     readonly stale: HostTerminationEvidence
-    readonly surviving: boolean
+    readonly refusal: string | null
   }> => {
-    if (pid === null) return { stale, surviving: false }
+    if (pid === null) return { stale, refusal: null }
     const observation = await ports.observe(pid)
     const staleNow = (record: HostTerminationRecord): boolean =>
       judged[record] !== null && recordIsStale(judged, record, observation)
     const survives = (record: HostTerminationRecord): boolean =>
       observation.state === 'live' && judged[record] !== null && !staleNow(record)
+    const survivors = RECORDS.filter(survives)
     return {
       stale: {
         registry: staleNow('registry') ? judged.registry : stale.registry,
         lease: staleNow('lease') ? judged.lease : stale.lease,
         discovery: staleNow('discovery') ? judged.discovery : stale.discovery
       },
-      surviving: survives('registry') || survives('lease') || survives('discovery')
+      refusal: survivors.length ? survivorRefusal(pid, survivors, profilePath, registryRoot) : null
     }
   }
 
@@ -815,16 +861,15 @@ export async function terminateHostProcess(
     let swept: readonly string[] = []
     if (sweep) {
       const judgement = await finalJudgement()
-      if (kind === 'pid_reused' && judgement.surviving) {
+      if (kind === 'pid_reused' && judgement.refusal !== null) {
         // One record reads the pid as reused, another as the live process's
         // own (a legacy lease taken after a wall-clock step reads as another
         // birth beside the discovery that process wrote): the evidence
         // disagrees about whose pid it is, so this is a refusal, not a
-        // success, and nothing is swept.
+        // success, and nothing is swept. It holds while that process lives.
         steps.push('evidence:inconsistent')
-        const reason = 'a record naming the pid is not contradicted by the process now at it'
-        log(`inconsistent (${reason}) after ${steps.join(' -> ')}`)
-        return { kind: 'inconsistent', pid, steps, swept: [], detail: reason }
+        log(`inconsistent (${judgement.refusal}) after ${steps.join(' -> ')}`)
+        return { kind: 'inconsistent', pid, steps, swept: [], detail: judgement.refusal }
       }
       swept = await ports.sweep(profilePath, judgement.stale, registryRoot)
     }

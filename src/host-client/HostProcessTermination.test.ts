@@ -367,12 +367,14 @@ describe('terminateHostProcess', () => {
     }
     const run = harness({ evidence, observe: () => live(OTHER, REUSED_START) })
     const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
-    expect(outcome).toMatchObject({
-      kind: 'inconsistent',
-      pid: PID,
-      swept: [],
-      detail: 'a record naming the pid is not contradicted by the process now at it'
-    })
+    expect(outcome).toMatchObject({ kind: 'inconsistent', pid: PID, swept: [] })
+    expect(outcome.detail).toBe(
+      'a record naming the pid is not contradicted by the process now at it: ' +
+        `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)} and the discovery ` +
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
+        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
+        'remove those files and stop again'
+    )
     expect(outcome.steps).toEqual([
       'socket:failed:Host shutdown request timed out',
       'verify:mismatch',
@@ -392,7 +394,10 @@ describe('terminateHostProcess', () => {
     expect(blind.sweeps).toEqual([NO_RECORDS])
   })
 
-  it('refuses a reused pid when the one record the process cannot contradict is a registry entry without a birth (C1)', async () => {
+  it('refuses a reused pid when the one record the process cannot contradict is a registry entry without a birth, naming the file to remove (C1, D1)', async () => {
+    // Only the pid's exit can prove such an entry stale, so the refusal holds
+    // while this process lives: it says which file an operator removes once
+    // the process is confirmed to be no Host.
     const evidence: HostTerminationEvidence = {
       discovery: null,
       lease: REGISTRY_EVIDENCE.lease,
@@ -400,14 +405,75 @@ describe('terminateHostProcess', () => {
     }
     const run = harness({ evidence, observe: () => live(OTHER, REUSED_START) })
     const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
-    expect(outcome).toMatchObject({ kind: 'inconsistent', pid: PID, swept: [] })
-    expect(outcome.steps).toEqual([
-      'socket:failed:Host shutdown request timed out',
-      'verify:mismatch',
-      'evidence:inconsistent'
-    ])
+    const refusal =
+      'a record naming the pid is not contradicted by the process now at it: ' +
+      `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)}. If pid 4242 is ` +
+      "neither this profile's Host (host-runtime/cli.js serve --profile " +
+      '/profiles/host-termination-p) nor the TaskWraith app, remove that file and stop again'
+    expect(outcome).toEqual({
+      kind: 'inconsistent',
+      pid: PID,
+      steps: [
+        'socket:failed:Host shutdown request timed out',
+        'verify:mismatch',
+        'evidence:inconsistent'
+      ],
+      swept: [],
+      detail: refusal
+    })
     expect(run.signals).toEqual([])
     expect(run.sweeps).toEqual([])
+    // The log line, which `stop-all` writes to stderr, carries it whole.
+    expect(run.lines.at(-1)).toBe(
+      `[host-termination] /profiles/host-termination-p: inconsistent (${refusal}) after ` +
+        'socket:failed:Host shutdown request timed out -> verify:mismatch -> evidence:inconsistent'
+    )
+  })
+
+  it('refuses only a reused pid: a stop or a termination whose pid is taken before the final observation still sweeps what it proves stale (D2)', async () => {
+    // The registry entry recorded no birth, so no live process contradicts
+    // it; the lease and the discovery are contradicted by the one now at the pid.
+    const evidence: HostTerminationEvidence = {
+      discovery: REGISTRY_EVIDENCE.discovery,
+      lease: REGISTRY_EVIDENCE.lease,
+      registry: { pid: PID, birthIdentity: null, bootEpoch: null }
+    }
+    const proven: HostTerminationEvidence = { ...evidence, registry: null }
+
+    // The socket stop lands and another process takes the pid after the exit.
+    const stopped = harness({
+      evidence,
+      shutdown: async () => 'stopping',
+      observe: () => live(OTHER, REUSED_START)
+    })
+    await expect(terminate({ profilePath: PROFILE, ports: stopped.ports })).resolves.toEqual({
+      kind: 'stopped',
+      pid: PID,
+      steps: ['socket:stopping', 'swept:registry'],
+      swept: ['registry'],
+      detail: 'pid reused after exit'
+    })
+    expect(stopped.sweeps).toEqual([proven])
+
+    // SIGTERM ends the Host, and another process takes the pid before the
+    // final observation.
+    const terminated = harness({
+      evidence,
+      observe: (call) =>
+        call === 1 ? live(BORN) : call === 2 ? { state: 'dead' } : live(OTHER, REUSED_START)
+    })
+    await expect(terminate({ profilePath: PROFILE, ports: terminated.ports })).resolves.toEqual({
+      kind: 'terminated',
+      pid: PID,
+      steps: [
+        'socket:failed:Host shutdown request timed out',
+        'verify:match',
+        'signal:SIGTERM',
+        'swept:registry'
+      ],
+      swept: ['registry']
+    })
+    expect(terminated.sweeps).toEqual([proven])
   })
 
   it('refuses a legacy lease taken after a wall-clock step beside the live Host that wrote the discovery (C1)', async () => {
@@ -439,7 +505,13 @@ describe('terminateHostProcess', () => {
     ])
     expect(run.signals).toEqual([])
     expect(run.sweeps).toEqual([])
-    expect(run.lines.at(-1)).toContain('inconsistent (a record naming the pid is not contradicted')
+    expect(outcome.detail).toBe(
+      'a record naming the pid is not contradicted by the process now at it: the discovery ' +
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
+        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
+        'remove that file and stop again'
+    )
+    expect(run.lines.at(-1)).toContain(`inconsistent (${outcome.detail}) after`)
   })
 
   it('sweeps every record when each names a dead pid of its own: all dropped on the way in, already gone (C6)', async () => {
