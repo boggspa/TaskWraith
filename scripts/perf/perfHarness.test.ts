@@ -4716,6 +4716,9 @@ describe('T2 wave-8 — host bundle preflight, spawn extraEnv, host span binding
     // A change here is not necessarily a break — it is a signal that the
     // derivation's assumptions must be re-checked against the new pipeline.
     expect(stages, 'host:build changed — re-check the freshness derivation').toEqual([
+      // Re-checked 2026-09-23: the stop-all hook writes nothing under out/host
+      // (the hooked build's out/host is byte-identical), so no derivation input moves.
+      'node scripts/host-stop-all.cjs --payload-root out/host --sweep',
       'node scripts/clean-host-output.cjs',
       'tsc -p src/host-runtime/tsconfig.json',
       'node scripts/build-history-workers.cjs',
