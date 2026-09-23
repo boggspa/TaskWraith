@@ -473,6 +473,40 @@ describe('configured AntiGravity discovery', () => {
     }
   })
 
+  it("a new settings generation clears the old one's pending probes, so a withdrawal is never followed by agy models", async () => {
+    vi.useFakeTimers()
+    try {
+      const getAntigravityCombinedModels = vi.fn(async () => [
+        { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
+      ])
+      const getKimiConfiguredStatus = vi.fn(async () => ({ available: false }))
+      const detector = createConfiguredProviderDetector(
+        {
+          getAntigravityCombinedModels,
+          getKimiConfiguredStatus,
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
+          resolveProviderBinary: async () => ({ binaryPath: null })
+        },
+        { staggerMs: 100 }
+      )
+
+      detector.start(optedInSettings)
+      // The first probe fires at once; AntiGravity's is still waiting its turn.
+      await vi.advanceTimersByTimeAsync(50)
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
+      const withdrawn = { ...optedInSettings, antigravityEnabled: false } as AppSettings
+      detector.start(withdrawn)
+      await vi.runAllTimersAsync()
+
+      expect(getAntigravityCombinedModels).not.toHaveBeenCalled()
+      // The new generation runs its own probes and completes.
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(2)
+      expect(detector.statusSnapshot(withdrawn).ready).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('invalidates a completed catalog when disclosure or key generation changes', async () => {
     vi.useFakeTimers()
     try {

@@ -392,6 +392,10 @@ export function createConfiguredProviderDetector(
       ? Math.floor(dependencies.probeDeadlineMs!)
       : CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
   let generation = 0
+  // The current generation's not-yet-fired probe timers. A new generation
+  // clears them, so a probe of superseded settings never starts: after a
+  // consent withdrawal, an old timer must not launch `agy models`.
+  let pendingProbeTimers: Array<ReturnType<typeof setTimeout>> = []
   let startedKey: string | null = null
   let completedKey: string | null = null
   let rosterConfigured = new Set<ProviderId>()
@@ -402,6 +406,8 @@ export function createConfiguredProviderDetector(
     const key = configuredProviderCacheKey(settings, dependencies)
     if (startedKey === key) return
     startedKey = key
+    for (const timer of pendingProbeTimers) clearTimeout(timer)
+    pendingProbeTimers = []
     completedKey = null
     rosterConfigured = settingsConfiguredProviders(settings)
     confirmedConfigured = new Set()
@@ -441,6 +447,7 @@ export function createConfiguredProviderDetector(
           })
         }, index * staggerMs)
         timer.unref?.()
+        pendingProbeTimers.push(timer)
       }
     )
   }

@@ -7,6 +7,7 @@
 import * as pty from 'node-pty'
 import type { AppSettings } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
+import { isAntigravityAgyOptInEnabled } from './AntigravityAgyOptInEnabledSignal'
 import {
   probeAgyModels,
   resolveAgyCliBinary,
@@ -101,6 +102,20 @@ export function captureAgyModelDiscoveryOutput(
         // The terminal already exited.
       }
       resolve(result)
+    }
+
+    // Read live immediately before the spawn (Chris, 2026-09-23): discovery's
+    // settings snapshot predates the binary resolve and the cache read, and a
+    // stale-while-revalidate refresh starts after its caller has returned.
+    if (!isAntigravityAgyOptInEnabled()) {
+      finish({
+        stdout: '',
+        stderr: '',
+        code: null,
+        timedOut: false,
+        error: 'agy models was not started because AntiGravity consent is not recorded.'
+      })
+      return
     }
 
     try {
