@@ -2,8 +2,6 @@ import { describe, expect, it, vi } from 'vitest'
 import type { ExecutionRunProjection } from './ExecutionGraphRun'
 import type { ExecutionGraphServiceDiagnostic } from '../ipc/executionGraphHandlers'
 import type { ExecutionGraphRecoveryDiagnostic } from '../services/ExecutionGraphCoordinator'
-import { startCatalogueExecutionRecovery } from '../startup/ThreadCatalogueExecutionOwners'
-import type { ThreadCatalogueMirror } from '../store/ThreadCatalogueMirror'
 import {
   EXECUTION_GRAPH_RECOVERY_AUTOMATIC_RETRY_DELAY_MS,
   ExecutionGraphRecoveryController,
@@ -14,8 +12,12 @@ function diagnostic(executionId: string, message = 'refused'): ExecutionGraphRec
   return { executionId, message }
 }
 
-function projection(executionId: string, state: ExecutionRunProjection['state']) {
-  return { executionId, state } as ExecutionRunProjection
+function projection(executionId: string, state: ExecutionRunProjection['state'], owner?: string) {
+  return {
+    executionId,
+    state,
+    ...(owner ? { owner: { threadId: owner } } : {})
+  } as ExecutionRunProjection
 }
 
 function harness(
@@ -23,38 +25,51 @@ function harness(
     startup?: readonly ExecutionGraphRecoveryDiagnostic[]
     retried?: readonly ExecutionGraphRecoveryDiagnostic[]
     archived?: ExecutionRunProjection
+    executions?: readonly ExecutionRunProjection[]
     coordinatorAvailable?: boolean
   } = {}
 ) {
   let diagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
+  let service: readonly ExecutionGraphServiceDiagnostic[] = []
+  const executions = options.executions ?? []
   const coordinator = {
     recover: vi.fn(() => options.startup ?? []),
     recoverExecutions: vi.fn(() => options.retried ?? []),
-    archiveExecution: vi.fn(async () => options.archived ?? projection('a', 'cancelled'))
+    archiveExecution: vi.fn(async () => options.archived ?? projection('a', 'cancelled')),
+    listExecutions: vi.fn(() => executions),
+    getExecution: vi.fn((executionId: string) =>
+      executions.find((execution) => execution.executionId === executionId)
+    )
   } satisfies ExecutionGraphRecoveryCoordinator
   const schedule = vi.fn()
   const log = vi.fn()
-  const reported: ExecutionGraphServiceDiagnostic[] = []
   const controller = new ExecutionGraphRecoveryController({
     coordinator: () => (options.coordinatorAvailable === false ? null : coordinator),
     readDiagnostics: () => diagnostics,
     writeDiagnostics: (next) => {
       diagnostics = next
     },
-    reportServiceDiagnostic: (next) => {
-      reported.push(next)
+    readServiceDiagnostics: () => service,
+    writeServiceDiagnostics: (next) => {
+      service = next
     },
     schedule,
     log
   })
-  return { controller, coordinator, schedule, log, reported, read: () => diagnostics }
+  return {
+    controller,
+    coordinator,
+    schedule,
+    log,
+    read: () => diagnostics,
+    service: () => service,
+    seedService: (next: readonly ExecutionGraphServiceDiagnostic[]) => {
+      service = next
+    }
+  }
 }
 
-function failWholePass(h: ReturnType<typeof harness>): void {
-  h.coordinator.recover.mockImplementation(() => {
-    throw new Error('ledger index unreadable')
-  })
-}
+const unreadable = { code: 'startup_recovery_failed', message: 'execution registry unreadable' }
 
 describe('ExecutionGraphRecoveryController', () => {
   it('records the launch refusals and arms exactly one automatic retry', () => {
@@ -77,9 +92,10 @@ describe('ExecutionGraphRecoveryController', () => {
     expect(h.coordinator.recoverExecutions).toHaveBeenCalledWith(['a', 'b'])
     expect(h.read()).toEqual([diagnostic('b')])
 
-    // A deferred replay of the launch pass reports again but never re-arms.
+    // A later startup pass never re-arms, and never re-runs the launch pass.
     h.controller.runStartupRecovery()
     expect(h.schedule).toHaveBeenCalledTimes(1)
+    expect(h.coordinator.recover).toHaveBeenCalledTimes(1)
   })
 
   it('arms no automatic retry when nothing was refused', () => {
@@ -89,64 +105,145 @@ describe('ExecutionGraphRecoveryController', () => {
     expect(h.schedule).not.toHaveBeenCalled()
   })
 
-  it('reports a launch pass that fails as a whole on the service channel', () => {
-    const h = harness({ startup: [diagnostic('a')] })
+  it('covers only the stacks still paused on every pass after the launch pass', () => {
+    // A stack the launch pass recovered may be live by the next pass, and
+    // recovery re-evaluates a stack as if the process had just restarted.
+    const h = harness({
+      startup: [diagnostic('b', 'Execution owner metadata is loading')],
+      retried: [diagnostic('b', 'Execution owner metadata is still loading')]
+    })
     h.controller.runStartupRecovery()
-    failWholePass(h)
 
-    // A replayed pass that throws recovered nothing, so the stack the last
-    // good pass paused keeps its notice (and its retry and archive actions).
-    expect(h.controller.runStartupRecovery()).toEqual([diagnostic('a')])
+    const next = h.controller.runStartupRecovery()
 
-    expect(h.reported).toEqual([
-      { code: 'startup_recovery_failed', message: 'ledger index unreadable' }
-    ])
-    expect(h.read()).toEqual([diagnostic('a')])
-    expect(h.log).toHaveBeenCalledWith(
-      '[ExecutionGraph] startup recovery failed: ledger index unreadable'
-    )
-    expect(h.schedule).toHaveBeenCalledTimes(1)
+    expect(h.coordinator.recover).toHaveBeenCalledTimes(1)
+    expect(h.coordinator.recoverExecutions).toHaveBeenCalledTimes(1)
+    expect(h.coordinator.recoverExecutions).toHaveBeenCalledWith(['b'])
+    expect(next).toEqual([diagnostic('b', 'Execution owner metadata is still loading')])
+    expect(h.read()).toEqual(next)
   })
 
-  it('reports a whole-pass failure once however often the launch pass replays', () => {
+  it('touches no ledger on a later pass when the launch pass paused nothing', () => {
     const h = harness()
-    failWholePass(h)
-
     h.controller.runStartupRecovery()
     h.controller.runStartupRecovery()
-
-    expect(h.coordinator.recover).toHaveBeenCalledTimes(2)
-    expect(h.reported).toHaveLength(1)
+    expect(h.coordinator.recover).toHaveBeenCalledTimes(1)
+    expect(h.coordinator.recoverExecutions).not.toHaveBeenCalled()
   })
 
-  it('surfaces a failed pass through the production starter instead of deferring it as owner metadata', async () => {
-    // index.ts hands the controller to the owner-metadata starter, which runs
-    // recovery from a timer: a throw that escaped the controller would land in
-    // onError (logged as a deferred owner lookup) and retry every 2 s, and the
-    // diagnostics snapshot would never hear of it.
-    vi.useFakeTimers()
-    try {
-      const h = harness()
-      failWholePass(h)
-      const onError = vi.fn()
-      const stop = startCatalogueExecutionRecovery({
-        mirror: {} as ThreadCatalogueMirror,
-        ownerIds: () => [],
-        recover: () => {
-          h.controller.runStartupRecovery()
-        },
-        onError
-      })
-      await vi.advanceTimersByTimeAsync(10_000)
-      stop()
+  it('runs the whole launch pass again after one that failed, keeping the paused set', () => {
+    const h = harness({ startup: [diagnostic('a')] })
+    h.coordinator.recover.mockImplementationOnce(() => {
+      throw new Error('execution registry briefly unreadable')
+    })
 
-      expect(h.reported).toEqual([
-        { code: 'startup_recovery_failed', message: 'ledger index unreadable' }
-      ])
-      expect(onError).not.toHaveBeenCalled()
-    } finally {
-      vi.useRealTimers()
+    // The starter hears the throw and runs the pass again.
+    expect(() => h.controller.runStartupRecovery()).toThrow('execution registry briefly unreadable')
+    expect(h.read()).toEqual([])
+
+    // Nothing was recovered, so the next pass is the whole launch pass again.
+    expect(h.controller.runStartupRecovery()).toEqual([diagnostic('a')])
+    expect(h.coordinator.recover).toHaveBeenCalledTimes(2)
+    expect(h.coordinator.recoverExecutions).not.toHaveBeenCalled()
+  })
+
+  it('preloads every live owner for the launch pass and only the paused owners after it', () => {
+    const h = harness({
+      executions: [
+        projection('a', 'running', 'chat-a'),
+        projection('b', 'running', 'chat-b'),
+        projection('c', 'running', 'chat-a'),
+        projection('d', 'running')
+      ],
+      startup: [diagnostic('b', 'Execution owner metadata is loading')]
+    })
+
+    expect(h.controller.startupOwnerIds()).toEqual(['chat-a', 'chat-b'])
+    expect(h.coordinator.listExecutions).toHaveBeenCalledWith({ includeTerminal: false })
+
+    h.controller.runStartupRecovery()
+
+    expect(h.controller.startupOwnerIds()).toEqual(['chat-b'])
+    expect(h.coordinator.listExecutions).toHaveBeenCalledTimes(1)
+  })
+
+  it('reports a failed startup pass once it survives a re-run, and only once', () => {
+    const h = harness()
+
+    // The next pass may absorb it (a listing that failed between the owner
+    // preload and recovery), so the first failure is only logged.
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), true)
+    expect(h.service()).toEqual([])
+    expect(h.log).toHaveBeenCalledWith(
+      '[ExecutionGraph] startup recovery pass failed and will run again: execution registry unreadable'
+    )
+
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), true)
+    expect(h.service()).toEqual([unreadable])
+
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    expect(h.service()).toEqual([unreadable])
+    expect(h.log).toHaveBeenCalledTimes(3)
+  })
+
+  it('reports a failed startup pass at once when no further pass will run', () => {
+    const h = harness()
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    expect(h.service()).toEqual([unreadable])
+    expect(h.log).toHaveBeenCalledWith(
+      '[ExecutionGraph] startup recovery pass failed: execution registry unreadable'
+    )
+  })
+
+  it('withdraws the report when a later pass succeeds, and only its own report', () => {
+    const history: ExecutionGraphServiceDiagnostic = {
+      code: 'history_deletion_recovery_required',
+      message: 'Pending deletion.'
     }
+    const h = harness()
+    h.seedService([history])
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    expect(h.service()).toEqual([history, unreadable])
+
+    h.controller.runStartupRecovery()
+
+    expect(h.service()).toEqual([history])
+
+    // A success also restarts the count: one new failure is only logged again.
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), true)
+    expect(h.service()).toEqual([history])
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), true)
+    expect(h.service()).toEqual([history, unreadable])
+  })
+
+  it('keeps the paused set through a later pass that throws, and withdraws on the next', () => {
+    const h = harness({ startup: [diagnostic('b')] })
+    h.controller.runStartupRecovery()
+    h.coordinator.recoverExecutions.mockImplementationOnce(() => {
+      throw new Error('execution registry unreadable')
+    })
+
+    expect(() => h.controller.runStartupRecovery()).toThrow('execution registry unreadable')
+    h.controller.startupPassFailed(new Error('execution registry unreadable'), false)
+    expect(h.read()).toEqual([diagnostic('b')])
+    expect(h.service()).toEqual([unreadable])
+
+    h.controller.runStartupRecovery()
+
+    expect(h.read()).toEqual([])
+    expect(h.service()).toEqual([])
+  })
+
+  it('bounds the reported message like every other graph diagnostic', () => {
+    const h = harness()
+    h.controller.startupPassFailed(new Error('x'.repeat(5_000)), false)
+    expect(h.service()[0].message).toBe('x'.repeat(2_048))
+  })
+
+  it('reports a thrown value that is not an Error by its own text', () => {
+    const h = harness()
+    h.controller.startupPassFailed('execution registry unreadable', false)
+    expect(h.service()).toEqual([unreadable])
   })
 
   it('logs an automatic retry that throws instead of crashing the timer', () => {
@@ -222,10 +319,11 @@ describe('ExecutionGraphRecoveryController', () => {
 
   it('answers with a reason while the graph service is unavailable', async () => {
     const h = harness({ coordinatorAvailable: false })
+    expect(h.controller.startupOwnerIds()).toEqual([])
     expect(h.controller.runStartupRecovery()).toEqual([])
-    // Initialization failure is already on the service channel as its own
+    // Initialization failure is already on the service list as its own
     // diagnostic; the launch pass falls back to nothing paused, not a failure.
-    expect(h.reported).toEqual([])
+    expect(h.service()).toEqual([])
     expect(h.log).not.toHaveBeenCalled()
     expect(() => h.controller.retry()).toThrow('Durable Stack recovery is unavailable')
     await expect(h.controller.archive('a')).rejects.toThrow('Durable Stack recovery is unavailable')

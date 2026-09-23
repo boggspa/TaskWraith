@@ -400,6 +400,8 @@ export class ExecutionGraphCoordinator {
   private readonly now: () => string
   private readonly createId: () => string
   private readonly draining = new Set<string>()
+  /** Graph runs this process's main-owned dispatcher has leased; see `noteDispatchLease`. */
+  private readonly dispatchLeasedRunIds = new Set<string>()
   private readonly cancellationOperations = new Map<string, Promise<void>>()
   private readonly cancellationContexts = new Map<
     string,
@@ -510,6 +512,21 @@ export class ExecutionGraphCoordinator {
     )
     if (!input.anchorRunRef) this.drain(input.executionId)
     return this.requireExecution(input.executionId)
+  }
+
+  /**
+   * The main-owned dispatcher leased this exact graph run in THIS process.
+   *
+   * Startup recovery reconciles what a previous process left behind, and it
+   * reads a claimed attempt whose queue row is past `queued` as a dispatch that
+   * may have crossed the side-effect boundary before restart, so it parks the
+   * stack. A row leased here is live here instead: the boot sweep can lease a
+   * queued attempt before the deferred launch pass runs, and a later pass can
+   * meet a stack dispatched since. Recovery leaves such an attempt to its run
+   * lifecycle rather than parking a stack whose provider run carries on.
+   */
+  noteDispatchLease(runId: string): void {
+    this.dispatchLeasedRunIds.add(runId)
   }
 
   /**
@@ -1459,6 +1476,11 @@ export class ExecutionGraphCoordinator {
         )
         changed = true
         break
+      }
+      if (this.dispatchLeasedRunIds.has(providerRunRef)) {
+        // Leased by this process, so live here: its run lifecycle owns it now.
+        changed = true
+        continue
       }
       const job = this.deps.getQueueJob(providerRunRef)
       if (!job) {

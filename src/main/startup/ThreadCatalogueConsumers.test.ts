@@ -5,8 +5,10 @@ import type {
   ThreadCatalogueProjection
 } from '../../shared/threadCatalogueTypes'
 import {
+  CATALOGUE_EXECUTION_RECOVERY_RETRY_DELAYS_MS,
   catalogueExecutionOwnerStatus,
-  preloadCatalogueExecutionOwners
+  preloadCatalogueExecutionOwners,
+  startCatalogueExecutionRecovery
 } from './ThreadCatalogueExecutionOwners'
 import { createCatalogueOrphanDrain } from './ThreadCatalogueOrphanDrain'
 
@@ -119,5 +121,112 @@ describe('late catalogue consumers', () => {
     consumer.notify()
     await vi.advanceTimersByTimeAsync(5000)
     expect(drain).toHaveBeenCalledTimes(3)
+  })
+})
+
+describe('startup execution recovery passes', () => {
+  /** Owners whose metadata read resolves to nothing are not failures; a throw is. */
+  function catalogue(open: () => Promise<null>): ThreadCatalogueMirror {
+    return new ThreadCatalogueMirror({
+      query: async <T>(query: { method: string }) =>
+        (query.method === 'open' ? await open() : true) as T
+    })
+  }
+
+  it('runs one pass when every owner loads', async () => {
+    vi.useFakeTimers()
+    const recover = vi.fn()
+    const onError = vi.fn()
+    const stop = startCatalogueExecutionRecovery({
+      mirror: catalogue(async () => null),
+      ownerIds: () => ['chat'],
+      recover,
+      onError
+    })
+
+    await vi.advanceTimersByTimeAsync(3_600_000)
+    stop()
+
+    expect(recover).toHaveBeenCalledTimes(1)
+    expect(onError).not.toHaveBeenCalled()
+  })
+
+  it('runs again on a backoff capped at a minute while an owner will not load, and stops at the bound', async () => {
+    vi.useFakeTimers()
+    const startedAt = Date.now()
+    const passes: number[] = []
+    const stop = startCatalogueExecutionRecovery({
+      mirror: catalogue(async () => {
+        throw new Error('Thread catalogue Host is not ready')
+      }),
+      ownerIds: () => ['chat'],
+      recover: () => {
+        passes.push(Date.now() - startedAt)
+      },
+      onError: vi.fn()
+    })
+
+    await vi.advanceTimersByTimeAsync(3_600_000)
+    stop()
+
+    expect(CATALOGUE_EXECUTION_RECOVERY_RETRY_DELAYS_MS).toEqual([
+      2_000,
+      4_000,
+      8_000,
+      16_000,
+      32_000,
+      ...Array(10).fill(60_000)
+    ])
+    expect(passes).toEqual([
+      0, 2_000, 6_000, 14_000, 30_000, 62_000, 122_000, 182_000, 242_000, 302_000, 362_000, 422_000,
+      482_000, 542_000, 602_000, 662_000
+    ])
+  })
+
+  it('hands every failed pass to onError, saying whether another pass follows', async () => {
+    vi.useFakeTimers()
+    const recover = vi.fn()
+    const onError = vi.fn()
+    const stop = startCatalogueExecutionRecovery({
+      mirror: catalogue(async () => null),
+      ownerIds: () => {
+        throw new Error('execution registry unreadable')
+      },
+      recover,
+      onError,
+      retryDelaysMs: [1_000, 1_000]
+    })
+
+    await vi.advanceTimersByTimeAsync(600_000)
+    stop()
+
+    expect(
+      onError.mock.calls.map(([error, retrying]) => [(error as Error).message, retrying])
+    ).toEqual([
+      ['execution registry unreadable', true],
+      ['execution registry unreadable', true],
+      ['execution registry unreadable', false]
+    ])
+    expect(recover).not.toHaveBeenCalled()
+  })
+
+  it('runs no further pass once stopped', async () => {
+    vi.useFakeTimers()
+    const recover = vi.fn()
+    const stop = startCatalogueExecutionRecovery({
+      mirror: catalogue(async () => {
+        throw new Error('Thread catalogue Host is not ready')
+      }),
+      ownerIds: () => ['chat'],
+      recover,
+      onError: vi.fn()
+    })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(recover).toHaveBeenCalledTimes(1)
+
+    stop()
+    await vi.advanceTimersByTimeAsync(600_000)
+
+    expect(recover).toHaveBeenCalledTimes(1)
   })
 })

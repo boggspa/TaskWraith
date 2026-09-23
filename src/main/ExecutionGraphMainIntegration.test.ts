@@ -232,13 +232,18 @@ describe('execution graph main integration', () => {
 
     // Recovery runs from the owner-metadata starter's timer, out of reach of
     // the try/catch around the starter (which covers only a synchronous
-    // throw). The controller's launch pass is the recover callback, and the
-    // controller keeps the paused set in the snapshot's recovery list and
-    // reports a pass that fails as a whole on its service list; its own suite
-    // proves that report through the real starter.
+    // throw). Each startup pass is the recover callback; the controller picks
+    // the owners it preloads, keeps the paused set in the snapshot's recovery
+    // list, and hears every failed pass, reporting one that keeps failing on
+    // the service list. ExecutionGraphStartupRecovery.test.ts proves that
+    // through the real starter.
     const starter = onlyCall(probe.source, 'startCatalogueExecutionRecovery')
     expect(dep(starter, 'recover')).toBe(
       '()=>{executionGraphRecoveryController.runStartupRecovery()}'
+    )
+    expect(dep(starter, 'ownerIds')).toBe('()=>executionGraphRecoveryController.startupOwnerIds()')
+    expect(dep(starter, 'onError')).toBe(
+      '(error,retrying)=>executionGraphRecoveryController.startupPassFailed(error,retrying)'
     )
     expect(
       probe
@@ -254,8 +259,9 @@ describe('execution graph main integration', () => {
     expect(dep(controller, 'writeDiagnostics')).toBe(
       '(next)=>{executionGraphRecoveryDiagnostics=next}'
     )
-    expect(dep(controller, 'reportServiceDiagnostic')).toBe(
-      '(diagnostic)=>{executionGraphServiceDiagnostics=[...executionGraphServiceDiagnostics,diagnostic]}'
+    expect(dep(controller, 'readServiceDiagnostics')).toBe('()=>executionGraphServiceDiagnostics')
+    expect(dep(controller, 'writeServiceDiagnostics')).toBe(
+      '(next)=>{executionGraphServiceDiagnostics=next}'
     )
   })
 
@@ -288,6 +294,38 @@ describe('execution graph main integration', () => {
       .map((call) => probe.text(call))
       .filter((call) => call.includes('executionGraphCoordinator'))
     expect(direct).toEqual([])
+  })
+
+  it('tells recovery about a graph lease before anything can run between them', () => {
+    // Startup recovery parks a claimed attempt whose queue row is past
+    // `queued` unless this process leased it, and the boot sweep leases
+    // queued attempts before the deferred launch pass runs. With no await
+    // between the lease and the note, no recovery pass can land between them.
+    const dispatcher = probe.fn('dispatchMainOwnedExecutionGraphAttempt')
+    const lease = onlyCall(dispatcher, 'leaseJob')
+    const note = onlyCall(dispatcher, 'noteDispatchLease')
+    const compose = onlyCall(dispatcher, 'composeMainOwnedExecutionGraphAttempt')
+    expect(probe.text(note).replace(/\s+/g, '')).toBe(
+      'executionGraphCoordinatorRef?.noteDispatchLease(appRunId)'
+    )
+    expect(lease.getEnd()).toBeLessThan(note.getStart())
+    expect(note.getEnd()).toBeLessThan(compose.getStart())
+
+    const awaits: ts.AwaitExpression[] = []
+    const visit = (node: ts.Node): void => {
+      if (ts.isAwaitExpression(node)) awaits.push(node)
+      ts.forEachChild(node, visit)
+    }
+    visit(dispatcher)
+    expect(awaits.length).toBeGreaterThan(0)
+    expect(
+      awaits
+        .filter((node) => node.getStart() > lease.getEnd() && node.getStart() < note.getStart())
+        .map((node) => probe.text(node))
+    ).toEqual([])
+
+    // The dispatcher is the only way a graph row is leased, so no other lease is noted.
+    expect(probe.callsTo(probe.source, 'noteDispatchLease')).toHaveLength(1)
   })
 
   it('delivers committed predecessor results as exact named data inputs before composition', () => {

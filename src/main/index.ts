@@ -9285,15 +9285,16 @@ let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic
 let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
 // Retry and archive for stacks whose startup recovery was refused; the paused
 // diagnostics stay in the `let` above so the IPC snapshot keeps one source,
-// and a launch pass that fails as a whole lands in the service list beside it.
+// and a startup pass that keeps failing is reported in the service list beside it.
 const executionGraphRecoveryController = new ExecutionGraphRecoveryController({
   coordinator: () => executionGraphCoordinatorRef,
   readDiagnostics: () => executionGraphRecoveryDiagnostics,
   writeDiagnostics: (next) => {
     executionGraphRecoveryDiagnostics = next
   },
-  reportServiceDiagnostic: (diagnostic) => {
-    executionGraphServiceDiagnostics = [...executionGraphServiceDiagnostics, diagnostic]
+  readServiceDiagnostics: () => executionGraphServiceDiagnostics,
+  writeServiceDiagnostics: (next) => {
+    executionGraphServiceDiagnostics = next
   }
 })
 
@@ -56814,15 +56815,12 @@ if (isGeminiMcpBridgeProcess) {
           // attempt is safe to requeue or must stop at requires_action.
           const stopExecutionRecovery = startCatalogueExecutionRecovery({
             mirror: startupThreadCatalogue.mirror,
-            ownerIds: () =>
-              (
-                executionGraphCoordinatorRef?.listExecutions({ includeTerminal: false }) ?? []
-              ).flatMap((execution) => (execution.owner ? [execution.owner.threadId] : [])),
+            ownerIds: () => executionGraphRecoveryController.startupOwnerIds(),
             recover: () => {
               executionGraphRecoveryController.runStartupRecovery()
             },
-            onError: (error) =>
-              console.error('[ExecutionGraph] owner metadata recovery deferred', error)
+            onError: (error, retrying) =>
+              executionGraphRecoveryController.startupPassFailed(error, retrying)
           })
           app.once('before-quit', stopExecutionRecovery)
         } catch (error) {
@@ -61878,6 +61876,7 @@ if (isGeminiMcpBridgeProcess) {
         if (leased.runId !== appRunId || leased.status !== 'starting' || !leased.executionGraph) {
           throw new Error('Execution graph scheduler could not acquire its exact queue lease.')
         }
+        executionGraphCoordinatorRef?.noteDispatchLease(appRunId)
         const entry = await composeMainOwnedExecutionGraphAttempt(appRunId)
         const { job } = resolveExecutionGraphQueueAuthority(appRunId)
         const binding = job.executionGraph!

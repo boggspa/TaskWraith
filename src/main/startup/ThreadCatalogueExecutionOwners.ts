@@ -42,37 +42,61 @@ export async function preloadCatalogueExecutionOwners(
   return failed
 }
 
-/** Recovery waits for its own owners off main; other executions can still recover. */
+/**
+ * Spacing of the passes that follow one that could not finish, because an
+ * owner failed to preload or the pass threw. Doubling to a one-minute cap and
+ * bounded at about eleven minutes, so a slow catalogue or Host still heals the
+ * paused owners, while a condition that never clears is left to the notices it
+ * raised rather than retried for the whole session.
+ */
+export const CATALOGUE_EXECUTION_RECOVERY_RETRY_DELAYS_MS: readonly number[] = Object.freeze([
+  2_000,
+  4_000,
+  8_000,
+  16_000,
+  32_000,
+  ...Array<number>(10).fill(60_000)
+])
+
+/**
+ * Recovery waits for its own owners off main; other executions can still
+ * recover. A pass runs again, on the backoff above, while an owner failed to
+ * preload or the pass threw. `onError` hears every throw, and whether another
+ * pass follows it.
+ */
 export function startCatalogueExecutionRecovery(options: {
   mirror: ThreadCatalogueMirror
   ownerIds(): readonly string[]
   recover(): void
-  onError(error: unknown): void
+  onError(error: unknown, retrying: boolean): void
+  retryDelaysMs?: readonly number[]
 }): () => void {
+  const delays = options.retryDelaysMs ?? CATALOGUE_EXECUTION_RECOVERY_RETRY_DELAYS_MS
   let stopped = false
+  let reruns = 0
   let timer: ReturnType<typeof setTimeout>
+  const schedule = (delayMs: number): void => {
+    timer = setTimeout(() => {
+      void run()
+    }, delayMs)
+    timer.unref?.()
+  }
   const run = async (): Promise<void> => {
-    let retry = false
+    let failure: { readonly error: unknown } | undefined
+    let ownersPending = false
     try {
       const failed = await preloadCatalogueExecutionOwners(options.mirror, options.ownerIds())
       if (stopped) return
       options.recover()
-      retry = failed.length > 0
+      ownersPending = failed.length > 0
     } catch (error) {
-      retry = true
-      options.onError(error)
+      failure = { error }
     }
-    if (retry && !stopped) {
-      timer = setTimeout(() => {
-        void run()
-      }, 2000)
-      timer.unref?.()
-    }
+    const retrying = (failure !== undefined || ownersPending) && !stopped && reruns < delays.length
+    if (failure) options.onError(failure.error, retrying)
+    if (retrying) schedule(delays[reruns++])
   }
-  timer = setTimeout(() => {
-    void run()
-  }, 0)
-  timer.unref?.()
+  schedule(0)
   return () => {
     stopped = true
     clearTimeout(timer)

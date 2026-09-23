@@ -1004,6 +1004,28 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
   })
 
+  it('leaves an attempt this process leased to its run lifecycle on recovery', () => {
+    // The boot sweep can lease a queued attempt before the deferred launch pass
+    // runs: that row is live here, not a dispatch from before the restart.
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const before = h.coordinator.getExecution(started.executionId)!
+    expect(Object.values(before.attempts)[0].state).toBe('queued')
+    expect(h.jobs.get(runId)?.status).toBe('queued')
+    h.coordinator.assertQueueJobDispatchable(runId)
+    markQueueStarting(h, runId)
+    h.coordinator.noteDispatchLease(runId)
+
+    expect(h.coordinator.recover()).toEqual([])
+
+    const recovered = h.coordinator.getExecution(started.executionId)!
+    expect(recovered.state).toBe('running')
+    expect(Object.values(recovered.attempts)[0].state).toBe('queued')
+    expect(recovered.lastSequence).toBe(before.lastSequence)
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+  })
+
   it('continues recovering healthy executions after one execution throws', () => {
     const h = harness()
     const broken = h.coordinator.appendStackStep(h.input())
