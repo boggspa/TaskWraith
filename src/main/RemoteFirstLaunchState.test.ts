@@ -499,6 +499,7 @@ describe('buildRemoteFirstLaunchState', () => {
     const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
     expect(piGroup?.label).toBe('Pi')
     expect(piGroup?.models.map((model) => model.name)).toEqual([
+      'Space Bunny Alpha (OpenRouter Free)',
       'Pareto (OpenRouter)',
       'Jev 1.13 (OpenRouter)',
       'Fugu Max (OpenRouter)',
@@ -520,9 +521,10 @@ describe('buildRemoteFirstLaunchState', () => {
       'Nemotron 3 Ultra'
     ])
     expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
-      // The projection iOS actually receives must carry the two new overrides
+      // The projection iOS actually receives must carry the brand overrides
       // too, or the rows arrive with no accent on the phone while the desktop
-      // card shows the vermilion and the magenta.
+      // card shows the stealth gold, the vermilion and the magenta.
+      'stealth',
       'unbiased',
       'typesafe',
       'sakana',

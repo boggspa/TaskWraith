@@ -151,7 +151,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-22'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-09-23'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -162,7 +162,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     kind: 'addition',
     title: 'New Additions',
     // Fallback / a11y only — renderers with `groups` show the structured list.
-    body: "Claude Opus 5.5, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
+    body: "Claude Opus 5.5, the free Space Bunny Alpha stealth preview, Unbiased's Pareto and TypeSafe's Jev 1.13 on OpenRouter via Pi, GLM-5.3 on the Mistral subscription and API, Devin SWE-2, Kimi K2.8 Preview with a 1M window and Low/High/Max thinking, DeepSeek V4.1 Flash on Ollama Cloud, Sakana's Fugu Max and Fugu Ultra v2 on OpenRouter via Pi, Inception Mercury 2.5 and the free Nex AGI Nex-N2.5 pair, GPT-6 Sol, GPT-6 Luna and GPT-6 Astra in Codex, Claude Fable 5.1, the Devin CLI seat, Cerebras Qwen 3.8 27B, GLM-5.2 on the Mistral subscription, OpenRouter Pi additions from Cohere, MiniMax, and Thinking Machines' Inkling family, plus AntiGravity Gemini 3.8 Flash, Grok 4.7 and 4.7 Fast in Grok, Grok 4.6 in Cursor, Muse Spark 1.3, the full Mistral lineup, Ollama Cloud GLM 5.2 and MiniMax M3, curated local Ollama models, and Pi BYOK models via DeepSeek, Z.ai, Qwen, Xiaomi's MiMo, Mistral, Poolside, and NVIDIA.",
     dismissible: true,
     groups: [
       {
@@ -462,9 +462,19 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
         models: [
           {
             // Leads the group: the newest story on this lineup (released
-            // 2026-09-17). `unbiased` is a real accent override — a burnt
-            // vermilion from PI_UPSTREAM_BRANDS that keeps the brand's red
-            // clear of the palette's vivid ones. The blurb says "no effort
+            // 2026-09-23). `stealth` is the gold override for OpenRouter's
+            // anonymous namespace — see PI_UPSTREAM_BRANDS. The blurb says
+            // "always-on" on purpose: every other reasoning row in this Pi
+            // group can be switched Off, and this route has no Off to offer.
+            name: 'Space Bunny Alpha (OpenRouter Free)',
+            blurb:
+              'A free stealth preview from an anonymous lab — 1M context, vision, and always-on Low-to-Max reasoning.',
+            accentProvider: 'stealth'
+          },
+          {
+            // Released 2026-09-17. `unbiased` is a real accent override — a
+            // burnt vermilion from PI_UPSTREAM_BRANDS that keeps the brand's
+            // red clear of the palette's vivid ones. The blurb says "no effort
             // axis" on purpose: the endpoint advertises no reasoning
             // parameter.
             name: 'Pareto (OpenRouter)',

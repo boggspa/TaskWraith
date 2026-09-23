@@ -312,8 +312,10 @@ describe('notification registry', () => {
     ])
     const pi = groups.find((g) => g.provider === 'pi')
     expect(pi?.models.map((m) => m.name)).toEqual([
-      // Pareto and Jev lead: they are the newest story on the card (released
-      // 2026-09-17), and Jev is announced ahead of its OpenRouter launch.
+      // Space Bunny Alpha leads: it is the newest story on the card (released
+      // 2026-09-23). Pareto and Jev (2026-09-17) follow, Jev announced ahead of
+      // its OpenRouter launch.
+      'Space Bunny Alpha (OpenRouter Free)',
       'Pareto (OpenRouter)',
       'Jev 1.13 (OpenRouter)',
       'Fugu Max (OpenRouter)',
@@ -337,6 +339,10 @@ describe('notification registry', () => {
     // Every Pi row wears the hue of the BYOK upstream that serves it — a
     // missing accent would silently fall back to the Pi seat slate.
     expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      // `stealth` is the override for OpenRouter's anonymous namespace. Without
+      // it the row falls back to the generic OpenRouter red, which a stealth
+      // preview must not wear — OpenRouter is not this model's developer.
+      'stealth',
       // Both 2026-09-17 routes wear their own brand override — see
       // PI_UPSTREAM_BRANDS. Unbiased carries a burnt vermilion (its own red is
       // too close to the palette's vivid ones) and TypeSafe the magenta that
@@ -379,6 +385,11 @@ describe('notification registry', () => {
     )
     expect(pi?.models.find((m) => m.name === 'Nex-N2.5-Mini (OpenRouter Free)')?.blurb).toMatch(
       /262K.*text only/i
+    )
+    // "Always-on" is the claim that matters: this route has no Off, and every
+    // other reasoning row in the Pi group does.
+    expect(pi?.models.find((m) => m.name === 'Space Bunny Alpha (OpenRouter Free)')?.blurb).toMatch(
+      /free stealth preview.*1M context.*vision.*always-on Low-to-Max/i
     )
     // Union Alpha's seven-day window was ended early by the user on
     // 2026-09-18, so the row is off the card entirely rather than reworded.
