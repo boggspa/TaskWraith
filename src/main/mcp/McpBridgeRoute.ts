@@ -51,6 +51,7 @@ export const MCP_BRIDGE_PROFILE_ENV_KEYS = {
   sketchDirect: 'TASKWRAITH_MCP_SKETCH_DIRECT',
   orchestrationDirect: 'TASKWRAITH_MCP_ORCHESTRATION_DIRECT',
   permissionOpportunityDirect: 'TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT',
+  computerUseDirect: 'TASKWRAITH_MCP_COMPUTER_USE_DIRECT',
   auditSubset: 'TASKWRAITH_MCP_AUDIT'
 } as const
 
@@ -85,6 +86,7 @@ export interface McpBridgeProfileEnvironment {
   sketchDirect: boolean
   orchestrationDirect: boolean
   permissionOpportunityDirect: boolean
+  computerUseDirect?: boolean
   auditSubset: boolean
 }
 
@@ -350,6 +352,7 @@ function emptyProfileEnvironment(): McpBridgeProfileEnvironment {
     sketchDirect: false,
     orchestrationDirect: false,
     permissionOpportunityDirect: false,
+    computerUseDirect: false,
     auditSubset: false
   }
 }
@@ -521,6 +524,7 @@ export function buildMcpBridgeRouteEnv(
       [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
         ? '1'
         : '0',
+      [MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]: profile.computerUseDirect ? '1' : '0',
       [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
     }
   }

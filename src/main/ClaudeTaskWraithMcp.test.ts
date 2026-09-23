@@ -19,6 +19,7 @@ import {
   taskWraithMcpAdvertisedToolNamesForProfile
 } from './mcp/McpToolProfiles'
 import {
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
@@ -28,6 +29,8 @@ import {
 } from './mcp/McpBridgeRuntime'
 import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V3_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V4_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V7_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V9_MESH_MCP_PROFILE_ID,
@@ -164,6 +167,30 @@ describe('buildClaudeTaskWraithMcpServers', () => {
     }
     expect(allowed).not.toContain('image_generate')
     expect(allowed).not.toContain('mcp__TaskWraith__image_generate')
+  })
+
+  it('adds the direct computer_use selector only for a full-v4 birth', () => {
+    const fullV3 = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID
+    })?.TaskWraith
+    const fullV4 = buildClaudeTaskWraithMcpServers({
+      ...fixture,
+      profileId: TASKWRAITH_FULL_V4_MCP_PROFILE_ID
+    })?.TaskWraith
+    expect(fullV3?.type).toBe('stdio')
+    expect(fullV4?.type).toBe('stdio')
+    if (fullV3?.type !== 'stdio' || fullV4?.type !== 'stdio') {
+      throw new Error('TaskWraith server missing')
+    }
+    expect(fullV3.args).not.toContain(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
+    expect(fullV4.args).toContain(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
+    expect(buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_FULL_V3_MCP_PROFILE_ID)).not.toContain(
+      'computer_use'
+    )
+    expect(buildClaudeTaskWraithAllowedToolNames(TASKWRAITH_FULL_V4_MCP_PROFILE_ID)).toContain(
+      'computer_use'
+    )
   })
 
   it('uses the exact gateway profile for both the bridge argv and allowed-tool surface', () => {

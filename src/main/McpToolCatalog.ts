@@ -1,4 +1,5 @@
 import { THREAD_CONTINUITY_TOOL_DEFINITIONS } from './continuity/ThreadContinuityToolDefinitions'
+import { COMPUTER_USE_TOOL_DEFINITION } from './mcp/ComputerUseToolDefinition'
 import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
@@ -37,6 +38,7 @@ export interface TaskWraithMcpToolDefinition {
 export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinition[] {
   const definitions: TaskWraithMcpToolDefinition[] = [
     ...THREAD_CONTINUITY_TOOL_DEFINITIONS,
+    COMPUTER_USE_TOOL_DEFINITION,
     {
       name: 'run_shell_command',
       description:

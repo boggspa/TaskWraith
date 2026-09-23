@@ -166,6 +166,8 @@ export const GEMINI_MCP_ORCHESTRATION_DIRECT_ARG = '--orchestration-direct'
 // Gateway-v18 direct redemption selector. Absent means every older immutable
 // profile retains its exact direct catalogue, including solo-v1.
 export const GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG = '--permission-opportunity-direct'
+// Full-v4 only. Older full-profile bridge receipts omit this selector.
+export const GEMINI_MCP_COMPUTER_USE_DIRECT_ARG = '--computer-use-direct'
 // Audit scope flag. Direct bridge children carry this in argv; static helpers
 // carry the complete profile receipt in their route environment. Unlike
 // safe-subset this does NOT restrict tools/call — audit tools route through the
@@ -211,6 +213,9 @@ export function applyMcpBridgeProfileArgvToEnv(
   }
   if (argv.includes(GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG)) {
     env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT = '1'
+  }
+  if (argv.includes(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)) {
+    env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT = '1'
   }
   if (argv.includes(GEMINI_MCP_AUDIT_SUBSET_ARG)) env.TASKWRAITH_MCP_AUDIT = '1'
 }
@@ -1237,6 +1242,7 @@ const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
   GEMINI_MCP_SKETCH_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
   GEMINI_MCP_PERMISSION_OPPORTUNITY_DIRECT_ARG,
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_AUDIT_SUBSET_ARG
 ])
 
@@ -1822,6 +1828,9 @@ export function handleMcpJsonRpcMessage(
     const permissionOpportunityDirect =
       (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
         process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const computerUseDirect =
+      (deps.env?.TASKWRAITH_MCP_COMPUTER_USE_DIRECT ??
+        process.env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT) === '1'
     const soloDirectTools = permissionOpportunityDirect
       ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
       : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
@@ -1838,6 +1847,7 @@ export function handleMcpJsonRpcMessage(
         // opaque redemption sibling is direct only when its v18 selector is
         // carried in the immutable bridge argv.
         tool.name !== 'request_tool_permission' &&
+        (tool.name !== 'computer_use' || computerUseDirect) &&
         (tool.name !== 'redeem_permission_opportunity' || permissionOpportunityDirect) &&
         (portableEnsembleControl
           ? tool.name !== 'ensemble_bossman_control'
@@ -1971,6 +1981,9 @@ export function handleMcpJsonRpcMessage(
     const permissionOpportunityDirect =
       (deps.env?.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT ??
         process.env.TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT) === '1'
+    const computerUseDirect =
+      (deps.env?.TASKWRAITH_MCP_COMPUTER_USE_DIRECT ??
+        process.env.TASKWRAITH_MCP_COMPUTER_USE_DIRECT) === '1'
     const soloDirectTools = permissionOpportunityDirect
       ? GATEWAY_SOLO_V2_MCP_DIRECT_TOOLS
       : GATEWAY_SOLO_V1_MCP_DIRECT_TOOLS
@@ -2015,6 +2028,16 @@ export function handleMcpJsonRpcMessage(
         id,
         -32601,
         'Tool redeem_permission_opportunity is available only in a fresh TaskWraith MCP profile.',
+        transport,
+        stdout
+      )
+      return
+    }
+    if (name === 'computer_use' && !computerUseDirect) {
+      writeMcpError(
+        id,
+        -32601,
+        'Tool computer_use is available directly only in the full-v4 TaskWraith MCP profile.',
         transport,
         stdout
       )
@@ -2267,6 +2290,7 @@ function profileEnvironmentForBridgeRoute(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
       ? '1'
       : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]: profile.computerUseDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0'
   }
 }

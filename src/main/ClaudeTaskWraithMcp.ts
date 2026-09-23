@@ -26,6 +26,7 @@ import {
 } from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
+  TASKWRAITH_FULL_V4_MCP_PROFILE_ID,
   isCoreTaskWraithMcpProfile,
   isGatewayTaskWraithMcpProfile,
   isGatewayV13DirectTaskWraithMcpProfile,
@@ -36,6 +37,7 @@ import {
   isSketchCanvasDirectTaskWraithMcpProfile
 } from './mcp/McpSessionProfileFence'
 import {
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_MESH_DIRECT_ARG,
   GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG,
   GEMINI_MCP_ORCHESTRATION_DIRECT_ARG,
@@ -206,7 +208,8 @@ function claudeTaskWraithBridgeArgsForProfile(
       arg !== GEMINI_MCP_MESH_DIRECT_ARG &&
       arg !== GEMINI_MCP_MESH_TOPOLOGY_DIRECT_ARG &&
       arg !== GEMINI_MCP_SKETCH_DIRECT_ARG &&
-      arg !== GEMINI_MCP_ORCHESTRATION_DIRECT_ARG
+      arg !== GEMINI_MCP_ORCHESTRATION_DIRECT_ARG &&
+      arg !== GEMINI_MCP_COMPUTER_USE_DIRECT_ARG
   )
   if (isCoreTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_CORE_SUBSET_ARG)
   if (isGatewayTaskWraithMcpProfile(profileId)) args.push(TASKWRAITH_MCP_GATEWAY_SUBSET_ARG)
@@ -225,6 +228,9 @@ function claudeTaskWraithBridgeArgsForProfile(
   }
   if (isGatewayV13DirectTaskWraithMcpProfile(profileId)) {
     args.push(GEMINI_MCP_ORCHESTRATION_DIRECT_ARG)
+  }
+  if (profileId === TASKWRAITH_FULL_V4_MCP_PROFILE_ID) {
+    args.push(GEMINI_MCP_COMPUTER_USE_DIRECT_ARG)
   }
   return args
 }

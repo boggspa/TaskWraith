@@ -20,6 +20,7 @@ import {
   canonicalBridgeLogDirectory,
   clearBridgeSubprocessLogHistory,
   endBridgeSubprocessLogHistoryClear,
+  GEMINI_MCP_COMPUTER_USE_DIRECT_ARG,
   GEMINI_MCP_CORE_SUBSET_ARG,
   GEMINI_MCP_GATEWAY_SUBSET_ARG,
   GEMINI_MCP_LOG_EPOCH_ARG,
@@ -2778,6 +2779,7 @@ describe('MCP bridge stream writes', () => {
       TASKWRAITH_MCP_SKETCH_DIRECT: '0',
       TASKWRAITH_MCP_ORCHESTRATION_DIRECT: '0',
       TASKWRAITH_MCP_PERMISSION_OPPORTUNITY_DIRECT: '0',
+      TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '0',
       TASKWRAITH_MCP_AUDIT: '0'
     }
     const gatewayEnv: Record<string, string | undefined> = {}
@@ -2790,6 +2792,73 @@ describe('MCP bridge stream writes', () => {
     const fullEnv: Record<string, string | undefined> = {}
     applyMcpBridgeProfileArgvToEnv(['taskwraith'], fullEnv)
     expect(fullEnv).toEqual(explicitFullProfile)
+
+    const fullV4Env: Record<string, string | undefined> = {}
+    applyMcpBridgeProfileArgvToEnv(
+      ['taskwraith', GEMINI_MCP_COMPUTER_USE_DIRECT_ARG],
+      fullV4Env
+    )
+    expect(fullV4Env).toEqual({
+      ...explicitFullProfile,
+      TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1'
+    })
+  })
+
+  it('keeps computer_use out of an older full receipt in actual tools/list and tools/call', async () => {
+    const list = (env: Record<string, string>) => {
+      const chunks: string[] = []
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [{ name: 'read_file' }, { name: 'computer_use' }],
+          env,
+          stdout: { write: vi.fn((chunk: string) => (chunks.push(chunk), true)) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        { jsonrpc: '2.0', id: 41, method: 'tools/list' },
+        'line'
+      )
+      return (
+        JSON.parse(chunks.join('').trim()) as { result: { tools: Array<{ name: string }> } }
+      ).result.tools.map((tool) => tool.name)
+    }
+    expect(list({})).toEqual(['read_file'])
+    expect(list({ TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1' })).toEqual([
+      'read_file',
+      'computer_use'
+    ])
+
+    const call = async (env: Record<string, string>) => {
+      const brokerRequest = vi.fn(async () => ({ ok: true, text: 'listed' }))
+      handleMcpJsonRpcMessage(
+        {
+          getDefaultSocketPath: () => SOCKET_PATH,
+          getAppVersion: () => '1.0.0',
+          getMcpToolDefinitions: () => [{ name: 'computer_use' }],
+          brokerRequest,
+          env,
+          stdout: { write: vi.fn(() => true) } as never
+        },
+        SOCKET_PATH,
+        'token-1',
+        {
+          jsonrpc: '2.0',
+          id: 42,
+          method: 'tools/call',
+          params: { name: 'computer_use', arguments: { action: 'list' } }
+        },
+        'line'
+      )
+      await new Promise((resolve) => setImmediate(resolve))
+      return brokerRequest
+    }
+    expect(await call({})).not.toHaveBeenCalled()
+    expect(await call({ TASKWRAITH_MCP_COMPUTER_USE_DIRECT: '1' })).toHaveBeenCalledWith(
+      SOCKET_PATH,
+      expect.objectContaining({ tool: 'computer_use', arguments: { action: 'list' } })
+    )
   })
 
   it('rejects retired Kimi global MCP registration without invoking the provider CLI', async () => {

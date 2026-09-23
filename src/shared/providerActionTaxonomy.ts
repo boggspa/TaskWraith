@@ -60,6 +60,7 @@ export const CANONICAL_DISPATCH_OWNERS = [
   'blackboard',
   'launch-control',
   'canvas',
+  'computer-use',
   'emulator',
   'mesh-canvas',
   'simulator-canvas',
@@ -1952,6 +1953,9 @@ export const TASKWRAITH_TOOL_ACTIONS = {
     'none',
     'none'
   ),
+  // Composite dispatcher only: every contained operation re-enters its own
+  // canonical approval, route, lock and audit path before doing any work.
+  computer_use: tool('orchestration', 'mcpTools', 'control.read', 'computer-use', 'none', 'none'),
   canvas_open: tool(
     'workspace_write',
     'mcpTools',

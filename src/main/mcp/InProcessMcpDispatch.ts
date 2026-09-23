@@ -55,6 +55,7 @@ function buildInProcessMcpDispatchEnvironment(
     [MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]: profile.permissionOpportunityDirect
       ? '1'
       : '0',
+    [MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]: profile.computerUseDirect ? '1' : '0',
     [MCP_BRIDGE_PROFILE_ENV_KEYS.auditSubset]: profile.auditSubset ? '1' : '0',
     [MCP_BRIDGE_ROUTE_ENV_KEYS.parentProvider]: options.parentProvider,
     [MCP_BRIDGE_ROUTE_ENV_KEYS.runId]: options.route.appRunId || '',

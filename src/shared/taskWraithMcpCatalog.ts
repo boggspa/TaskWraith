@@ -290,6 +290,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'launch_adopt',
   'launch_stop',
   'launch_status',
+  'computer_use',
   'canvas_open',
   'canvas_render_html',
   'canvas_render_chart',

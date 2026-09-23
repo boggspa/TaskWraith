@@ -12,6 +12,7 @@ export const TASKWRAITH_FULL_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwrait
 export const TASKWRAITH_FULL_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v2'
 /** Fresh non-persistable Claude births use this successor; legacy sessions remain v1. */
 export const TASKWRAITH_FULL_V3_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v3'
+export const TASKWRAITH_FULL_V4_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v4'
 export const TASKWRAITH_CORE_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v1'
 export const TASKWRAITH_CORE_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v2'
 export const TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v1'
@@ -84,15 +85,21 @@ export const TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId 
   'taskwraith-gateway-v20-mesh'
 export const TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   'taskwraith-gateway-solo-v4'
+export const TASKWRAITH_GATEWAY_V21_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v21'
+export const TASKWRAITH_GATEWAY_V21_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-v21-mesh'
+export const TASKWRAITH_GATEWAY_SOLO_V5_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  'taskwraith-gateway-solo-v5'
 /** Current birth profile for a fresh, persistently fenceable gateway session. */
 export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V21_MCP_PROFILE_ID
 /** Current mesh-capable fresh gateway alias; older mesh receipts remain immutable. */
 export const TASKWRAITH_FRESH_GATEWAY_MESH_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V21_MESH_MCP_PROFILE_ID
 /** Current birth profile for a fresh single-provider session. */
 export const TASKWRAITH_FRESH_SOLO_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_SOLO_V5_MCP_PROFILE_ID
 /** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
@@ -132,6 +139,10 @@ function isProviderId(value: unknown): value is ProviderId {
 
 export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcpProfileId {
   return (
+    value === TASKWRAITH_GATEWAY_V21_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V21_MESH_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_SOLO_V5_MCP_PROFILE_ID ||
+    value === TASKWRAITH_FULL_V4_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID ||
@@ -311,7 +322,7 @@ export function resolveTaskWraithMcpProfile(input: {
     if (input.profileReceiptCanPersist !== false) {
       return freshTaskWraithGatewayProfile(input)
     }
-    return { profileId: TASKWRAITH_FULL_V3_MCP_PROFILE_ID, source: 'default_full' }
+    return { profileId: TASKWRAITH_FULL_V4_MCP_PROFILE_ID, source: 'default_full' }
   }
 
   if (input.provider === 'grok' && input.grokMcpAdvertised !== true) {
@@ -540,6 +551,20 @@ export function taskWraithMcpRunStartedWithPinnedReceipt(input: {
   )
 }
 
+/** Computer Use is hidden; these successors inherit the exact prior transport flags. */
+function computerUseTransportPredecessor(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): TaskWraithMcpProfileId | null | undefined {
+  if (profileId === TASKWRAITH_GATEWAY_V21_MCP_PROFILE_ID)
+    return TASKWRAITH_GATEWAY_V20_MCP_PROFILE_ID
+  if (profileId === TASKWRAITH_GATEWAY_V21_MESH_MCP_PROFILE_ID)
+    return TASKWRAITH_GATEWAY_V20_MESH_MCP_PROFILE_ID
+  if (profileId === TASKWRAITH_GATEWAY_SOLO_V5_MCP_PROFILE_ID)
+    return TASKWRAITH_GATEWAY_SOLO_V4_MCP_PROFILE_ID
+  if (profileId === TASKWRAITH_FULL_V4_MCP_PROFILE_ID) return TASKWRAITH_FULL_V3_MCP_PROFILE_ID
+  return profileId
+}
+
 export function isCoreTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
@@ -551,6 +576,7 @@ export function isCoreTaskWraithMcpProfile(
 export function isGatewayTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID ||
@@ -597,6 +623,7 @@ export function isGatewayTaskWraithMcpProfile(
 export function isSoloTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_SOLO_V1_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_SOLO_V2_MCP_PROFILE_ID ||
@@ -609,6 +636,7 @@ export function isSoloTaskWraithMcpProfile(
 export function isPermissionOpportunityDirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V18_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V18_MESH_MCP_PROFILE_ID ||
@@ -630,6 +658,7 @@ export function isPermissionOpportunityDirectTaskWraithMcpProfile(
 export function isPortableEnsembleControlMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_FULL_V2_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_FULL_V3_MCP_PROFILE_ID ||
@@ -674,6 +703,7 @@ export function isPortableEnsembleControlMcpProfile(
 export function isMeshCanvasDirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V7_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
@@ -696,6 +726,7 @@ export function isMeshCanvasDirectTaskWraithMcpProfile(
 export function isMeshTopologyDirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V15_MESH_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V16_MESH_MCP_PROFILE_ID ||
@@ -710,6 +741,7 @@ export function isMeshTopologyDirectTaskWraithMcpProfile(
 export function isSketchCanvasDirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V8_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V8_MESH_MCP_PROFILE_ID ||
@@ -752,6 +784,7 @@ export function isSketchCanvasDirectTaskWraithMcpProfile(
 export function isGatewayV13DirectTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
+  profileId = computerUseTransportPredecessor(profileId)
   return (
     profileId === TASKWRAITH_GATEWAY_V13_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V13_MESH_MCP_PROFILE_ID ||

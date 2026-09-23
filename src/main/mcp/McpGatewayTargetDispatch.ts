@@ -2,7 +2,7 @@ import { CAPABILITY_INVOKE_TOOL_NAME } from './McpToolGateway'
 
 export interface GatewayTargetDispatchMarker {
   viaGateway: true
-  gatewayToolName: typeof CAPABILITY_INVOKE_TOOL_NAME
+  gatewayToolName: typeof CAPABILITY_INVOKE_TOOL_NAME | 'computer_use'
 }
 
 /**

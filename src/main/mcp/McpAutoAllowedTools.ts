@@ -279,6 +279,9 @@ export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
 export const RECON_INSTRUMENT_ADVERTISE_TOOLS: ReadonlyArray<TaskWraithMcpToolName> = Object.freeze(
   TASKWRAITH_MCP_TOOLS.filter(
     (tool) =>
+      // Reachable wrapper, never auto-allowed. Its canonical subcalls enforce
+      // the seat's existing navigation, capture and interaction permissions.
+      tool === 'computer_use' ||
       tool === 'canvas_navigate' ||
       tool === 'canvas_render_chart' ||
       tool === 'emulator_open' ||

@@ -1502,6 +1502,7 @@ import {
   readPngDimensions
 } from './canvas/canvasTypes'
 import { createCanvasToolExecutors, isCanvasMcpToolName } from './mcp/CanvasToolExecutors'
+import { executeComputerUseTool } from './mcp/ComputerUseToolExecutor'
 import { createEmulatorToolExecutors, isEmulatorMcpToolName } from './mcp/EmulatorToolExecutors'
 import { createMeshToolExecutors, isMeshMcpToolName } from './mcp/MeshToolExecutors'
 import { createSimulatorToolExecutors, isSimulatorMcpToolName } from './mcp/SimulatorToolExecutors'
@@ -36296,7 +36297,7 @@ function geminiApiProviderDeps() {
         }
       }
       const result = await executeGeminiMcpTool(dispatchContract.toolName, args, route, 'gemini')
-      return { text: result.text, isError: result.isError }
+      return { text: result.text, isError: result.isError, content: result.content }
     },
     prepareToolContext: (
       sender: Electron.WebContents,
@@ -37150,7 +37151,11 @@ function antigravityGeminiApiAgentDeps(wireModelId: string) {
     },
     executeMcpTool: async (toolName: string, args: unknown, route: AgentRunRoute | null) => {
       const dispatchContract = resolveToolDispatchContractStrict(toolName, args)
-      if (!dispatchContract.ok || !isTaskWraithMcpToolName(dispatchContract.toolName)) {
+      if (
+        !dispatchContract.ok ||
+        (!isTaskWraithMcpToolName(dispatchContract.toolName) &&
+          !isCapabilityGatewayToolName(dispatchContract.toolName))
+      ) {
         return {
           text: `Unknown TaskWraith MCP tool: ${toolName}`,
           isError: true
@@ -37162,7 +37167,7 @@ function antigravityGeminiApiAgentDeps(wireModelId: string) {
         route,
         'antigravity'
       )
-      return { text: result.text, isError: result.isError }
+      return { text: result.text, isError: result.isError, content: result.content }
     },
     prepareToolContext: undefined
   }
@@ -40932,6 +40937,16 @@ async function executeUnscopedGeminiMcpTool(
       }),
       isError: true
     }
+  }
+  if (toolName === 'computer_use') {
+    markDispatchHandled('computer-use')
+    return executeComputerUseTool(args, (name, targetArgs) => {
+      if (!isCanvasMcpToolName(name)) throw new Error('Invalid Computer Use target tool.')
+      return executeGeminiMcpTool(name, targetArgs, effectiveRoute, parentProvider, callerContext, {
+        viaGateway: true,
+        gatewayToolName: 'computer_use'
+      })
+    })
   }
   if (
     toolName === TOOL_PERMISSION_RETRY_TOOL_NAME &&

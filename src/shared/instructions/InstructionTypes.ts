@@ -134,6 +134,7 @@ export interface ResolvedInstructionContext {
 export type PromptEnvelopeLayerId =
   | 'continuity_checkpoint'
   | 'continuity_tools'
+  | 'computer_use_tools'
   | 'simulator_canvas_hint'
   | 'emulator_canvas_hint'
   | 'browser_canvas_hint'

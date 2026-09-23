@@ -117,6 +117,7 @@ describe('MCP bridge route-from-env authority', () => {
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.meshTopologyDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.orchestrationDirect]).toBe('1')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.permissionOpportunityDirect]).toBe('1')
+    expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.computerUseDirect]).toBe('0')
     expect(builtA.env[MCP_BRIDGE_PROFILE_ENV_KEYS.soloSubset]).toBe('1')
     expect(parsedA.value).toMatchObject({
       route: { appRunId: 'run-123', appChatId: 'chat-456' },

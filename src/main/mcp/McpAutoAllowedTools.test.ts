@@ -220,6 +220,7 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
         'cancel_subthread',
         'canvas_navigate',
         'canvas_render_chart',
+        'computer_use',
         'emulator_open',
         'delegate_to_subthread',
         'delegate_wave',

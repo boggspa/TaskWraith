@@ -232,6 +232,12 @@ export const FULL_V3_MCP_ADVERTISE_TOOLS = Object.freeze([
   ...EMULATOR_MCP_TOOL_NAMES
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
+/** Computer Use successor; existing full-profile receipts stay unchanged. */
+export const FULL_V4_MCP_ADVERTISE_TOOLS = Object.freeze([
+  ...FULL_V3_MCP_ADVERTISE_TOOLS,
+  'computer_use'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
 /**
  * Grok reasoning and Cursor-hosted Grok catalogues reject large MCP surfaces
  * before a turn starts. Managed runs therefore use this named core profile for
@@ -1414,6 +1420,12 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v21')
+    return [...taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v20'), 'computer_use']
+  if (profileId === 'taskwraith-gateway-v21-mesh')
+    return [...taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v20-mesh'), 'computer_use']
+  if (profileId === 'taskwraith-gateway-solo-v5')
+    return [...taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-solo-v4'), 'computer_use']
   if (profileId === 'taskwraith-gateway-v20')
     return [...GATEWAY_V19_MCP_HIDDEN_TOOL_NAMES, 'tw_history_search', 'tw_history_read', 'tw_checkpoint']
   if (profileId === 'taskwraith-gateway-v20-mesh')
@@ -1468,6 +1480,9 @@ export function taskWraithGatewayHiddenToolNamesForProfile(
 export function taskWraithGatewayDirectToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly TaskWraithMcpToolName[] {
+  if (profileId === 'taskwraith-gateway-v21') return GATEWAY_V20_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-v21-mesh') return GATEWAY_V20_MESH_MCP_DIRECT_TOOLS
+  if (profileId === 'taskwraith-gateway-solo-v5') return GATEWAY_SOLO_V4_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v20') return GATEWAY_V20_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-v20-mesh') return GATEWAY_V20_MESH_MCP_DIRECT_TOOLS
   if (profileId === 'taskwraith-gateway-solo-v4') return GATEWAY_SOLO_V4_MCP_DIRECT_TOOLS
@@ -1526,6 +1541,7 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-full-v1': FULL_MCP_ADVERTISE_TOOLS,
   'taskwraith-full-v2': FULL_V2_MCP_ADVERTISE_TOOLS,
   'taskwraith-full-v3': FULL_V3_MCP_ADVERTISE_TOOLS,
+  'taskwraith-full-v4': FULL_V4_MCP_ADVERTISE_TOOLS,
   'taskwraith-core-v1': CORE_MCP_ADVERTISE_TOOLS,
   'taskwraith-core-v2': CORE_V2_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v1': GATEWAY_MCP_ADVERTISE_TOOLS,
@@ -1589,6 +1605,10 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-gateway-v20': GATEWAY_V20_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v20-mesh': GATEWAY_V20_MESH_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-solo-v4': GATEWAY_SOLO_V4_MCP_ADVERTISE_TOOLS,
+  // Computer Use adds one hidden schema and leaves the direct surface compact.
+  'taskwraith-gateway-v21': GATEWAY_V20_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v21-mesh': GATEWAY_V20_MESH_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-solo-v5': GATEWAY_SOLO_V4_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v19': GATEWAY_V19_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v19-mesh': GATEWAY_V19_MESH_MCP_ADVERTISE_TOOLS,
   // Solo-v1 preserves v17 eligibility with a lean direct birth catalogue.

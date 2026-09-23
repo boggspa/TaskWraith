@@ -53,6 +53,7 @@ const branch = (
 ): DispatcherBranchContract => ({ condition, toolNames, owners })
 
 const DISPATCHER_BRANCH_CONTRACTS = [
+  branch("toolName === 'computer_use'", ['computer_use'], 'computer-use'),
   branch(
     'toolName === TOOL_PERMISSION_RETRY_TOOL_NAME || toolName === PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME',
     [TOOL_PERMISSION_RETRY_TOOL_NAME, PERMISSION_OPPORTUNITY_REDEMPTION_TOOL_NAME],

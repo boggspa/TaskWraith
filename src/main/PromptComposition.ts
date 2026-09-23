@@ -1608,9 +1608,36 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     input.taskWraithMcpAdvertised !== false &&
     !input.resumeSessionId &&
     [
+      'taskwraith-gateway-v21',
+      'taskwraith-gateway-v21-mesh',
+      'taskwraith-gateway-solo-v5',
+      'taskwraith-full-v4'
+    ].includes(input.taskWraithMcpProfileId || '')
+  ) {
+    const hint =
+      input.taskWraithMcpProfileId === 'taskwraith-full-v4'
+        ? 'For browser and app-window tasks, use computer_use directly. It combines actions with fresh observations and screenshots; visual tasks require image input.'
+        : 'For browser and app-window tasks, discover computer_use with capability_search when listed. It combines actions with fresh observations and screenshots; visual tasks require image input.'
+    result.contextualPrompt = `${hint}\n\n${result.contextualPrompt}`
+    result.envelopeLayers.unshift({
+      id: 'computer_use_tools',
+      label: 'Computer Use discovery',
+      state: 'applied',
+      content: hint
+    })
+  }
+  if (
+    !input.verbatimPrompt &&
+    !input.continuityIsolated &&
+    input.taskWraithMcpAdvertised !== false &&
+    !input.resumeSessionId &&
+    [
       'taskwraith-gateway-v20',
       'taskwraith-gateway-v20-mesh',
-      'taskwraith-gateway-solo-v4'
+      'taskwraith-gateway-solo-v4',
+      'taskwraith-gateway-v21',
+      'taskwraith-gateway-v21-mesh',
+      'taskwraith-gateway-solo-v5'
     ].includes(input.taskWraithMcpProfileId || '')
   ) {
     const hint =

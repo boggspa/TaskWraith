@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 225 tools below are the full TaskWraith surface. 48 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. capability_invoke reaches hidden capabilities only — a directly advertised tool must be called by name. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 226 tools below are the full TaskWraith surface. 48 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. capability_invoke reaches hidden capabilities only — a directly advertised tool must be called by name. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1174,6 +1174,15 @@ Return launch attempts (status, detected http://localhost URLs, errors). Pass `a
 - Required args: none
 - Optional args: attemptId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"launch_status","arguments":{"attemptId":"text"}}}}`
+
+## computer_use
+
+Use a browser or approved app window with one observe–act–observe interface. Start with list, open a URL (browser) or launchId (approved native window), then act using refs from the returned observation. Open, observe and successful actions return a fresh element tree and screenshot image when capture is permitted. Check action execution and observation separately; a capture failure does not mean an action failed. Browser coordinates are viewport CSS pixels, not image pixels; prefer refs. Native windows support observe/click/fill only, with an exact foreground-window lease, ref, expectedObservationId and expectedInputEpoch. Other browser actions are key, scroll, hover, select and navigate. No provider-specific model is required; visual reasoning requires a model/transport that accepts images. Each underlying operation keeps its own permission, human-takeover and approval checks. Stop and re-observe on refusal; never replay an unconfirmed action blindly.
+
+- Access: governed by your run permission role
+- Required args: action
+- Optional args: canvasId, url, launchId, ref, selector, x, y, text, key, deltaX, deltaY, expectedInputEpoch, expectedObservationId, navigation
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"computer_use","arguments":{"action":"list"}}}}`
 
 ## canvas_open
 

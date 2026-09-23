@@ -51,6 +51,7 @@ export const TOOL_DISPLAY_NAMES: Record<string, string> = {
   git_blame: 'Git blame',
 
   // ── Browser automation ───────────────────────────────────────
+  computer_use: 'Computer Use',
   browser_open: 'Opened browser',
   browser_navigate: 'Navigated browser',
   browser_click: 'Clicked in browser',

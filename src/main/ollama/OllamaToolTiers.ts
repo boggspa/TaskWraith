@@ -97,6 +97,8 @@ export const OLLAMA_ADVERTISED_TOOL_NAMES = GATEWAY_V17_MCP_DIRECT_TOOLS
 export function ollamaDirectToolNamesForProfile(
   profileId?: TaskWraithMcpProfileId | null
 ): readonly OllamaToolName[] {
+  if (profileId === 'taskwraith-gateway-v21-mesh')
+    return taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v21')
   if (profileId === 'taskwraith-gateway-v20-mesh')
     return taskWraithGatewayDirectToolNamesForProfile('taskwraith-gateway-v20')
   const localProfileId =

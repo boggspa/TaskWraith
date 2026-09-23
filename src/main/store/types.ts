@@ -1034,6 +1034,7 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
   | 'taskwraith-full-v2'
   | 'taskwraith-full-v3'
+  | 'taskwraith-full-v4'
   | 'taskwraith-core-v1'
   | 'taskwraith-core-v2'
   | 'taskwraith-gateway-v1'
@@ -1091,6 +1092,9 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-gateway-v20'
   | 'taskwraith-gateway-v20-mesh'
   | 'taskwraith-gateway-solo-v4'
+  | 'taskwraith-gateway-v21'
+  | 'taskwraith-gateway-v21-mesh'
+  | 'taskwraith-gateway-solo-v5'
   | 'taskwraith-gateway-v19'
   | 'taskwraith-gateway-v19-mesh'
   // Solo-v2 is the lean v18-derived birth catalogue; solo-v1 remains frozen.
