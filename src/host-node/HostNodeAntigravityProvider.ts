@@ -5,6 +5,7 @@ import { AGY_PRINT_TIMEOUT } from '../shared/antigravityPrintTimeout'
 import { ANTIGRAVITY_PROVIDER_ID } from '../shared/retiredProviders'
 import {
   discoverHostStandaloneAntigravity,
+  HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL,
   hostStandaloneAgyProbeEnvironment,
   hostStandaloneAntigravityOffers,
   readHostStandaloneAntigravityConsent,
@@ -18,6 +19,7 @@ import {
 } from '../host-shared/antigravity/HostAgyConversationReceipt'
 import {
   HOST_PROVIDER_RUN_MAX_TEXT_CHARS,
+  HOST_PROVIDER_RUN_MAX_WARNING_CHARS,
   normalizeHostProviderRunPresentationText,
   normalizeHostProviderRunThread,
   validateHostProviderRunPrompt,
@@ -157,7 +159,19 @@ function buildPlanArgs(
 
 export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
   readonly providerId = ANTIGRAVITY_PROVIDER_ID
-  private currentOffers: HostProviderOffersProjection
+  /**
+   * What a selection is validated against before a run starts: the offers of
+   * the last probe that got an answer. A ready probe sets them. Withdrawn
+   * consent, a missing CLI or a signed-out agy empties them, so those sends
+   * are refused up front. An `unknown` probe (agy timed out, crashed, exited
+   * non-zero or overflowed) leaves them alone, the same last-known-good rule
+   * as the Ollama adapter and the Domain send gate. The published offers stay
+   * honest either way. Before any ready probe this is the composition catalog,
+   * empty in production, so a Host that never reached agy fails closed.
+   */
+  private validationOffers: HostProviderOffersProjection
+  /** The latest probe was `unknown`, so `validationOffers` may be stale. */
+  private validationOffersStale = false
   private readonly activeRuns = new Map<string, ActiveRun>()
   private probeCache: {
     readonly value: HostStandaloneAntigravityProbe
@@ -168,7 +182,7 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
   private readonly now: () => number
 
   constructor(private readonly options: HostNodeAntigravityProviderOptions) {
-    this.currentOffers = options.offers
+    this.validationOffers = options.offers
     this.spawnProcess = options.spawn ?? hostNodeAntigravitySpawn
     this.now = options.now ?? (() => Date.now())
   }
@@ -196,9 +210,11 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
 
   async getOffers(): Promise<HostProviderOffersProjection> {
     const probe = await this.probe()
-    this.currentOffers =
+    const offers =
       probe.status === 'ready' ? probe.admission.offers : hostStandaloneAntigravityOffers([])
-    return this.currentOffers
+    this.validationOffersStale = probe.status === 'unknown'
+    if (!this.validationOffersStale) this.validationOffers = offers
+    return offers
   }
 
   async getStatus(): Promise<HostProviderStatusProjection> {
@@ -208,7 +224,9 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
       status:
         probe.status === 'ready'
           ? 'ready'
-          : probe.status === 'auth_required' || probe.status === 'consent_required'
+          : probe.status === 'auth_required' ||
+              probe.status === 'consent_required' ||
+              probe.status === 'unknown'
             ? 'auth_required'
             : 'unavailable',
       label: 'AntiGravity',
@@ -277,7 +295,15 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
     if (normalized.posture.postureId !== 'plan') {
       throw new Error('Standalone AntiGravity currently permits only Plan.')
     }
-    const model = this.currentOffers.models.find(
+    // Offers kept across an unknown probe say nothing about consent, which the
+    // user can withdraw at any time, so read it from its own source first.
+    if (this.validationOffersStale) {
+      const consent = readHostStandaloneAntigravityConsent(this.options.profilePath)
+      if (!consent.accepted || consent.acceptedAt === null) {
+        throw new Error(HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL)
+      }
+    }
+    const model = this.validationOffers.models.find(
       (entry) => entry.modelId === normalized.modelId && entry.available
     )
     if (
@@ -361,7 +387,8 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
       // provider process can spawn, so withdrawal wins without a launch.
       const probe = await this.probe(true)
       if (probe.status !== 'ready') throw new Error(probe.detail)
-      this.currentOffers = probe.admission.offers
+      this.validationOffers = probe.admission.offers
+      this.validationOffersStale = false
       const current = this.options.runPort.getThread(request.threadId)
       if (!current) throw new Error('AntiGravity thread was removed before launch.')
       thread = this.validateThread(current)
@@ -449,12 +476,20 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         ...(providerSessionId ? { sessionId: providerSessionId } : {}),
         exitCode
       }
-    } catch {
+    } catch (error) {
+      // The reason is what the user reads: withdrawn consent, a signed-out or
+      // unreachable agy from the forced re-probe above. A cancel needs none.
+      const reason = active.cancelled
+        ? null
+        : normalizeHostProviderRunPresentationText(
+            error instanceof Error ? error.message : '',
+            HOST_PROVIDER_RUN_MAX_WARNING_CHARS
+          )
       const finish: HostProviderRunFinish = {
         runId: request.runId,
         status: active.cancelled ? 'cancelled' : 'failed',
         finishedAt: new Date(this.now()).toISOString(),
-        warningSummaries: [],
+        warningSummaries: reason ? [reason] : [],
         ...(active.cancelled ? {} : { errorCode: 'provider_launch_failed' as const })
       }
       this.options.runPort.finishRun(finish)
@@ -463,7 +498,8 @@ export class HostNodeAntigravityProvider implements HostNodeProviderInstance {
         runId: request.runId,
         threadId: request.threadId,
         status: finish.status,
-        at: finish.finishedAt
+        at: finish.finishedAt,
+        ...(reason ? { warningCount: 1 } : {})
       })
       return { runId: request.runId, status: finish.status, exitCode: null }
     } finally {

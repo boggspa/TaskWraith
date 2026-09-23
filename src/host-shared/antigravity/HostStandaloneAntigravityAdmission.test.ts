@@ -269,7 +269,55 @@ describe('discoverHostStandaloneAntigravity', () => {
           code: 0
         })
       })
-    ).resolves.toMatchObject({ status: 'auth_required', admission: null })
+    ).resolves.toMatchObject({
+      status: 'unknown',
+      admission: null,
+      detail: 'The agy account probe exceeded its bounded output limit.'
+    })
+  })
+
+  // A signed-out agy answers with no models. An agy that could not be read at
+  // all says nothing about the account, so the Host may keep the offers of its
+  // last answered probe for it and never for a signed-out answer.
+  it('reports agy that could not be read as unknown, apart from a signed-out answer', async () => {
+    const probe = (capture: DiscoverHostStandaloneAntigravityInput['capture']) =>
+      discoverHostStandaloneAntigravity({
+        profilePath: profile(acceptedSettings()),
+        resolveBinary: async () => ({ binaryPath: AGY_BINARY }),
+        capture
+      })
+    const unknown = {
+      status: 'unknown',
+      admission: null,
+      detail: 'A live agy account could not be verified; sign in and retry.'
+    }
+
+    await expect(
+      probe(async () => ({ stdout: '', stderr: '', code: null, timedOut: true }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => {
+        throw new Error('the PTY could not start')
+      })
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({ stdout: 'gemini-3.7-flash-high\n', stderr: '', code: 1 }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({
+        stdout: '',
+        stderr: '',
+        code: null,
+        error: 'agy models could not start.'
+      }))
+    ).resolves.toMatchObject(unknown)
+    await expect(
+      probe(async () => ({ stdout: 'Not logged in. Please sign in.', stderr: '', code: 0 }))
+    ).resolves.toMatchObject({
+      status: 'auth_required',
+      admission: null,
+      detail: 'agy returned no live authenticated models; sign in and retry.'
+    })
   })
 })
 

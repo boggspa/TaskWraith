@@ -395,3 +395,203 @@ describe('createHostNodeAntigravityProviderFactory', () => {
     })
   })
 })
+
+// An `agy models` call that timed out, crashed, exited non-zero or overflowed
+// says nothing about the account. A send is then validated against the offers
+// of the last probe that got an answer, as the Ollama adapter does after a
+// failed catalog read, while the published offers and status stay honest. An
+// answer that says no still refuses up front, and no path spawns agy without
+// consent: the run's forced re-probe reads it again before any spawn.
+describe('HostNodeAntigravityProvider after a probe that could not read agy', () => {
+  const CONSENT_DETAIL =
+    'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
+  const UNVERIFIED_DETAIL = 'A live agy account could not be verified; sign in and retry.'
+
+  function harness() {
+    const profilePath = profile()
+    const state: {
+      probe: 'answers' | 'times-out' | 'no-models' | 'held'
+      models: typeof MODELS
+      binary: string | null
+      release?: () => void
+    } = { probe: 'answers', models: MODELS, binary: AGY_BINARY }
+    const runPort = new RunPort()
+    const spawn = vi.fn((input: HostNodeAntigravitySpawnInput): HostNodeAntigravitySpawnHandle => {
+      input.onStdout('Plan complete.')
+      return { kill: vi.fn(), exit: Promise.resolve({ code: 0, signal: null }) }
+    })
+    const timedOut = { stdout: '', stderr: '', code: null, timedOut: true }
+    const provider = new HostNodeAntigravityProvider({
+      profilePath,
+      runPort,
+      offers: hostStandaloneAntigravityOffers([]),
+      resources: {
+        ...resources(),
+        resolveBinary: async () =>
+          state.binary
+            ? { binaryPath: state.binary, source: 'path' }
+            : { binaryPath: null, source: 'missing' }
+      },
+      captureModels: async () => {
+        if (state.probe === 'held') {
+          await new Promise<void>((resolve) => {
+            state.release = resolve
+          })
+          return timedOut
+        }
+        if (state.probe === 'times-out') return timedOut
+        if (state.probe === 'no-models') {
+          return { stdout: 'Not logged in. Please sign in.', stderr: '', code: 0 }
+        }
+        return { stdout: JSON.stringify({ models: state.models }), stderr: '', code: 0 }
+      },
+      spawn,
+      readConversationReceipt: async () => null
+    })
+    // Each refresh is a fresh probe, as the next one a second later would be.
+    const refresh = async () => {
+      provider['probeCache'] = null
+      return provider.getOffers()
+    }
+    const send = () =>
+      provider.run({ runId: 'run-1', threadId: 'thread-1', prompt: 'inspect', target: TARGET })
+    return { profilePath, state, runPort, spawn, provider, refresh, send }
+  }
+
+  function withdrawConsent(profilePath: string): void {
+    writeFileSync(
+      join(profilePath, 'settings.json'),
+      JSON.stringify({ antigravityEnabled: false, antigravityOptInAcceptedAt: null }),
+      { mode: 0o600 }
+    )
+  }
+
+  it('runs a send after one agy models call timed out, as the last ready probe offered it', async () => {
+    const { state, runPort, spawn, refresh, send } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+    state.probe = 'answers'
+
+    await expect(send()).resolves.toMatchObject({ status: 'completed' })
+    expect(runPort.begins).toHaveLength(1)
+    expect(spawn).toHaveBeenCalledTimes(1)
+  })
+
+  it('publishes the unknown probe honestly: no offers, and the account unverified', async () => {
+    const { state, provider, refresh } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    const offers = await refresh()
+    provider['probeCache'] = null
+
+    expect(offers).toEqual(hostStandaloneAntigravityOffers([]))
+    await expect(provider.getStatus()).resolves.toMatchObject({
+      status: 'auth_required',
+      detail: UNVERIFIED_DETAIL
+    })
+    await expect(provider.getAuthStatus()).resolves.toMatchObject({ state: 'unauthenticated' })
+  })
+
+  it('fails the run with the probe reason when agy still cannot be read, and never spawns', async () => {
+    const { state, runPort, spawn, refresh, send } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+
+    await expect(send()).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.finish).toMatchObject({
+      status: 'failed',
+      errorCode: 'provider_launch_failed',
+      warningSummaries: [UNVERIFIED_DETAIL]
+    })
+    expect(runPort.events.at(-1)).toMatchObject({ status: 'failed', warningCount: 1 })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('fails the run with the consent reason when consent is withdrawn with no refresh in between', async () => {
+    const { profilePath, runPort, spawn, refresh, send } = harness()
+    await refresh()
+    withdrawConsent(profilePath)
+
+    await expect(send()).resolves.toMatchObject({ status: 'failed' })
+    expect(runPort.finish?.warningSummaries).toEqual([CONSENT_DETAIL])
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('reads consent from its own source before admitting against offers an unknown probe kept', async () => {
+    const { profilePath, state, runPort, spawn, refresh, send } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+    withdrawConsent(profilePath)
+    state.probe = 'answers'
+
+    await expect(send()).rejects.toThrow(CONSENT_DETAIL)
+    expect(runPort.begins).toEqual([])
+    expect(runPort.transcripts).toEqual([])
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('stays fail-closed when no probe has ever got an answer', async () => {
+    const { state, runPort, spawn, refresh, send } = harness()
+    state.probe = 'times-out'
+    await refresh()
+    state.probe = 'answers'
+
+    await expect(send()).rejects.toThrow('AntiGravity model selection is not currently offered.')
+    expect(runPort.begins).toEqual([])
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['consent is withdrawn', (h: ReturnType<typeof harness>) => withdrawConsent(h.profilePath)],
+    [
+      'the agy CLI is missing',
+      (h: ReturnType<typeof harness>) => {
+        h.state.binary = null
+      }
+    ],
+    [
+      'agy answers with no models',
+      (h: ReturnType<typeof harness>) => {
+        h.state.probe = 'no-models'
+      }
+    ]
+  ])('refuses up front when a refresh saw that %s', async (_label, answerNo) => {
+    const h = harness()
+    await h.refresh()
+    answerNo(h)
+    await h.refresh()
+
+    await expect(h.send()).rejects.toThrow('AntiGravity model selection is not currently offered.')
+    expect(h.runPort.begins).toEqual([])
+    expect(h.spawn).not.toHaveBeenCalled()
+  })
+
+  it('validates against the next probe that gets an answer after an unknown one', async () => {
+    const { state, refresh, send } = harness()
+    await refresh()
+    state.probe = 'times-out'
+    await refresh()
+    state.probe = 'answers'
+    state.models = [{ id: 'claude-opus-4-6', label: 'claude-opus-4-6' }]
+    await refresh()
+
+    await expect(send()).rejects.toThrow('AntiGravity model selection is not currently offered.')
+  })
+
+  it('gives a run cancelled during the forced re-probe no failure reason', async () => {
+    const { state, runPort, spawn, provider, refresh, send } = harness()
+    await refresh()
+    state.probe = 'held'
+    const run = send()
+    await vi.waitFor(() => expect(state.release).toBeTypeOf('function'))
+    expect(provider.cancel('run-1')).toBe(true)
+    state.release?.()
+
+    await expect(run).resolves.toMatchObject({ status: 'cancelled' })
+    expect(runPort.finish).toMatchObject({ status: 'cancelled', warningSummaries: [] })
+    expect(spawn).not.toHaveBeenCalled()
+  })
+})

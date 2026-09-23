@@ -125,6 +125,12 @@ export interface HostStandaloneAntigravityAdmission {
   readonly offers: HostProviderOffersProjection
 }
 
+/**
+ * `unknown` means `agy models` could not be read at all: it timed out,
+ * crashed, exited non-zero or overflowed the output bound. That says nothing
+ * about the account. `auth_required` is agy answering with no live models,
+ * which is what signed out looks like.
+ */
 export type HostStandaloneAntigravityProbe =
   | {
       readonly status: 'ready'
@@ -132,10 +138,13 @@ export type HostStandaloneAntigravityProbe =
       readonly detail: string
     }
   | {
-      readonly status: 'consent_required' | 'unavailable' | 'auth_required'
+      readonly status: 'consent_required' | 'unavailable' | 'auth_required' | 'unknown'
       readonly admission: null
       readonly detail: string
     }
+
+export const HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL =
+  'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
 
 export interface DiscoverHostStandaloneAntigravityInput {
   readonly profilePath: string
@@ -434,7 +443,7 @@ export async function discoverHostStandaloneAntigravity(
     return {
       status: 'consent_required',
       admission: null,
-      detail: 'Accept the AntiGravity account/ToS ban-risk disclosure in TaskWraith first.'
+      detail: HOST_STANDALONE_ANTIGRAVITY_CONSENT_DETAIL
     }
   }
   let binary: HostStandaloneAgyResolvedBinary
@@ -462,7 +471,7 @@ export async function discoverHostStandaloneAntigravity(
     })
   } catch {
     return {
-      status: 'auth_required',
+      status: 'unknown',
       admission: null,
       detail: 'A live agy account could not be verified; sign in and retry.'
     }
@@ -473,14 +482,14 @@ export async function discoverHostStandaloneAntigravity(
     MAX_PROBE_OUTPUT_BYTES
   ) {
     return {
-      status: 'auth_required',
+      status: 'unknown',
       admission: null,
       detail: 'The agy account probe exceeded its bounded output limit.'
     }
   }
   if (captured.error || captured.timedOut || captured.code !== 0) {
     return {
-      status: 'auth_required',
+      status: 'unknown',
       admission: null,
       detail: 'A live agy account could not be verified; sign in and retry.'
     }
