@@ -1991,6 +1991,7 @@ import {
 } from './ProviderAdapters'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import {
+  antigravityLaunchConsentRefusal,
   composeAntigravityLaunchPrompt,
   getAntigravityProviderMcpStatus,
   getAntigravityProviderStatus,
@@ -21135,6 +21136,13 @@ async function runCliProviderProcess(
      * previous id, so the next turn simply starts fresh.
      */
     resolveExitSessionId?: () => Promise<string | null>
+    /**
+     * The provider's own last word before its child starts. It runs after the
+     * launch fence, with nothing awaited between it and the spawn, so it sees
+     * anything that changed while the provider's setup waited. A returned
+     * message refuses the launch as a visible setup failure.
+     */
+    launchRefusal?: () => string | null
   } & (
     | { extraEnv?: Record<string, string>; resolvedEnv?: never }
     | {
@@ -21394,6 +21402,23 @@ async function runCliProviderProcess(
   if (!providerTransportLaunchAuthorized(provider, payload, route)) {
     try {
       settleDeniedProviderTransportLaunch(route)
+    } finally {
+      transportClose.markTransportClosed()
+    }
+    await releaseWorkspaceLockSetupGuardian()
+    return transportOperation
+  }
+  const launchRefusal = options.launchRefusal?.() ?? null
+  if (launchRefusal) {
+    try {
+      settleVisibleProviderSetupFailure({
+        sender: event.sender,
+        provider,
+        route,
+        message: launchRefusal,
+        setupRequired: true,
+        fallback: options.fallback
+      })
     } finally {
       transportClose.markTransportClosed()
     }
@@ -38242,6 +38267,10 @@ async function runAntigravityAgyProvider(
             finalResponse: completedFinalResponse
           }),
         onComplete: releasePermissionLease,
+        // Preparing the launch read consent before the waits above (binary
+        // lookup, conversation receipt, permission lease writes, transcript
+        // monitor). Read it again, live, with nothing awaited before the spawn.
+        launchRefusal: () => antigravityLaunchConsentRefusal(AppStore.getSettings()),
         // Keyed by the run's own cwd, which is what agy records. The temporary
         // native permission overlay is separately serialized because official
         // agy exposes only one global settings path.

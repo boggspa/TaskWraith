@@ -1,3 +1,4 @@
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 import { MainSourceProbe } from '../mainSourceProbe.testutil'
 
@@ -283,5 +284,60 @@ describe('AntiGravity S3 runtime integration', () => {
     expect(hookOverlayIdx).toBeGreaterThan(-1)
     expect(stripIdx).toBeGreaterThan(hookOverlayIdx)
     expect(stripIdx - hookOverlayIdx).toBeLessThan(500)
+  })
+
+  // Preparing the launch reads consent before the Desktop send waits on the
+  // binary lookup, the conversation receipt, the permission lease's file writes
+  // and the transcript monitor. The user can withdraw consent during any of
+  // those waits, so the read that decides is the one the CLI runner makes just
+  // before the spawn.
+  it('reads live consent immediately before the agy spawn, after every setup wait', () => {
+    const agy = probe.fn('runAntigravityAgyProvider')
+    const run = probe.callsTo(agy, 'runCliProviderProcess')
+    expect(run).toHaveLength(1)
+    expect(probe.propText(run[0], 5, 'launchRefusal')).toBe(
+      '() => antigravityLaunchConsentRefusal(AppStore.getSettings())'
+    )
+
+    const runner = probe.fn('runCliProviderProcess')
+    if (!ts.isBlock(runner)) throw new Error('runCliProviderProcess has no block body')
+    const statements = [...runner.statements]
+    const containsAwait = (node: ts.Node): boolean => {
+      if (ts.isAwaitExpression(node)) return true
+      return ts.forEachChild(node, containsAwait) ?? false
+    }
+
+    // In order: the launch fence (Stop, setup abort, history, persistence),
+    // the provider's refusal read, the refusal branch, then the try that spawns.
+    const readAt = statements.findIndex(
+      (statement) =>
+        ts.isVariableStatement(statement) && probe.callsTo(statement, 'launchRefusal').length === 1
+    )
+    expect(readAt).toBeGreaterThan(0)
+    const fence = statements[readAt - 1]
+    expect(ts.isIfStatement(fence) && probe.text(fence.expression).replace(/\s+/g, ' ')).toBe(
+      '!providerTransportLaunchAuthorized(provider, payload, route)'
+    )
+
+    const refusal = statements[readAt + 1]
+    if (!ts.isIfStatement(refusal)) throw new Error('no refusal branch after the read')
+    expect(probe.text(refusal.expression)).toBe('launchRefusal')
+    expect(probe.callsTo(refusal.thenStatement, 'settleVisibleProviderSetupFailure')).toHaveLength(
+      1
+    )
+    const refusalBody = refusal.thenStatement
+    expect(ts.isBlock(refusalBody) && ts.isReturnStatement(refusalBody.statements.at(-1)!)).toBe(
+      true
+    )
+
+    const launch = statements[readAt + 2]
+    if (!ts.isTryStatement(launch))
+      throw new Error('the refusal branch is not followed by the launch')
+    const spawnAt = launch.tryBlock.statements.findIndex((statement) =>
+      probe.callsTo(statement, 'spawn').some((call) => probe.argText(call, 0) === 'command')
+    )
+    expect(spawnAt).toBeGreaterThan(-1)
+    // Nothing between the read and the spawn may wait.
+    expect(launch.tryBlock.statements.slice(0, spawnAt + 1).some(containsAwait)).toBe(false)
   })
 })

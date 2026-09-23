@@ -1,12 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  antigravityLaunchConsentRefusal,
   composeAntigravityLaunchPrompt,
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch,
   withAntigravityLaunchPrompt
 } from './AntigravityProviderRuntime'
 import { formatAgyProjectBoundSessionId } from './AntigravityConversationReceipt'
-import { withAntigravityColdStartSteer, withAntigravityLongTurnProgress } from './AntigravityLongTurnProgress'
+import {
+  withAntigravityColdStartSteer,
+  withAntigravityLongTurnProgress
+} from './AntigravityLongTurnProgress'
 
 const OPTED_IN = {
   antigravityEnabled: true,
@@ -596,6 +600,34 @@ describe('prepareAntigravityProviderLaunch', () => {
     )
 
     expect(status).toMatchObject({ available: false, authState: 'consent-required' })
+  })
+})
+
+// The Desktop agy send reads this with the live settings immediately before it
+// spawns agy, after every wait that follows preparing the launch.
+describe('antigravityLaunchConsentRefusal', () => {
+  it('admits a launch only while both consent bits are held, and otherwise refuses with the Settings sentence', async () => {
+    expect(antigravityLaunchConsentRefusal(OPTED_IN)).toBeNull()
+    const withdrawn = [
+      null,
+      undefined,
+      {},
+      { antigravityEnabled: false, antigravityOptInAcceptedAt: null },
+      { antigravityEnabled: false, antigravityOptInAcceptedAt: 1_700_000_000_000 },
+      { antigravityEnabled: true, antigravityOptInAcceptedAt: null }
+    ]
+    for (const settings of withdrawn) {
+      expect(antigravityLaunchConsentRefusal(settings)).toBe(
+        'AntiGravity is disabled until the user enables it and records informed risk acceptance in Settings → Providers.'
+      )
+    }
+    // The same sentence a send gets when consent was already withdrawn before it.
+    await expect(
+      prepareAntigravityProviderLaunch(
+        { settings: {}, prompt: 'Inspect.' },
+        { resolveBinary: vi.fn() }
+      )
+    ).rejects.toThrow(antigravityLaunchConsentRefusal({})!)
   })
 })
 

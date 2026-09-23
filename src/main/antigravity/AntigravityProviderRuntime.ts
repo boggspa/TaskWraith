@@ -198,6 +198,27 @@ export function withAntigravityLaunchPrompt(
   return { ...plan, args: [...plan.args.slice(0, -1), prompt] }
 }
 
+/** What every agy launch says while the Settings consent gate is closed. */
+export const ANTIGRAVITY_OPT_IN_REQUIRED_MESSAGE =
+  'AntiGravity is disabled until the user enables it and records informed risk acceptance in Settings → Providers.'
+
+/**
+ * The last consent read before main starts agy. Preparing a launch reads
+ * consent once, and the run then waits on the binary lookup, the conversation
+ * receipt, the permission lease's file writes and the transcript monitor. The
+ * user can withdraw consent during any of those waits. Call this with the live
+ * settings and nothing awaited between the call and the spawn; it returns the
+ * refusal to show, or null when agy may start.
+ */
+export function antigravityLaunchConsentRefusal(
+  settings:
+    | Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'>
+    | null
+    | undefined
+): string | null {
+  return isAntigravityOptInEnabled(settings) ? null : ANTIGRAVITY_OPT_IN_REQUIRED_MESSAGE
+}
+
 /**
  * Prepare one official-CLI launch. The default is closed: there is no binary
  * resolution, environment construction, or child-process opportunity until
@@ -215,9 +236,7 @@ export async function prepareAntigravityProviderLaunch(
   deps: AntigravityProviderRuntimeDependencies = {}
 ): Promise<AntigravityProviderLaunchPlan> {
   if (!isAntigravityOptInEnabled(input.settings)) {
-    throw new Error(
-      'AntiGravity is disabled until the user enables it and records informed risk acceptance in Settings → Providers.'
-    )
+    throw new Error(ANTIGRAVITY_OPT_IN_REQUIRED_MESSAGE)
   }
 
   const binary = await (deps.resolveBinary ?? resolveAgyCliBinary)()
