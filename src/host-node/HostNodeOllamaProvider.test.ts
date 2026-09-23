@@ -12,6 +12,7 @@ import {
   HostNodeOllamaValidationError
 } from './HostNodeOllamaProvider'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
 import type { HostNodeProviderResourcePort } from './HostNodeProviderResources'
 import type {
   HostProviderRunBegin,
@@ -1201,5 +1202,150 @@ describe('HostNodeOllamaProvider admission of an unproven Cloud row', () => {
     expect(result.status).toBe('completed')
     expect(runPort.begins).toEqual([expect.objectContaining({ modelId: cloudModelId })])
     expect(runPort.transcripts[0]).toMatchObject({ role: 'user', text: 'hello' })
+  })
+})
+
+// One failed offers refresh (a daemon blip, a slow `/api/tags`) leaves the
+// catalog state unknown. The offers and status it publishes stay honest, but a
+// selection is validated against the last refresh that read the catalog, the
+// same fallback the Domain send gate applies. The catalog is the real one and
+// only the network is stubbed, so a failed read takes the production path.
+describe('HostNodeOllamaProvider validation after a failed offers refresh', () => {
+  const localModelId = 'qwen3.5:9b'
+  const cloudModelId = 'minimax-m3:cloud'
+  const remembered = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+  let daemon: { up: boolean; tags: Array<{ model: string; remote_host?: string }> }
+
+  function selection(modelId: string): HostProviderRunThread {
+    const { reasoningId: _unused, ...thread } = threadFixture({ modelId })
+    return thread
+  }
+
+  // Production composes the adapter with an empty catalog, so every model it
+  // admits here was proven by a refresh.
+  function composed(
+    options: Partial<ConstructorParameters<typeof HostNodeOllamaProvider>[0]> = {}
+  ): HostNodeOllamaProvider {
+    return provider(resourcePort(), new FakeRunPort(), {
+      offers: hostNodeOllamaOffersFromCatalog({ models: [] }),
+      ...options
+    })
+  }
+
+  async function refresh(instance: HostNodeOllamaProvider) {
+    instance['catalogCache'] = undefined
+    return instance.getOffers()
+  }
+
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    const daemonClient = await vi.importActual<
+      typeof import('../host-shared/ollama/OllamaDaemonClient')
+    >('../host-shared/ollama/OllamaDaemonClient')
+    mockFetchCatalog.mockImplementation(daemonClient.fetchOllamaModelCatalog)
+    daemon = {
+      up: true,
+      tags: [{ model: localModelId }, { model: cloudModelId, remote_host: 'ollama.com' }]
+    }
+    // Every account request is refused, so only the remembered sign-in can
+    // make the Cloud row available.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        if (daemon.up && String(input).endsWith('/api/tags')) {
+          return new Response(JSON.stringify({ models: daemon.tags }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        throw new TypeError('fetch failed')
+      })
+    )
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    mockFetchCatalog.mockReset()
+  })
+
+  it('admits what the last good refresh offered after one failed refresh', async () => {
+    const instance = composed({ rememberedCliSignIn: () => remembered })
+    await refresh(instance)
+    daemon.up = false
+    await refresh(instance)
+
+    expect(instance.validateThread(selection(localModelId)).modelId).toBe(localModelId)
+    expect(instance.validateThread(selection(cloudModelId)).modelId).toBe(cloudModelId)
+  })
+
+  it('publishes the failed refresh honestly: no offers, and the daemon unreachable', async () => {
+    const instance = composed()
+    const good = await refresh(instance)
+    daemon.up = false
+    const failed = await refresh(instance)
+    instance['catalogCache'] = undefined
+
+    expect(good.models.map((model) => model.modelId)).toContain(localModelId)
+    expect(failed).toEqual(hostNodeOllamaOffersFromCatalog({ models: [] }))
+    expect(await instance.getStatus()).toMatchObject({
+      status: 'unavailable',
+      detail: 'Ollama daemon and direct Cloud API are not reachable.'
+    })
+  })
+
+  it('still refuses an unproven Cloud row with its own detail after a failed refresh', async () => {
+    const instance = composed()
+    const good = await refresh(instance)
+    expect(good.models.find((model) => model.modelId === cloudModelId)).toMatchObject({
+      available: false
+    })
+    daemon.up = false
+    await refresh(instance)
+
+    expect(() => instance.validateThread(selection(cloudModelId))).toThrow(
+      'Ollama Cloud account status is unavailable.'
+    )
+    expect(instance.validateThread(selection(localModelId)).modelId).toBe(localModelId)
+  })
+
+  it('stays fail-closed when no refresh has ever read the catalog', async () => {
+    const instance = composed({ rememberedCliSignIn: () => remembered })
+    expect(() => instance.validateThread(selection(localModelId))).toThrow(
+      'Ollama model is not offered by the Host catalog.'
+    )
+    daemon.up = false
+    await refresh(instance)
+
+    expect(() => instance.validateThread(selection(localModelId))).toThrow(
+      'Ollama model is not offered by the Host catalog.'
+    )
+  })
+
+  // A daemon that answered is authoritative even when it lists nothing: the
+  // model is gone, not unknown, so a later failed read cannot bring it back.
+  it('keeps a refresh that read an empty catalog as the set a failed one falls back to', async () => {
+    const instance = composed()
+    await refresh(instance)
+    daemon.tags = []
+    await refresh(instance)
+    daemon.up = false
+    await refresh(instance)
+
+    expect(() => instance.validateThread(selection(localModelId))).toThrow(
+      'Ollama model is not offered by the Host catalog.'
+    )
+  })
+
+  it('follows the next refresh that reads the catalog after a failed one', async () => {
+    const instance = composed({ rememberedCliSignIn: () => remembered })
+    daemon.tags = [{ model: localModelId }]
+    await refresh(instance)
+    daemon.up = false
+    await refresh(instance)
+    daemon.up = true
+    daemon.tags = [{ model: localModelId }, { model: cloudModelId, remote_host: 'ollama.com' }]
+    await refresh(instance)
+
+    expect(instance.validateThread(selection(cloudModelId)).modelId).toBe(cloudModelId)
   })
 })

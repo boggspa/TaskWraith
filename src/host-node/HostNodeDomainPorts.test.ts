@@ -26,6 +26,8 @@ import {
   unavailableMuseMeterSnapshot
 } from '../main/muse/MuseUsage'
 import { createHostNodeMuseProviderFactory } from './HostNodeMuseProvider'
+import { createHostNodeOllamaProviderFactory } from './HostNodeOllamaProvider'
+import { hostNodeOllamaOffersFromCatalog } from './HostNodeOllamaCatalog'
 import type {
   HostNodeProvider,
   HostNodeProviderInstance,
@@ -1914,6 +1916,108 @@ describe('HostNodeDomainPorts', () => {
       )
     ).resolves.toEqual({ status: 'failed', errorCode: 'provider_offers_unavailable' })
     await domain.shutdown()
+  })
+
+  it('starts an Ollama send after one failed offers refresh, as the last good refresh offered it', async () => {
+    // The Ollama adapter validated each run against the offers of the latest
+    // refresh, so one failed refresh (a daemon blip, a slow /api/tags) emptied
+    // them and refused every model, even an installed local one, right after
+    // this gate had validated the send against the last-known-good set. The
+    // real adapter and catalog run here with only the network stubbed; the
+    // daemon misses exactly the send's refresh and is back for the run.
+    const { domainOptions, store, workspace } = open()
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'ollama',
+      modelId: 'qwen3.5:9b',
+      postureId: 'plan'
+    })
+    let failingTagReads = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string | URL | Request) => {
+        const url = String(input)
+        if (url.endsWith('/api/tags') && failingTagReads > 0) {
+          failingTagReads -= 1
+          throw new TypeError('fetch failed')
+        }
+        if (url.endsWith('/api/tags')) {
+          return new Response(JSON.stringify({ models: [{ model: 'qwen3.5:9b' }] }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' }
+          })
+        }
+        if (url.endsWith('/api/chat')) {
+          const chunk = {
+            model: 'qwen3.5:9b',
+            created_at: '2026-08-24T05:00:00.000Z',
+            message: { role: 'assistant', content: 'Still here.' },
+            done: true
+          }
+          return new Response(`${JSON.stringify(chunk)}\n`, { status: 200 })
+        }
+        throw new TypeError('fetch failed')
+      })
+    )
+    const domain = new HostNodeDomainPorts({
+      ...domainOptions,
+      hostQueuedStartEnabled: false,
+      providers: [
+        createHostNodeOllamaProviderFactory({
+          offers: hostNodeOllamaOffersFromCatalog({ models: [] }),
+          baseUrl: 'http://127.0.0.1:11434'
+        })
+      ]
+    })
+    try {
+      const good = await domain.providerOffers('ollama')
+      expect(good.models).toEqual([
+        expect.objectContaining({ modelId: 'qwen3.5:9b', available: true })
+      ])
+      // Expire the adapter's one-second catalog cache so the send's refresh
+      // goes to the daemon, which then misses that one read.
+      const adapter = domain.registry.getInstance('ollama') as unknown as {
+        catalogCache?: unknown
+      }
+      adapter.catalogCache = undefined
+      failingTagReads = 1
+
+      await expect(
+        domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'run-ollama-after-blip',
+            { threadId: thread.appChatId },
+            { text: 'Are you still there?' }
+          ),
+          { id: 'target' }
+        )
+      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'run_started' })
+      expect(failingTagReads).toBe(0)
+      await vi.waitFor(() =>
+        expect(store.getThread(thread.appChatId)?.runs).toEqual([
+          expect.objectContaining({ runId: 'run-ollama-after-blip', status: 'completed' })
+        ])
+      )
+      expect(
+        store
+          .getThread(thread.appChatId)
+          ?.messages.map((message) => [message.role, message.content])
+      ).toEqual([
+        [
+          'system',
+          'Provider catalogue refresh failed · this send was validated against the last known offer set.'
+        ],
+        ['user', 'Are you still there?'],
+        ['assistant', 'Still here.']
+      ])
+    } finally {
+      await domain.shutdown()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('hands Mistral a bounded transcript for cold sessions, without Host notices in it', async () => {

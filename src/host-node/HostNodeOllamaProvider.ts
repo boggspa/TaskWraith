@@ -198,7 +198,15 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
   private readonly cloudApiKey: string | null
   private readonly terminalLauncher?: HostNodeProviderTerminalLauncher
   private readonly rememberedCliSignIn?: () => OllamaCliSignInRecord | null
-  private currentOffers: HostProviderOffersProjection
+  /**
+   * What `validateThread` judges a selection against: the offers of the last
+   * refresh that read the catalog. A refresh whose read failed publishes the
+   * honest empty offers but leaves this set alone, because a failed read says
+   * nothing about which models exist; this is the same last-known-good rule
+   * the Domain send gate applies. Until a read succeeds it is the composition
+   * catalog, empty in production, so a Host that never read one fails closed.
+   */
+  private lastReadOffers: HostProviderOffersProjection
   private readonly executeTool?: (
     toolCall: OllamaToolCall
   ) => Promise<{ ok: boolean; result: string }>
@@ -218,7 +226,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     this.cloudApiKey = options.cloudApiKey ?? null
     this.terminalLauncher = options.terminalLauncher
     this.rememberedCliSignIn = options.rememberedCliSignIn
-    this.currentOffers = options.offers
+    this.lastReadOffers = options.offers
     this.executeTool = options.executeTool
   }
 
@@ -256,10 +264,11 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
 
   async getOffers(): Promise<HostProviderOffersProjection> {
     const status = await this.runtimeStatus()
-    this.currentOffers = hostNodeOllamaOffersFromCatalog({
+    const offers = hostNodeOllamaOffersFromCatalog({
       models: status.catalog?.models ?? []
     })
-    return this.currentOffers
+    if (status.catalog) this.lastReadOffers = offers
+    return offers
   }
 
   /** A missing daemon is a present `unavailable` row, never an omission. */
@@ -341,7 +350,13 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     return false
   }
 
-  /** Validate a thread's Ollama selection against the catalog offers. */
+  /**
+   * Validate a thread's Ollama selection against the offers of the last
+   * refresh that read the catalog. One failed read (a daemon blip, a slow
+   * `/api/tags`) must not refuse every model the Host already knows; the
+   * run's own catalog check in `ensureModelAvailable` still decides whether
+   * the model can run now.
+   */
   validateThread(thread: HostProviderRunThread): HostProviderRunThread {
     const normalized = normalizeHostProviderRunThread(thread)
     if (!normalized) {
@@ -350,7 +365,7 @@ export class HostNodeOllamaProvider implements HostNodeProviderInstance {
     if (normalized.providerId !== OLLAMA_PROVIDER_ID) {
       throw new HostNodeOllamaValidationError('Thread is not configured for Ollama.')
     }
-    const model = this.currentOffers.models.find((entry) => entry.modelId === normalized.modelId)
+    const model = this.lastReadOffers.models.find((entry) => entry.modelId === normalized.modelId)
     if (!model) {
       throw new HostNodeOllamaValidationError('Ollama model is not offered by the Host catalog.')
     }
