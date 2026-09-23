@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { OLLAMA_CLOUD_PROBE_TIMEOUT_MS } from './OllamaCliSignInMemory'
 import {
   discoverOllamaCloud,
   discoverOllamaCloudAccount,
@@ -7,6 +8,44 @@ import {
 } from './OllamaDaemonClient'
 
 const REMEMBERED = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+
+/** A signed-in daemon whose account relay answers only after `delayMs`. */
+function daemonAnsweringAccountAfter(delayMs: number): typeof fetch {
+  return vi.fn((input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input)
+    if (url.endsWith('/api/tags')) {
+      return Promise.resolve(
+        new Response(JSON.stringify({ models: [{ model: 'qwen3.5:9b' }] }), {
+          status: 200,
+          headers: { 'content-type': 'application/json' }
+        })
+      )
+    }
+    if (url.endsWith('/api/me')) {
+      return new Promise<Response>((resolve, reject) => {
+        const answer = setTimeout(
+          () =>
+            resolve(
+              new Response(JSON.stringify({ plan: 'pro' }), {
+                status: 200,
+                headers: { 'content-type': 'application/json' }
+              })
+            ),
+          delayMs
+        )
+        init?.signal?.addEventListener(
+          'abort',
+          () => {
+            clearTimeout(answer)
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          },
+          { once: true }
+        )
+      })
+    }
+    return Promise.reject(new TypeError('fetch failed'))
+  }) as unknown as typeof fetch
+}
 
 /** A daemon that lists a pulled Cloud tag but whose account relay never answers. */
 function daemonWithSilentAccount(): typeof fetch {
@@ -415,5 +454,28 @@ describe('OllamaDaemonClient model presentation', () => {
     await expect(
       discoverOllamaCloudAccount('http://127.0.0.1:11434', { timeoutMs: 20 })
     ).resolves.toMatchObject({ supported: false, authenticated: null, accountProbe: 'refused' })
+  })
+
+  // The Host gave the account relay 1.5 s while main gave it 4 s, so one slow
+  // `/api/me` read as signed in on the desktop and as unknown in the Host.
+  it('waits for the account answer exactly as long as main does', async () => {
+    vi.useFakeTimers()
+    try {
+      const cases = [
+        { delayMs: OLLAMA_CLOUD_PROBE_TIMEOUT_MS - 500, accountProbe: 'answered' },
+        { delayMs: OLLAMA_CLOUD_PROBE_TIMEOUT_MS + 500, accountProbe: 'timed-out' }
+      ]
+      for (const { delayMs, accountProbe } of cases) {
+        vi.stubGlobal('fetch', daemonAnsweringAccountAfter(delayMs))
+        const catalog = fetchOllamaModelCatalog('http://127.0.0.1:11434')
+        const account = discoverOllamaCloudAccount('http://127.0.0.1:11434')
+        await vi.advanceTimersByTimeAsync(delayMs)
+        const authenticated = accountProbe === 'answered' ? true : null
+        await expect(catalog).resolves.toMatchObject({ cloud: { authenticated, accountProbe } })
+        await expect(account).resolves.toMatchObject({ authenticated, accountProbe })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

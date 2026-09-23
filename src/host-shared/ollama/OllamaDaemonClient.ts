@@ -21,6 +21,7 @@ import {
 } from '../../shared/ollamaModelAvailability'
 import {
   applyRememberedOllamaCliSignIn,
+  OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
   type OllamaCliSignInRecord,
   type OllamaProbeOutcome
 } from './OllamaCliSignInMemory'
@@ -233,7 +234,7 @@ async function readJsonWithDeadline(
   const timer = setTimeout(() => {
     deadlineFired = true
     controller.abort()
-  }, options.timeoutMs ?? 1_500)
+  }, options.timeoutMs ?? OLLAMA_CLOUD_PROBE_TIMEOUT_MS)
   try {
     const response = await fetch(url, { ...init, signal: controller.signal })
     let value: unknown = null
@@ -659,7 +660,10 @@ export async function fetchOllamaModelCatalog(
       ? { supported: false, enabled: true, authenticated: null, models: [] }
       : await discoverOllamaCloudAccount(normalizedBaseUrl, {
           signal: options.signal,
-          timeoutMs: Math.min(options.timeoutMs ?? 3_000, 1_500),
+          timeoutMs: Math.min(
+            options.timeoutMs ?? OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
+            OLLAMA_CLOUD_PROBE_TIMEOUT_MS
+          ),
           cloudApiKey: options.cloudApiKey,
           daemonCloudModels
         })

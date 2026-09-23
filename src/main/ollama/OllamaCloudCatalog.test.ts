@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { OLLAMA_CLOUD_PROBE_TIMEOUT_MS } from './OllamaCliSignInMemory'
 import { discoverOllamaCloud, normalizeOllamaCloudRecommendations } from './OllamaCloudCatalog'
 
 function jsonResponse(value: unknown, status = 200): Response {
@@ -246,5 +247,40 @@ describe('discoverOllamaCloud', () => {
         signal: controller.signal
       })
     ).resolves.toMatchObject({ authenticated: null, accountProbe: 'aborted' })
+  })
+
+  // The Host lane waits on the same constant, so main and the Host give one
+  // slow `/api/me` the same answer.
+  it('waits for the account answer up to the deadline it shares with the Host', async () => {
+    vi.useFakeTimers()
+    try {
+      for (const [delayMs, accountProbe] of [
+        [OLLAMA_CLOUD_PROBE_TIMEOUT_MS - 500, 'answered'],
+        [OLLAMA_CLOUD_PROBE_TIMEOUT_MS + 500, 'timed-out']
+      ] as const) {
+        const answerAfterDelay = vi.fn(
+          (url: string, init?: RequestInit) =>
+            new Promise<Response>((resolve, reject) => {
+              if (!url.endsWith('/api/me')) return reject(new TypeError('fetch failed'))
+              const answer = setTimeout(() => resolve(jsonResponse({ plan: 'pro' })), delayMs)
+              init?.signal?.addEventListener(
+                'abort',
+                () => {
+                  clearTimeout(answer)
+                  reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+                },
+                { once: true }
+              )
+            })
+        ) as unknown as typeof fetch
+        const discovery = discoverOllamaCloud('http://127.0.0.1:11434', {
+          fetchImpl: answerAfterDelay
+        })
+        await vi.advanceTimersByTimeAsync(delayMs)
+        await expect(discovery).resolves.toMatchObject({ accountProbe })
+      }
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

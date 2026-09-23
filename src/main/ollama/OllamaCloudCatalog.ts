@@ -4,7 +4,7 @@ import {
   ollamaCloudBaseModelId
 } from '../../shared/ollamaModelAvailability'
 import { fetchOllamaCloudApiCatalog } from './OllamaCloudApi'
-import type { OllamaProbeOutcome } from './OllamaCliSignInMemory'
+import { OLLAMA_CLOUD_PROBE_TIMEOUT_MS, type OllamaProbeOutcome } from './OllamaCliSignInMemory'
 
 export interface OllamaCloudModelRecommendation {
   model: string
@@ -44,15 +44,6 @@ interface JsonResult {
   value: unknown
   outcome: OllamaProbeOutcome
 }
-
-/**
- * Deadline shared by every daemon request in one discovery. It is armed on
- * main's event loop, so a long synchronous stall (a large chat parse at
- * relaunch) spends it before the socket is even read; `/api/me` measures
- * 110-200 ms warm and 445 ms at the slowest relaunch seen, so this leaves real
- * headroom without letting a hung daemon pin a status card for long.
- */
-export const OLLAMA_CLOUD_PROBE_TIMEOUT_MS = 4_000
 
 function positiveInteger(value: unknown): number | undefined {
   const number = typeof value === 'number' ? value : Number(value)

@@ -64,12 +64,12 @@ import {
   type OllamaSessionMemory
 } from './OllamaRunMemory'
 import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
+import { discoverOllamaCloud, type OllamaCloudDiscoverySnapshot } from './OllamaCloudCatalog'
 import {
-  discoverOllamaCloud,
-  OLLAMA_CLOUD_PROBE_TIMEOUT_MS,
-  type OllamaCloudDiscoverySnapshot
-} from './OllamaCloudCatalog'
-import { applyRememberedOllamaCliSignIn, normalizeOllamaCliSignIn } from './OllamaCliSignInMemory'
+  applyRememberedOllamaCliSignIn,
+  normalizeOllamaCliSignIn,
+  OLLAMA_CLOUD_PROBE_TIMEOUT_MS
+} from './OllamaCliSignInMemory'
 import { OLLAMA_CLOUD_API_BASE_URL, ollamaCloudApiHeaders } from './OllamaCloudApi'
 import { resolveOllamaTurnNumPredict, type OllamaThinkingSetting } from './OllamaRunProfiles'
 import {

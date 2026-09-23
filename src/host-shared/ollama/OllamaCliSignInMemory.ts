@@ -28,6 +28,18 @@ export interface OllamaCliSignInRecord {
  */
 export type OllamaProbeOutcome = 'answered' | 'refused' | 'timed-out' | 'aborted'
 
+/**
+ * Deadline for one Cloud account probe, shared by main and the Host so the
+ * same slow `POST /api/me` cannot read as signed in on the desktop and as
+ * unknown in the Host. `/api/status` and the recommendations request share
+ * it, and a caller's own shorter deadline still wins. `/api/me` is a round
+ * trip the daemon relays to ollama.com: 110-200 ms warm and 445 ms at the
+ * slowest relaunch seen. Main arms it on an event loop a large chat parse can
+ * stall at relaunch, which is what the headroom is for; a hung daemon still
+ * cannot pin a status card for long.
+ */
+export const OLLAMA_CLOUD_PROBE_TIMEOUT_MS = 4_000
+
 /** The subset of a cloud-discovery snapshot this memory reads and repairs. */
 export interface OllamaCliSignInObservation {
   readonly supported: boolean
