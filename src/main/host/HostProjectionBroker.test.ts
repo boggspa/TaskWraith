@@ -10,9 +10,13 @@ import {
 import {
   hasExternalHostBootHold,
   holdExternalHostForBoot,
-  releaseExternalHostBootHold
+  releaseAllExternalHostBootHolds
 } from './HostExternalBootHold'
-import { createHostProjectionBroker, type HostProjectionClientPort } from './HostProjectionBroker'
+import {
+  createHostProjectionBroker,
+  type HostProjectionClientPort,
+  type HostProjectionTransportErrorReport
+} from './HostProjectionBroker'
 import { HostProjectionTransportError } from './HostProjectionClient'
 import { ThreadCatalogueRequestError } from '../../shared/threadCatalogueRequestError'
 
@@ -331,47 +335,177 @@ describe('HostProjectionBroker', () => {
   })
 
   /**
-   * S1a review F2: the spawner's probe holds the Host across main's boot, and
-   * main's own lasting client takes over the moment it authenticates — not
-   * before, or a slow boot could still outlast the Host's last-lease grace.
+   * D2: a broker socket is a per-request connection and never a reason for the
+   * Host to stay up. Each one declines the lease right after its welcome,
+   * before any request can use it, and again on every reconnect.
    */
-  it('releases the boot hold once its own client authenticates, and never on a failed connect', async () => {
-    const held = { close: vi.fn() }
-    holdExternalHostForBoot({}, held)
-    try {
-      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
-      const port = (connect: () => Promise<unknown>): HostProjectionClientPort => ({
-        connect: vi.fn(connect),
-        getSnapshot: vi.fn(async () => ({ snapshot })),
+  it('broker sockets never hold the Host: each connect declines before its first request', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    const order: string[] = []
+    const sockets: Array<HostProjectionClientPort & { connected: boolean }> = []
+    const createClient = vi.fn(() => {
+      const index = sockets.length + 1
+      const socket = {
+        connected: false,
+        connect: vi.fn(async () => {
+          order.push(`connect#${index}`)
+          socket.connected = true
+        }),
+        declineHostLease: vi.fn(async () => {
+          order.push(`decline#${index}`)
+        }),
+        getSnapshot: vi.fn(async () => {
+          order.push(`snapshot#${index}`)
+          if (index === 1) {
+            socket.connected = false
+            throw new Error('TaskWraith Host disconnected.')
+          }
+          return { snapshot }
+        }),
         getDeltasSince: vi.fn(),
         submitCommand: vi.fn(),
         lookupReceipt: vi.fn(),
-        close: vi.fn()
-      })
-      const createClient = vi
-        .fn()
-        .mockReturnValueOnce(
-          port(async () => {
-            throw new Error('Timed out connecting to the TaskWraith Host.')
-          })
-        )
-        .mockReturnValueOnce(port(async () => undefined))
+        close: vi.fn(() => {
+          socket.connected = false
+        })
+      }
+      sockets.push(socket)
+      return socket
+    })
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient
+    })
+
+    await expect(broker.snapshot()).resolves.toMatchObject({ ok: false })
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    expect(order).toEqual([
+      'connect#1',
+      'decline#1',
+      'snapshot#1',
+      'connect#2',
+      'decline#2',
+      'snapshot#2'
+    ])
+    broker.close()
+  })
+
+  it('never uses a socket whose decline failed, and tolerates a Host that predates leases', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    const port = (decline: () => Promise<void>) => ({
+      connected: true,
+      connect: vi.fn(async () => undefined),
+      declineHostLease: vi.fn(decline),
+      getSnapshot: vi.fn(async () => ({ snapshot })),
+      getDeltasSince: vi.fn(),
+      submitCommand: vi.fn(),
+      lookupReceipt: vi.fn(),
+      close: vi.fn()
+    })
+    const refused = port(async () => {
+      throw new HostProjectionTransportError('host_unavailable')
+    })
+    const legacy = port(async () => {
+      throw new HostProjectionTransportError('unknown_request_kind')
+    })
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient: vi
+        .fn<() => HostProjectionClientPort>()
+        .mockReturnValueOnce(refused)
+        .mockReturnValue(legacy)
+    })
+    await expect(broker.snapshot()).resolves.toMatchObject({ ok: false })
+    expect(refused.getSnapshot).not.toHaveBeenCalled()
+    expect(refused.close).toHaveBeenCalledTimes(1)
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    expect(legacy.getSnapshot).toHaveBeenCalledTimes(1)
+    broker.close()
+  })
+
+  /**
+   * S1a re-review RN3: the boot hold used to be released by the first broker
+   * connect. A broker socket declines, so it cannot stand in for the hold;
+   * only main's explicit lease acquire lets it go (HostLeaseReasons).
+   */
+  it("leaves the spawner's boot hold alone when a broker socket connects", async () => {
+    const held = { close: vi.fn() }
+    const profile = '/tmp/taskwraith-host-broker-test'
+    holdExternalHostForBoot(profile, {}, held)
+    try {
+      const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
       const broker = createHostProjectionBroker({
-        userDataPath: '/tmp/taskwraith-host-broker-test',
+        userDataPath: profile,
         appVersion: 'test',
-        createClient
+        createClient: () => ({
+          connected: true,
+          connect: vi.fn(async () => undefined),
+          declineHostLease: vi.fn(async () => undefined),
+          getSnapshot: vi.fn(async () => ({ snapshot })),
+          getDeltasSince: vi.fn(),
+          submitCommand: vi.fn(),
+          lookupReceipt: vi.fn(),
+          close: vi.fn()
+        })
       })
-
-      await expect(broker.snapshot()).resolves.toMatchObject({ ok: false })
-      expect(held.close).not.toHaveBeenCalled()
-      expect(hasExternalHostBootHold()).toBe(true)
-
       await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
-      expect(held.close).toHaveBeenCalledTimes(1)
-      expect(hasExternalHostBootHold()).toBe(false)
+      expect(held.close).not.toHaveBeenCalled()
+      expect(hasExternalHostBootHold(profile)).toBe(true)
       broker.close()
     } finally {
-      releaseExternalHostBootHold()
+      releaseAllExternalHostBootHolds()
     }
+  })
+
+  /**
+   * D10: every typed Host error reaches the poison detector with the identity
+   * it ran under, and an `unauthorized` on a still-connected socket is still
+   * scoped to its request (the socket is not evicted).
+   */
+  it('reports unauthorized under the Desktop identity and still keeps the connected socket', async () => {
+    const snapshot = createEmptyHostSnapshot({ generation: 1, cursor: 0 })
+    const reports: HostProjectionTransportErrorReport[] = []
+    const client = {
+      connected: true,
+      connect: vi.fn(async () => undefined),
+      declineHostLease: vi.fn(async () => undefined),
+      getSnapshot: vi.fn(async () => ({ snapshot })),
+      getDeltasSince: vi.fn(),
+      submitCommand: vi.fn(),
+      lookupReceipt: vi.fn(),
+      queryThreadCatalogue: vi.fn(async () => {
+        throw new HostProjectionTransportError('unauthorized')
+      }),
+      close: vi.fn()
+    }
+    const broker = createHostProjectionBroker({
+      userDataPath: '/tmp/taskwraith-host-broker-test',
+      appVersion: 'test',
+      createClient: () => client,
+      onTransportError: (report) => {
+        reports.push(report)
+        throw new Error('a failing listener must not change the outcome')
+      }
+    })
+    await expect(
+      broker.queryThreadCatalogue?.({ method: 'open', chatId: 'chat-1', mode: 'metadata' })
+    ).rejects.toThrow('unauthorized')
+    expect(reports).toEqual([
+      {
+        code: 'unauthorized',
+        operation: 'catalogue',
+        clientId: TASKWRAITH_DESKTOP_HOST_CLIENT_ID,
+        connected: true
+      }
+    ])
+    expect(client.close).not.toHaveBeenCalled()
+    await expect(broker.snapshot()).resolves.toEqual({ ok: true, snapshot })
+    // A generic failure is not a Host answer and is not reported.
+    client.getSnapshot.mockRejectedValueOnce(new Error('boom'))
+    await expect(broker.snapshot()).resolves.toMatchObject({ ok: false })
+    expect(reports).toHaveLength(1)
+    broker.close()
   })
 })

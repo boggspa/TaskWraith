@@ -22,7 +22,6 @@ import {
   TASKWRAITH_DESKTOP_HOST_CAPABILITIES,
   TASKWRAITH_DESKTOP_HOST_CLIENT_ID
 } from '../../shared/hostProtocol'
-import { releaseExternalHostBootHold } from './HostExternalBootHold'
 import { HostProjectionClient, HostProjectionTransportError } from './HostProjectionClient'
 
 export type HostProjectionSnapshotResult =
@@ -56,6 +55,27 @@ export interface HostProjectionClientPort {
     options?: ThreadCatalogueRequestOptions
   ): Promise<T>
   maintainThreadCatalogue?<T = unknown>(request: ThreadCatalogueMaintenanceQuery): Promise<T>
+  /** Say this socket is not a holder of the Host (`host.lease` decline). */
+  declineHostLease?(): Promise<void>
+}
+
+/** What a broker request was doing when the Host answered a typed error. */
+export type HostProjectionBrokerOperation =
+  | 'snapshot'
+  | 'deltas'
+  | 'command'
+  | 'receipt'
+  | 'catalogue'
+  | 'catalogue-maintenance'
+
+/** One body-free Host error, reported for diagnosis (the poison detector). */
+export interface HostProjectionTransportErrorReport {
+  readonly code: HostProjectionTransportError['code']
+  readonly operation: HostProjectionBrokerOperation
+  /** The authenticated identity the failing socket bound as. */
+  readonly clientId: string
+  /** Whether the failing socket was still connected (a request-scoped refusal). */
+  readonly connected: boolean
 }
 
 export interface HostProjectionBroker {
@@ -78,6 +98,11 @@ export interface HostProjectionBrokerOptions {
   readonly actor?: HostActorIdentity
   readonly capabilities?: readonly HostCapability[]
   readonly createClient?: () => HostProjectionClientPort
+  /**
+   * Every typed Host error a request met, with the operation it failed and
+   * the identity it ran under. Called synchronously; must not throw.
+   */
+  readonly onTransportError?: (report: HostProjectionTransportErrorReport) => void
 }
 
 function errorText(error: unknown): string {
@@ -94,6 +119,23 @@ function sameCapabilitySet(
   const wanted = new Set(right)
   const got = new Set(left)
   return wanted.size === got.size && [...wanted].every((capability) => got.has(capability))
+}
+
+/**
+ * A broker socket is a per-request connection, never a reason for the Host to
+ * stay up: main's lease socket (`HostLeaseReasons`) is. A Host that predates
+ * leases answers `unknown_request_kind` and has nothing to decline.
+ */
+async function declineLease(candidate: HostProjectionClientPort): Promise<void> {
+  if (typeof candidate.declineHostLease !== 'function') return
+  try {
+    await candidate.declineHostLease()
+  } catch (error) {
+    if (error instanceof HostProjectionTransportError && error.code === 'unknown_request_kind') {
+      return
+    }
+    throw error
+  }
 }
 
 /** One authenticated Desktop Host session shared by every main-process consumer. */
@@ -189,14 +231,14 @@ export function createHostProjectionBroker(
     const work = (async (): Promise<HostProjectionClientPort> => {
       try {
         await next.connect()
+        // Declined before any request can use the socket: a broker socket
+        // never counts as a holder of the Host, only main's lease does.
+        await declineLease(next)
         if (epoch !== connectionEpoch) {
           closeClient(next)
           throw new Error('Host projection connection was superseded')
         }
         client = next
-        // One of main's own lasting clients is authenticated and holding the
-        // Host, so the spawner's boot hold has done its job.
-        releaseExternalHostBootHold()
         return next
       } catch (error) {
         if (client !== next) closeClient(next)
@@ -215,7 +257,26 @@ export function createHostProjectionBroker(
     }
   }
 
+  const reportTransportError = (
+    operation: HostProjectionBrokerOperation,
+    error: unknown,
+    connected: boolean
+  ): void => {
+    if (!options.onTransportError || !(error instanceof HostProjectionTransportError)) return
+    try {
+      options.onTransportError({
+        code: error.code,
+        operation,
+        clientId: clientIdentity.clientId,
+        connected
+      })
+    } catch {
+      // Diagnosis must never change the request's own outcome.
+    }
+  }
+
   const withClient = async <T>(
+    operation: HostProjectionBrokerOperation,
     run: (active: HostProjectionClientPort) => Promise<T>
   ): Promise<{ ok: true; value: T } | { ok: false; error: string; errorCause: unknown }> => {
     let lease: { readonly client: HostProjectionClientPort; readonly epoch: number } | undefined
@@ -230,10 +291,12 @@ export function createHostProjectionBroker(
       // Generic errors and typed errors observed after disconnect still evict
       // this exact lease. The epoch/client guard prevents a late rejection
       // from an older client from closing a replacement that already connected.
+      const connected = lease?.client.connected === true
       const reusableRequestFailure =
-        lease?.client.connected === true &&
+        connected &&
         (error instanceof HostProjectionTransportError ||
           error instanceof ThreadCatalogueRequestError)
+      reportTransportError(operation, error, connected)
       if (lease && !reusableRequestFailure) discardClient(lease)
       return { ok: false, error: errorText(error), errorCause: error }
     }
@@ -241,7 +304,7 @@ export function createHostProjectionBroker(
 
   const broker: HostProjectionBroker = {
     async maintainThreadCatalogue<T>(request: ThreadCatalogueMaintenanceQuery): Promise<T> {
-      const outcome = await withClient(async (active) => {
+      const outcome = await withClient('catalogue-maintenance', async (active) => {
         if (!active.maintainThreadCatalogue) throw new Error('History maintenance is unavailable')
         return active.maintainThreadCatalogue<T>(request)
       })
@@ -256,7 +319,7 @@ export function createHostProjectionBroker(
       request: ThreadCatalogueReadQuery,
       options: ThreadCatalogueRequestOptions = {}
     ): Promise<T> {
-      const outcome = await withClient(async (active) => {
+      const outcome = await withClient('catalogue', async (active) => {
         if (!active.queryThreadCatalogue) throw new Error('History catalogue is unavailable')
         return active.queryThreadCatalogue<T>(request, options)
       })
@@ -268,14 +331,14 @@ export function createHostProjectionBroker(
       return outcome.value
     },
     async snapshot() {
-      const outcome = await withClient((active) => active.getSnapshot())
+      const outcome = await withClient('snapshot', (active) => active.getSnapshot())
       return outcome.ok
         ? { ok: true, snapshot: outcome.value.snapshot }
         : { ok: false, error: outcome.error }
     },
 
     async deltasSince(position) {
-      const outcome = await withClient((active) => active.getDeltasSince(position))
+      const outcome = await withClient('deltas', (active) => active.getDeltasSince(position))
       return outcome.ok
         ? { ok: true, result: outcome.value.result }
         : { ok: false, error: outcome.error }
@@ -286,12 +349,14 @@ export function createHostProjectionBroker(
         ...command,
         actor: { ...actorIdentity }
       }
-      const outcome = await withClient((active) => active.submitCommand(authenticatedCommand))
+      const outcome = await withClient('command', (active) =>
+        active.submitCommand(authenticatedCommand)
+      )
       return outcome.ok ? { ok: true, receipt: outcome.value } : { ok: false, error: outcome.error }
     },
 
     async lookupReceipt(commandId) {
-      const outcome = await withClient((active) => active.lookupReceipt({ commandId }))
+      const outcome = await withClient('receipt', (active) => active.lookupReceipt({ commandId }))
       return outcome.ok ? { ok: true, receipt: outcome.value } : { ok: false, error: outcome.error }
     },
 

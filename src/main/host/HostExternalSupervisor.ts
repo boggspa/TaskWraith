@@ -5,10 +5,26 @@ import { isAbsolute, resolve } from 'node:path'
 
 import {
   HostProjectionClient,
-  HostProjectionIncompatibleProtocolError
+  HostProjectionIncompatibleProtocolError,
+  type HostProjectionDiscoveryProcessIdentity
 } from '../../host-client/HostProjectionClient'
-import type { HostCapability, HostBootstrapWelcome } from '../../shared/hostProtocol'
+import {
+  HOST_TERMINATION_SUCCESS_KINDS,
+  hostTerminationExpectation,
+  isHostServeCommandFor,
+  readHostTerminationEvidence,
+  terminateHostProcess,
+  type HostTerminationOutcome
+} from '../../host-client/HostProcessTermination'
 import { HostShutdownClient } from '../../host-client/HostShutdownClient'
+import { resolveHostRegistryRoot } from '../../host-runtime/HostRegistry'
+import {
+  matchProcessBirth,
+  observeProcessBirthIdentity,
+  observeProcessCommandLine
+} from '../../host-runtime/ProcessBirthIdentity'
+import type { HostLifecycleHostIdentity } from '../../shared/hostLifecycle'
+import type { HostCapability, HostBootstrapWelcome } from '../../shared/hostProtocol'
 import {
   holdExternalHostForBoot,
   releaseExternalHostBootHold,
@@ -21,6 +37,36 @@ import type { HostExternalLaunchCommand } from './HostExternalLaunchResolver'
  *  projection reconciler then re-reads the chat list on a 1s main-process
  *  timer. Keep a bounded tail so the failure can name itself. */
 const STDERR_TAIL_LIMIT = 2_000
+
+/**
+ * How long a launch waits for a Host that is still stopping to let go of the
+ * profile authority (S1a review A2/C2). A Host stops on its own now — its last
+ * lease went, or its registry entry did — and for that whole stop its listener
+ * is closed while it still holds the authority, so a Host spawned in that
+ * window exits at once with "The profile authority is held by pid N (owner is
+ * live)". Such a stop ends within the Host's HOST_LIFETIME_STOP_DEADLINE_MS
+ * (120 s; `src/host-node/HostNodeProductionServer.ts`), and a stop that fails
+ * or overruns ends the process. This literal keeps a margin over that
+ * deadline; `HostExternalSupervisor.test.ts` pins it against the Host's
+ * constant so the two cannot drift apart. It is a literal because importing
+ * the Host server here would pull the whole Host into main's bootstrap bundle.
+ */
+export const HOST_EXTERNAL_AUTHORITY_WAIT_MS = 135_000
+
+/** Poll cadence while waiting on a stopping Host: two `ps` reads per poll. */
+const AUTHORITY_POLL_MS = 500
+
+/** One launch, plus a respawn after each stopping Host a launch had to wait out. */
+const DEFAULT_MAX_LAUNCH_ATTEMPTS = 3
+
+/**
+ * The Host's refusal to start while another live process holds the profile
+ * authority (`HostProfileAuthorityLeaseBusyError`, printed by the Host CLI).
+ * An indeterminate owner is not matched: nothing waits on what it cannot
+ * verify.
+ */
+export const HOST_AUTHORITY_BUSY_PATTERN =
+  /The profile authority is held by pid (\d+) \(owner is live\)/
 
 const FLOOR: readonly HostCapability[] = [
   'commands',
@@ -36,17 +82,24 @@ export type HostExternalSupervisorStatus =
   | 'idle'
   | 'probing'
   | 'launching'
+  | 'waiting-for-authority'
   | 'restarting'
   | 'attached-existing'
   | 'attached-launched'
   | 'failed'
   | 'closed'
 export type HostExternalEnsureResult =
-  | { readonly kind: 'existing'; readonly welcome: HostBootstrapWelcome }
+  | {
+      readonly kind: 'existing'
+      readonly welcome: HostBootstrapWelcome
+      /** From the discovery record the probe authenticated through. */
+      readonly host?: HostLifecycleHostIdentity
+    }
   | {
       readonly kind: 'launched'
       readonly pid: number | null
       readonly welcome: HostBootstrapWelcome
+      readonly host?: HostLifecycleHostIdentity
     }
 
 export class HostExternalProductionModeError extends HostProjectionIncompatibleProtocolError {
@@ -56,11 +109,34 @@ export class HostExternalProductionModeError extends HostProjectionIncompatibleP
   }
 }
 
+/**
+ * Who holds this profile's authority lease, judged by the pid it names:
+ * `none` when there is no record or its pid is dead or reused (the next Host
+ * reclaims it), `host` when that pid is alive with the recorded birth and runs
+ * a Host serving this profile, `unverifiable` otherwise (identity unavailable,
+ * no birth evidence, or not a Host — the in-process lane records Electron
+ * main's own pid).
+ */
+export type HostExternalAuthorityOwner =
+  | { readonly kind: 'none' }
+  | { readonly kind: 'host'; readonly pid: number }
+  | { readonly kind: 'unverifiable'; readonly pid: number; readonly detail: string }
+
 export interface HostExternalSupervisorOptions {
   readonly profilePath: string
   readonly probe?: (timeoutMs: number) => Promise<HostBootstrapWelcome | HostExternalProbeResult>
   readonly resolveLaunch: () => Promise<HostExternalLaunchCommand | null>
   readonly shutdownExisting?: (profilePath: string) => Promise<unknown>
+  /**
+   * Verified termination (D9) after `shutdownExisting` failed: identity-checked
+   * TERM then KILL. `cause` is the socket failure, so the socket stop is not
+   * asked twice.
+   */
+  readonly terminateExisting?: (
+    profilePath: string,
+    cause: unknown
+  ) => Promise<Pick<HostTerminationOutcome, 'kind' | 'pid' | 'detail'>>
+  readonly observeAuthorityOwner?: (profilePath: string) => Promise<HostExternalAuthorityOwner>
   readonly spawn?: (
     executable: string,
     args: readonly string[],
@@ -71,11 +147,17 @@ export interface HostExternalSupervisorOptions {
   readonly timeoutMs?: number
   readonly pollMs?: number
   readonly probeTimeoutMs?: number
+  readonly authorityWaitMs?: number
+  readonly authorityPollMs?: number
+  readonly maxLaunchAttempts?: number
+  readonly log?: (line: string) => void
 }
 
 export interface HostExternalProbeResult {
   readonly welcome: HostBootstrapWelcome
   readonly payloadVersion?: string
+  /** The discovery record's process identity (pid, start, install id, payload). */
+  readonly process?: HostProjectionDiscoveryProcessIdentity
   /**
    * The probe's still-open authenticated connection. The supervisor keeps the
    * one behind the result it returns as the boot hold (`HostExternalBootHold`)
@@ -99,6 +181,21 @@ function normalizeProbeResult(
   return 'welcome' in value ? value : { welcome: value }
 }
 
+/** The snapshot's identity block, only when the discovery named everything it needs. */
+function hostIdentityOf(result: HostExternalProbeResult): HostLifecycleHostIdentity | undefined {
+  const process = result.process
+  const hostId = process?.hostId ?? result.welcome.hostId
+  if (!process || !Number.isSafeInteger(process.pid) || process.pid < 1 || !hostId) {
+    return undefined
+  }
+  return {
+    pid: process.pid,
+    hostId,
+    startedAt: process.startedAt,
+    ...(process.payloadVersion ? { payloadVersion: process.payloadVersion } : {})
+  }
+}
+
 async function defaultProbe(
   profilePath: string,
   timeoutMs: number
@@ -116,14 +213,65 @@ async function defaultProbe(
   })
   try {
     const welcome = await client.connect()
-    const payloadVersion = client.discoveryProcessIdentity?.payloadVersion
+    const process = client.discoveryProcessIdentity ?? undefined
+    const payloadVersion = process?.payloadVersion
     // Left open: the supervisor decides whether this connection holds the
     // Host across main's boot or closes now.
-    return { welcome, ...(payloadVersion ? { payloadVersion } : {}), connection: client }
+    return {
+      welcome,
+      ...(payloadVersion ? { payloadVersion } : {}),
+      ...(process ? { process } : {}),
+      connection: client
+    }
   } catch (error) {
     client.close()
     throw error
   }
+}
+
+async function defaultTerminateExisting(
+  profilePath: string,
+  cause: unknown
+): Promise<HostTerminationOutcome> {
+  return terminateHostProcess({
+    profilePath,
+    // The socket stop already failed on this very path; go straight to the
+    // identity-verified signals instead of asking the same socket again.
+    ports: {
+      shutdown: async () => {
+        throw cause instanceof Error ? cause : new Error(String(cause))
+      }
+    }
+  })
+}
+
+async function defaultObserveAuthorityOwner(
+  profilePath: string
+): Promise<HostExternalAuthorityOwner> {
+  const { lease } = readHostTerminationEvidence(profilePath, resolveHostRegistryRoot())
+  if (!lease) return { kind: 'none' }
+  const birth = await observeProcessBirthIdentity(lease.pid)
+  if (birth.state === 'dead') return { kind: 'none' }
+  if (birth.state === 'identity_unavailable') {
+    return { kind: 'unverifiable', pid: lease.pid, detail: 'its identity cannot be observed' }
+  }
+  const match = matchProcessBirth(
+    birth,
+    hostTerminationExpectation({ discovery: null, lease, registry: null })
+  )
+  // Born at another time: a reused pid, and a lease the next Host reclaims.
+  if (match === 'mismatch') return { kind: 'none' }
+  if (match !== 'match') {
+    return { kind: 'unverifiable', pid: lease.pid, detail: 'its lease carries no birth evidence' }
+  }
+  const command = await observeProcessCommandLine(lease.pid)
+  if (command.state === 'dead') return { kind: 'none' }
+  if (command.state !== 'live') {
+    return { kind: 'unverifiable', pid: lease.pid, detail: 'its command line cannot be observed' }
+  }
+  return isHostServeCommandFor(command, profilePath)
+    ? { kind: 'host', pid: lease.pid }
+    : { kind: 'unverifiable', pid: lease.pid, detail: 'it is not a Host serving this profile' }
 }
 
 function closeProbe(result: HostExternalProbeResult | null): void {
@@ -133,6 +281,14 @@ function closeProbe(result: HostExternalProbeResult | null): void {
     // A probe connection that cannot close is already gone.
   }
 }
+
+function describe(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+type LaunchOutcome =
+  | { readonly kind: 'ready'; readonly result: HostExternalEnsureResult }
+  | { readonly kind: 'authority-busy'; readonly error: Error }
 
 export class HostExternalSupervisor {
   private statusValue: HostExternalSupervisorStatus = 'idle'
@@ -151,7 +307,14 @@ export class HostExternalSupervisor {
       typeof options.resolveLaunch !== 'function'
     )
       throw new Error('External Host options are invalid.')
-    for (const value of [options.timeoutMs, options.pollMs, options.probeTimeoutMs])
+    for (const value of [
+      options.timeoutMs,
+      options.pollMs,
+      options.probeTimeoutMs,
+      options.authorityWaitMs,
+      options.authorityPollMs,
+      options.maxLaunchAttempts
+    ])
       if (value !== undefined && (!Number.isSafeInteger(value) || value < 1))
         throw new Error('External Host timing option is invalid.')
     this.closeSignal = new Promise((resolve) => {
@@ -179,8 +342,8 @@ export class HostExternalSupervisor {
       this.statusValue = 'closed'
       this.signalClose()
       // Teardown, an explicit stop or a failed preparation: this supervisor's
-      // hold on the Host (if main's client never took over) goes with it.
-      releaseExternalHostBootHold(this)
+      // hold on the Host (if main's lease never took over) goes with it.
+      releaseExternalHostBootHold(this.options.profilePath, this)
     }
   }
 
@@ -189,6 +352,15 @@ export class HostExternalSupervisor {
     const assertOpen = () => {
       if (this.closed || generation !== this.generation)
         throw new Error('External Host supervisor is closed.')
+    }
+    const log = this.options.log ?? (() => undefined)
+    const now = this.options.now ?? (() => Date.now())
+    const delay =
+      this.options.delay ??
+      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+    const pause = async (ms: number): Promise<void> => {
+      await Promise.race([delay(ms), this.closeSignal])
+      assertOpen()
     }
     const probe =
       this.options.probe ?? ((timeout: number) => defaultProbe(this.options.profilePath, timeout))
@@ -203,23 +375,80 @@ export class HostExternalSupervisor {
       }
       return result
     }
+    /** A production Host answered, or nothing did (every other failure). */
+    const tryProbe = async (): Promise<HostExternalProbeResult | null> => {
+      try {
+        return await probeProduction()
+      } catch (error) {
+        if (error instanceof HostProjectionIncompatibleProtocolError) {
+          this.statusValue = 'failed'
+          throw error
+        }
+        return null
+      }
+    }
     // The connection behind the result this supervisor returns stays open:
-    // the Host must not start its last-lease grace before main's own client
+    // the Host must not start its last-lease grace before main's own lease
     // exists, and main's first socket waits for all of main's synchronous
     // start-up. Every other probe connection closes on its own path.
     const holdForBoot = (result: HostExternalProbeResult): void => {
-      if (result.connection) holdExternalHostForBoot(this, result.connection)
-    }
-    this.statusValue = 'probing'
-    let existing: HostExternalProbeResult | null = null
-    try {
-      existing = await probeProduction()
-    } catch (error) {
-      if (error instanceof HostProjectionIncompatibleProtocolError) {
-        this.statusValue = 'failed'
-        throw error
+      if (result.connection) {
+        holdExternalHostForBoot(this.options.profilePath, this, result.connection)
       }
     }
+    const attachExisting = (result: HostExternalProbeResult): HostExternalEnsureResult => {
+      this.statusValue = 'attached-existing'
+      holdForBoot(result)
+      const host = hostIdentityOf(result)
+      return { kind: 'existing', welcome: result.welcome, ...(host ? { host } : {}) }
+    }
+    /**
+     * Replaces a Host serving another payload: its own authenticated stop
+     * first, then (D9) identity-verified termination when the socket path
+     * fails — a wedged or refusing Host no longer fails the launch outright.
+     */
+    const replaceExisting = async (): Promise<void> => {
+      this.statusValue = 'restarting'
+      try {
+        await (
+          this.options.shutdownExisting ??
+          ((profilePath: string) => new HostShutdownClient({ profilePath }).shutdown())
+        )(this.options.profilePath)
+      } catch (shutdownError) {
+        assertOpen()
+        let outcome: Pick<HostTerminationOutcome, 'kind' | 'pid' | 'detail'>
+        try {
+          outcome = await (this.options.terminateExisting ?? defaultTerminateExisting)(
+            this.options.profilePath,
+            shutdownError
+          )
+        } catch (error) {
+          this.statusValue = 'failed'
+          throw new Error(
+            `External Host could not be replaced: its stop failed (${describe(
+              shutdownError
+            )}) and verified termination failed (${describe(error)}).`
+          )
+        }
+        if (!HOST_TERMINATION_SUCCESS_KINDS.has(outcome.kind)) {
+          this.statusValue = 'failed'
+          throw new Error(
+            `External Host could not be replaced: its stop failed (${describe(
+              shutdownError
+            )}) and verified termination ended ${outcome.kind}${
+              outcome.detail ? ` (${outcome.detail})` : ''
+            }.`
+          )
+        }
+        log(
+          `[host-external] replaced Host pid ${outcome.pid ?? 'unknown'} by verified termination (${outcome.kind})`
+        )
+      }
+      assertOpen()
+    }
+
+    this.statusValue = 'probing'
+    let existing: HostExternalProbeResult | null = await tryProbe()
     let command: HostExternalLaunchCommand | null
     try {
       command = await this.options.resolveLaunch()
@@ -230,29 +459,108 @@ export class HostExternalSupervisor {
       throw error
     }
     if (existing && (!command || existing.payloadVersion === command.payloadVersion)) {
-      this.statusValue = 'attached-existing'
-      holdForBoot(existing)
-      return { kind: 'existing', welcome: existing.welcome }
+      return attachExisting(existing)
     }
     if (existing) {
       // Never hold a Host this supervisor is about to replace.
       closeProbe(existing)
-      this.statusValue = 'restarting'
-      try {
-        await (
-          this.options.shutdownExisting ??
-          ((profilePath: string) => new HostShutdownClient({ profilePath }).shutdown())
-        )(this.options.profilePath)
-      } catch (error) {
-        this.statusValue = 'failed'
-        throw error
-      }
-      assertOpen()
+      existing = null
+      await replaceExisting()
     }
     if (!command) {
       this.statusValue = 'failed'
       throw new Error('External Host launch command is unavailable.')
     }
+    const launchCommand = command
+
+    /**
+     * A Host that exited because another one still holds the profile authority
+     * is waited out when that holder is a Host we can verify (it is stopping,
+     * or a peer launcher's Host is coming up): a Host that answers meanwhile
+     * is attached or replaced, and once the holder is gone the launch
+     * respawns. Anything unverifiable ends the launch with the original error.
+     */
+    const waitOutAuthorityHolder = async (
+      busy: Error
+    ): Promise<
+      | { readonly kind: 'released' }
+      | { readonly kind: 'attached'; readonly result: HostExternalEnsureResult }
+    > => {
+      const observeOwner = this.options.observeAuthorityOwner ?? defaultObserveAuthorityOwner
+      const waitMs = this.options.authorityWaitMs ?? HOST_EXTERNAL_AUTHORITY_WAIT_MS
+      const pollMs = this.options.authorityPollMs ?? AUTHORITY_POLL_MS
+      const deadline = now() + waitMs
+      this.statusValue = 'waiting-for-authority'
+      let announced: number | null = null
+      for (;;) {
+        const owner = await observeOwner(this.options.profilePath)
+        assertOpen()
+        if (owner.kind === 'none') return { kind: 'released' }
+        if (owner.kind === 'unverifiable') {
+          this.statusValue = 'failed'
+          throw new Error(
+            `${busy.message} The holder, pid ${owner.pid}, was not waited for: ${owner.detail}.`
+          )
+        }
+        if (announced !== owner.pid) {
+          announced = owner.pid
+          log(
+            `[host-external] the profile authority is held by Host pid ${owner.pid}; waiting up to ${waitMs} ms for it to exit`
+          )
+        }
+        if (now() >= deadline) {
+          this.statusValue = 'failed'
+          throw new Error(
+            `${busy.message} Host pid ${owner.pid} still held the profile authority after ${waitMs} ms.`
+          )
+        }
+        await pause(pollMs)
+        const answered = await tryProbe()
+        assertOpen()
+        if (answered) {
+          if (answered.payloadVersion === launchCommand.payloadVersion) {
+            return { kind: 'attached', result: attachExisting(answered) }
+          }
+          closeProbe(answered)
+          await replaceExisting()
+          this.statusValue = 'waiting-for-authority'
+        }
+      }
+    }
+
+    const maxAttempts = this.options.maxLaunchAttempts ?? DEFAULT_MAX_LAUNCH_ATTEMPTS
+    for (let attempt = 1; ; attempt += 1) {
+      const outcome = await this.launchOnce(launchCommand, {
+        assertOpen,
+        now,
+        delay,
+        pause,
+        tryProbe,
+        holdForBoot
+      })
+      if (outcome.kind === 'ready') return outcome.result
+      if (attempt >= maxAttempts) {
+        this.statusValue = 'failed'
+        throw outcome.error
+      }
+      const waited = await waitOutAuthorityHolder(outcome.error)
+      if (waited.kind === 'attached') return waited.result
+      log('[host-external] the profile authority was released; launching the Host again')
+    }
+  }
+
+  private async launchOnce(
+    command: HostExternalLaunchCommand,
+    ports: {
+      readonly assertOpen: () => void
+      readonly now: () => number
+      readonly delay: (ms: number) => Promise<void>
+      readonly pause: (ms: number) => Promise<void>
+      readonly tryProbe: () => Promise<HostExternalProbeResult | null>
+      readonly holdForBoot: (result: HostExternalProbeResult) => void
+    }
+  ): Promise<LaunchOutcome> {
+    const { assertOpen, now, delay, pause, tryProbe, holdForBoot } = ports
     this.statusValue = 'launching'
     const spawn = this.options.spawn ?? ((exe, args, opts) => nodeSpawn(exe, [...args], opts))
     let child: ChildProcess
@@ -304,6 +612,11 @@ export class HostExternalSupervisor {
     const spawnFailure = (): Error | null => childError
     let childExit: number | null = null
     let childExited = false
+    let childClosed = false
+    let signalChildClosed: () => void = () => undefined
+    const childClosedSignal = new Promise<void>((resolve) => {
+      signalChildClosed = resolve
+    })
     child.once('error', (error) => {
       childError = error
     })
@@ -311,19 +624,20 @@ export class HostExternalSupervisor {
       childExited = true
       childExit = code
     })
+    // 'exit' can come before the child's last stderr bytes are read; 'close'
+    // comes after its stdio has ended.
+    child.once('close', () => {
+      childClosed = true
+      signalChildClosed()
+    })
     child.unref()
-    const now = this.options.now ?? (() => Date.now())
-    const delay =
-      this.options.delay ??
-      ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
     const deadline = now() + (this.options.timeoutMs ?? 120_000)
     // Every abnormal exit closes the pipe, including the assertOpen() throws
     // that fire when the supervisor is closed mid-launch. Only the success
     // path leaves it open, drained.
     try {
       while (now() < deadline) {
-        await Promise.race([delay(this.options.pollMs ?? 250), this.closeSignal])
-        assertOpen()
+        await pause(this.options.pollMs ?? 250)
         const failure = spawnFailure()
         if (failure) {
           this.statusValue = 'failed'
@@ -331,29 +645,40 @@ export class HostExternalSupervisor {
           throw new Error(withStderr(failure.message))
         }
         if (childExited) {
-          this.statusValue = 'failed'
+          if (!childClosed) await Promise.race([childClosedSignal, delay(250)])
           closeStderr()
-          throw new Error(
+          const error = new Error(
             withStderr(`External Host exited ${childExit ?? 'without a code'} before readiness.`)
           )
+          // Refused because a live Host still holds the profile authority: the
+          // caller may wait that Host out. Any other exit fails the launch.
+          if (HOST_AUTHORITY_BUSY_PATTERN.test(stderrTail)) return { kind: 'authority-busy', error }
+          this.statusValue = 'failed'
+          throw error
         }
-        let ready: HostExternalProbeResult | null = null
+        const ready = await tryProbe()
+        if (!ready) continue
+        if (ready.payloadVersion !== command.payloadVersion) {
+          closeProbe(ready)
+          continue
+        }
         try {
-          ready = await probeProduction()
-          if (ready.payloadVersion !== command.payloadVersion) {
-            closeProbe(ready)
-            continue
-          }
           assertOpen()
-          this.statusValue = 'attached-launched'
-          drainStderr()
-          holdForBoot(ready)
-          return { kind: 'launched', pid: child.pid ?? null, welcome: ready.welcome }
         } catch (error) {
           closeProbe(ready)
-          if (error instanceof HostProjectionIncompatibleProtocolError) {
-            this.statusValue = 'failed'
-            throw error
+          throw error
+        }
+        this.statusValue = 'attached-launched'
+        drainStderr()
+        holdForBoot(ready)
+        const host = hostIdentityOf(ready)
+        return {
+          kind: 'ready',
+          result: {
+            kind: 'launched',
+            pid: child.pid ?? null,
+            welcome: ready.welcome,
+            ...(host ? { host } : {})
           }
         }
       }

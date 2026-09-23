@@ -145,4 +145,65 @@ describe('createResumeHostHealthCheck', () => {
     expect(broken.lines[0]).toContain('Host failed after screen unlocked')
     expect(broken.lines[0]).toContain('gone')
   })
+
+  /**
+   * D4: the Host resets every lease deadline once when it sees a suspend, but
+   * main's own renew timer fires late after a wake. The check renews first, so
+   * the lease lands inside the reset TTL; it never starts anything itself.
+   */
+  it("renews main's Host lease before it probes", async () => {
+    const order: string[] = []
+    const check = createResumeHostHealthCheck({
+      renewLease: async () => {
+        order.push('renew')
+      },
+      probeHost: async () => {
+        order.push('probe')
+        return { ok: true }
+      },
+      dropHostConnection: vi.fn(),
+      nudgeCatalogueRecovery: () => order.push('nudge'),
+      probeTimeoutMs: 20
+    })
+    const outcome = await check('system resumed')
+    expect(order).toEqual(['renew', 'probe', 'nudge'])
+    expect(outcome).toMatchObject({ renewedLease: true, probe: 'ok' })
+  })
+
+  it('still probes and nudges when the lease renewal throws or never answers', async () => {
+    const lines: string[] = []
+    const probe = vi.fn(async () => ({ ok: true }))
+    const nudge = vi.fn()
+    const failing = createResumeHostHealthCheck({
+      renewLease: async () => {
+        throw new Error('lease socket gone')
+      },
+      probeHost: probe,
+      dropHostConnection: vi.fn(),
+      nudgeCatalogueRecovery: nudge,
+      probeTimeoutMs: 20,
+      log: (line) => lines.push(line)
+    })
+    await expect(failing('system resumed')).resolves.toMatchObject({
+      renewedLease: false,
+      probe: 'ok'
+    })
+    expect(lines.join('\n')).toContain('could not renew the Host lease: lease socket gone')
+
+    const hanging = createResumeHostHealthCheck({
+      renewLease: () => new Promise<void>(() => {}),
+      probeHost: probe,
+      dropHostConnection: vi.fn(),
+      nudgeCatalogueRecovery: nudge,
+      probeTimeoutMs: 20
+    })
+    await expect(hanging('system resumed')).resolves.toMatchObject({ probe: 'ok' })
+    expect(probe).toHaveBeenCalledTimes(2)
+    expect(nudge).toHaveBeenCalledTimes(2)
+  })
+
+  it('reports no renewal when no lease is wired (the in-process Host)', async () => {
+    const { check } = makeCheck()
+    await expect(check('system resumed')).resolves.toMatchObject({ renewedLease: false })
+  })
 })

@@ -8,7 +8,14 @@
  * thing to discover the socket died is whatever the user clicks next, and it
  * discovers it by failing.
  *
- * Two things are therefore done here, and deliberately nothing else:
+ * Three things are therefore done here, and deliberately nothing else:
+ *
+ *  0. **Renew main's Host lease at once.** The Host judges a lease on its own
+ *     awake clock and resets every deadline once when it sees a suspend, but
+ *     main's renew timer fires late after a wake; renewing here keeps the
+ *     lease inside that reset TTL. A lease that is no longer held (the Host
+ *     lapsed it, or exited) is repaired by the lease module itself, through
+ *     `HostLifecycleController.ensure('lease-reacquire')`, not here.
  *
  *  1. **Probe, and on failure drop the connection.** Dropping makes the next
  *     request reconnect instead of inheriting a corpse. It is done ONLY on a
@@ -26,11 +33,10 @@
  *
  * What this must never do, and does not:
  *   - Call `HostLifecycleController.start()` or `HostExternalSupervisor
- *     .ensureAvailable()`. The controller's contract is explicit — "It never
- *     retries in the background: only app startup or an explicit user action
- *     can call start()" — and a system event is not a user action. Respawning
- *     a Host from a timer is the undeclared background service that contract
- *     forbids.
+ *     .ensureAvailable()`. A system event is not a user action, and a Host
+ *     the user stopped, or whose start failed, stays down. Bringing a lost
+ *     Host back behind a running lifecycle is the lease module's bounded
+ *     re-acquire (`ensure`), which this check only prompts by renewing.
  *   - Release, expire or force any write-gate hold. The gate's release closure
  *     is identity-fenced precisely so a stale releaser cannot free a NEWER
  *     hold; a force-release here would let a local write interleave with an
@@ -43,6 +49,8 @@ export interface ResumeHostProbeResult {
 }
 
 export interface ResumeHostHealthCheckDeps {
+  /** Renew main's Host lease now (`DesktopHostLease.renewNow`). Must not throw. */
+  renewLease?: () => Promise<void>
   /** Bounded, side-effect-free Host round-trip. Must not throw; the broker's
    *  snapshot() already answers `{ ok, error }` rather than rejecting. */
   probeHost: () => Promise<ResumeHostProbeResult>
@@ -56,6 +64,8 @@ export interface ResumeHostHealthCheckDeps {
 
 export interface ResumeHostHealthCheckOutcome {
   reason: string
+  /** True when main's lease renewal was asked for (and did not throw). */
+  renewedLease: boolean
   probe: 'ok' | 'failed' | 'timeout' | 'threw'
   /** True when the socket was dropped so the next request rebuilds it. */
   droppedConnection: boolean
@@ -94,6 +104,24 @@ export function createResumeHostHealthCheck(
   let inFlight: Promise<ResumeHostHealthCheckOutcome> | null = null
 
   const runOnce = async (reason: string): Promise<ResumeHostHealthCheckOutcome> => {
+    // First, and bounded like the probe: the Host's reset TTL is the window.
+    let renewedLease = false
+    if (deps.renewLease) {
+      let renewTimer: ReturnType<typeof setTimeout> | undefined
+      try {
+        const bound = new Promise<void>((resolve) => {
+          renewTimer = setTimeout(resolve, timeoutMs)
+          renewTimer.unref?.()
+        })
+        await Promise.race([deps.renewLease(), bound])
+        renewedLease = true
+      } catch (error) {
+        log(`[resume-health] could not renew the Host lease: ${detail(error)}`)
+      } finally {
+        if (renewTimer) clearTimeout(renewTimer)
+      }
+    }
+
     let probe: ResumeHostHealthCheckOutcome['probe'] = 'ok'
     let because: string | undefined
 
@@ -144,6 +172,7 @@ export function createResumeHostHealthCheck(
 
     const outcome: ResumeHostHealthCheckOutcome = {
       reason,
+      renewedLease,
       probe,
       droppedConnection,
       nudgedRecovery,
