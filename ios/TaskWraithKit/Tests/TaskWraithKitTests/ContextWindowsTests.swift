@@ -204,6 +204,19 @@ struct ContextWindowsTests {
         }
     }
 
+    @Test("Space Bunny Alpha keeps its exact 1_000_000 window on the table itself")
+    func spaceBunnyAlphaWindow() {
+        // The pi provider fallback is ALSO 1_000_000, so `resolve` alone passes
+        // with the row deleted — only the byModel lookup tells a present row
+        // from an absent one. Mirrors CONTEXT_WINDOWS_BY_MODEL in
+        // src/shared/contextWindows.ts.
+        let wireId = "openrouter/stealth/space-bunny-alpha"
+        #expect(
+            ContextWindows.byModel[wireId] == 1_000_000,
+            "missing or drifted window row for \(wireId)")
+        #expect(ContextWindows.resolve(provider: "pi", model: wireId) == 1_000_000)
+    }
+
     @Test("unknown / missing model falls back to the provider window")
     func providerFallback() {
         #expect(ContextWindows.resolve(provider: "ollama", model: "totally-unknown:1b") == 262_144)

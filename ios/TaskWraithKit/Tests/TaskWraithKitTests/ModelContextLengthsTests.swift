@@ -396,6 +396,23 @@ struct ModelContextLengthsTests {
         #expect(row?.formatted == "1.0M")
     }
 
+    @Test("pi group lists Space Bunny Alpha once at 1_000_000 / 1.0M")
+    func piSpaceBunnyAlphaRow() {
+        // The desktop derives this list from the ensemble catalogue; the phone
+        // hand-lists it, so a new OpenRouter route has to be added here too. The
+        // filtered list is pinned rather than a first-match, so a dropped row
+        // reds instead of reading as "nothing to check".
+        let piRows =
+            ModelContextLengths.buildGroups()
+            .first(where: { $0.provider == "pi" })?
+            .models ?? []
+        let rows = piRows.filter { $0.modelId == "openrouter/stealth/space-bunny-alpha" }
+        #expect(rows.map(\.label) == ["Space Bunny Alpha"])
+        let row = rows.first
+        #expect(row?.contextWindow == 1_000_000)
+        #expect(row?.formatted == "1.0M")
+    }
+
     // MARK: - Provider order
 
     @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/antigravity/pi/mistral, no ollama")

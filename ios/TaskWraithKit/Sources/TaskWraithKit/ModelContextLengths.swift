@@ -127,6 +127,7 @@ public enum ModelContextLengths {
                 (id: "openrouter/sakana/fugu-ultra-v2", label: "Fugu Ultra v2"),
                 (id: "openrouter/unbiased/pareto", label: "Pareto"),
                 (id: "openrouter/typesafe/jev-1.13", label: "Jev 1.13"),
+                (id: "openrouter/stealth/space-bunny-alpha", label: "Space Bunny Alpha"),
             ]
         case "grok":
             return [

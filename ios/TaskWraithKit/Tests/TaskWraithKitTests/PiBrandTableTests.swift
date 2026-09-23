@@ -127,6 +127,20 @@ struct PiBrandTableTests {
         }
     }
 
+    @Test("labels Space Bunny Alpha and dresses it in the stealth brand")
+    func spaceBunnyAlphaLabelAndBrand() {
+        // A dropped label row does not read as nil: the uncatalogued fallback
+        // renders the bare "stealth/space-bunny-alpha" where the desktop shows
+        // "Space Bunny Alpha". The brand comes from the `openrouter/stealth`
+        // override, never the generic OpenRouter one. Mirrors PI_MODEL_LABELS
+        // and PI_UPSTREAM_BRANDS in src/shared/piBrandTable.ts.
+        let wireId = "openrouter/stealth/space-bunny-alpha"
+        #expect(PiBrandTable.modelLabels[wireId] == "Space Bunny Alpha")
+        #expect(PiBrandTable.modelLabel(forWireModelId: wireId) == "Space Bunny Alpha")
+        #expect(PiBrandTable.brand(forWireModelId: wireId)?.label == "Stealth")
+        #expect(PiBrandTable.brand(forWireModelId: wireId)?.hueClass == "stealth")
+    }
+
     @Test("keeps the disambiguating suffix on models two upstreams both serve")
     func disambiguatesSharedModels() {
         #expect(
