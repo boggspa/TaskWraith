@@ -4537,6 +4537,191 @@ describe('normalizeOllamaModels', () => {
   })
 })
 
+// Concurrent catalog readers share one daemon round trip only when nothing
+// about the answer can differ between them. Every reader below starts while
+// the other is provably in flight, so each exclusion, if lost, hands one
+// reader the other's answer.
+describe('fetchOllamaModelCatalog shared flights', () => {
+  const settings = { ollamaBaseUrl: 'http://127.0.0.1:11434' }
+  const remembered = { signedIn: true, plan: 'pro', updatedAt: '2026-08-01T00:00:00.000Z' }
+
+  /** A daemon whose every answer waits for `release()`, unless its own signal aborts first. */
+  function gatedDaemon(answer: (url: string, init?: RequestInit) => unknown): {
+    release: () => void
+  } {
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        (url: string, init?: RequestInit) =>
+          new Promise((resolve, reject) => {
+            const abort = (): void =>
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            if (init?.signal?.aborted) return abort()
+            init?.signal?.addEventListener('abort', abort, { once: true })
+            void gate.then(() => {
+              try {
+                resolve(answer(String(url), init))
+              } catch (error) {
+                reject(error)
+              }
+            })
+          })
+      )
+    )
+    return { release }
+  }
+
+  /** A signed-in daemon with one installed model. */
+  function signedInDaemon(url: string): unknown {
+    if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+    if (url.endsWith('/api/status')) return jsonResponse({ cloud: { disabled: false } })
+    if (url.endsWith('/api/me')) return jsonResponse({ plan: 'pro' })
+    return jsonResponse({ recommendations: [] })
+  }
+
+  const unprobedCloud = { supported: false, enabled: true, authenticated: null, models: [] }
+  const answeredCloud = { authenticated: true, accountProbe: 'answered' }
+
+  it('keys a flight on the remembered sign-in', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      throw new TypeError('fetch failed')
+    })
+    const withMemory = fetchOllamaModelCatalog({ ...settings, ollamaCliSignIn: remembered })
+    const withoutMemory = fetchOllamaModelCatalog(settings)
+    daemon.release()
+
+    expect((await withMemory).cloud).toMatchObject({
+      authenticated: true,
+      authenticatedFromMemory: true
+    })
+    expect((await withoutMemory).cloud.authenticated).toBeNull()
+  })
+
+  it('keys a flight on the daemon base URL', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url === 'http://127.0.0.1:11434/api/tags') {
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      }
+      if (url === 'http://127.0.0.1:11500/api/tags') {
+        return jsonResponse({ models: [{ model: 'llama3.2:3b' }] })
+      }
+      throw new TypeError('fetch failed')
+    })
+    const first = fetchOllamaModelCatalog({ ollamaBaseUrl: 'http://127.0.0.1:11434' })
+    const second = fetchOllamaModelCatalog({ ollamaBaseUrl: 'http://127.0.0.1:11500' })
+    daemon.release()
+
+    expect((await first).localModels.map((model) => model.id)).toEqual(['qwen3.5:9b'])
+    expect((await second).localModels.map((model) => model.id)).toEqual(['llama3.2:3b'])
+  })
+
+  it('keys a flight on the configured default model', async () => {
+    const daemon = gatedDaemon((url) => {
+      if (url.endsWith('/api/tags')) {
+        return jsonResponse({ models: [{ model: 'qwen3.5:9b' }, { model: 'llama3.2:3b' }] })
+      }
+      throw new TypeError('fetch failed')
+    })
+    const qwen = fetchOllamaModelCatalog({ ...settings, ollamaDefaultModel: 'qwen3.5:9b' })
+    const llama = fetchOllamaModelCatalog({ ...settings, ollamaDefaultModel: 'llama3.2:3b' })
+    daemon.release()
+
+    expect((await qwen).models.find((model) => model.isDefault)?.id).toBe('qwen3.5:9b')
+    expect((await llama).models.find((model) => model.isDefault)?.id).toBe('llama3.2:3b')
+  })
+
+  // The user replaces a stored key while a read opened with the old one is
+  // still waiting on a slow daemon. The refresh that follows must list the new
+  // key's Cloud models, not join the old flight and show the old key's.
+  it('never shares a read that carries a Cloud API key', async () => {
+    const daemon = gatedDaemon((url, init) => {
+      if (url === 'https://ollama.com/api/tags') {
+        const authorization = (init?.headers as Record<string, string> | undefined)?.Authorization
+        return jsonResponse({
+          models: [{ name: authorization === 'Bearer old-key' ? 'kimi-k3' : 'minimax-m3' }]
+        })
+      }
+      if (url.endsWith('/api/tags')) return jsonResponse({ models: [{ model: 'qwen3.5:9b' }] })
+      if (url.endsWith('/api/me')) return { ok: false, status: 401, json: async () => ({}) }
+      throw new TypeError('fetch failed')
+    })
+    const oldKey = fetchOllamaModelCatalog(settings, { cloudApiKey: 'old-key' })
+    const newKey = fetchOllamaModelCatalog(settings, { cloudApiKey: 'new-key' })
+    const noKey = fetchOllamaModelCatalog(settings)
+    daemon.release()
+
+    expect((await oldKey).cloudModels.map((model) => model.id)).toEqual(['kimi-k3:cloud'])
+    expect((await newKey).cloudModels.map((model) => model.id)).toEqual(['minimax-m3:cloud'])
+    const keyless = await noKey
+    expect(keyless.cloud.authenticated).toBe(false)
+    expect(keyless.cloudModels).toEqual([])
+  })
+
+  it('never lets a cancelled run take down a plain read started beside it', async () => {
+    const daemon = gatedDaemon(signedInDaemon)
+    const run = new AbortController()
+    const cancelled = fetchOllamaModelCatalog(settings, { signal: run.signal })
+    const statusCard = fetchOllamaModelCatalog(settings)
+    run.abort()
+    daemon.release()
+
+    await expect(cancelled).rejects.toThrow('aborted')
+    expect((await statusCard).cloud).toMatchObject(answeredCloud)
+  })
+
+  it('keeps a run started beside a plain read cancellable', async () => {
+    const daemon = gatedDaemon(signedInDaemon)
+    const statusCard = fetchOllamaModelCatalog(settings)
+    const run = new AbortController()
+    const cancelled = fetchOllamaModelCatalog(settings, { signal: run.signal })
+    run.abort()
+    daemon.release()
+
+    await expect(cancelled).rejects.toThrow('aborted')
+    expect((await statusCard).cloud).toMatchObject(answeredCloud)
+  })
+
+  it('never shares a probe with a caller that brings a launch authority, in either order', async () => {
+    const refusedLaunch = { launchAuthorized: () => false }
+
+    let daemon = gatedDaemon(signedInDaemon)
+    const launchFirst = fetchOllamaModelCatalog(settings, refusedLaunch)
+    const cardSecond = fetchOllamaModelCatalog(settings)
+    daemon.release()
+    expect((await launchFirst).cloud).toEqual(unprobedCloud)
+    expect((await cardSecond).cloud).toMatchObject(answeredCloud)
+
+    daemon = gatedDaemon(signedInDaemon)
+    const cardFirst = fetchOllamaModelCatalog(settings)
+    const launchSecond = fetchOllamaModelCatalog(settings, refusedLaunch)
+    daemon.release()
+    expect((await cardFirst).cloud).toMatchObject(answeredCloud)
+    expect((await launchSecond).cloud).toEqual(unprobedCloud)
+  })
+
+  it('never shares a probe with a caller that brings its own deadline', async () => {
+    vi.useFakeTimers()
+    try {
+      const daemon = gatedDaemon(signedInDaemon)
+      const bounded = fetchOllamaModelCatalog(settings, { timeoutMs: 50 })
+      const statusCard = fetchOllamaModelCatalog(settings)
+      const boundedOutcome = expect(bounded).rejects.toThrow('timed out after 50 ms')
+      await vi.advanceTimersByTimeAsync(50)
+      await boundedOutcome
+      daemon.release()
+
+      expect((await statusCard).cloud).toMatchObject(answeredCloud)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('parseOllamaMemoryPsOutput', () => {
   it('sums llama-server / Ollama runner RSS samples', () => {
     const sample = parseOllamaMemoryPsOutput(

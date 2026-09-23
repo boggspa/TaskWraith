@@ -1475,18 +1475,27 @@ const ollamaCatalogFlights = new Map<string, Promise<OllamaModelCatalogSnapshot>
 /**
  * Only a plain read may share a flight. A caller with its own signal, launch
  * authority or deadline keeps its own round trip, so a cancelled run can never
- * abort a status card's request, nor the reverse.
+ * abort a status card's request, nor the reverse. A read that carries a Cloud
+ * API key keeps its own round trip too: a flight opened with the old key must
+ * never answer a caller who has since replaced it, and leaving keyed reads out
+ * keeps the key, and anything derived from it, out of this map.
  */
 function ollamaCatalogFlightKey(
   settings: OllamaModelCatalogSettings,
   options: OllamaModelCatalogOptions
 ): string | null {
-  if (options.signal || options.launchAuthorized || options.timeoutMs !== undefined) return null
+  if (
+    options.signal ||
+    options.launchAuthorized ||
+    options.timeoutMs !== undefined ||
+    options.cloudApiKey
+  ) {
+    return null
+  }
   return JSON.stringify([
     normalizeOllamaBaseUrl(settings.ollamaBaseUrl),
     String(settings.ollamaDefaultModel || ''),
-    normalizeOllamaCliSignIn(settings.ollamaCliSignIn),
-    Boolean(options.cloudApiKey)
+    normalizeOllamaCliSignIn(settings.ollamaCliSignIn)
   ])
 }
 
