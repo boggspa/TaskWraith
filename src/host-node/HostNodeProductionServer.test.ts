@@ -216,9 +216,8 @@ function harness(
     })
   }
   const signalListeners = new Map<string, () => void>()
-  // The process's `beforeExit`, fired by hand: the moment nothing is left to
-  // keep the event loop alive.
-  const runDryListeners: Array<() => void> = []
+  // What the CLI's Host would do to its process; here only recorded.
+  const ended: number[] = []
   const server = new HostNodeProductionServer({
     profilePath: '/profile',
     mode: 'production',
@@ -241,13 +240,7 @@ function harness(
       },
       removeListener: (signal) => signalListeners.delete(signal)
     },
-    exitTarget: {
-      once: (_event, listener_) => void runDryListeners.push(listener_),
-      removeListener: (_event, listener_) => {
-        const index = runDryListeners.indexOf(listener_)
-        if (index >= 0) runDryListeners.splice(index, 1)
-      }
-    },
+    endProcess: (code) => void ended.push(code),
     acquireLease: () => {
       order.push('lease.acquire')
       return lease
@@ -306,10 +299,7 @@ function harness(
     composition,
     domain,
     signalListeners,
-    runDryListeners: () => runDryListeners.length,
-    runDry: () => {
-      for (const listener_ of runDryListeners.splice(0)) listener_()
-    },
+    ended: () => [...ended],
     capabilityOffer: () => capabilityOffer,
     gitReadProvider: () => composedGitReadProvider,
     compositionPerf: () => composedPerf,
@@ -507,6 +497,8 @@ describe('HostNodeProductionServer', () => {
     failing.listener.start.mockRejectedValueOnce(new Error('listen failed'))
     await expect(failing.server.start()).rejects.toThrow('listen failed')
     expect(failing.lease.release).toHaveBeenCalledOnce()
+    // Cleaned up: the process can exit on its own.
+    expect(failing.ended()).toEqual([])
 
     const unsafe = harness()
     unsafe.listener.start.mockRejectedValueOnce(new Error('listen failed'))
@@ -515,6 +507,8 @@ describe('HostNodeProductionServer', () => {
     expect(unsafe.domain.shutdown).toHaveBeenCalledOnce()
     expect(unsafe.composition.shutdown).toHaveBeenCalledOnce()
     expect(unsafe.lease.release).not.toHaveBeenCalled()
+    // Nothing retries a start: what the cleanup left must not hold the process up.
+    expect(unsafe.ended()).toEqual([1])
   })
 
   it('handles SIGTERM, has no parent-death behaviour, and exits by lease lapse only after grace', async () => {
@@ -1487,7 +1481,7 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     expect(h.server.phase).toBe('stopped')
   })
 
-  it('says why a lease-driven stop failed, keeps the profile authority, and fails the shutdown', async () => {
+  it('says why a lease-driven stop failed, keeps the profile authority, fails the shutdown and ends the process', async () => {
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
       const clock = steppedLeaseClock()
@@ -1503,10 +1497,12 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
         )
       )
       // Not a success: nobody retries a stop the Host decided on, so the CLI
-      // must see the failure and exit non-zero instead of a silent 0.
+      // must see the failure, and the process must end rather than wait for a
+      // retry that never comes, holding the profile authority.
       await expect(h.server.waitForShutdown()).rejects.toThrow('runtime cleanup failed')
       expect(h.server.phase).toBe('failed')
       expect(h.lease.release).not.toHaveBeenCalled()
+      expect(h.ended()).toEqual([1])
     } finally {
       write.mockRestore()
     }
@@ -1534,95 +1530,48 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
   const stderrLines = (write: { mock: { calls: unknown[][] } }) =>
     write.mock.calls.map(([text]) => String(text))
 
-  // S1a re-review R3: a stop that never settles, not only one that fails.
-  it('reports a lifetime stop still running at its deadline, and fails it once nothing is left to run, keeping the profile authority', async () => {
+  // S1a re-review R3 and confirmation A1: a stop that never settles, or that
+  // would only have settled after its deadline, holds nothing up past it.
+  it('ends the process when a lifetime stop is still running at its deadline, keeping the profile authority, and gives up only once', async () => {
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
-      // A cleanup step waiting on something that will never settle it.
-      const { h, outcome } = await lifetimeStop(() => new Promise<void>(() => {}))
-      await vi.waitFor(() =>
+      for (const late of ['finishes', 'fails', 'never settles'] as const) {
+        write.mockClear()
+        let finish!: () => void
+        let fail!: (error: Error) => void
+        const { h, outcome } = await lifetimeStop(
+          () =>
+            new Promise<void>((resolve, reject) => {
+              finish = resolve
+              fail = reject
+            })
+        )
+        await vi.waitFor(() =>
+          expect(outcome(), late).toBe(
+            'stopping after the last client lease did not finish within 50 ms'
+          )
+        )
         // Runtime output, not a source pin: the whole stderr line, terminator included.
-        expect(stderrLines(write)).toEqual(
+        expect(stderrLines(write), late).toEqual(
           expect.arrayContaining([
-            'taskwraith-host: stopping after the last client lease has not finished within 50 ms, profile authority still held\n'
+            'taskwraith-host: stopping after the last client lease did not finish within 50 ms, profile authority retained\n'
           ])
         )
-      )
-      // Reported, not failed: work still in flight could yet finish it.
-      await new Promise((resolve) => setTimeout(resolve, 100))
-      expect(outcome()).toBe('pending')
-      expect(h.runDryListeners()).toBe(1)
-      // Nothing is left to run: the process is about to exit with the stop halfway.
-      h.runDry()
-      await vi.waitFor(() =>
-        expect(outcome()).toBe('stopping after the last client lease did not finish within 50 ms')
-      )
-      expect(stderrLines(write)).toEqual(
-        expect.arrayContaining([
+        expect(h.ended(), late).toEqual([1])
+        expect(h.lease.release, late).not.toHaveBeenCalled()
+        // Whatever the stop does afterwards, the Host has given up: no second
+        // report and no second ending.
+        if (late === 'finishes') finish()
+        if (late === 'fails') fail(new Error('claim compaction refused'))
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(
+          stderrLines(write).filter((line) => /finish|failed,/.test(line)),
+          late
+        ).toEqual([
           'taskwraith-host: stopping after the last client lease did not finish within 50 ms, profile authority retained\n'
         ])
-      )
-      expect(h.server.phase).toBe('stopping')
-      expect(h.lease.release).not.toHaveBeenCalled()
-    } finally {
-      write.mockRestore()
-    }
-  })
-
-  // S1a confirmation C1: a healthy stop may outlast the deadline.
-  it('reports a lifetime stop that finishes after its deadline as late, and exits clean with the profile authority released', async () => {
-    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-    try {
-      let finish!: () => void
-      const { h, outcome } = await lifetimeStop(
-        () => new Promise<void>((resolve) => (finish = resolve))
-      )
-      await vi.waitFor(() =>
-        expect(stderrLines(write)).toEqual(
-          expect.arrayContaining([
-            'taskwraith-host: stopping after the last client lease has not finished within 50 ms, profile authority still held\n'
-          ])
-        )
-      )
-      expect(outcome()).toBe('pending')
-      finish()
-      await h.server.waitForShutdown()
-      await vi.waitFor(() =>
-        expect(stderrLines(write)).toEqual(
-          expect.arrayContaining([
-            'taskwraith-host: stopping after the last client lease finished after its 50 ms deadline, profile authority released\n'
-          ])
-        )
-      )
-      expect(h.server.phase).toBe('stopped')
-      expect(h.lease.release).toHaveBeenCalledOnce()
-      expect(stderrLines(write).filter((line) => line.includes('did not finish'))).toEqual([])
-      // The run-dry watch went with the stop: an exit now is the clean one.
-      expect(h.runDryListeners()).toBe(0)
-    } finally {
-      write.mockRestore()
-    }
-  })
-
-  it('fails a lifetime stop that fails after its deadline with its own failure, not the deadline', async () => {
-    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
-    try {
-      let fail!: (error: Error) => void
-      const { h, outcome } = await lifetimeStop(
-        () => new Promise<void>((_resolve, reject) => (fail = reject))
-      )
-      await vi.waitFor(() => expect(h.runDryListeners()).toBe(1))
-      fail(new Error('claim compaction refused'))
-      await vi.waitFor(() => expect(outcome()).toMatch(/runtime cleanup failed/))
-      expect(stderrLines(write)).toEqual(
-        expect.arrayContaining([
-          'taskwraith-host: stopping after the last client lease failed, profile authority retained: ' +
-            'Production Host runtime cleanup failed; retaining profile authority. <- claim compaction refused\n'
-        ])
-      )
-      expect(stderrLines(write).filter((line) => line.includes('did not finish'))).toEqual([])
-      expect(h.runDryListeners()).toBe(0)
-      expect(h.lease.release).not.toHaveBeenCalled()
+        expect(h.ended(), late).toEqual([1])
+      }
     } finally {
       write.mockRestore()
     }
@@ -1632,6 +1581,7 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
       for (const fails of [false, true]) {
+        write.mockClear()
         const clock = steppedLeaseClock()
         const h = harness({ environment: {}, leasePorts: clock.ports, lifetimeStopDeadlineMs: 50 })
         if (fails)
@@ -1642,20 +1592,60 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
         await new Promise((resolve) => setTimeout(resolve, 150))
         const late = stderrLines(write).filter((line) => line.includes('finish'))
         expect(late, fails ? 'after a failed stop' : 'after a clean stop').toEqual([])
-        expect(h.runDryListeners()).toBe(0)
+        // A clean stop leaves the process to exit on its own; a failed one ended it, once.
+        expect(h.ended()).toEqual(fails ? [1] : [])
       }
     } finally {
       write.mockRestore()
     }
   })
 
-  it('takes a shorter stop deadline from TASKWRAITH_HOST_LEASE_TIMING, never a longer one', async () => {
+  it('never ends the process for an explicit stop that fails: the next signal retries it', async () => {
+    const h = harness({ environment: {} })
+    h.composition.shutdown.mockRejectedValueOnce(new Error('transient runtime failure'))
+    await h.server.start()
+    h.signalListeners.get('SIGTERM')?.()
+    await vi.waitFor(() => expect(h.server.phase).toBe('failed'))
+    expect(h.signalListeners.has('SIGTERM')).toBe(true)
+    expect(h.ended()).toEqual([])
+    h.signalListeners.get('SIGTERM')?.()
+    await h.server.waitForShutdown()
+    expect(h.server.phase).toBe('stopped')
+    expect(h.ended()).toEqual([])
+  })
+
+  it('only fails waitForShutdown when no process-ending port is given, as for an in-process embedder', async () => {
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
-      for (const [stop, deadlineMs] of [
-        ['stop:300', 300],
-        ['stop:999999999', HOST_LIFETIME_STOP_DEADLINE_MS]
+      const clock = steppedLeaseClock()
+      const h = harness({ environment: {}, leasePorts: clock.ports, endProcess: undefined })
+      h.composition.shutdown.mockRejectedValueOnce(new Error('claim compaction refused'))
+      await h.server.start()
+      clock.advance(leasesOf(h), HOST_LAST_LEASE_GRACE_MS)
+      await expect(h.server.waitForShutdown()).rejects.toThrow('runtime cleanup failed')
+      expect(h.ended()).toEqual([])
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it('takes a shorter stop deadline from TASKWRAITH_HOST_LEASE_TIMING, and says when it ignores a longer one', async () => {
+    const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
+    try {
+      for (const [stop, logged, deadlineMs] of [
+        ['stop:300', ', stop deadline 300ms', 300],
+        [
+          'stop:120000',
+          `; stop:120000 ignored, it may only shorten the ${HOST_LIFETIME_STOP_DEADLINE_MS}ms stop deadline`,
+          null
+        ],
+        [
+          'stop:999999999',
+          `; stop:999999999 ignored, it may only shorten the ${HOST_LIFETIME_STOP_DEADLINE_MS}ms stop deadline`,
+          null
+        ]
       ] as const) {
+        write.mockClear()
         const clock = steppedLeaseClock()
         const h = harness({
           environment: { [HOST_LEASE_TIMING_ENV]: `heartbeat:200,ttl:800,grace:1500,${stop}` },
@@ -1663,22 +1653,22 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
         })
         h.composition.shutdown.mockImplementationOnce(() => new Promise<void>(() => {}))
         await h.server.start()
-        expect(stderrLines(write)).toEqual(
+        expect(stderrLines(write), stop).toEqual(
           expect.arrayContaining([
-            `taskwraith-host: [host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat 200ms, ttl 800ms, grace 1500ms, stop deadline ${deadlineMs}ms\n`
+            `taskwraith-host: [host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat 200ms, ttl 800ms, grace 1500ms${logged}\n`
           ])
         )
         clock.advance(leasesOf(h), 1500)
         await new Promise((resolve) => setTimeout(resolve, 400))
-        const overdue = stderrLines(write).filter((line) => line.includes('has not finished'))
+        const overdue = stderrLines(write).filter((line) => line.includes('did not finish'))
         expect(overdue, stop).toEqual(
-          deadlineMs === 300
-            ? [
-                'taskwraith-host: stopping after the last client lease has not finished within 300 ms, profile authority still held\n'
+          deadlineMs === null
+            ? []
+            : [
+                `taskwraith-host: stopping after the last client lease did not finish within ${deadlineMs} ms, profile authority retained\n`
               ]
-            : []
         )
-        write.mockClear()
+        expect(h.ended(), stop).toEqual(deadlineMs === null ? [] : [1])
       }
     } finally {
       write.mockRestore()
@@ -1706,7 +1696,7 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
     })
   })
 
-  it('says why a registry self-check stop failed, and fails the shutdown too', async () => {
+  it('says why a registry self-check stop failed, fails the shutdown and ends the process too', async () => {
     const write = vi.spyOn(process.stderr, 'write').mockImplementation(() => true)
     try {
       const clock = steppedLeaseClock()
@@ -1723,6 +1713,7 @@ describe('HostNodeProductionServer lease lifetime (Host-lifetime programme)', ()
           'Production Host listener cleanup failed; retaining profile authority. <- socket busy\n'
       )
       expect(h.lease.release).not.toHaveBeenCalled()
+      expect(h.ended()).toEqual([1])
     } finally {
       write.mockRestore()
     }

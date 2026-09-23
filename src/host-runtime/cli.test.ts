@@ -4,6 +4,7 @@ import { join, resolve } from 'node:path'
 import { expect, it, vi } from 'vitest'
 import type { HostStopAllOptions, HostStopAllReport } from '../host-client/HostStopAll'
 import {
+  endHostProcess,
   runHostCli,
   runHostProductionCli,
   runHostShutdownCli,
@@ -43,8 +44,13 @@ it('dispatches a parsed production server through an injected factory', async ()
   expect(factory).toHaveBeenCalledWith({
     profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
-    registry: expect.any(HostRegistryPublisher)
+    registry: expect.any(HostRegistryPublisher),
+    endProcess: endHostProcess
   })
+  // The served Host can end its own process (a stop it decided on that
+  // failed); an in-process embedder of the factory never gets one.
+  const [options] = (factory.mock.calls as unknown as [Record<string, unknown>][])[0] ?? []
+  expect(options?.endProcess).toBeTypeOf('function')
   expect(start).toHaveBeenCalledOnce()
   expect(waitForShutdown).toHaveBeenCalledOnce()
 })
@@ -76,6 +82,7 @@ it('passes a terminal launcher only when every standard stream is an interactive
     profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
     registry: expect.any(HostRegistryPublisher),
+    endProcess: endHostProcess,
     terminalLauncher
   })
 })
@@ -110,6 +117,7 @@ it('uses a separate terminal-window handoff for background or detached stdio', a
     profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
     registry: expect.any(HostRegistryPublisher),
+    endProcess: endHostProcess,
     terminalLauncher: terminalWindowLauncher
   })
 })
@@ -135,7 +143,8 @@ it('keeps auth flows unavailable when a headless Host has no terminal-window han
   expect(factory).toHaveBeenCalledWith({
     profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
-    registry: expect.any(HostRegistryPublisher)
+    registry: expect.any(HostRegistryPublisher),
+    endProcess: endHostProcess
   })
 })
 
@@ -195,7 +204,8 @@ it('hands serve a registry publisher for this profile, this CLI and this Node', 
   expect(factory).toHaveBeenCalledWith({
     profilePath: CLI_PROFILE,
     payloadVersion: PAYLOAD_VERSION,
-    registry
+    registry,
+    endProcess: endHostProcess
   })
   // Serve only hands the publisher over; the server publishes after it listens.
   expect(registry.publish).not.toHaveBeenCalled()

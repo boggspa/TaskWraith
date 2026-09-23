@@ -10,7 +10,6 @@ import {
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { createConnection } from 'node:net'
 import { dirname, join } from 'node:path'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -428,7 +427,8 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     cli: string,
     profile: string,
     extraEnv: Record<string, string>,
-    extraArgs: readonly string[] = []
+    extraArgs: readonly string[] = [],
+    nodeArgs: readonly string[] = []
   ): { child: ChildProcess; stderr: () => string } {
     mkdirSync(profile, { recursive: true })
     hostProfiles.push(profile)
@@ -444,7 +444,7 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     }
     const child = spawn(
       process.execPath,
-      [cli, 'serve', '--mode', 'production', '--profile', profile, ...extraArgs],
+      [...nodeArgs, cli, 'serve', '--mode', 'production', '--profile', profile, ...extraArgs],
       { env, stdio: ['ignore', 'ignore', 'pipe'] }
     )
     spawned.push(child)
@@ -732,61 +732,129 @@ describe('production Host CLI subprocess: lease lifetime', () => {
   }, 90_000)
 
   /**
-   * S1a confirmation C1 on the real binary: a stop that outlasts its deadline
-   * but finishes is late, not failed. A connection that never says hello and
-   * never closes its side holds the listener's client drain for one full
-   * drain timeout (1 s), three times the 300 ms deadline `stop:` sets here.
-   * The held drain comes from half-closing a Unix-domain socket, so this runs
-   * where the Host listens on one; the unit suite pins the logic everywhere.
+   * A test-only hook on the built Host: a preload that replaces the history
+   * writers' drain, the step a busy-cap stop cancelling many runs can run
+   * past its bound. `fail` first writes a megabyte to stderr, the backlog a
+   * reader that has fallen behind leaves queued, then rejects; `hang` never
+   * settles and keeps an interval running, a live handle of the kind a wedged
+   * step leaves.
    */
-  it.skipIf(process.platform === 'win32')(
-    'exits 0 from a lifetime stop that finishes after its deadline, and says it was late',
-    async () => {
-      const root = mkdtempSync(join(tmpdir(), 'host-late-stop-subprocess-'))
-      paths.push(root)
-      const cli = buildCli(root)
-      const profile = join(root, 'late')
-      const host = spawnHost(cli, profile, {
-        [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500,stop:300'
-      })
-      await waitFor(() => existsSync(taskWraithHostDiscoveryPath(profile)), 'production discovery')
-      expect(host.stderr()).toContain('grace 1500ms, stop deadline 300ms')
-      // Unauthenticated, so no holder: the grace still runs out on schedule.
-      const halfOpen = createConnection({
-        path: taskWraithHostSocketPath(realpathSync(profile)),
-        allowHalfOpen: true
-      })
-      try {
-        await new Promise<void>((resolve, reject) => {
-          halfOpen.once('connect', resolve)
-          halfOpen.once('error', reject)
-        })
-        halfOpen.on('error', () => undefined)
-        await waitForExit(host.child, 15_000)
-      } finally {
-        halfOpen.destroy()
-      }
-      expect(host.child.exitCode, host.stderr()).toBe(0)
-      expect(host.stderr()).toContain(
-        'stopping after the last client lease has not finished within 300 ms, profile authority still held'
-      )
-      expect(host.stderr()).toContain(
-        'stopping after the last client lease finished after its 300 ms deadline, profile authority released'
-      )
-      expect(host.stderr()).not.toContain('did not finish')
-      expectArtefactsGone(profile)
-      expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('missing')
-    },
-    90_000
-  )
+  function writersDrainHook(root: string, cli: string, mode: 'fail' | 'hang'): string {
+    const publisher = join(
+      dirname(dirname(cli)),
+      'host-shared',
+      'thread-catalogue',
+      'ThreadCatalogueSourcePublisher.js'
+    )
+    const hook = join(root, `writers-drain-${mode}.cjs`)
+    writeFileSync(
+      hook,
+      [
+        "'use strict'",
+        `const { ThreadCatalogueSourcePublisher } = require(${JSON.stringify(publisher)})`,
+        mode === 'fail'
+          ? "ThreadCatalogueSourcePublisher.prototype.dispose = async () => { process.stderr.write('x'.repeat(1024 * 1024) + '\\n'); throw new Error('History source writers have not drained') }"
+          : 'ThreadCatalogueSourcePublisher.prototype.dispose = () => new Promise(() => { setInterval(() => {}, 1_000) })',
+        ''
+      ].join('\n')
+    )
+    return hook
+  }
+
+  /** A second Host takes the profile over and serves it, then leaves cleanly. */
+  async function takesTheProfileOver(cli: string, profile: string, root: string): Promise<void> {
+    const next = spawnHost(cli, profile, {
+      [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500'
+    })
+    const client = await connect(profile, 'tui-takeover')
+    await expect(client.getHostStatus()).resolves.toMatchObject({ pid: next.child.pid })
+    client.close()
+    await waitForExit(next.child)
+    expect(next.child.exitCode, next.stderr()).toBe(0)
+    expectArtefactsGone(profile)
+    expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('missing')
+  }
 
   /**
-   * The stuck half of the same deadline, by the reviewer's reproduction: the
-   * Host with no history worker bundles, its stop landed in the worker's
-   * eight-second restart gap (the R3 test above explains it), where only
-   * unref'd timers are left. Past the 1 s deadline `stop:` sets, nothing holds
-   * the process: it must exit 1 then, with the profile authority and registry
-   * entry kept, not wait out the gap.
+   * S1a confirmation A1 on the real binary. A stop the Host decided on that
+   * fails used to keep the process up for a retry nobody sends: listener
+   * closed, profile authority held, every relaunch finding no Host. It must
+   * end the process within its deadline, crash-equivalent, so the next Host
+   * can take the profile.
+   */
+  it('ends the process when a lifetime stop fails, and a second Host takes the profile', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-failed-stop-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root)
+    const profile = join(root, 'failed')
+    const host = spawnHost(
+      cli,
+      profile,
+      { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500,stop:5000' },
+      [],
+      ['--require', writersDrainHook(root, cli, 'fail')]
+    )
+    // What arrives after the hook's megabyte.
+    let tail = ''
+    host.child.stderr?.on('data', (chunk: string) => {
+      tail = (tail + chunk).slice(-4_096)
+    })
+    await waitFor(
+      () => host.stderr().includes('stopping after the last client lease (idle)'),
+      'the lifetime stop'
+    )
+    const stopAt = Date.now()
+    await waitForExit(host.child, 15_000)
+    expect(host.child.exitCode, tail).toBe(1)
+    expect(Date.now() - stopAt).toBeLessThan(5_000)
+    // It ends only once its last lines are through, the reason and the CLI's
+    // own, although they were queued a megabyte behind.
+    expect(tail).toContain(
+      'stopping after the last client lease failed, profile authority retained: ' +
+        'History source writers have not drained'
+    )
+    expect(tail).toContain('taskwraith-host: History source writers have not drained')
+    // Crash-equivalent: the authority and the entry name a process that is gone.
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
+    expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('present')
+    await takesTheProfileOver(cli, profile, root)
+  }, 90_000)
+
+  it('ends the process at its deadline while a stop step still holds it open, and a second Host takes the profile', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'host-hung-stop-subprocess-'))
+    paths.push(root)
+    const cli = buildCli(root)
+    const profile = join(root, 'hung')
+    const host = spawnHost(
+      cli,
+      profile,
+      { [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500,stop:1000' },
+      [],
+      ['--require', writersDrainHook(root, cli, 'hang')]
+    )
+    await waitFor(
+      () => host.stderr().includes('stopping after the last client lease (idle)'),
+      'the lifetime stop'
+    )
+    const stopAt = Date.now()
+    await waitForExit(host.child, 15_000)
+    const elapsed = Date.now() - stopAt
+    expect(host.child.exitCode, host.stderr()).toBe(1)
+    expect(elapsed).toBeGreaterThanOrEqual(900)
+    expect(elapsed).toBeLessThan(3_000)
+    expect(host.stderr()).toContain(
+      'stopping after the last client lease did not finish within 1000 ms, profile authority retained'
+    )
+    await takesTheProfileOver(cli, profile, root)
+  }, 90_000)
+
+  /**
+   * The same deadline with nothing but unref'd timers left, by the reviewer's
+   * reproduction: the Host with no history worker bundles, its stop landed in
+   * the worker's eight-second restart gap (the R3 test above explains it). The
+   * deadline's timer holds the process to the 1 s deadline `stop:` sets, and
+   * no further: it ends there, exit 1, with the profile authority and registry
+   * entry kept, not after waiting out the gap.
    */
   it('exits 1 at the deadline from a lifetime stop that leaves nothing to run, keeping the profile authority', async () => {
     const root = mkdtempSync(join(tmpdir(), 'host-stuck-stop-subprocess-'))
@@ -813,12 +881,8 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     expect(elapsed).toBeGreaterThanOrEqual(900)
     expect(elapsed).toBeLessThan(3_000)
     expect(host.stderr()).toContain(
-      'stopping after the last client lease has not finished within 1000 ms, profile authority still held'
-    )
-    expect(host.stderr()).toContain(
       'stopping after the last client lease did not finish within 1000 ms, profile authority retained'
     )
-    expect(host.stderr()).not.toContain('finished after')
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
     expect(readHostRegistryEntry(join(root, 'registry'), profile).kind).toBe('present')
   }, 90_000)

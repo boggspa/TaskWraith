@@ -132,10 +132,10 @@ export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 export const HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS = 10_000
 
 /**
- * When a stop the Host decides on its own (the last lease went, or its
- * registry entry did) is reported overdue. It is summed from the bounds its
- * cleanup steps run under, one after another, plus the margin, so a stop that
- * runs every bounded step out to its bound still finishes inside it:
+ * How long a stop the Host decides on its own (the last lease went, or its
+ * registry entry did) may run. It is summed from the bounds its cleanup steps
+ * run under, one after another, plus the margin, so a stop that runs every
+ * bounded step out to its bound still finishes inside it:
  *   - the listener's three drains, HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS
  *     each;
  *   - the domain's queued dispatches, then its provider runs' completions,
@@ -146,18 +146,17 @@ export const HOST_LIFETIME_STOP_DEADLINE_MARGIN_MS = 10_000
  *   - the history worker's `close`, then its termination,
  *     THREAD_CATALOGUE_CLOSE_TIMEOUT_MS and THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS.
  * Not covered: the mirror's read itself, up to THREAD_CATALOGUE_REQUEST_TIMEOUT_MS.
- * Only a live history worker can take that long, and a live worker holds the
- * process up by itself, so such a stop finishes after the deadline and says so.
+ * Only a history worker that is alive but wedged takes that long, and such a
+ * stop ends at the deadline like any other.
  *
- * The deadline reports; it never cuts a stop short. Its timer is ref'd, so
- * the process stays up until the stop settles or the deadline passes: by then
- * the listener is closed and may be all that held the event loop, and a step
- * waiting only on unref'd timers (a history worker restart's backoff) would
- * otherwise let the process run dry and exit 0 halfway, with the profile
- * authority and registry entry still held. A stop still running at the
- * deadline may yet finish, and then exits 0. One that leaves the process
- * nothing to run past it is stuck: it is reported, and waitForShutdown fails,
- * so the CLI exits non-zero.
+ * Nothing retries a stop the Host decided on, so the deadline is a hard one:
+ * a stop still running when it passes is reported and ends the process, the
+ * way a stop that fails does (stopForLifetime). Until then the deadline's
+ * timer is ref'd and keeps the process alive: by then the listener is closed
+ * and may be all that held the event loop, and a step waiting only on unref'd
+ * timers (a history worker restart's backoff) would otherwise let the process
+ * run dry and exit 0 halfway, with the profile authority and registry entry
+ * still held.
  */
 export const HOST_LIFETIME_STOP_DEADLINE_MS =
   3 * HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS +
@@ -175,15 +174,6 @@ export interface HostNodePermissionConsentAuthority extends HostPermissionConsen
 export interface HostNodeProductionSignalTarget {
   once(signal: NodeJS.Signals, listener: () => void): unknown
   removeListener(signal: NodeJS.Signals, listener: () => void): unknown
-}
-
-/**
- * The process's `beforeExit`, emitted once nothing is left to keep the event
- * loop alive: how a lifetime stop past its deadline learns it cannot finish.
- */
-export interface HostNodeProductionExitTarget {
-  once(event: 'beforeExit', listener: () => void): unknown
-  removeListener(event: 'beforeExit', listener: () => void): unknown
 }
 
 export interface HostNodeProductionServerOptions {
@@ -240,8 +230,12 @@ export interface HostNodeProductionServerOptions {
    * shorter `stop:` in TASKWRAITH_HOST_LEASE_TIMING.
    */
   readonly lifetimeStopDeadlineMs?: number
-  /** Seam for tests; production uses the process itself. */
-  readonly exitTarget?: HostNodeProductionExitTarget
+  /**
+   * Ends the process after a stop the Host decided on has failed or run out of
+   * time (stopForLifetime). The CLI's Host passes one; an in-process embedder
+   * (most tests) does not, and then such a stop only fails waitForShutdown.
+   */
+  readonly endProcess?: (code: number) => void
 }
 
 function deferred(): {
@@ -378,10 +372,8 @@ function resolveHostPerfSnapshotFile(
  * its own entry gone.
  */
 export class HostNodeProductionServer {
-  private readonly options: Required<
-    Pick<HostNodeProductionServerOptions, 'signalTarget' | 'exitTarget'>
-  > &
-    Omit<HostNodeProductionServerOptions, 'signalTarget' | 'exitTarget'>
+  private readonly options: Required<Pick<HostNodeProductionServerOptions, 'signalTarget'>> &
+    Omit<HostNodeProductionServerOptions, 'signalTarget'>
   private readonly shutdown = deferred()
   private readonly signals = new Map<NodeJS.Signals, () => void>()
   private startPromise: Promise<void> | null = null
@@ -423,11 +415,7 @@ export class HostNodeProductionServer {
     if (typeof options.resolveIdentity !== 'function') {
       throw new Error('HostNodeProductionServer requires resolveIdentity')
     }
-    this.options = {
-      ...options,
-      signalTarget: options.signalTarget ?? process,
-      exitTarget: options.exitTarget ?? process
-    }
+    this.options = { ...options, signalTarget: options.signalTarget ?? process }
     // Startup failure may precede any caller waiting for shutdown. Observe the
     // rejection here while retaining the original promise for explicit callers.
     void this.shutdown.promise.catch(() => undefined)
@@ -813,6 +801,10 @@ export class HostNodeProductionServer {
       } catch (cleanupError) {
         this.phaseValue = 'failed'
         this.shutdown.reject(asError(cleanupError))
+        // Nothing retries a start, and the signals are gone: whatever the
+        // cleanup left live must not hold the process, and the profile
+        // authority with it, for good (see stopForLifetime).
+        this.options.endProcess?.(1)
         throw cleanupError
       }
       this.phaseValue = 'failed'
@@ -927,18 +919,18 @@ export class HostNodeProductionServer {
     if (timing.source === 'rejected') {
       log(`[host-lease] ${HOST_LEASE_TIMING_ENV}=${timing.raw} ignored: ${timing.reason}`)
     } else if (timing.source === 'environment') {
-      // Like the lease timing, it may only shorten the deadline.
+      let stop = ''
       if (timing.stopDeadlineMs !== undefined) {
-        this.lifetimeStopDeadlineMs = Math.min(
-          timing.stopDeadlineMs,
-          HOST_LIFETIME_STOP_DEADLINE_MS
-        )
+        // Like the lease timing, it may only shorten the deadline.
+        if (timing.stopDeadlineMs < HOST_LIFETIME_STOP_DEADLINE_MS) {
+          this.lifetimeStopDeadlineMs = timing.stopDeadlineMs
+          stop = `, stop deadline ${timing.stopDeadlineMs}ms`
+        } else {
+          stop = `; stop:${timing.stopDeadlineMs} ignored, it may only shorten the ${HOST_LIFETIME_STOP_DEADLINE_MS}ms stop deadline`
+        }
       }
       log(
-        `[host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat ${timing.timing.heartbeatMs}ms, ttl ${timing.timing.ttlMs}ms, grace ${timing.timing.graceMs}ms` +
-          (timing.stopDeadlineMs === undefined
-            ? ''
-            : `, stop deadline ${this.lifetimeStopDeadlineMs}ms`)
+        `[host-lease] ${HOST_LEASE_TIMING_ENV} shortened timing to heartbeat ${timing.timing.heartbeatMs}ms, ttl ${timing.timing.ttlMs}ms, grace ${timing.timing.graceMs}ms${stop}`
       )
     }
     if (persist) log(`[host-lease] ${HOST_PERSIST_ENV}=1: the last-lease grace exit is disabled`)
@@ -979,54 +971,46 @@ export class HostNodeProductionServer {
   /**
    * A stop the Host decides on its own: the last lease is gone, or its registry
    * entry is. Nobody retries it the way a second SIGTERM retries a signalled
-   * stop, so a cleanup failure must not end in a silent exit 0 with the profile
-   * authority left behind: name what failed, and settle waitForShutdown as a
-   * failure, which the CLI turns into a non-zero exit. A stop still running at
-   * its deadline (HOST_LIFETIME_STOP_DEADLINE_MS) is reported then and settles
-   * on whatever happens first: it finishes, late and said so, and exits 0; it
-   * fails; or the process runs out of work with the stop unfinished, which is
-   * a failure too.
+   * stop, so it must never leave the process up with its listener closed and
+   * the profile authority held, where every relaunch finds no Host. It has
+   * until its deadline (HOST_LIFETIME_STOP_DEADLINE_MS). If it fails, or is
+   * still running then, the Host names why on stderr, fails waitForShutdown,
+   * and ends the process through `endProcess`, live handles or not. That is
+   * crash-equivalent: the cleanup it could do has run, and the authority lease
+   * names this pid and its birth, so the next Host takes the profile over
+   * once this process is gone.
    */
   private stopForLifetime(action: string): void {
     const deadlineMs = this.options.lifetimeStopDeadlineMs ?? this.lifetimeStopDeadlineMs
-    const exitTarget = this.options.exitTarget
-    let overdue = false
-    // Past the deadline, nothing is left to keep the event loop alive and the
-    // stop has not finished: the process is about to exit with it halfway.
-    const onRunDry = () => {
-      writeHostStderr(
-        `taskwraith-host: ${action} did not finish within ${deadlineMs} ms, profile authority retained\n`
-      )
-      this.shutdown.reject(new Error(`${action} did not finish within ${deadlineMs} ms`))
+    let settled = false
+    const giveUp = (line: string, error: Error): void => {
+      if (settled) return
+      settled = true
+      writeHostStderr(`taskwraith-host: ${line}\n`)
+      this.shutdown.reject(error)
+      this.options.endProcess?.(1)
     }
     // Ref'd on purpose: until the stop settles or this fires, it is what keeps
     // the process alive.
-    const deadline = setTimeout(() => {
-      overdue = true
-      writeHostStderr(
-        `taskwraith-host: ${action} has not finished within ${deadlineMs} ms, profile authority still held\n`
-      )
-      exitTarget.once('beforeExit', onRunDry)
-    }, deadlineMs)
-    const standDown = () => {
-      clearTimeout(deadline)
-      if (overdue) exitTarget.removeListener('beforeExit', onRunDry)
-    }
+    const deadline = setTimeout(
+      () =>
+        giveUp(
+          `${action} did not finish within ${deadlineMs} ms, profile authority retained`,
+          new Error(`${action} did not finish within ${deadlineMs} ms`)
+        ),
+      deadlineMs
+    )
     void this.stop().then(
       () => {
-        standDown()
-        if (overdue) {
-          writeHostStderr(
-            `taskwraith-host: ${action} finished after its ${deadlineMs} ms deadline, profile authority released\n`
-          )
-        }
+        settled = true
+        clearTimeout(deadline)
       },
       (error: unknown) => {
-        standDown()
-        writeHostStderr(
-          `taskwraith-host: ${action} failed, profile authority retained: ${describeFailure(error)}\n`
+        clearTimeout(deadline)
+        giveUp(
+          `${action} failed, profile authority retained: ${describeFailure(error)}`,
+          asError(error)
         )
-        this.shutdown.reject(asError(error))
       }
     )
   }

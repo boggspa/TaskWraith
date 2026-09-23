@@ -60,6 +60,12 @@ export interface HostNodeProductionFactoryOptions {
   readonly registry?: HostRegistryPublisherPort
   /** Lease clock/scheduler seam for tests; production uses the defaults. */
   readonly leasePorts?: HostLeaseRegistryPorts
+  /**
+   * How the process ends after a stop the Host decided on has failed or run
+   * out of time. The `cli.js serve` path supplies it; an in-process embedder
+   * (most tests) does not, and its process is never ended from here.
+   */
+  readonly endProcess?: (code: number) => void
 }
 
 function appendBounded(
@@ -171,6 +177,7 @@ export function createHostNodeProductionServer(
     ...(options.payloadVersion ? { payloadVersion: options.payloadVersion } : {}),
     ...(options.registry ? { registry: options.registry } : {}),
     ...(options.leasePorts ? { leasePorts: options.leasePorts } : {}),
+    ...(options.endProcess ? { endProcess: options.endProcess } : {}),
     resolveIdentity: (profilePath, lease) =>
       loadOrCreateHostServerIdentity({
         profilePath,

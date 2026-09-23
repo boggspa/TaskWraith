@@ -56,6 +56,35 @@ export interface HostRegistryPublisherInput {
   readonly log: (line: string) => void
 }
 
+/** How long an ending Host waits for its last stderr lines to reach the reader. */
+const HOST_END_PROCESS_FLUSH_MS = 1_000
+
+/**
+ * Ends this Host's process after a stop it decided on has failed or run out of
+ * time. Nothing retries such a stop, and whatever it left live (a history
+ * worker, a provider's pipes) would otherwise keep the process, and with it
+ * the profile authority, up for good. It waits for the current turn, so the
+ * failure has settled everywhere, then for stderr to flush, but never longer
+ * than HOST_END_PROCESS_FLUSH_MS: a reader that stopped reading cannot hold
+ * the exit.
+ */
+export function endHostProcess(code: number): void {
+  setImmediate(() => {
+    const exit = (): void => {
+      process.exit(code)
+    }
+    const fallback = setTimeout(exit, HOST_END_PROCESS_FLUSH_MS)
+    try {
+      process.stderr.write('', () => {
+        clearTimeout(fallback)
+        exit()
+      })
+    } catch {
+      // The fallback still ends the process.
+    }
+  })
+}
+
 export async function runHostDiagnosticCli(
   argv: readonly string[] = process.argv.slice(2)
 ): Promise<void> {
@@ -103,6 +132,7 @@ export async function runHostProductionCli(
       profilePath: command.profilePath,
       payloadVersion,
       registry,
+      endProcess: endHostProcess,
       ...(command.museBinary ? { museBinary: command.museBinary } : {}),
       ...(terminalLauncher ? { terminalLauncher } : {}),
       ...(fullAccessBootstrapSecret ? { fullAccessBootstrapSecret } : {})
