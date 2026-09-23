@@ -31,7 +31,14 @@ export interface HostShutdownClientOptions {
   readonly connect?: (path: string) => Socket
   readonly exists?: (path: string) => boolean
   readonly delay?: (ms: number) => Promise<void>
+  /** Budget for the socket round-trip (hello, welcome, shutdown ACK). */
   readonly timeoutMs?: number
+  /**
+   * Budget for the Host to remove its ownership artefacts after the ACK; a
+   * Host draining live provider work needs longer than the ACK does. Defaults
+   * to `timeoutMs`, which keeps the historical single-budget behaviour.
+   */
+  readonly removalTimeoutMs?: number
 }
 
 export type HostShutdownState = 'stopping' | 'already_stopping'
@@ -50,6 +57,7 @@ export class HostShutdownClient {
   private readonly exists: (path: string) => boolean
   private readonly delay: (ms: number) => Promise<void>
   private readonly timeoutMs: number
+  private readonly removalTimeoutMs: number
 
   constructor(options: HostShutdownClientOptions) {
     if (
@@ -67,6 +75,9 @@ export class HostShutdownClient {
     this.timeoutMs = options.timeoutMs ?? 5_000
     if (!Number.isSafeInteger(this.timeoutMs) || this.timeoutMs < 1)
       throw new Error('HostShutdownClient timeout is invalid')
+    this.removalTimeoutMs = options.removalTimeoutMs ?? this.timeoutMs
+    if (!Number.isSafeInteger(this.removalTimeoutMs) || this.removalTimeoutMs < 1)
+      throw new Error('HostShutdownClient removal timeout is invalid')
   }
 
   async shutdown(): Promise<HostShutdownState> {
@@ -109,7 +120,7 @@ export class HostShutdownClient {
   }
 
   private async waitForRemoval(paths: readonly string[]): Promise<void> {
-    const deadline = Date.now() + this.timeoutMs
+    const deadline = Date.now() + this.removalTimeoutMs
     while (Date.now() < deadline) {
       if (!paths.some((path) => this.exists(path))) return
       await this.delay(25)
