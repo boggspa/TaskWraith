@@ -44,7 +44,7 @@ import type {
   HostAuthorityReceiptResult
 } from './HostAuthority'
 import { HostSession, type HostSessionBinding } from './HostSession'
-import { HostLocalServer } from './HostLocalServer'
+import { HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS, HostLocalServer } from './HostLocalServer'
 import {
   HOST_LEASE_DEFAULT_TIMING,
   HostLeaseRegistry,
@@ -849,6 +849,33 @@ describe('HostLocalServer', () => {
     await Promise.all([server.stop(), server.stop()])
     expect(unsubscribe).toHaveBeenCalledOnce()
     expect(server.isStarted).toBe(false)
+    client.close()
+  })
+
+  // A production Host's lifetime-stop deadline is summed from this bound
+  // (HOST_LIFETIME_STOP_DEADLINE_MS), so the drain must wait the exported one.
+  it('waits HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS by default for a client that never finishes closing', async () => {
+    server = new HostLocalServer({
+      userDataPath,
+      hostId: 'test-host',
+      hostVersion: 'node-host-v1',
+      session: session as unknown as HostSession,
+      authority: authority as unknown as HostAuthority
+    })
+    await server.start()
+    const client = await connectClient(server.socketPath)
+    client.writeLine(
+      JSON.stringify(makeClientHello(readFileSync(server.tokenPath, 'utf8').trim(), ['bootstrap']))
+    )
+    await client.readFrame()
+    // Paused, it never reads the Host's end of the stream, so never closes its own.
+    client.pause()
+    const startedAt = Date.now()
+    await server.stop()
+    const elapsed = Date.now() - startedAt
+    // One full drain, then it is dropped: well short of a second one.
+    expect(elapsed).toBeGreaterThanOrEqual(HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS - 50)
+    expect(elapsed).toBeLessThan(2 * HOST_LOCAL_SERVER_SHUTDOWN_DRAIN_TIMEOUT_MS)
     client.close()
   })
 

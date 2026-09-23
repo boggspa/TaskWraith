@@ -3,6 +3,9 @@ import { tmpdir } from 'node:os'
 import { EventEmitter } from 'node:events'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
+  THREAD_CATALOGUE_CLOSE_TIMEOUT_MS,
+  THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS,
+  THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS,
   ThreadCatalogueClient,
   type ThreadCatalogueProcessPort
 } from '../../host-shared/thread-catalogue/ThreadCatalogueClient'
@@ -11,20 +14,27 @@ class Port extends EventEmitter implements ThreadCatalogueProcessPort {
   readonly posts: Array<{ id: number; query: { method: string }; priority?: string }> = []
   terminateCalls = 0
 
-  constructor(readonly terminateResult: 'resolve' | 'reject' = 'resolve') {
+  constructor(
+    readonly terminateResult: 'resolve' | 'reject' | 'hang' = 'resolve',
+    readonly answersClose = true
+  ) {
     super()
   }
 
   postMessage(value: unknown): void {
     const message = value as { id: number; query: { method: string }; priority?: string }
     this.posts.push(message)
-    if (message.query.method === 'initialize' || message.query.method === 'close') {
+    if (
+      message.query.method === 'initialize' ||
+      (message.query.method === 'close' && this.answersClose)
+    ) {
       queueMicrotask(() => this.emit('message', { id: message.id, ok: true, value: true }))
     }
   }
 
   terminate(): Promise<void> {
     this.terminateCalls += 1
+    if (this.terminateResult === 'hang') return new Promise(() => undefined)
     return this.terminateResult === 'resolve'
       ? Promise.resolve()
       : Promise.reject(new Error('termination rejected'))
@@ -93,6 +103,75 @@ describe('ThreadCatalogueClient supervision regressions', () => {
 
     expect(port.posts.filter(({ query }) => query.method === 'close')).toHaveLength(1)
     expect(port.terminateCalls).toBe(1)
+  })
+
+  // A production Host's lifetime-stop deadline is summed from these three
+  // bounds (HOST_LIFETIME_STOP_DEADLINE_MS), so each step must wait its own.
+  it('gives a worker that never answers close THREAD_CATALOGUE_CLOSE_TIMEOUT_MS, then terminates it', async () => {
+    vi.useFakeTimers()
+    const port = new Port('resolve', false)
+    const client = new ThreadCatalogueClient(
+      port,
+      options(() => new Port())
+    )
+    await client.ready
+
+    let disposed = false
+    void client.dispose().then(() => {
+      disposed = true
+    })
+    await vi.advanceTimersByTimeAsync(THREAD_CATALOGUE_CLOSE_TIMEOUT_MS - 1)
+    expect(port.terminateCalls).toBe(0)
+    expect(disposed).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    expect(port.terminateCalls).toBe(1)
+    expect(disposed).toBe(true)
+  })
+
+  it('fails a disposal whose worker termination stays unconfirmed for THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS', async () => {
+    vi.useFakeTimers()
+    const port = new Port('hang')
+    const client = new ThreadCatalogueClient(
+      port,
+      options(() => new Port())
+    )
+    await client.ready
+
+    let outcome: unknown = 'pending'
+    void client.dispose().then(
+      () => {
+        outcome = 'disposed'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+    await vi.advanceTimersByTimeAsync(THREAD_CATALOGUE_TERMINATE_TIMEOUT_MS - 1)
+    expect(port.terminateCalls).toBe(1)
+    expect(outcome).toBe('pending')
+    await vi.advanceTimersByTimeAsync(1)
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toBe('History worker termination is unconfirmed')
+  })
+
+  it('restarts a failed worker after at most THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS', async () => {
+    vi.useFakeTimers()
+    const first = new Port()
+    const restart = vi.fn(() => new Port())
+    // A base delay far past the cap, so the cap alone sets the wait.
+    const client = new ThreadCatalogueClient(first, {
+      ...options(restart),
+      restartDelayMs: 10 * THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS
+    })
+    await client.ready
+
+    first.emit('exit', 1)
+    await vi.advanceTimersByTimeAsync(THREAD_CATALOGUE_RESTART_BACKOFF_CAP_MS - 1)
+    expect(restart).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(1)
+    expect(restart).toHaveBeenCalledOnce()
+    await client.ready
+    await client.dispose()
   })
 
   // The lane rides the ENVELOPE, never the query: `decodeThreadCatalogueReadQuery`

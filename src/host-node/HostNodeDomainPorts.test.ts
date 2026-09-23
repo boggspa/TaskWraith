@@ -35,6 +35,7 @@ import type {
 } from './HostNodeProvider'
 import { hostProviderOffers } from '../host-shared/HostProviderCatalog'
 import {
+  HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS,
   HostNodeDomainPorts,
   TASKWRAITH_HOST_QUEUED_START_ENV,
   isHostQueuedStartEnabled
@@ -1417,6 +1418,54 @@ describe('HostNodeDomainPorts', () => {
       alreadyStopped: true,
       cancelledRuns: 0
     })
+  })
+
+  // The production Host's lifetime-stop deadline is summed from this bound
+  // (HOST_LIFETIME_STOP_DEADLINE_MS), so the wait must be the exported one.
+  it('gives up on a provider run that never completes after HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS by default', async () => {
+    const { domain, store, workspace, releaseRun } = open({ killReleases: false })
+    const registered = store.registerWorkspace({ path: workspace })
+    const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+    store.configureThread({
+      threadId: thread.appChatId,
+      providerId: 'muse',
+      modelId: 'muse-spark-1.2',
+      postureId: 'workspace_write',
+      postureConsent: true
+    })
+    await expect(
+      domain.executeCommand(
+        context,
+        command(
+          'composer.send',
+          'run-shutdown-bound',
+          { threadId: thread.appChatId },
+          { text: 'never ends' }
+        ),
+        { id: 'target' }
+      )
+    ).resolves.toMatchObject({ status: 'succeeded' })
+
+    vi.useFakeTimers()
+    try {
+      let outcome: unknown = 'pending'
+      void domain.shutdown().then(
+        (result) => {
+          outcome = result
+        },
+        (error: unknown) => {
+          outcome = error
+        }
+      )
+      await vi.advanceTimersByTimeAsync(HOST_NODE_DOMAIN_SHUTDOWN_TIMEOUT_MS - 1)
+      expect(outcome).toBe('pending')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(outcome).toBeInstanceOf(Error)
+      expect((outcome as Error).message).toBe('Host provider shutdown timed out')
+    } finally {
+      vi.useRealTimers()
+      releaseRun()
+    }
   })
 
   it('terminalizes a run when a provider promise rejects after composer acceptance', async () => {

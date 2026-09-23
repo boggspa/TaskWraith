@@ -3,7 +3,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ThreadCatalogue } from '../../host-shared/thread-catalogue/ThreadCatalogue'
-import { ThreadCatalogueSourcePublisher } from '../../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
+import {
+  THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS,
+  ThreadCatalogueSourcePublisher
+} from '../../host-shared/thread-catalogue/ThreadCatalogueSourcePublisher'
 import { captureThreadCatalogueWitness } from '../../host-shared/thread-catalogue/ThreadCatalogueWitness'
 import type { ThreadCatalogueProjection } from '../../shared/threadCatalogueTypes'
 
@@ -113,6 +116,40 @@ describe('ThreadCatalogue source-operation supervision regressions', () => {
 
     expect(pendingDuringRepair).toBe(true)
     expect(drainedDuringRepair).toBe(false)
+  })
+
+  // A production Host's lifetime-stop deadline is summed from this bound
+  // (HOST_LIFETIME_STOP_DEADLINE_MS), so the drain must wait the exported one.
+  it('fails a drain whose writers never finish after THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS', async () => {
+    vi.useFakeTimers()
+    const profilePath = profile()
+    fs.writeFileSync(join(profilePath, 'chats', 'chat.json'), '{}', { mode: 0o600 })
+    const publisher = new ThreadCatalogueSourcePublisher({
+      profilePath,
+      writer: 'host',
+      writerId: 'writer',
+      segmented: false,
+      canWrite: () => true
+    })
+    // A source writer that never finishes.
+    publisher.begin('chat')
+    const startedAt = Date.now()
+    let outcome: unknown = 'pending'
+    void publisher.drain().then(
+      () => {
+        outcome = 'drained'
+      },
+      (error: unknown) => {
+        outcome = error
+      }
+    )
+    // Straight to one 10 ms poll short of the bound, rather than every poll.
+    vi.setSystemTime(startedAt + THREAD_CATALOGUE_SOURCE_DRAIN_TIMEOUT_MS - 20)
+    await vi.advanceTimersByTimeAsync(10)
+    expect(outcome).toBe('pending')
+    await vi.advanceTimersByTimeAsync(10)
+    expect(outcome).toBeInstanceOf(Error)
+    expect((outcome as Error).message).toBe('History source writers have not drained')
   })
 
   it('retries writer registration after an untracked save repaired during cooldown', async () => {
