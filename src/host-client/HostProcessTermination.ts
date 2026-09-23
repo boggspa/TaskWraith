@@ -16,6 +16,7 @@ import {
   type HostProfileAuthorityProcessPort
 } from '../host-runtime/HostProfileAuthorityLease'
 import {
+  PROCESS_BIRTH_START_TOLERANCE_MS,
   isProcessBirthIdentityDigest,
   matchProcessBirth,
   observeProcessBirthIdentity,
@@ -49,7 +50,8 @@ import { HostShutdownClient } from './HostShutdownClient'
  * Refusals, all without a signal:
  *  - the evidence names more than one pid, or two birth digests for one pid,
  *    and observing each pid cannot prove every disagreeing record stale
- *    (`inconsistent`);
+ *    (`inconsistent`). A registry digest beside a legacy (nonce) lease is
+ *    resolved the same way: each record is judged by its own birth;
  *  - the birth identity or the command line cannot be observed
  *    (`identity_unavailable`; the caller may only retry the socket path);
  *  - the evidence carries no birth to compare with (`unverifiable`);
@@ -63,9 +65,11 @@ import { HostShutdownClient } from './HostShutdownClient'
  * socket file and directory, discovery, token, lease and registry entry are
  * removed — each only while it still carries exactly the record read before
  * termination (never by pid alone: a successor may have been handed the same
- * pid), and the profile-side artefacts only while no other owner holds the
- * profile's authority lease — so the next launch neither waits on a stale
- * socket nor loses a successor's state.
+ * pid), only once that record is proven stale (its pid is dead, or the process
+ * now at that pid contradicts the record's own birth), and the profile-side
+ * artefacts only while no other owner holds the profile's authority lease —
+ * so the next launch neither waits on a stale socket nor loses a successor's
+ * or a live owner's state.
  *
  * Electron-free: shared by Electron main, the TUI, `cli.js stop-all` and the
  * build script.
@@ -139,7 +143,7 @@ export interface HostTerminationPorts {
   signal(pid: number, signal: HostTerminationSignal): void
   /**
    * Removes the artefacts that still carry exactly one of `dead`'s records:
-   * every record in it names a process proven gone.
+   * every record in it is proven stale.
    */
   sweep(
     profilePath: string,
@@ -301,44 +305,114 @@ function leaseExpectation(lease: HostTerminationLeaseEvidence): HostTerminationE
   return Number.isFinite(startedAtMs) ? { startedAtMs } : {}
 }
 
+type HostTerminationRecord = 'registry' | 'lease' | 'discovery'
+
+const NO_EVIDENCE: HostTerminationEvidence = Object.freeze({
+  discovery: null,
+  lease: null,
+  registry: null
+})
+
 /**
- * Resolves inconsistent evidence by observation: a record whose pid is dead,
- * or alive with a birth other than the one the record carries, is stale and
- * is dropped (and swept after the termination). A record that cannot be
- * proven stale — an unobservable pid, or a discovery or birthless registry
- * entry whose pid is alive — is kept, so the evidence stays inconsistent and
- * nothing is signalled.
+ * Whether an observation of the pid a record names proves that record stale.
+ * A dead pid proves every record stale. A live process proves stale only what
+ * contradicts the record's own birth: a registry or lease digest it does not
+ * carry, a legacy lease whose recorded start is more than
+ * PROCESS_BIRTH_START_TOLERANCE_MS from its start, or a discovery written
+ * before it started (a Host's listener starts after its process). A registry
+ * entry that recorded no birth is proven stale only by death, and nothing is
+ * proven by an observation that failed.
+ */
+function recordIsStale(
+  evidence: HostTerminationEvidence,
+  record: HostTerminationRecord,
+  observation: ProcessBirthObservation
+): boolean {
+  if (observation.state === 'dead') return true
+  if (observation.state !== 'live') return false
+  if (record === 'registry') {
+    const birthIdentity = evidence.registry?.birthIdentity
+    return (
+      isProcessBirthIdentityDigest(birthIdentity) &&
+      matchProcessBirth(observation, { birthIdentity }) === 'mismatch'
+    )
+  }
+  if (record === 'lease') {
+    return (
+      evidence.lease !== null &&
+      matchProcessBirth(observation, leaseExpectation(evidence.lease)) === 'mismatch'
+    )
+  }
+  const writtenAt = evidence.discovery ? Date.parse(evidence.discovery.startedAt) : Number.NaN
+  return (
+    observation.startedAtMs !== null &&
+    Number.isFinite(writtenAt) &&
+    writtenAt < observation.startedAtMs - PROCESS_BIRTH_START_TOLERANCE_MS
+  )
+}
+
+/**
+ * A registry birth digest beside a legacy (nonce) lease. The two carry
+ * different kinds of birth, so the digest-against-digest check cannot compare
+ * them; letting the digest decide alone would read the live owner of that
+ * lease as a reused pid and sweep its lease.
+ */
+function registryDigestBesideLegacyLease(evidence: HostTerminationEvidence): boolean {
+  return (
+    isProcessBirthIdentityDigest(evidence.registry?.birthIdentity) &&
+    evidence.lease !== null &&
+    !isProcessBirthIdentityDigest(evidence.lease.processStartIdentity)
+  )
+}
+
+/**
+ * Resolves evidence by observation: a record that its pid's observation
+ * proves stale is dropped (and swept after the termination). A record that
+ * cannot be proven stale — an unobservable pid, a live pid that contradicts
+ * nothing the record carries — is kept, so evidence that stays inconsistent
+ * is refused and nothing is signalled.
  */
 async function dropStaleEvidence(
   ports: Pick<HostTerminationPorts, 'observe'>,
   evidence: HostTerminationEvidence
-): Promise<{ readonly evidence: HostTerminationEvidence; readonly dropped: readonly string[] }> {
+): Promise<{
+  readonly kept: HostTerminationEvidence
+  readonly stale: HostTerminationEvidence
+  readonly dropped: readonly HostTerminationRecord[]
+}> {
   const observations = new Map<number, Promise<ProcessBirthObservation>>()
-  const stale = async (pid: number, expected: HostTerminationExpectation): Promise<boolean> => {
+  const observe = (pid: number): Promise<ProcessBirthObservation> => {
     let observation = observations.get(pid)
     if (!observation) {
       observation = ports.observe(pid)
       observations.set(pid, observation)
     }
-    const observed = await observation
-    if (observed.state === 'dead') return true
-    return matchProcessBirth(observed, expected) === 'mismatch'
+    return observation
   }
-  const dropped: string[] = []
-  let { registry, lease, discovery } = evidence
-  if (registry && (await stale(registry.pid, { birthIdentity: registry.birthIdentity }))) {
-    registry = null
-    dropped.push('registry')
+  const judge = async (record: HostTerminationRecord): Promise<boolean> => {
+    const value = evidence[record]
+    return value !== null && recordIsStale(evidence, record, await observe(value.pid))
   }
-  if (lease && (await stale(lease.pid, leaseExpectation(lease)))) {
-    lease = null
-    dropped.push('lease')
+  const registryStale = await judge('registry')
+  const leaseStale = await judge('lease')
+  const discoveryStale = await judge('discovery')
+  const dropped: HostTerminationRecord[] = []
+  if (registryStale) dropped.push('registry')
+  if (leaseStale) dropped.push('lease')
+  if (discoveryStale) dropped.push('discovery')
+  return {
+    kept: {
+      registry: registryStale ? null : evidence.registry,
+      lease: leaseStale ? null : evidence.lease,
+      discovery: discoveryStale ? null : evidence.discovery
+    },
+    stale: {
+      registry: registryStale ? evidence.registry : null,
+      lease: leaseStale ? evidence.lease : null,
+      discovery: discoveryStale ? evidence.discovery : null
+    },
+    dropped
   }
-  if (discovery && (await stale(discovery.pid, {}))) {
-    discovery = null
-    dropped.push('discovery')
-  }
-  return { evidence: { registry, lease, discovery }, dropped }
 }
 
 /**
@@ -679,15 +753,18 @@ export async function terminateHostProcess(
   const steps: string[] = []
   const log = (line: string): void => ports.log?.(`[host-termination] ${profilePath}: ${line}`)
 
-  // Every record read here is swept only once the process it names is proven
-  // gone; `judged` is what the termination itself acts on.
+  // `judged` is what the termination acts on; `stale` holds the records
+  // already proven stale on the way in. Nothing is swept that is not proven
+  // stale, at the end, by an observation of the pid it names.
   const before = ports.readEvidence(profilePath, registryRoot)
   let judged = before
+  let stale = NO_EVIDENCE
   let target = hostTerminationTargetPid(before)
-  if (target.inconsistent) {
+  if (target.inconsistent || registryDigestBesideLegacyLease(before)) {
     const resolved = await dropStaleEvidence(ports, before)
     for (const source of resolved.dropped) steps.push(`evidence:stale-${source}`)
-    judged = resolved.evidence
+    judged = resolved.kept
+    stale = resolved.stale
     target = hostTerminationTargetPid(judged)
     if (target.inconsistent) {
       steps.push('evidence:inconsistent')
@@ -698,12 +775,31 @@ export async function terminateHostProcess(
   const pid = target.pid
   const expected = hostTerminationExpectation(judged)
 
+  /**
+   * The records to sweep: those dropped as stale on the way in, and each
+   * record naming the target pid that a fresh observation of that pid proves
+   * stale — all of them once it is dead; while another process lives at that
+   * pid, only those contradicting their own birth. A record that cannot be
+   * proven stale is never swept.
+   */
+  const provenStale = async (): Promise<HostTerminationEvidence> => {
+    if (pid === null) return stale
+    const observation = await ports.observe(pid)
+    const staleNow = (record: HostTerminationRecord): boolean =>
+      judged[record] !== null && recordIsStale(judged, record, observation)
+    return {
+      registry: staleNow('registry') ? judged.registry : stale.registry,
+      lease: staleNow('lease') ? judged.lease : stale.lease,
+      discovery: staleNow('discovery') ? judged.discovery : stale.discovery
+    }
+  }
+
   const finish = async (
     kind: HostTerminationOutcomeKind,
     sweep: boolean,
     detail?: string
   ): Promise<HostTerminationOutcome> => {
-    const swept = sweep ? await ports.sweep(profilePath, before, registryRoot) : []
+    const swept = sweep ? await ports.sweep(profilePath, await provenStale(), registryRoot) : []
     if (swept.length) steps.push(`swept:${swept.join(',')}`)
     log(`${kind}${detail ? ` (${detail})` : ''} after ${steps.join(' -> ') || 'no steps'}`)
     return { kind, pid, steps, swept, ...(detail ? { detail } : {}) }
