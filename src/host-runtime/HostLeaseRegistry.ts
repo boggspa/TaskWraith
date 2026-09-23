@@ -36,8 +36,11 @@
  * drain and is gone again within one grace (a status poll, a socket that
  * declines a moment later) has not taken the Host back: the drain resumes at
  * once, busy cap still counted from its first start, so a poller can never
- * keep a wedged run's Host alive by resetting the cap. `persist` disables the
- * grace exit only — nothing else in this module.
+ * keep a wedged run's Host alive by resetting the cap. The holder that left
+ * still gets the grace an idle Host gives its last holder: a resumed drain
+ * never ends `drained` sooner than one grace after it left, so a client that
+ * came back during a drain and then dropped once can reconnect. `persist`
+ * disables the grace exit only — nothing else in this module.
  *
  * Only an owner that can act on an exit gets a bounded lifetime: a registry
  * built without `onExit` (the in-process Host inside Electron main, the
@@ -284,6 +287,8 @@ export class HostLeaseRegistry {
   private drainStartAwakeMs: number | null = null
   /** A drain a holder interrupted: its busy-cap start, and when the holder came. */
   private interruptedDrain: { anchorAwakeMs: number; heldSinceAwakeMs: number } | null = null
+  /** A resumed drain may not end `drained` before this: one grace after its holder left. */
+  private drainedNotBeforeAwakeMs: number | null = null
   private exited = false
 
   constructor(options: HostLeaseRegistryOptions = {}) {
@@ -469,6 +474,9 @@ export class HostLeaseRegistry {
       if (this.graceStartAwakeMs !== null) this.graceStartAwakeMs = this.awakeMs
       if (this.drainStartAwakeMs !== null) this.drainStartAwakeMs = this.awakeMs
       if (this.interruptedDrain) this.interruptedDrain.anchorAwakeMs = this.awakeMs
+      if (this.drainedNotBeforeAwakeMs !== null) {
+        this.drainedNotBeforeAwakeMs = this.awakeMs + this.timing.graceMs
+      }
       this.log(
         `[host-lease] suspend-observed: deadlines reset (phase=${this.phase}, awake=${this.awakeMs}ms)`
       )
@@ -526,6 +534,7 @@ export class HostLeaseRegistry {
         this.phase = 'held'
         this.graceStartAwakeMs = null
         this.drainStartAwakeMs = null
+        this.drainedNotBeforeAwakeMs = null
       }
       return
     }
@@ -536,9 +545,12 @@ export class HostLeaseRegistry {
       if (interrupted && now - interrupted.heldSinceAwakeMs < this.timing.graceMs) {
         // Gone again within one grace: a poll or a socket that declined, not a
         // client taking the Host back. The drain resumes, and its busy cap
-        // keeps counting from the drain's first start.
+        // keeps counting from the drain's first start. But the client may only
+        // have dropped: it gets a full grace to come back before an idle drain
+        // may end, as it would from an idle Host.
         this.phase = 'draining'
         this.drainStartAwakeMs = interrupted.anchorAwakeMs
+        this.drainedNotBeforeAwakeMs = now + this.timing.graceMs
         this.log('[host-lease] no holder again within the grace: draining resumes')
         return
       }
@@ -565,6 +577,8 @@ export class HostLeaseRegistry {
     }
     if (this.phase === 'draining' && this.drainStartAwakeMs !== null) {
       if (this.liveRuns() === 0) {
+        const notBefore = this.drainedNotBeforeAwakeMs
+        if (notBefore !== null && this.awakeMs < notBefore) return
         this.exit('drained')
         return
       }

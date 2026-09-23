@@ -617,6 +617,115 @@ describe('HostLeaseRegistry', () => {
       expect(h.logs.at(-1)).toContain('draining resumes')
     })
 
+    // S1a re-review R1: a client that came back during a drain and then
+    // dropped once (a TUI retrying after 1.8 s, main's mirror after 500 ms)
+    // must find its Host still there.
+    it('gives a holder that left a resumed drain a full grace to come back once the work is done', () => {
+      let live = 1
+      const h = harness({ liveWork: () => live })
+      h.registry.start()
+      h.advanceTicks(45)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      // The reopened app arrives during the drain, and the run finishes under it.
+      h.registry.authenticated(7)
+      h.advanceTicks(2)
+      live = 0
+      h.advanceTicks(1)
+      // Its socket drops once: the drain resumes, but it may not end yet.
+      h.registry.closed(7)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      h.advanceTicks(1)
+      expect(h.exits).toEqual([])
+      // It reconnects 1.8 s after the drop and finds its Host.
+      h.sleep(800)
+      h.registry.authenticated(8)
+      expect(h.registry.lifetimePhase).toBe('held')
+      h.advanceTicks(120)
+      expect(h.exits).toEqual([])
+    })
+
+    it('waits out the same grace when the work is still settling as the holder leaves', () => {
+      let live = 1
+      const h = harness({ liveWork: () => live })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.registry.authenticated(7)
+      h.advanceTicks(3)
+      h.registry.closed(7)
+      // The run's completion settles inside the reconnect gap.
+      h.sleep(TICK_MS / 2)
+      live = 0
+      h.advance(TICK_MS / 2)
+      expect(h.exits).toEqual([])
+      h.sleep(TICK_MS / 2)
+      h.registry.authenticated(8)
+      expect(h.registry.lifetimePhase).toBe('held')
+    })
+
+    it('ends a resumed drain on the first tick one grace after its holder left, never sooner', () => {
+      let live = 1
+      const h = harness({ liveWork: () => live })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.registry.authenticated(7)
+      h.advanceTicks(2)
+      live = 0
+      h.advanceTicks(1)
+      // Left at 48.5 s, between two ticks.
+      h.sleep(TICK_MS / 2)
+      h.registry.closed(7)
+      h.advance(TICK_MS / 2)
+      h.advanceTicks(44)
+      // 93 s: 44.5 s since it left.
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['drained'])
+    })
+
+    it("resets a resumed drain's return window on a suspend, like every other deadline", () => {
+      let live = 1
+      const h = harness({ liveWork: () => live })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.registry.authenticated(7)
+      h.advanceTicks(1)
+      live = 0
+      h.advanceTicks(1)
+      h.registry.closed(7)
+      h.advanceTicks(40)
+      h.sleep(60 * 60_000)
+      h.advance(TICK_MS)
+      expect(h.ticks.at(-1)?.suspendObserved).toBe(true)
+      // Five seconds of the window were left; a full grace runs again from the wake.
+      h.advanceTicks(HOST_LAST_LEASE_GRACE_MS / TICK_MS - 1)
+      expect(h.exits).toEqual([])
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['drained'])
+    })
+
+    it('keeps no return window once a returning holder has taken the Host back', () => {
+      let live = 1
+      const h = harness({ liveWork: () => live })
+      h.registry.start()
+      h.advanceTicks(45)
+      h.registry.authenticated(7)
+      h.advanceTicks(1)
+      h.registry.closed(7)
+      // Back at once, and this time it stays a full grace: the Host is its again.
+      h.registry.authenticated(8)
+      h.advanceTicks(50)
+      h.registry.closed(8)
+      h.advanceTicks(45)
+      expect(h.registry.lifetimePhase).toBe('draining')
+      // A fresh drain: a suspend in it must not revive the old visit's window.
+      h.sleep(60 * 60_000)
+      h.advance(TICK_MS)
+      expect(h.ticks.at(-1)?.suspendObserved).toBe(true)
+      live = 0
+      h.advance(TICK_MS)
+      expect(h.exits).toEqual(['drained'])
+    })
+
     it('treats a throwing live-work probe as busy rather than idle', () => {
       const h = harness({
         liveWork: () => {
