@@ -700,4 +700,125 @@ describe('real isolated history import', () => {
       await service.dispose()
     }
   })
+
+  it('settles a prior Host incarnation backlog larger than one settle-runs batch', async () => {
+    // One `settle-runs` mutation carries at most 1000 runs: the wire protocol
+    // and the decoder both refuse a larger batch. A bigger backlog is settled
+    // in successive passes. Each adoption republishes the thread, the polling
+    // mirror reports the lower `unsettledRuns`, and the recovery re-queues the
+    // chat. This is wired the way HostNodeProductionServer wires it: publisher
+    // `onChanged` -> `changed` and a started mirror. If that loop breaks, every
+    // run past the first batch stays `running` for the life of the Host.
+    const backlog = 2100
+    const profilePath = join(directory, 'host-restart-backlog')
+    fs.mkdirSync(join(profilePath, 'chats'), { recursive: true })
+    const file = join(profilePath, 'chats', 'chat.json')
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        appChatId: 'chat',
+        title: 'Chat',
+        provider: 'muse',
+        scope: 'global',
+        createdAt: 1,
+        updatedAt: 2,
+        persistenceRevision: 1,
+        messages: [],
+        runs: Array.from({ length: backlog }, (_, index) => ({
+          runId: `host-run-${index}`,
+          provider: 'muse',
+          status: 'running',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          hostRunOrigin: {
+            schemaVersion: 1,
+            kind: 'host-node',
+            hostId: 'host',
+            incarnation: 'old'
+          }
+        }))
+      })
+    )
+    const reader = { profilePath, runtimeInstanceId: 'new', segmented: false }
+    const service = new ThreadCatalogueWorkerService({
+      reader,
+      decoderPath,
+      writer: 'host',
+      writerId: 'new',
+      writerLifecycle: () => 'active',
+      assertSourceAuthority: () => {}
+    })
+    const batches: number[] = []
+    const recoveryReadsByLease = new Map<string, number>()
+    const client = {
+      query: async <T>(q: ThreadCatalogueQuery) => {
+        if (q.method === 'prepare' && q.mutation.kind === 'settle-runs')
+          batches.push(q.mutation.runs.length)
+        const result = await service.query(q)
+        if (q.method === 'objects' && q.kind === 'recovery' && Array.isArray(result))
+          recoveryReadsByLease.set(
+            q.leaseId,
+            (recoveryReadsByLease.get(q.leaseId) ?? 0) + result.length
+          )
+        return result as T
+      }
+    }
+    const publisher = new HostPublisher({
+      profilePath,
+      writer: 'host',
+      writerId: 'new',
+      segmented: false,
+      canWrite: () => true,
+      canManageRecoveryHolds: () => true,
+      onChanged: (chatId) => {
+        void service.query({ method: 'changed', chatId }).catch(() => undefined)
+      }
+    })
+    const controller = new ThreadCatalogueRecoveryController({
+      reader,
+      client,
+      publisher,
+      incarnation: 'new',
+      assertAuthority: () => {},
+      hasLiveWork: () => false
+    })
+    const mirror = new ThreadCatalogueMirror(client)
+    const runningRuns = (): number =>
+      (JSON.parse(fs.readFileSync(file, 'utf8')).runs as Array<{ status: string }>).filter(
+        (run) => run.status === 'running'
+      ).length
+    let recovery: ThreadCatalogueHostRecovery | undefined
+    try {
+      await service.refreshInventory()
+      await service.ensureIndexed('chat', 'metadata')
+      await mirror.refresh()
+      mirror.start()
+      recovery = new ThreadCatalogueHostRecovery({
+        client,
+        mirror,
+        controller,
+        origin: { schemaVersion: 1, kind: 'host-node', hostId: 'host', incarnation: 'new' }
+      })
+      // Stays inside this file's per-platform test budget (see vi.setConfig).
+      const deadline =
+        Date.now() + (process.platform === 'win32' ? 150_000 : process.env.CI ? 100_000 : 25_000)
+      while (runningRuns() > 0 && Date.now() < deadline)
+        await new Promise((resolve) => setTimeout(resolve, 50))
+      expect(runningRuns()).toBe(0)
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+      expect(saved.runs.filter((run: { status: string }) => run.status === 'failed')).toHaveLength(
+        backlog
+      )
+      expect(batches.length).toBeGreaterThanOrEqual(Math.ceil(backlog / 1000))
+      expect(Math.max(...batches)).toBeLessThanOrEqual(1000)
+      // A pass stops paging the recovery index once it holds a full batch.
+      // It does not read the whole backlog before settling any of it.
+      expect(recoveryReadsByLease.size).toBeGreaterThanOrEqual(Math.ceil(backlog / 1000))
+      expect(Math.max(...recoveryReadsByLease.values())).toBeLessThan(backlog)
+    } finally {
+      recovery?.dispose()
+      controller.dispose()
+      await mirror.dispose()
+      await service.dispose()
+    }
+  })
 })
