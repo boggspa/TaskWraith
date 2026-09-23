@@ -222,6 +222,28 @@ function buildSmokeLaunchArgv(smokeUserDataPath, temporaryRoot = os.tmpdir()) {
 }
 
 /**
+ * The `open` argv for the isolated launch. `open` hands the caller's
+ * environment to nothing, and the app's external Host inherits the app's
+ * environment (its launcher spreads process.env), so `--env` is the only way
+ * the smoke's registry root reaches that Host: without it the Host would
+ * publish into the machine-wide ~/.taskwraith/hosts.
+ */
+function buildSmokeOpenArgs(appRoot, launchArgs, registryRoot) {
+  if (typeof registryRoot !== 'string' || !path.isAbsolute(registryRoot)) {
+    throw new Error('smoke Host registry root must be absolute')
+  }
+  return [
+    '-n',
+    '-W',
+    '--env',
+    `TASKWRAITH_HOST_REGISTRY_ROOT=${registryRoot}`,
+    appRoot,
+    '--args',
+    ...launchArgs
+  ]
+}
+
+/**
  * Prove the argv we are about to hand to `open` really carries isolation.
  *
  * The failure this guards is silent: `open -n -W <app>` with the `--args`
@@ -376,12 +398,15 @@ async function main() {
   }
 
   fs.mkdirSync(smokeUserDataPath, { recursive: true })
+  const registryRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'taskwraith-host-boot-smoke-registry-')
+  )
   const timeoutMs = Number(
     process.env.TASKWRAITH_HOST_SMOKE_TIMEOUT_MS || DEFAULT_DISCOVERY_TIMEOUT_MS
   )
   let launched = null
   try {
-    launched = spawn('/usr/bin/open', ['-n', '-W', appRoot, '--args', ...launchArgs], {
+    launched = spawn('/usr/bin/open', buildSmokeOpenArgs(appRoot, launchArgs, registryRoot), {
       stdio: ['ignore', 'pipe', 'pipe']
     })
 
@@ -425,6 +450,7 @@ async function main() {
   } finally {
     if (launched && launched.exitCode === null) launched.kill('SIGTERM')
     fs.rmSync(smokeUserDataPath, { recursive: true, force: true })
+    fs.rmSync(registryRoot, { recursive: true, force: true })
   }
 }
 
@@ -443,6 +469,7 @@ module.exports = {
   isStrictDescendant,
   createSmokeUserDataPath,
   buildSmokeLaunchArgv,
+  buildSmokeOpenArgs,
   argvCarriesIsolation,
   isTaskWraithAlreadyRunning,
   loadShippingDiscoveryDecoder,

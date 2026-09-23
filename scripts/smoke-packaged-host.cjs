@@ -52,6 +52,7 @@ main().catch((error) => {
 })
 
 async function main() {
+  isolateHostRegistry()
   validateSourceLayout()
   if (sourceLauncher) {
     await validateSourceLauncher()
@@ -140,6 +141,17 @@ function validateSourceLayout() {
   } else {
     console.log('note: out/host missing — run npm run host:build before packaging')
   }
+}
+
+/**
+ * Every Host this smoke starts publishes its registry entry into a temporary
+ * root, never the machine-wide ~/.taskwraith/hosts; every launcher spawn
+ * spreads process.env.
+ */
+function isolateHostRegistry() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-host-smoke-registry-'))
+  process.env.TASKWRAITH_HOST_REGISTRY_ROOT = root
+  process.on('exit', () => fs.rmSync(root, { recursive: true, force: true }))
 }
 
 async function validateSourceLauncher() {

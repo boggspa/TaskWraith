@@ -27,6 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { createHostNodeProductionServer } from '../host-node/HostNodeProductionFactory'
 import type { HostNodeProductionServer } from '../host-node/HostNodeProductionServer'
+import { HOST_REGISTRY_ROOT_ENV } from '../host-runtime/HostRegistry'
 import { HOST_SERVER_PRODUCTION_VERSION } from '../host-runtime/HostServerIdentity'
 import { HostProjectionClient } from '../host-client/HostProjectionClient'
 import type { HostCapability } from '../shared/hostProtocol'
@@ -138,6 +139,9 @@ afterEach(async () => {
 async function startProductionHost(): Promise<HostNodeProductionServer> {
   const started = createHostNodeProductionServer({
     profilePath: userDataPath,
+    // The factory publishes no registry entry without an injected publisher;
+    // the root is named anyway so none could ever reach ~/.taskwraith/hosts.
+    env: { ...process.env, [HOST_REGISTRY_ROOT_ENV]: join(profileParent, 'host-registry') },
     // A deterministic absent explicit binary keeps this socket test independent
     // of any developer-installed Muse executable or credentials.
     museBinary: join(profileParent, 'missing-muse-binary'),

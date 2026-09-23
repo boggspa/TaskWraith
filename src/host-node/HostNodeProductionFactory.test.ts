@@ -7,6 +7,7 @@ import {
   readdirSync,
   realpathSync,
   rmSync,
+  unlinkSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -20,10 +21,20 @@ import {
   hostStandaloneComposedProviderIds
 } from '../host-shared/HostStandaloneProviderMatrix'
 import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from '../host-runtime/HostProfileAuthorityLease'
+import { HOST_PERSIST_ENV, type HostLeaseRegistryPorts } from '../host-runtime/HostLeaseRegistry'
+import {
+  HOST_REGISTRY_REFRESH_MS,
+  HOST_REGISTRY_ROOT_ENV,
+  HostRegistryPublisher,
+  hostRegistryEntryPath,
+  readHostRegistryEntry
+} from '../host-runtime/HostRegistry'
+import { currentProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
 import { HOST_PROTOCOL_VERSION, type HostCommand } from '../shared/hostProtocol'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 import {
   taskWraithHostDiscoveryPath,
+  taskWraithHostSocketPath,
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
 
@@ -63,6 +74,22 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(historyWorkers.directory, { recursive: true, force: true }))
 
+/**
+ * The factory publishes a registry entry only through an injected `registry`
+ * (the production CLI builds one); none of the servers below is given one.
+ * Each hand-built env still names this file's own registry root, so a
+ * publisher ever built from it could never reach ~/.taskwraith/hosts.
+ */
+let registryRoot = ''
+beforeAll(() => {
+  registryRoot = realpathSync(mkdtempSync(join(tmpdir(), 'host-factory-registry-')))
+})
+afterAll(() => rmSync(registryRoot, { recursive: true, force: true }))
+const isolated = (env: NodeJS.ProcessEnv): NodeJS.ProcessEnv => ({
+  ...env,
+  [HOST_REGISTRY_ROOT_ENV]: registryRoot
+})
+
 const paths: string[] = []
 afterEach(() => {
   while (paths.length) rmSync(paths.pop()!, { recursive: true, force: true })
@@ -74,7 +101,7 @@ it('creates a production server for a cold profile without touching Desktop stat
   const profile = join(parent, 'cold-profile')
   const server = createHostNodeProductionServer({
     profilePath: profile,
-    env: { PATH: '' },
+    env: isolated({ PATH: '' }),
     temporaryParent: parent
   })
   expect(server.phase).toBe('idle')
@@ -114,10 +141,13 @@ it('composes all static live providers plus guarded AntiGravity on a cold profil
   mkdirSync(profile)
   const server = createHostNodeProductionServer({
     profilePath: profile,
-    env: { PATH: '' },
+    env: isolated({ PATH: '' }),
     temporaryParent: parent
   })
   await server.start()
+  // No injected registry: a running server published nothing, even with a
+  // root named in its env.
+  expect(readdirSync(registryRoot)).toEqual([])
   const client = new HostProjectionClient({
     userDataPath: profile,
     client: { clientId: 'nine-client', clientClass: 'test', clientVersion: '1.0' },
@@ -192,7 +222,7 @@ it('admits AntiGravity only from existing consent plus a live nonempty agy model
   chmodSync(agy, 0o700)
   const server = createHostNodeProductionServer({
     profilePath: profile,
-    env: { PATH: bin },
+    env: isolated({ PATH: bin }),
     temporaryParent: parent
   })
   await server.start()
@@ -349,7 +379,7 @@ it.skipIf(process.platform === 'win32')(
     const server = createHostNodeProductionServer({
       profilePath: profile,
       gitExecutable: binary,
-      env: { PATH: '', GITHUB_TOKEN: 'must-not-reach-git' },
+      env: isolated({ PATH: '', GITHUB_TOKEN: 'must-not-reach-git' }),
       temporaryParent: parent
     })
     await server.start()
@@ -426,7 +456,7 @@ it('serves an authenticated cold-profile setup/history workflow and cleans owned
   const server = createHostNodeProductionServer({
     profilePath: profile,
     museBinary: binary,
-    env: { PATH: '', META_API_KEY: 'bounded-test-key' },
+    env: isolated({ PATH: '', META_API_KEY: 'bounded-test-key' }),
     temporaryParent: parent
   })
   await server.start()
@@ -582,7 +612,7 @@ it.skipIf(process.platform === 'win32')(
     try {
       const detached = createHostNodeProductionServer({
         profilePath: join(parent, 'detached-profile'),
-        env: { PATH: binDir },
+        env: isolated({ PATH: binDir }),
         temporaryParent: parent
       })
       await detached.start()
@@ -606,7 +636,7 @@ it.skipIf(process.platform === 'win32')(
       }
       const interactive = createHostNodeProductionServer({
         profilePath: join(parent, 'interactive-profile'),
-        env: { PATH: binDir },
+        env: isolated({ PATH: binDir }),
         temporaryParent: parent,
         terminalLauncher
       })
@@ -681,10 +711,173 @@ it('disposes lease-late Muse resources when terminal handoff construction is inv
   const server = createHostNodeProductionServer({
     profilePath: profile,
     museBinary: binary,
-    env: { PATH: '' },
+    env: isolated({ PATH: '' }),
     temporaryParent: parent,
     terminalLauncher: {} as never
   })
   await expect(server.start()).rejects.toThrow('handoff')
   expect(readdirSync(parent).filter((name) => name.startsWith('taskwraith-muse-'))).toEqual([])
 })
+
+/**
+ * The lease registry's scheduler, stepped by hand: `advance(ms)` moves the
+ * monotonic and wall clocks together one tick at a time, so every tick is an
+ * awake tick and the registry's 60 s cadence costs no real time.
+ */
+function steppedLeaseClock(): {
+  readonly ports: HostLeaseRegistryPorts
+  advance(ms: number): void
+} {
+  let monoNs = 0n
+  let tick: (() => void) | null = null
+  let tickMs = 0
+  return {
+    ports: {
+      monotonicNowNs: () => monoNs,
+      wallNowMs: () => Number(monoNs / 1_000_000n),
+      schedule: (callback, intervalMs) => {
+        tick = callback
+        tickMs = intervalMs
+        return () => {
+          tick = null
+        }
+      }
+    },
+    advance(ms) {
+      for (let elapsed = 0; elapsed < ms; elapsed += tickMs) {
+        if (!tick) throw new Error('the lease registry is not ticking')
+        monoNs += BigInt(tickMs) * 1_000_000n
+        tick()
+      }
+    }
+  }
+}
+
+/**
+ * A production server on the real registry publisher (under a temporary root)
+ * and the stepped lease clock. With persist on there is no last-lease grace:
+ * the registry self-check is the only way this Host can stop.
+ */
+function registryHost(prefix: string) {
+  const parent = realpathSync(mkdtempSync(join(tmpdir(), prefix)))
+  paths.push(parent)
+  const profile = join(parent, 'profile')
+  mkdirSync(profile)
+  const root = join(parent, 'registry')
+  vi.stubEnv(HOST_PERSIST_ENV, '1')
+  const clock = steppedLeaseClock()
+  const server = createHostNodeProductionServer({
+    profilePath: profile,
+    env: isolated({ PATH: '' }),
+    temporaryParent: parent,
+    registry: new HostRegistryPublisher({
+      root,
+      profilePath: profile,
+      cliPath: '/payload/host-runtime/cli.js',
+      nodeExecutable: process.execPath
+    }),
+    leasePorts: clock.ports
+  })
+  return { server, clock, profile, root, entryPath: hostRegistryEntryPath(root, profile) }
+}
+
+it('publishes through the real registry publisher, never stops on an unreadable entry, and stops after two missing checks', async () => {
+  const { server, clock, profile, root, entryPath } = registryHost('host-node-factory-registry-')
+  try {
+    await server.start()
+    const self = currentProcessBirthIdentity()
+    expect(self.state).toBe('live')
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      path: entryPath,
+      entry: {
+        profilePath: profile,
+        pid: process.pid,
+        birthIdentity: self.state === 'live' ? self.birthIdentity : null,
+        socketPath: taskWraithHostSocketPath(profile),
+        discoveryPath: taskWraithHostDiscoveryPath(profile),
+        cliPath: '/payload/host-runtime/cli.js',
+        nodeExecutable: process.execPath,
+        persist: true,
+        leaseMode: 'lease',
+        beatSeq: 0,
+        lifetimePhase: 'held'
+      }
+    })
+
+    // A path that can be neither read nor rewritten: three unreadable checks
+    // in a row, and the Host keeps serving.
+    unlinkSync(entryPath)
+    mkdirSync(entryPath)
+    clock.advance(3 * HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    rmSync(entryPath, { recursive: true })
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: process.pid }
+    })
+
+    // Missing once is a strike, not a stop, and the refresh never recreates it.
+    unlinkSync(entryPath)
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    expect(existsSync(entryPath)).toBe(false)
+    // Missing twice stops the Host through its own cleanup.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    await server.waitForShutdown()
+    expect(server.phase).toBe('stopped')
+    expect(existsSync(entryPath)).toBe(false)
+    expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+  } finally {
+    vi.unstubAllEnvs()
+    await server.stop().catch(() => undefined)
+  }
+}, 30_000)
+
+it('stops after two checks find another Host in its entry, and leaves that entry as found', async () => {
+  const { server, clock, profile, root, entryPath } = registryHost(
+    'host-node-factory-registry-foreign-'
+  )
+  try {
+    await server.start()
+    expect(readHostRegistryEntry(root, profile)).toMatchObject({
+      kind: 'present',
+      entry: { pid: process.pid }
+    })
+    // Another Host (pid 99999) rewrites this profile's entry.
+    new HostRegistryPublisher({
+      root,
+      profilePath: profile,
+      pid: 99_999,
+      observeSelf: () => ({ state: 'live', birthIdentity: 'b'.repeat(64), startedAtMs: null })
+    }).publish({
+      profilePath: profile,
+      pid: 99_999,
+      startedAt: '2026-09-23T00:00:00.000Z',
+      hostId: 'host-foreign',
+      persist: false,
+      leaseMode: 'lease',
+      holders: 1,
+      implicitHolders: 0,
+      lifetimePhase: 'held'
+    })
+    const foreign = readFileSync(entryPath, 'utf8')
+    expect(JSON.parse(foreign)).toMatchObject({ pid: 99_999, birthIdentity: 'b'.repeat(64) })
+    // Foreign once is a strike, and the refresh never overwrites it.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    expect(server.phase).toBe('running')
+    expect(readFileSync(entryPath, 'utf8')).toBe(foreign)
+    // Foreign twice stops this Host; its cleanup leaves the other Host's entry.
+    clock.advance(HOST_REGISTRY_REFRESH_MS)
+    await server.waitForShutdown()
+    expect(server.phase).toBe('stopped')
+    expect(readFileSync(entryPath, 'utf8')).toBe(foreign)
+    expect(existsSync(taskWraithHostDiscoveryPath(profile))).toBe(false)
+    expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(false)
+  } finally {
+    vi.unstubAllEnvs()
+    await server.stop().catch(() => undefined)
+  }
+}, 30_000)

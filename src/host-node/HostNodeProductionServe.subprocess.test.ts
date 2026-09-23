@@ -28,6 +28,8 @@ import {
   HOST_LEASE_TIMING_ENV,
   HOST_PERSIST_ENV
 } from '../host-runtime/HostLeaseRegistry'
+import { readHostRegistryEntry } from '../host-runtime/HostRegistry'
+import { observeProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
 
 const paths: string[] = []
 
@@ -530,6 +532,28 @@ describe('production Host CLI subprocess: lease lifetime', () => {
       [HOST_PERSIST_ENV]: '1'
     })
     await waitFor(() => existsSync(taskWraithHostDiscoveryPath(persisted)), 'persist discovery')
+    // `cli.js serve` publishes this Host's entry into the registry root its
+    // environment names, recording this CLI and this Node.
+    const registryRoot = join(root, 'registry')
+    await waitFor(
+      () => readHostRegistryEntry(registryRoot, persisted).kind === 'present',
+      'registry entry'
+    )
+    const birth = await observeProcessBirthIdentity(persistent.child.pid!)
+    expect(birth.state).toBe('live')
+    expect(readHostRegistryEntry(registryRoot, persisted)).toMatchObject({
+      kind: 'present',
+      entry: {
+        profilePath: realpathSync(persisted),
+        pid: persistent.child.pid,
+        birthIdentity: birth.state === 'live' ? birth.birthIdentity : null,
+        cliPath: realpathSync(cli),
+        nodeExecutable: process.execPath,
+        payloadVersion: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+        persist: true,
+        leaseMode: 'lease'
+      }
+    })
     await new Promise((resolve) => setTimeout(resolve, 2 * GRACE_MS))
     expect(persistent.child.exitCode, persistent.stderr()).toBeNull()
     const observer = await connect(persisted, 'tui-persist-subprocess')
@@ -542,6 +566,8 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     await waitForExit(persistent.child)
     expect(persistent.child.exitCode).toBe(0)
     expectArtefactsGone(persisted)
+    // A clean stop removes the entry before the authority lease goes.
+    expect(readHostRegistryEntry(registryRoot, persisted).kind).toBe('missing')
 
     // 3. Legacy switch: answers the lease kinds as a pre-lease Host and has no lease lifetime.
     const legacyProfile = join(root, 'legacy')

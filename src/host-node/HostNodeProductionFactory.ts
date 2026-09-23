@@ -14,6 +14,8 @@ import {
 } from '../host-shared/git/HostGitSecurity'
 import { loadOrCreateHostServerIdentity } from '../host-runtime/HostServerIdentity'
 import { HostPermissionConsentAuthority } from '../host-runtime/HostPermissionConsent'
+import type { HostLeaseRegistryPorts } from '../host-runtime/HostLeaseRegistry'
+import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
 import {
   HostNodeMuseAuthHandoff,
   type HostNodeMuseTerminalLauncher
@@ -50,6 +52,14 @@ export interface HostNodeProductionFactoryOptions {
   readonly terminalLauncher?: HostNodeMuseTerminalLauncher
   /** Copied synchronously; caller must zero its source buffer after construction. */
   readonly fullAccessBootstrapSecret?: Buffer
+  /**
+   * The machine-wide registry publisher. The `cli.js serve` path supplies the
+   * real one; without it (an in-process embedder, most tests) nothing is
+   * published and the registry self-check never runs.
+   */
+  readonly registry?: HostRegistryPublisherPort
+  /** Lease clock/scheduler seam for tests; production uses the defaults. */
+  readonly leasePorts?: HostLeaseRegistryPorts
 }
 
 function appendBounded(
@@ -159,6 +169,8 @@ export function createHostNodeProductionServer(
     profilePath: options.profilePath,
     mode: 'production',
     ...(options.payloadVersion ? { payloadVersion: options.payloadVersion } : {}),
+    ...(options.registry ? { registry: options.registry } : {}),
+    ...(options.leasePorts ? { leasePorts: options.leasePorts } : {}),
     resolveIdentity: (profilePath, lease) =>
       loadOrCreateHostServerIdentity({
         profilePath,

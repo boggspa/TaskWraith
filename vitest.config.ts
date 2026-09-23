@@ -36,6 +36,11 @@ export default defineConfig({
     // SQLite database in a fresh temp dir overran vitest's 10 s hook default on
     // the loaded Windows runner (ThreadCatalogueDatabase, run 35018002768).
     hookTimeout: process.platform === 'win32' || process.env.CI ? 30_000 : 10_000,
+    // Every run publishes Host registry entries into its own temporary root
+    // (TASKWRAITH_HOST_REGISTRY_ROOT, inherited by every worker and every Host
+    // they spawn), and the run fails if anything writes into the real
+    // ~/.taskwraith/hosts. See the module header.
+    globalSetup: ['./scripts/vitest/hostRegistryIsolation.ts'],
     // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
     // records a measured baseline without imposing a threshold or PR ratchet.
     coverage: {

@@ -447,6 +447,11 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
   const userDataPath = fs.realpathSync(
     fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-'))
   )
+  // The smoke Host publishes its registry entry here, never into the
+  // machine-wide ~/.taskwraith/hosts.
+  const registryRoot = fs.mkdtempSync(
+    path.join(os.tmpdir(), 'taskwraith-tui-package-smoke-registry-')
+  )
   const museBinary = path.join(userDataPath, 'muse')
   const discoveryPath = path.join(userDataPath, 'taskwraith-host-v2.json')
   const tokenPath = path.join(userDataPath, 'taskwraith-host-v2.token')
@@ -461,7 +466,12 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
   ]
   const spawned = spawnPackagedLauncher(hostLauncher, hostArgs, packageTarget, {
     cwd: resourcesDir,
-    env: { ...process.env, META_API_KEY: 'packaged-tui-smoke-key', ELECTRON_RUN_AS_NODE: '' },
+    env: {
+      ...process.env,
+      META_API_KEY: 'packaged-tui-smoke-key',
+      ELECTRON_RUN_AS_NODE: '',
+      TASKWRAITH_HOST_REGISTRY_ROOT: registryRoot
+    },
     stdio: 'ignore',
     detached: false
   })
@@ -519,6 +529,7 @@ async function runLiveControlRoundTrip(packageRoot, packageTarget) {
       }
     } finally {
       removeSmokeTree(userDataPath)
+      fs.rmSync(registryRoot, { recursive: true, force: true })
     }
   }
   console.log('packaged TUI live control smoke ok (direct production Host + packaged tw --no-start-host)')

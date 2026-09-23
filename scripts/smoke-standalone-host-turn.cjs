@@ -115,6 +115,9 @@ async function main() {
   const root = fs.realpathSync.native(
     fs.mkdtempSync(path.join(os.tmpdir(), 'taskwraith-host-turn-smoke-'))
   )
+  // The smoke Host publishes its registry entry under the smoke root, never
+  // into the machine-wide ~/.taskwraith/hosts (hostEnvironment spreads this).
+  process.env.TASKWRAITH_HOST_REGISTRY_ROOT = path.join(root, 'host-registry')
   const profile = path.join(root, 'profile')
   const workspace = path.join(root, 'workspace')
   const outDir = path.join(root, 'out')

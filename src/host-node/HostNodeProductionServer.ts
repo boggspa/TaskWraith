@@ -47,6 +47,7 @@ import {
   type HostLeaseRegistryPorts,
   type HostLeaseTickInfo
 } from '../host-runtime/HostLeaseRegistry'
+import { HOST_REGISTRY_REFRESH_MS } from '../host-runtime/HostRegistry'
 import type { HostRegistryPublisherPort } from '../host-runtime/HostRegistryPort'
 import { HostProfileAuthorityLease } from '../host-runtime/HostProfileAuthorityLease'
 import type { HostPermissionConsentAuthorityPort } from '../host-runtime/HostPermissionConsent'
@@ -102,9 +103,11 @@ export interface HostNodeProductionListener {
   readonly startedAt?: string | null
 }
 
-/** Awake-time cadence of the registry refresh and self-check. */
-export const HOST_REGISTRY_REFRESH_MS = 60_000
-/** Consecutive `missing`/`foreign` self-checks before a graceful stop. */
+/**
+ * Consecutive `missing`/`foreign` self-checks before a graceful stop. The
+ * checks run every HOST_REGISTRY_REFRESH_MS of awake time (owned by
+ * HostRegistry, the publisher's module).
+ */
 export const HOST_REGISTRY_SELF_CHECK_STRIKES = 2
 
 export interface HostNodePermissionConsentAuthority extends HostPermissionConsentAuthorityPort {

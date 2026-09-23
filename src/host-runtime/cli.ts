@@ -16,7 +16,11 @@ import {
 } from '../host-client/HostStopAll'
 import { resolve } from 'node:path'
 import { resolveHostPayloadVersion } from './HostPayloadIdentity'
-import { canonicalHostProfilePath } from './HostRegistry'
+import {
+  canonicalHostProfilePath,
+  createHostRegistryPublisherFromEnvironment
+} from './HostRegistry'
+import type { HostRegistryPublisherPort } from './HostRegistryPort'
 import {
   HOST_FULL_ACCESS_BOOTSTRAP_FD,
   HOST_FULL_ACCESS_BOOTSTRAP_FD_ENV,
@@ -36,6 +40,19 @@ export interface HostProductionCliRuntime {
   readonly readFullAccessBootstrapSecret?: () => Buffer | null | Promise<Buffer | null>
   readonly resolvePayloadVersion?: () => string
   readonly env?: NodeJS.ProcessEnv
+  /** Defaults to the machine-wide registry named by the environment. */
+  readonly createRegistryPublisher?: (
+    input: HostRegistryPublisherInput
+  ) => HostRegistryPublisherPort
+}
+
+export interface HostRegistryPublisherInput {
+  readonly profilePath: string
+  readonly env: NodeJS.ProcessEnv
+  /** This CLI's own path, so `stop-all --payload-root` can select the Host. */
+  readonly cliPath: string
+  readonly nodeExecutable: string
+  readonly log: (line: string) => void
 }
 
 export async function runHostDiagnosticCli(
@@ -69,9 +86,19 @@ export async function runHostProductionCli(
     const payloadVersion = (
       runtime.resolvePayloadVersion ?? (() => resolveHostPayloadVersion(resolve(__dirname, '..')))
     )()
+    const registry = (
+      runtime.createRegistryPublisher ?? createHostRegistryPublisherFromEnvironment
+    )({
+      profilePath: command.profilePath,
+      env: environment,
+      cliPath: resolve(__dirname, 'cli.js'),
+      nodeExecutable: process.execPath,
+      log: (line) => void process.stderr.write(`taskwraith-host: ${line}\n`)
+    })
     host = createProduction({
       profilePath: command.profilePath,
       payloadVersion,
+      registry,
       ...(command.museBinary ? { museBinary: command.museBinary } : {}),
       ...(terminalLauncher ? { terminalLauncher } : {}),
       ...(fullAccessBootstrapSecret ? { fullAccessBootstrapSecret } : {})

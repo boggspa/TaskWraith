@@ -11,7 +11,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs'
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -23,6 +23,7 @@ import {
   taskWraithHostTokenPath
 } from '../shared/taskWraithHostPaths.node'
 import { HOST_PROFILE_AUTHORITY_LEASE_FILENAME } from './HostProfileAuthorityLease'
+import { HOST_REGISTRY_ROOT_ENV } from './HostRegistry'
 import { HostProfileDomainStore } from './HostProfileDomainStore'
 
 const OLD_GENERAL_RESPONSE_LINE_BYTES = 256_000
@@ -135,13 +136,25 @@ function compileProductionCli(root: string): string {
   return cli
 }
 
+/**
+ * The Host's environment: no PATH, and this fixture's own registry root, so
+ * `serve` never publishes into the machine-wide ~/.taskwraith/hosts.
+ */
+function hostEnvironment(profile: string): NodeJS.ProcessEnv {
+  return {
+    ...process.env,
+    PATH: '',
+    [HOST_REGISTRY_ROOT_ENV]: join(dirname(profile), 'host-registry')
+  }
+}
+
 function spawnProductionHost(cli: string, profile: string): ChildProcess {
   const child = spawn(
     process.execPath,
     [cli, 'serve', '--mode', 'production', '--profile', profile],
     {
       cwd: process.cwd(),
-      env: { ...process.env, PATH: '' },
+      env: hostEnvironment(profile),
       stdio: ['ignore', 'pipe', 'pipe']
     }
   )
@@ -467,7 +480,7 @@ describe('real production Host ensemble smoke', () => {
         [cli, 'stop', '--profile', realpathSync(profile)],
         {
           cwd: process.cwd(),
-          env: { ...process.env, PATH: '' },
+          env: hostEnvironment(profile),
           encoding: 'utf8',
           timeout: EXIT_BUDGET_MS
         }
