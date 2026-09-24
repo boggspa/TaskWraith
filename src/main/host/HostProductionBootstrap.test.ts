@@ -16,6 +16,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 import {
   createHostProductionBootstrap,
   resetHostProductionBootstrapForTests
@@ -745,6 +746,20 @@ describe('HostProductionBootstrap R1 (composition root stays wiring-only)', () =
     } as unknown as HostRuntimeBootstrap
 
     expect(compositionInput.pipelineFactory?.(runtime)).toBeInstanceOf(HostDeferredAllowPipeline)
+  })
+
+  // Capture-01: a command whose observed effects were appended one at a time
+  // paid one F_FULLFSYNC per effect; here that cost lands on the main thread.
+  it('publishes deferred-allow command effects as one durable batch', () => {
+    const probe = new MainSourceProbe(
+      'HostProductionBootstrap.ts',
+      new URL('./HostProductionBootstrap.ts', import.meta.url)
+    )
+    const coordinators = probe.construction('HostMutationCompletionCoordinator')
+    expect(coordinators).toHaveLength(1)
+    expect(probe.propText(coordinators[0]!, 0, 'publishEffects')).toBe(
+      '(effects) => publisher.publishDurableBatch(effects)'
+    )
   })
 
   it('keeps the ISO clock and the millisecond clock separate', () => {

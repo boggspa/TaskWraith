@@ -440,8 +440,11 @@ export class HostDomainDeltaPublisher {
   }
 
   /**
-   * Background reconciliation only. Real HostDeltaStore batches the already
-   * validated inputs behind one fsync; injected legacy ports retain publish().
+   * One journal batch behind one fsync, for background reconciliation and
+   * command completion. A store rejection journals none of the effects; a
+   * failed write is rolled back, and a rollback it cannot prove blocks further
+   * appends (reported as store_error). Injected legacy ports without
+   * appendBatch retain publish().
    */
   publishDurableBatch(
     effects: readonly HostDomainEffectDto[] | readonly unknown[]

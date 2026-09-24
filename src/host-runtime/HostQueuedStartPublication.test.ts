@@ -729,6 +729,59 @@ describe('createHostQueuedStartPublication', () => {
     expect(publication.pendingCount()).toBe(0)
   })
 
+  // Command effects publish as one journal batch, so a failed write surfaces
+  // as a store error. One at a readable journal position may have left a
+  // prefix durable when its rollback was unproven, so it is partial, as the
+  // completion coordinator also reads it; one with no position appended
+  // nothing.
+  it.each([
+    [
+      'a store error at a readable position',
+      {
+        kind: 'store_error',
+        detail: 'injected batch fsync failure (rollback uncertain)',
+        position: { generation: 1, cursor: 1 }
+      },
+      'deferred_effects_partial'
+    ],
+    [
+      'a store error before the journal was readable',
+      { kind: 'store_error', detail: 'getPosition failed', position: null },
+      'deferred_effects_unavailable'
+    ],
+    [
+      'a partial publish',
+      {
+        kind: 'partial',
+        position: { generation: 1, cursor: 1 },
+        publishedCount: 0,
+        results: [],
+        failedAtIndex: 0,
+        failure: { kind: 'store_error', detail: 'short write' }
+      },
+      'deferred_effects_partial'
+    ],
+    [
+      'a rejected publish',
+      {
+        kind: 'rejected',
+        reason: 'validation_failed',
+        failures: [],
+        position: { generation: 1, cursor: 1 }
+      },
+      'deferred_effects_unavailable'
+    ]
+  ] as const)('promotes %s to its indeterminate outcome', async (_label, publish, code) => {
+    const { publication, completes, indeterminates } = setup({
+      publish: publish as HostDomainDeltaPublishResult
+    })
+    publication.completeStart('cmd-1')
+    await publication.drain()
+    expect(completes).toEqual([])
+    expect(indeterminates).toEqual([code])
+    expect(publication.pendingCount()).toBe(0)
+  })
+
   it('does not append start effects until the projection queue releases a held legacy observer', async () => {
     const { publication, published, completes, ports, releaseQueue } = setup({ holdQueue: true })
     publication.completeStart('cmd-1')

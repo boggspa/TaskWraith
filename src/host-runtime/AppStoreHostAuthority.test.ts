@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { fsyncSync, mkdtempSync, readFileSync, rmSync, writeSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -657,6 +657,227 @@ describe('AppStoreHostAuthority', () => {
           payload: expect.objectContaining({ title: 'Persisted' })
         })
       ]
+    })
+  })
+
+  describe('command-path effect publication', () => {
+    type DonorThread = AppStoreHostAuthoritySnapshotDonorFamilies['threads'][number]
+    const threadId = 'thread-batched-effects'
+    const runIds = Array.from(
+      { length: 5 },
+      (_, index) => `00000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`
+    )
+
+    // One persist that settles five running runs: six observed effects.
+    function persistingPorts(runtimeUnderTest: HostRuntimeBootstrap) {
+      let persisted = false
+      return {
+        runtime: runtimeUnderTest,
+        snapshotDonor: () =>
+          donorFamilies({
+            threads: [
+              {
+                id: threadId,
+                workspaceId: null,
+                title: persisted ? 'Persisted' : 'Before',
+                chatKind: 'ensemble' as const,
+                archived: false,
+                pinned: false,
+                updatedAt: persisted ? 2 : 1,
+                messageCount: persisted ? 1 : 0
+              }
+            ],
+            runs: runIds.map((runId, index) => ({
+              runId,
+              threadId,
+              providerId: 'codex',
+              providerOutcome: persisted ? ('completed' as const) : ('running' as const),
+              startedAt: index + 1,
+              ...(persisted ? { endedAt: index + 10 } : {})
+            }))
+          }),
+        commandExecutor: () => {
+          persisted = true
+          return { status: 'succeeded' as const, resultSummary: 'thread_record_persisted' }
+        }
+      }
+    }
+
+    function persistCommand(commandId: string): HostCommand {
+      return makeCommand({
+        commandId,
+        idempotencyKey: `${commandId}-key`,
+        actor: ACTOR_A,
+        name: 'thread.record.persist',
+        target: { threadId },
+        arguments: {
+          transferId: '11111111-1111-4111-8111-111111111111',
+          sha256: 'a'.repeat(64),
+          byteLength: 1,
+          expectedRevision: 0
+        }
+      })
+    }
+
+    it('journals every observed effect of one command behind a single fsync', async () => {
+      let journalFsyncs = 0
+      const counted = new HostRuntimeBootstrap({
+        hostDataDir: join(hostDataDir, 'counted'),
+        delta: {
+          now: () => NOW,
+          batchFsync: (descriptor) => {
+            journalFsyncs += 1
+            fsyncSync(descriptor)
+          }
+        },
+        receipts: { now: () => NOW }
+      })
+      const authority = open({ ports: persistingPorts(counted) })
+
+      const result = await authority.command(
+        contextFor(ACTOR_A, CLIENT_A),
+        persistCommand('batched-persist')
+      )
+
+      expect(result).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+      const journalled = counted.deltaStore.since({ generation: 1, cursor: 0 })
+      if (journalled.kind !== 'deltas') throw new Error(`unexpected ${journalled.kind}`)
+      expect(journalled.deltas.map((delta) => [delta.family, delta.entityId]).sort()).toEqual(
+        [['thread', threadId], ...runIds.map((runId) => ['run', runId])].sort()
+      )
+      // Capture-01: 1,400 per-effect appends cost one F_FULLFSYNC each.
+      expect(journalFsyncs).toBe(1)
+      const receipt = counted.receiptStore.getByCommandId('batched-persist', ACTOR_A)
+      expect(receipt).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'succeeded', generation: 1, cursor: journalled.deltas.length }
+      })
+    })
+
+    it('journals none of a command’s effects when the batch write fails part-way', async () => {
+      const failingRunId = runIds[2]!
+      const failing = new HostRuntimeBootstrap({
+        hostDataDir: join(hostDataDir, 'failing'),
+        delta: {
+          now: () => NOW,
+          batchWrite: (descriptor, bytes, offset, length) => {
+            const chunk = Buffer.from(bytes.buffer, bytes.byteOffset + offset, length)
+            if (chunk.includes(failingRunId)) {
+              // A torn prefix reaches the file before the failure.
+              writeSync(descriptor, bytes, offset, Math.floor(length / 2), null)
+              throw new Error('injected journal write failure')
+            }
+            return writeSync(descriptor, bytes, offset, length, null)
+          }
+        },
+        receipts: { now: () => NOW }
+      })
+      const authority = open({ ports: persistingPorts(failing) })
+
+      await authority.command(contextFor(ACTOR_A, CLIENT_A), persistCommand('torn-persist'))
+
+      // Reread from disk: the torn prefix was rolled back, not merely unindexed.
+      failing.deltaStore.reopen()
+      expect(failing.deltaStore.getPosition()).toEqual({ generation: 1, cursor: 0 })
+      expect(failing.deltaStore.since({ generation: 1, cursor: 0 })).toMatchObject({
+        kind: 'deltas',
+        deltas: []
+      })
+      expect(failing.receiptStore.getByCommandId('torn-persist', ACTOR_A)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'indeterminate', errorCode: 'deferred_effects_partial' }
+      })
+      // A proven rollback leaves the journal writable.
+      expect(
+        failing.deltaStore.append({ kind: 'upsert', family: 'thread', entityId: 'after-rollback' })
+      ).toMatchObject({ kind: 'appended', position: { generation: 1, cursor: 1 } })
+    })
+
+    it('journals a queued start’s observed effects behind a single fsync', async () => {
+      let journalFsyncs = 0
+      const counted = new HostRuntimeBootstrap({
+        hostDataDir: join(hostDataDir, 'queued-counted'),
+        delta: {
+          now: () => NOW,
+          batchFsync: (descriptor) => {
+            journalFsyncs += 1
+            fsyncSync(descriptor)
+          }
+        },
+        receipts: { now: () => NOW }
+      })
+      const send = makeCommand({
+        commandId: '77777777-7777-4777-8777-777777777777',
+        idempotencyKey: 'queued-batched-key',
+        actor: ACTOR_A,
+        name: 'composer.send',
+        target: { threadId: 'thread-1' },
+        arguments: { text: 'hello' }
+      })
+      let started = false
+      const authority = open({
+        ports: {
+          runtime: counted,
+          queuedComposerSend: () => ({ status: 'succeeded' as const, resultSummary: 'run_queued' }),
+          snapshotDonor: () =>
+            donorFamilies({
+              threads: [
+                (started
+                  ? { id: 'thread-1', messageCount: 1, updatedAt: 2 }
+                  : { id: 'thread-1' }) as DonorThread
+              ],
+              runs: started
+                ? [
+                    {
+                      runId: send.commandId,
+                      threadId: 'thread-1',
+                      providerId: 'codex',
+                      providerOutcome: 'running'
+                    }
+                  ]
+                : []
+            })
+        }
+      })
+      await expect(authority.command(contextFor(ACTOR_A, CLIENT_A), send)).resolves.toMatchObject({
+        ok: true,
+        value: { status: 'pending', phase: 'queued' }
+      })
+      const fingerprint = fingerprintHostCommand(send).fingerprint
+      authority.handleQueuedStartStarting({
+        commandId: send.commandId,
+        threadId: 'thread-1',
+        fingerprint,
+        phase: 'starting',
+        executionClaimCursor: { coverageEpoch: 'a'.repeat(64), sequence: 1 },
+        startedEvidence: false,
+        terminalOutcome: null
+      })
+      started = true
+      authority.handleQueuedStartStarted({
+        commandId: send.commandId,
+        threadId: 'thread-1',
+        fingerprint,
+        phase: 'started',
+        startedEvidence: true,
+        terminalOutcome: null
+      })
+      authority.handleQueuedStartDispatchSettled(send.commandId, { status: 'succeeded' })
+      await authority.drainQueuedStartPublication()
+
+      expect(counted.receiptStore.getByCommandId(send.commandId, ACTOR_A)).toMatchObject({
+        kind: 'found',
+        receipt: { status: 'succeeded', phase: 'started' }
+      })
+      const journalled = counted.deltaStore.since({ generation: 1, cursor: 0 })
+      if (journalled.kind !== 'deltas') throw new Error(`unexpected ${journalled.kind}`)
+      expect(journalled.deltas.map((delta) => [delta.family, delta.entityId]).sort()).toEqual(
+        [
+          ['run', send.commandId],
+          ['thread', 'thread-1']
+        ].sort()
+      )
+      expect(journalFsyncs).toBe(1)
     })
   })
 

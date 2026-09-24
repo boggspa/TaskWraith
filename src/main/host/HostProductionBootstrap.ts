@@ -708,8 +708,9 @@ export function createHostProductionBootstrap(
 
     const publisher = new HostDomainDeltaPublisher({ store: runtime.deltaStore })
 
+    // One journal batch behind one fsync per command, as in the Host.
     const coordinator = new HostMutationCompletionCoordinator({
-      publishEffects: (effects) => publisher.publish(effects),
+      publishEffects: (effects) => publisher.publishDurableBatch(effects),
       getPosition: () => runtime.getPosition(),
       completeReceipt: (i) => runtime.receiptStore.complete(i),
       markIndeterminate: (i) => runtime.receiptStore.markIndeterminate(i)

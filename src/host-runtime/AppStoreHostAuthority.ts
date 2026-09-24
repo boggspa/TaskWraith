@@ -554,7 +554,7 @@ export class AppStoreHostAuthority implements HostAuthority {
             const donor = await this.readMutationSnapshotDonor()
             return scopeHostMutationObservationFamilies(donor, scope)
           },
-          publishEffects: (effects) => this.domainPublisher.publish(effects),
+          publishEffects: (effects) => this.domainPublisher.publishDurableBatch(effects),
           getPosition: () => this.runtime.getPosition(),
           runProjectionOperation: (operation, label) =>
             this.runProjectionOperation(operation, label),
@@ -578,9 +578,11 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
     // Scope 2: sole-journal publish + completion ports (allowed branch only).
+    // A command's observed effects commit as one journal batch behind one
+    // fsync: a persist that touched many rows used to pay one per row.
     this.domainPublisher = new HostDomainDeltaPublisher({ store: this.runtime.deltaStore })
     this.completionCoordinator = new HostMutationCompletionCoordinator({
-      publishEffects: (effects) => this.domainPublisher.publish(effects),
+      publishEffects: (effects) => this.domainPublisher.publishDurableBatch(effects),
       getPosition: () => this.runtime.getPosition(),
       completeReceipt: (input) => this.runtime.receiptStore.complete(input),
       markIndeterminate: (input) => this.runtime.receiptStore.markIndeterminate(input)

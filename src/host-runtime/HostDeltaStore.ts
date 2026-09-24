@@ -246,7 +246,7 @@ export interface HostDeltaStoreOptions {
   initialGeneration?: HostGeneration
   now?: () => string
   log?: (line: string) => void
-  /** Fault seams shared by ordinary, reset, and background batch journal writes. */
+  /** Fault seams shared by ordinary, reset, and batch journal writes. */
   batchWrite?: (descriptor: number, bytes: Uint8Array, offset: number, length: number) => number
   batchFsync?: (descriptor: number) => void
   batchTruncate?: (descriptor: number, length: number) => void
@@ -532,9 +532,9 @@ export class HostDeltaStore {
   }
 
   /**
-   * Background projection batch. Every envelope is validated before the first
-   * byte is written; the complete JSONL batch is fsynced once before any memory
-   * state or listener can observe it. Commands continue to use append().
+   * Domain-effect batch for reconciliation and command completion. Every
+   * envelope is validated before the first byte is written; the complete JSONL
+   * batch is fsynced once before any memory state or listener can observe it.
    */
   appendBatch(inputs: readonly HostDeltaAppendInput[]): HostDeltaAppendBatchResult {
     if (this.appendAuthorityBlocked) throw new Error('Host delta append authority is blocked')

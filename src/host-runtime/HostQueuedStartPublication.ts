@@ -606,9 +606,15 @@ export function createHostQueuedStartPublication(ports: HostQueuedStartPublicati
         return
       }
       if (published.kind !== 'published') {
+        // A store error at a readable journal position may have left a prefix
+        // durable, as HostMutationCompletionCoordinator also reads it; one
+        // with no position appended nothing.
         promote(
           input.commandId,
-          published.kind === 'partial' ? 'deferred_effects_partial' : 'deferred_effects_unavailable'
+          published.kind === 'partial' ||
+            (published.kind === 'store_error' && published.position !== null)
+            ? 'deferred_effects_partial'
+            : 'deferred_effects_unavailable'
         )
         return
       }
