@@ -1,9 +1,18 @@
 import { describe, expect, it, vi } from 'vitest'
+import { createHostProjectionSerialQueue } from '../../host-runtime/HostProjectionSerialQueue'
+import { createHostBridgeQueuedStartAdapter } from '../host/HostBridgeQueuedStartAdapter'
+import {
+  createHostBridgeQueuedRoundStartProducer,
+  dispatchObservedHostBridgeRound,
+  verifyHostBridgeQueuedRoundStartRecord,
+  type HostBridgeQueuedRoundStartIdentity
+} from '../host/HostBridgeQueuedRoundStartProducer'
 import type { AgentRunPayload, RunDispatchObserver } from '../run/AgentRunTypes'
 import { createWorkSpanRecorder } from '../perf/WorkSpanRecorder'
 import type { AppSettings, ChatRecord, EnsembleParticipant, ProviderId } from '../store/types'
 import { EnsembleOrchestrator } from './EnsembleOrchestrator'
 import type { EnsembleOrchestratorDeps } from './EnsembleOrchestratorTypes'
+import type { EnsembleRoundStartObserver } from './EnsembleRoundStartObserver'
 
 function participant(
   id: string,
@@ -60,11 +69,14 @@ function harness(
   options: {
     invokeAdapterImmediately?: boolean
     spans?: EnsembleOrchestratorDeps['spans']
+    persistChatBarrier?: EnsembleOrchestratorDeps['persistChatBarrier']
+    onDispatch?: () => void
   } = {}
 ): {
   orchestrator: EnsembleOrchestrator
   dispatched: AgentRunPayload[]
   getChat: (chatId: string) => ChatRecord | null
+  saveChat: (next: ChatRecord) => void
   invokeAdapter: (index: number) => void
   settle: (runId: string) => void
 } {
@@ -79,7 +91,9 @@ function harness(
     saveChat: (next) => chats.set(next.appChatId, next),
     getSettings: settings,
     ...(options.spans ? { spans: options.spans } : {}),
+    ...(options.persistChatBarrier ? { persistChatBarrier: options.persistChatBarrier } : {}),
     dispatch: (payload, _event, observer) => {
+      options.onDispatch?.()
       dispatched.push(payload)
       observers.push(observer)
       if (invokeAdapterImmediately) {
@@ -102,6 +116,9 @@ function harness(
     orchestrator,
     dispatched,
     getChat: (chatId) => chats.get(chatId) || null,
+    saveChat: (next) => {
+      chats.set(next.appChatId, next)
+    },
     invokeAdapter: (index) => {
       const payload = dispatched[index]
       observers[index]?.onAdapterInvoked?.({
@@ -208,5 +225,255 @@ describe('EnsembleOrchestrator round_start spans', () => {
     await vi.waitFor(() => expect(testHarness.dispatched).toHaveLength(1))
     testHarness.settle(testHarness.dispatched[0]!.appRunId || '')
     await testHarness.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+  })
+})
+
+function pendingRoundBarrier() {
+  let resolve!: () => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<void>((done, fail) => {
+    resolve = done
+    reject = fail
+  })
+  return { promise, resolve, reject }
+}
+
+function roundObserver(): EnsembleRoundStartObserver & {
+  onRoundReserved: ReturnType<typeof vi.fn<(roundId: string) => void>>
+  onRoundPersistedBeforeParticipants: ReturnType<typeof vi.fn<(roundId: string) => Promise<void>>>
+  onRoundStartUnproven: ReturnType<typeof vi.fn<(roundId: string) => void>>
+} {
+  return {
+    onRoundReserved: vi.fn(),
+    onRoundPersistedBeforeParticipants: vi.fn(async () => undefined),
+    onRoundStartUnproven: vi.fn()
+  }
+}
+
+describe('EnsembleOrchestrator durable round-start observation', () => {
+  it('proves the actual saved round through the producer and adapter before dispatch', async () => {
+    const hostCommandActionId = 'host:command:11111111-1111-4111-8111-111111111111'
+    const journal = pendingRoundBarrier()
+    const publication = pendingRoundBarrier()
+    const order: string[] = []
+    const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])], {
+      persistChatBarrier: () => journal.promise,
+      onDispatch: () => order.push('dispatch')
+    })
+    const onPrepared = vi.fn(async () => {
+      await publication.promise
+      order.push('prepared')
+    })
+    const adapter = createHostBridgeQueuedStartAdapter({
+      runProjectionOperation: createHostProjectionSerialQueue(),
+      onPrepared
+    })
+    adapter.register({
+      hostCommandActionId,
+      threadId: 'ensemble-chat',
+      authority: {
+        actorId: 'actor-a',
+        clientId: 'client-a',
+        clientClass: 'desktop',
+        commandFingerprint: 'round-start-integration'
+      }
+    })
+    const verify = vi.fn((identity: HostBridgeQueuedRoundStartIdentity) =>
+      verifyHostBridgeQueuedRoundStartRecord(h.getChat(identity.threadId), identity)
+    )
+    const barrier = vi.fn(() => journal.promise)
+    const abort = vi.fn()
+    const producer = createHostBridgeQueuedRoundStartProducer({
+      persistenceEnabled: () => true,
+      awaitPromptAndRoundDurable: barrier,
+      verifyPromptAndRound: verify
+    })
+    producer.onAdapter(adapter, abort)
+    const observation = producer.observeRound({ hostCommandActionId, threadId: 'ensemble-chat' })
+    const result = dispatchObservedHostBridgeRound(observation, (roundStartObserver) =>
+      h.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Prove the actual saved round.',
+        event: { sender: {} as Electron.WebContents },
+        roundStartObserver
+      })
+    )
+    expect(result.status).toBe('started')
+    expect(verify).toHaveReturnedWith(true)
+    expect(barrier).toHaveBeenCalledExactlyOnceWith({
+      hostCommandActionId,
+      threadId: 'ensemble-chat',
+      roundId: result.roundId
+    })
+    expect(onPrepared).not.toHaveBeenCalled()
+    expect(h.dispatched).toEqual([])
+    journal.resolve()
+    await vi.waitFor(() => expect(onPrepared).toHaveBeenCalledOnce())
+    expect(h.dispatched).toEqual([])
+    publication.resolve()
+    await vi.waitFor(() => expect(h.dispatched).toHaveLength(1))
+    expect(adapter.get(hostCommandActionId)?.prepared).toMatchObject({
+      start: { kind: 'ensemble', roundId: result.roundId, participantRunIds: [] },
+      effectRefs: expect.arrayContaining([
+        { family: 'round', entityId: result.roundId },
+        { family: 'thread', entityId: 'ensemble-chat' }
+      ])
+    })
+    expect(adapter.get(hostCommandActionId)?.prepared?.effectRefs).toHaveLength(2)
+    expect(verify).toHaveBeenCalledTimes(2)
+    expect(order).toEqual(['prepared', 'dispatch'])
+    expect(abort).not.toHaveBeenCalled()
+    producer.beginShutdown()
+    await producer.drain()
+    h.settle(h.dispatched[0]!.appRunId || '')
+    await h.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+  })
+
+  it('returns the reservation immediately and publishes after durability before participant dispatch', async () => {
+    const journal = pendingRoundBarrier()
+    const publication = pendingRoundBarrier()
+    const order: string[] = []
+    const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])], {
+      persistChatBarrier: () => journal.promise,
+      onDispatch: () => order.push('dispatch')
+    })
+    const observer = roundObserver()
+    observer.onRoundReserved.mockImplementation((roundId) => {
+      const saved = h.getChat('ensemble-chat')
+      expect(saved?.ensemble?.activeRound).toMatchObject({ roundId, status: 'running' })
+      expect(saved?.messages).toContainEqual(
+        expect.objectContaining({
+          id: `ensemble-user-${roundId}`,
+          role: 'user',
+          metadata: expect.objectContaining({
+            kind: 'ensembleRoundPrompt',
+            ensembleRoundId: roundId
+          })
+        })
+      )
+      order.push('reserved')
+    })
+    observer.onRoundPersistedBeforeParticipants.mockImplementation(async () => {
+      await publication.promise
+      order.push('prepared')
+    })
+    const result = h.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start with durable evidence.',
+      event: { sender: {} as Electron.WebContents },
+      roundStartObserver: observer
+    })
+    expect(result.status).toBe('started')
+    expect(observer.onRoundReserved).toHaveBeenCalledExactlyOnceWith(result.roundId)
+    expect(observer.onRoundPersistedBeforeParticipants).not.toHaveBeenCalled()
+    expect(h.dispatched).toEqual([])
+    journal.resolve()
+    await vi.waitFor(() =>
+      expect(observer.onRoundPersistedBeforeParticipants).toHaveBeenCalledExactlyOnceWith(
+        result.roundId
+      )
+    )
+    expect(h.dispatched).toEqual([])
+    publication.resolve()
+    await vi.waitFor(() => expect(h.dispatched).toHaveLength(1))
+    expect(order).toEqual(['reserved', 'prepared', 'dispatch'])
+    expect(observer.onRoundStartUnproven).not.toHaveBeenCalled()
+    h.settle(h.dispatched[0]!.appRunId || '')
+    await h.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+  })
+
+  it('abandons observation when ownership is lost while durability is pending', async () => {
+    const journal = pendingRoundBarrier()
+    const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])], {
+      persistChatBarrier: () => journal.promise
+    })
+    const observer = roundObserver()
+    const result = h.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start.',
+      event: { sender: {} as Electron.WebContents },
+      roundStartObserver: observer
+    })
+    const saved = h.getChat('ensemble-chat')!
+    h.saveChat({
+      ...saved,
+      ensemble: {
+        ...saved.ensemble!,
+        activeRound: { ...saved.ensemble!.activeRound!, roundId: 'replacement-round' }
+      }
+    })
+    journal.resolve()
+    await vi.waitFor(() =>
+      expect(observer.onRoundStartUnproven).toHaveBeenCalledExactlyOnceWith(result.roundId)
+    )
+    expect(observer.onRoundPersistedBeforeParticipants).not.toHaveBeenCalled()
+    expect(h.dispatched).toEqual([])
+    await h.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+  })
+
+  it('does not dispatch after cancellation during the observation await', async () => {
+    const publication = pendingRoundBarrier()
+    const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])])
+    const observer = roundObserver()
+    observer.onRoundPersistedBeforeParticipants.mockImplementation(() => publication.promise)
+    h.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start.',
+      event: { sender: {} as Electron.WebContents },
+      roundStartObserver: observer
+    })
+    await vi.waitFor(() =>
+      expect(observer.onRoundPersistedBeforeParticipants).toHaveBeenCalledOnce()
+    )
+    const cancellation = h.orchestrator.cancelRound('ensemble-chat', 'cancel while publishing')
+    publication.resolve()
+    await cancellation
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(h.dispatched).toEqual([])
+  })
+
+  it.each(['reserved', 'persisted'] as const)(
+    'contains a failed %s observer and still dispatches',
+    async (phase) => {
+      const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])])
+      const observer = roundObserver()
+      if (phase === 'reserved') {
+        observer.onRoundReserved.mockImplementation(() => {
+          throw new Error('observer fault')
+        })
+      } else {
+        observer.onRoundPersistedBeforeParticipants.mockRejectedValue(new Error('observer fault'))
+      }
+      h.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Start despite observational failure.',
+        event: { sender: {} as Electron.WebContents },
+        roundStartObserver: observer
+      })
+      await vi.waitFor(() => expect(h.dispatched).toHaveLength(1))
+      expect(observer.onRoundStartUnproven).toHaveBeenCalledOnce()
+      h.settle(h.dispatched[0]!.appRunId || '')
+      await h.orchestrator.cancelRound('ensemble-chat', 'cleanup')
+    }
+  )
+
+  it('abandons observation on durability failure without dispatching participants', async () => {
+    const journal = pendingRoundBarrier()
+    const h = harness([chat('ensemble-chat', [participant('codex', 'codex', 1)])], {
+      persistChatBarrier: () => journal.promise
+    })
+    const observer = roundObserver()
+    const result = h.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Start.',
+      event: { sender: {} as Electron.WebContents },
+      roundStartObserver: observer
+    })
+    journal.reject(new Error('journal unavailable'))
+    await vi.waitFor(() =>
+      expect(observer.onRoundStartUnproven).toHaveBeenCalledExactlyOnceWith(result.roundId)
+    )
+    expect(observer.onRoundPersistedBeforeParticipants).not.toHaveBeenCalled()
+    expect(h.dispatched).toEqual([])
   })
 })
