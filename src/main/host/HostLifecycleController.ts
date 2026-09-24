@@ -121,9 +121,10 @@ export class HostLifecycleController {
    * as one serialized transition. Refused once `stopSync()` fenced the exit.
    */
   restart(
-    reason: 'user-restart' | 'poison-restart' = 'user-restart'
+    reason: 'user-restart' | 'poison-restart' = 'user-restart',
+    expectedHost?: HostLifecycleHostIdentity
   ): Promise<HostLifecycleActionResult> {
-    return this.enqueue(() => this.performRestart(reason))
+    return this.enqueue(() => this.performRestart(reason, expectedHost))
   }
 
   /**
@@ -165,12 +166,28 @@ export class HostLifecycleController {
   }
 
   private async performRestart(
-    reason: 'user-restart' | 'poison-restart'
+    reason: 'user-restart' | 'poison-restart',
+    expectedHost?: HostLifecycleHostIdentity
   ): Promise<HostLifecycleActionResult> {
     if (this.closing) {
       return {
         ok: false,
         error: 'TaskWraith is shutting down; Host cannot be restarted.',
+        snapshot: this.getSnapshot()
+      }
+    }
+    if (
+      reason === 'poison-restart' &&
+      (this.state.phase !== 'running' ||
+        this.state.desired !== 'running' ||
+        (expectedHost &&
+          (this.state.host?.pid !== expectedHost.pid ||
+            this.state.host?.startedAt !== expectedHost.startedAt ||
+            this.state.host?.hostId !== expectedHost.hostId)))
+    ) {
+      return {
+        ok: false,
+        error: 'The confirmed Host or lifecycle intent changed; automatic restart abandoned.',
         snapshot: this.getSnapshot()
       }
     }
@@ -210,10 +227,11 @@ export class HostLifecycleController {
       if (changed) this.transition('running', 'running', reason)
       return { ok: true, snapshot: this.getSnapshot() }
     } catch (error) {
-      // The Host is gone and could not be brought back: the outcome of a
-      // failed start, and like one it is never retried in the background.
+      // Re-attachment can fail after a healthy shared Host answered (for
+      // example, launch resolution failed). Detach our failed handle without
+      // turning that local error into a shutdown of the shared process.
       try {
-        await active.stop()
+        active.stopSync()
       } catch (cleanupError) {
         this.log?.(
           `[host-lifecycle] failed re-attach cleanup error: ${boundedError(cleanupError, 'unknown failure')}`

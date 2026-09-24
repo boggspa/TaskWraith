@@ -251,6 +251,25 @@ describe('HostPoisonDetector', () => {
     expect(value.lines.join('\n')).toContain('with runs still live')
   })
 
+  it.each(['stopped', 'replaced'] as const)(
+    'abandons a deferred restart when the confirmed Host is %s',
+    async (change) => {
+      let current: HostStatusProjection | null = status(POISONED.clients, 1)
+      const value = detector({ status: () => current })
+      value.delay.mockImplementation(async (ms) => {
+        value.advance(ms)
+        current =
+          change === 'stopped'
+            ? null
+            : { ...status(POISONED.clients, 0), pid: 5151, startedAt: '2026-09-24T01:00:00Z' }
+      })
+      await value.flood()
+      expect(value.delay).toHaveBeenCalledTimes(1)
+      expect(value.restart).not.toHaveBeenCalled()
+      expect(value.lines.join('\n')).toContain('restart abandoned')
+    }
+  )
+
   it('abandons a deferred restart when the app starts quitting', async () => {
     let closing = false
     const value = detector({ status: () => status(POISONED.clients, 1), closing: () => closing })
@@ -440,6 +459,9 @@ describe('the poisoned Desktop session on a real Host listener', () => {
     for (let index = 0; index < POISON_UNAUTHORIZED_MIN; index += 1) detector.report(UNAUTHORIZED)
     await detector.settled()
     expect(lifecycle.restart).toHaveBeenCalledTimes(1)
-    expect(lifecycle.restart).toHaveBeenCalledWith('poison-restart')
+    expect(lifecycle.restart).toHaveBeenCalledWith(
+      'poison-restart',
+      expect.objectContaining({ pid: process.pid, hostId: 'poison-host' })
+    )
   })
 })

@@ -465,6 +465,30 @@ describe('HostLifecycleController restart (D10)', () => {
     expect(onOffline).toHaveBeenCalledTimes(1)
   })
 
+  it('does not let a queued poison restart revive a Host the user stopped', async () => {
+    const active = attachedSupervisor(HOST_A)
+    const createSupervisor = vi.fn(() => active)
+    const controller = new HostLifecycleController({ createSupervisor })
+    await controller.start()
+    const stop = controller.stop()
+    const restart = controller.restart('poison-restart', HOST_A)
+    await stop
+    await expect(restart).resolves.toMatchObject({ ok: false, snapshot: { phase: 'stopped' } })
+    expect(active.stop).toHaveBeenCalledTimes(1)
+    expect(createSupervisor).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not apply an old poison verdict to a replacement Host', async () => {
+    const active = attachedSupervisor(HOST_B)
+    const controller = new HostLifecycleController({ createSupervisor: () => active })
+    await controller.start()
+    await expect(controller.restart('poison-restart', HOST_A)).resolves.toMatchObject({
+      ok: false,
+      snapshot: { phase: 'running', host: HOST_B }
+    })
+    expect(active.stop).not.toHaveBeenCalled()
+  })
+
   it('keeps the handle and starts nothing when the stop half fails', async () => {
     const active = supervisor({
       stop: vi.fn(async () => {
@@ -595,7 +619,7 @@ describe('HostLifecycleController ensure (lease re-acquire, D6)', () => {
     expect(stuck.ensureLive).not.toHaveBeenCalled()
   })
 
-  it('fails a Host it could not bring back like a failed start, and never retries it', async () => {
+  it('detaches a failed re-attach without stopping a Host that may still be healthy', async () => {
     const onOffline = vi.fn()
     const active = attachedSupervisor(HOST_A, {
       ensureLive: vi.fn(async () => {
@@ -611,7 +635,8 @@ describe('HostLifecycleController ensure (lease re-acquire, D6)', () => {
       error: 'External Host exited 1 before readiness.',
       snapshot: { phase: 'failed', desired: 'running', reason: 'start-failed' }
     })
-    expect(active.stop).toHaveBeenCalledTimes(1)
+    expect(active.stop).not.toHaveBeenCalled()
+    expect(active.stopSync).toHaveBeenCalledTimes(1)
     expect(onOffline).toHaveBeenCalledTimes(1)
     await expect(controller.ensure('lease-reacquire')).resolves.toMatchObject({ ok: false })
     expect(active.ensureLive).toHaveBeenCalledTimes(1)
