@@ -39,6 +39,7 @@ import {
   assertTuiStandaloneHostWelcome,
   ensureTuiHostAvailable,
   planTuiHostStopAll,
+  prepareTuiHostRestart,
   resolveTuiHostLaunchCommand,
   restartTuiHost,
   runTuiHostStopAll,
@@ -224,6 +225,7 @@ function verifiedTermination(
   return (request) =>
     terminateHostProcess({
       ...request,
+      expected: request.expected ?? undefined,
       registryRoot: '/registry/unused',
       ports: {
         shutdown: async () => {
@@ -661,7 +663,7 @@ describe('TUI Host process manager', () => {
           return () => (now += 10)
         })()
       })
-    ).resolves.toEqual({ kind: 'launched', pid: 42 })
+    ).resolves.toEqual({ kind: 'launched', pid: 99 })
     expect(sourceSecret).toEqual(Buffer.alloc(32))
   })
 
@@ -839,7 +841,9 @@ describe('TUI Host restart', () => {
       userDataPath: '/profiles/restart',
       profile: 'production',
       pid: 4242,
+      expected: { pid: 4242, birthIdentity: RECORDED_BIRTH },
       terminateHost: async (request) => {
+        expect(request.expected).toEqual({ pid: 4242, birthIdentity: RECORDED_BIRTH })
         calls.push(`terminate:${request.profilePath}:${String(request.pid)}`)
         return outcome('stopped')
       },
@@ -893,6 +897,111 @@ describe('TUI Host restart', () => {
     expect(result).toEqual({ termination: outcome('identity_unavailable') })
     expect(probe).not.toHaveBeenCalled()
     expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('never replaces a concurrent winner after stopping the confirmed Host', async () => {
+    const terminateHost = vi.fn(async () => outcome('stopped'))
+    const spawn = vi.fn()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/concurrent-restart',
+      profile: 'production',
+      expected: { pid: 4242, birthIdentity: RECORDED_BIRTH },
+      terminateHost,
+      probe: async () => withPayload(777, STALE_PAYLOAD),
+      resolvePayloadVersion: async () => FRESH_PAYLOAD,
+      resolveLaunchCommand: async () => command(),
+      spawn
+    })
+
+    expect(terminateHost).toHaveBeenCalledTimes(1)
+    expect(terminateHost).toHaveBeenCalledWith({
+      profilePath: '/profiles/concurrent-restart',
+      pid: 4242,
+      expected: { pid: 4242, birthIdentity: RECORDED_BIRTH }
+    })
+    expect(spawn).not.toHaveBeenCalled()
+    expect(result.launch).toEqual({ kind: 'existing' })
+  })
+
+  it('refuses a Host that appeared after a disconnected restart was requested', async () => {
+    const terminateHost = vi.fn()
+    const spawn = vi.fn()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/newcomer',
+      profile: 'production',
+      expected: null,
+      terminateHost,
+      spawn,
+      probe: async () => authenticatedProbe(777),
+      resolveLaunchCommand: async () => command()
+    })
+
+    expect(result.termination).toMatchObject({ kind: 'inconsistent', pid: null, heldBy: 777 })
+    expect(result.launch).toBeUndefined()
+    expect(terminateHost).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('refuses restart when the selected Host is gone and a replacement holds its profile', async () => {
+    const probe = vi.fn()
+    const spawn = vi.fn()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/replacement',
+      profile: 'production',
+      expected: { pid: 4242, birthIdentity: RECORDED_BIRTH },
+      terminateHost: async () => ({ ...outcome('already_gone'), heldBy: 777 }),
+      probe,
+      spawn,
+      resolveLaunchCommand: async () => command()
+    })
+
+    expect(result.launch).toBeUndefined()
+    expect(result.termination.heldBy).toBe(777)
+    expect(probe).not.toHaveBeenCalled()
+    expect(spawn).not.toHaveBeenCalled()
+  })
+
+  it('launches an offline profile without an unbound termination request', async () => {
+    const child = new FakeChild()
+    const terminateHost = vi.fn()
+    const result = await restartTuiHost({
+      userDataPath: '/profiles/offline-restart',
+      profile: 'production',
+      expected: null,
+      terminateHost,
+      probe: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue(authenticatedProbe(42)),
+      spawn: () => child.asChildProcess(),
+      resolveLaunchCommand: async () => command(),
+      openHostStderrLog: () => null,
+      delay: async () => undefined
+    })
+
+    expect(result.launch).toEqual({ kind: 'launched', pid: 42 })
+    expect(terminateHost).not.toHaveBeenCalled()
+  })
+
+  it('reports the responding Host when another launcher wins', async () => {
+    const child = new FakeChild()
+    const result = await ensureTuiHostAvailable({
+      userDataPath: '/profiles/launch-loser',
+      profile: 'production',
+      probe: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValue(authenticatedProbe(777)),
+      spawn: () => child.asChildProcess(),
+      resolveLaunchCommand: async () => command(),
+      openHostStderrLog: () => null,
+      delay: async () => {
+        child.emit('exit', 1, null)
+      }
+    })
+
+    expect(result).toEqual({ kind: 'launched', pid: 777 })
   })
 })
 
@@ -991,12 +1100,84 @@ describe('TUI Host stop-all', () => {
     const result = await runTuiHostStopAll(plan, { ports: { stopAll: registry, terminate } })
 
     expect(terminate.mock.calls).toEqual([
-      [{ profilePath: '/profiles/b', registryRoot: '/registry' }]
+      [
+        {
+          profilePath: '/profiles/b',
+          registryRoot: '/registry',
+          expected: {
+            pid: 202,
+            birthIdentity: BIRTH(202),
+            startedAtMs: Date.parse('2026-09-23T10:00:00.000Z')
+          }
+        }
+      ]
     ])
     expect(result).toEqual({
       kind: 'done',
       results: [{ host: plan.selected[0], outcome: outcome('stopped', 202) }]
     })
+  })
+
+  it('keeps a confirmed plan valid when only lease-holder counts change', async () => {
+    const entries = [entry('/profiles/a', 101)]
+    const registry = fakeRegistry(entries)
+    const plan = await planTuiHostStopAll(byProfile('/profiles/a'), {
+      registryRoot: '/registry',
+      ports: { stopAll: registry }
+    })
+    entries[0] = { ...entries[0], holders: 4, implicitHolders: 2 }
+    const terminate = vi.fn(async () => outcome('stopped', 101))
+
+    const result = await runTuiHostStopAll(plan, { ports: { stopAll: registry, terminate } })
+
+    expect(result.kind).toBe('done')
+    expect(terminate).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures the matching restart birth before confirmation without switching to a newer Host', async () => {
+    const entries = [entry('/profiles/a', 101)]
+    const registry = fakeRegistry(entries)
+    const expected = {
+      pid: 101,
+      birthIdentity: null,
+      startedAtMs: Date.parse(entries[0].startedAt)
+    }
+
+    expect(
+      await prepareTuiHostRestart('/profiles/a', expected, {
+        registryRoot: '/registry',
+        ports: { stopAll: registry }
+      })
+    ).toEqual({ ...expected, birthIdentity: BIRTH(101) })
+
+    entries[0] = entry('/profiles/a', 202)
+    expect(
+      await prepareTuiHostRestart('/profiles/a', expected, {
+        registryRoot: '/registry',
+        ports: { stopAll: registry }
+      })
+    ).toEqual(expected)
+  })
+
+  it('refuses a plan whose pid has the same timestamp but a changed birth digest', async () => {
+    const registry = fakeRegistry([entry('/profiles/a', 101)])
+    const plan = await planTuiHostStopAll(byProfile('/profiles/a'), {
+      registryRoot: '/registry',
+      ports: { stopAll: registry }
+    })
+    const terminate = vi.fn(async () => outcome('stopped', 101))
+    const changed = async (options: HostStopAllOptions) => {
+      const report = await registry(options)
+      return {
+        ...report,
+        hosts: report.hosts.map((host) => ({ ...host, birthIdentity: BIRTH(999) }))
+      }
+    }
+
+    const result = await runTuiHostStopAll(plan, { ports: { stopAll: changed, terminate } })
+
+    expect(result.kind).toBe('registry_changed')
+    expect(terminate).not.toHaveBeenCalled()
   })
 
   it('never sweeps: a dead registry entry outside the scope survives /host stop-all', async () => {
@@ -1046,7 +1227,19 @@ describe('TUI Host stop-all', () => {
       const result = await runTuiHostStopAll(plan, { ports: { stopAll, terminate } })
 
       expect(result.kind).toBe('done')
-      expect(terminate.mock.calls).toEqual([[{ profilePath: inScope, registryRoot: root }]])
+      expect(terminate.mock.calls).toEqual([
+        [
+          {
+            profilePath: inScope,
+            registryRoot: root,
+            expected: {
+              pid: 101,
+              birthIdentity: BIRTH(101),
+              startedAtMs: Date.parse('2026-09-23T10:00:00.000Z')
+            }
+          }
+        ]
+      ])
       expect(existsSync(hostRegistryEntryPath(root, outOfScope))).toBe(true)
     } finally {
       if (previousTmpdir === undefined) delete process.env.TMPDIR

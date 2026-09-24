@@ -3,7 +3,10 @@
 import { spawnSync } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { chmod, readFile, stat, writeFile } from 'node:fs/promises'
-import { HostProjectionClient } from '../host-client/HostProjectionClient'
+import {
+  HostProjectionClient,
+  HostProjectionTransportError
+} from '../host-client/HostProjectionClient'
 import {
   TW_MISSION_MAX_BUNDLE_BYTES,
   importTwMissionBundleBytes,
@@ -52,6 +55,7 @@ import {
 import {
   ensureTuiHostAvailable,
   planTuiHostStopAll,
+  prepareTuiHostRestart,
   restartTuiHost,
   runTuiHostStopAll,
   type EnsureTuiHostAvailableResult,
@@ -227,8 +231,22 @@ async function connectedSnapshot(options: TaskWraithTuiCliOptions): Promise<Task
     capabilities: ['bootstrap', 'snapshot', 'health'],
     userDataPath: options.userDataPath
   })
+  let decline: Promise<void> | undefined
+  let declineError: unknown
+  client.on('welcome', () => {
+    // Send during welcome, before snapshot work can delay a one-shot reader.
+    decline = client.declineHostLease().catch((error: unknown) => {
+      if (
+        !(error instanceof HostProjectionTransportError && error.code === 'unknown_request_kind')
+      ) {
+        declineError = error
+      }
+    })
+  })
   try {
     const welcome = await client.connect()
+    await decline
+    if (declineError) throw declineError
     const frame = await client.getSnapshot()
     return stateFromHostSnapshot(frame.snapshot, {
       connection: 'connected',
@@ -412,12 +430,13 @@ function tuiHostControl(options: TaskWraithTuiCliOptions, userDataPath: string):
     ...(restartUnavailable
       ? { restartUnavailable }
       : {
-          restart: (pid: number | null) =>
+          prepareRestart: (expected) => prepareTuiHostRestart(userDataPath, expected),
+          restart: (expected) =>
             restartTuiHost({
               userDataPath,
               profile: options.hostLaunchProfile,
               enableFullAccessPresence: true,
-              pid
+              expected
             })
         }),
     planStopAll: (request) => planTuiHostStopAll(request),
@@ -470,7 +489,7 @@ async function main(): Promise<void> {
     )
   }
   let initialHostLaunch: EnsureTuiHostAvailableResult | undefined
-  if (!options.demo && options.startHost) {
+  if (!options.demo && options.startHost && !options.json && !options.snapshot) {
     if (!options.userDataPath) throw new Error('TaskWraith Host userData path is unavailable.')
     initialHostLaunch = await ensureTuiHostAvailable({
       userDataPath: options.userDataPath,
