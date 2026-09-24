@@ -10,8 +10,10 @@ import type {
   HostBridgeQueuedStartProducerOptions
 } from './HostBridgeQueuedStartProducer'
 import { createHostBridgeQueuedStartProducerBinding } from './HostBridgeQueuedStartProducerBinding'
+import type { createHostBridgeQueuedRoundStartProducer } from './HostBridgeQueuedRoundStartProducer'
 
 type Producer = ReturnType<typeof createHostBridgeQueuedStartProducer>
+type RoundProducer = ReturnType<typeof createHostBridgeQueuedRoundStartProducer>
 const COMMAND_ID = '11111111-1111-4111-8111-111111111111'
 const IDENTITY: HostBridgeQueuedStartIdentity = {
   hostCommandActionId: `host:command:${COMMAND_ID}`,
@@ -238,4 +240,77 @@ describe('HostBridgeQueuedStartProducerBinding', () => {
     expect(beginShutdown).toHaveBeenCalledOnce()
     expect(h.onCurrentProducer.mock.calls.map(([value]) => value)).toEqual([producer, null])
   })
+})
+
+describe('HostBridgeQueuedStartProducerBinding round generations', () => {
+  it.each(['before', 'after'] as const)(
+    'keeps B usable when A shutdown begins %s B binds',
+    async (order) => {
+      const journalA = deferred()
+      let current: RoundProducer | null = null
+      const onCurrentRound = vi.fn((producer: RoundProducer | null) => {
+        current = producer
+      })
+      const binding = createHostBridgeQueuedStartProducerBinding({
+        persistenceEnabled: () => true,
+        awaitPromptAndStartDurable: async () => undefined,
+        verifyPromptAndStart: () => true,
+        onCurrentProducer: vi.fn(),
+        roundStart: {
+          persistenceEnabled: () => true,
+          awaitPromptAndRoundDurable: vi
+            .fn()
+            .mockImplementationOnce(() => journalA.promise)
+            .mockResolvedValue(undefined),
+          verifyPromptAndRound: () => true,
+          onCurrentProducer: onCurrentRound
+        }
+      })
+      const currentRound = (): RoundProducer => {
+        if (!current) throw new Error('expected bound round producer')
+        return current
+      }
+      const a = registeredAdapter()
+      const b = registeredAdapter()
+      binding.onAdapter(a.adapter, a.abort)
+      const producerA = currentRound()
+      const observationA = producerA.observeRound(IDENTITY)!
+      observationA.observer.onRoundReserved('round-a')
+      const pendingA = observationA.observer.onRoundPersistedBeforeParticipants('round-a')
+      let shutdownA: Promise<void>
+      if (order === 'before') {
+        shutdownA = Promise.resolve(binding.beforeShutdown!(a.adapter))
+        expect(current).toBeNull()
+        binding.onAdapter(b.adapter, b.abort)
+      } else {
+        binding.onAdapter(b.adapter, b.abort)
+        shutdownA = Promise.resolve(binding.beforeShutdown!(a.adapter))
+      }
+      const producerB = currentRound()
+      expect(producerB).not.toBe(producerA)
+      const observationB = producerB.observeRound(IDENTITY)!
+      observationB.observer.onRoundReserved('round-b')
+      await observationB.observer.onRoundPersistedBeforeParticipants('round-b')
+      await shutdownA
+      await pendingA
+      expect(currentRound()).toBe(producerB)
+      expect(a.abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+      expect(a.onPrepared).not.toHaveBeenCalled()
+      expect(b.onPrepared).toHaveBeenCalledOnce()
+      expect(b.abort).not.toHaveBeenCalled()
+      expect(b.adapter.get(IDENTITY.hostCommandActionId)?.prepared?.start).toEqual({
+        kind: 'ensemble',
+        roundId: 'round-b',
+        participantRunIds: []
+      })
+      journalA.resolve()
+      await producerA.drain()
+      expect(a.onPrepared).not.toHaveBeenCalled()
+      expect(onCurrentRound.mock.calls.map(([value]) => value)).toEqual(
+        order === 'before' ? [producerA, null, producerB] : [producerA, producerB]
+      )
+      await binding.beforeShutdown!(b.adapter)
+      expect(current).toBeNull()
+    }
+  )
 })

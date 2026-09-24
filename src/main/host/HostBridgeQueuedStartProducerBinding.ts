@@ -2,15 +2,27 @@ import {
   createHostBridgeQueuedStartProducer,
   type HostBridgeQueuedStartProducerOptions
 } from './HostBridgeQueuedStartProducer'
+import {
+  createHostBridgeQueuedRoundStartProducer,
+  type HostBridgeQueuedRoundStartProducerOptions
+} from './HostBridgeQueuedRoundStartProducer'
 import type {
   HostProductionQueuedStartAdapter,
   HostProductionQueuedStartOptions
 } from './HostProductionBootstrap'
 
 type Producer = ReturnType<typeof createHostBridgeQueuedStartProducer>
+type RoundProducer = ReturnType<typeof createHostBridgeQueuedRoundStartProducer>
+interface Generation {
+  readonly producer: Producer
+  readonly roundProducer?: RoundProducer
+}
 
 export interface HostBridgeQueuedStartProducerBindingOptions extends HostBridgeQueuedStartProducerOptions {
   readonly onCurrentProducer: (producer: Producer | null) => void
+  readonly roundStart?: HostBridgeQueuedRoundStartProducerOptions & {
+    readonly onCurrentProducer: (producer: RoundProducer | null) => void
+  }
 }
 
 /**
@@ -23,9 +35,12 @@ export function createHostBridgeQueuedStartProducerBinding(
   if (!options || typeof options.onCurrentProducer !== 'function') {
     throw new Error('HostBridgeQueuedStartProducerBinding requires onCurrentProducer')
   }
-  const producers = new WeakMap<HostProductionQueuedStartAdapter, Producer>()
+  if (options.roundStart && typeof options.roundStart.onCurrentProducer !== 'function') {
+    throw new Error('HostBridgeQueuedStartProducerBinding requires round onCurrentProducer')
+  }
+  const producers = new WeakMap<HostProductionQueuedStartAdapter, Generation>()
   const boundAdapters = new WeakSet<HostProductionQueuedStartAdapter>()
-  let currentProducer: Producer | null = null
+  let currentGeneration: Generation | null = null
 
   return {
     onAdapter(adapter, abortQueuedStart) {
@@ -35,23 +50,31 @@ export function createHostBridgeQueuedStartProducerBinding(
         throw new Error('HostBridgeQueuedStartProducerBinding adapter is already bound')
       }
       const producer = createHostBridgeQueuedStartProducer(options)
+      const roundProducer = options.roundStart
+        ? createHostBridgeQueuedRoundStartProducer(options.roundStart)
+        : undefined
       producer.onAdapter(adapter, abortQueuedStart)
+      roundProducer?.onAdapter(adapter, abortQueuedStart)
       boundAdapters.add(adapter)
-      producers.set(adapter, producer)
-      currentProducer = producer
+      const generation = { producer, roundProducer }
+      producers.set(adapter, generation)
+      currentGeneration = generation
       options.onCurrentProducer(producer)
+      if (roundProducer) options.roundStart?.onCurrentProducer(roundProducer)
     },
     async beforeShutdown(adapter) {
-      const producer = producers.get(adapter)
-      if (!producer) return
+      const generation = producers.get(adapter)
+      if (!generation) return
       // Fence synchronously: stopSync may return and start the next generation
       // while this producer still has publication tails to drain.
-      producer.beginShutdown()
-      if (currentProducer === producer) {
-        currentProducer = null
+      generation.producer.beginShutdown()
+      generation.roundProducer?.beginShutdown()
+      if (currentGeneration === generation) {
+        currentGeneration = null
         options.onCurrentProducer(null)
+        options.roundStart?.onCurrentProducer(null)
       }
-      await producer.drain()
+      await Promise.all([generation.producer.drain(), generation.roundProducer?.drain()])
       producers.delete(adapter)
     }
   }
