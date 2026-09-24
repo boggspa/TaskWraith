@@ -1080,6 +1080,7 @@ import {
 } from './perf/MainPerfSnapshot'
 import { createWorkSpanRecorder } from './perf/WorkSpanRecorder'
 import { bindMainWorkSpanSink } from './perf/mainWorkSpanSink'
+import { installMainPerfWorkSpanHandle } from './perf/perfWorkSpanHandle'
 import { resolveHostInstallId } from './host/HostInstallIdentity'
 import { createHostProductionBootstrap } from './host/HostProductionBootstrap'
 import {
@@ -4612,6 +4613,7 @@ bindMainWorkSpanSink(mainWorkSpanRecorder)
 const ensembleHostAdmissionRuntime = new EnsembleHostAdmissionRuntime({
   schedulerOptions: { spans: mainWorkSpanRecorder }
 })
+installMainPerfWorkSpanHandle(mainWorkSpanRecorder, () => ensembleHostAdmissionRuntime.snapshot())
 const ensembleDelegatedRunAdmission = new EnsembleDelegatedRunAdmission(
   ensembleHostAdmissionRuntime
 )

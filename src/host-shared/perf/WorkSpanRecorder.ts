@@ -245,6 +245,26 @@ export interface WorkSpanSnapshot extends WorkSpanAggregates {
   spans: WorkSpan[]
 }
 
+/**
+ * The retained spans that started inside one window, with what a caller
+ * needs to know whether the window is whole. Nothing is aggregated or reset.
+ */
+export interface WorkSpanWindowRead {
+  /** Copies of retained spans with `sinceMs <= startedAt < untilMs`, oldest first. */
+  spans: WorkSpan[]
+  /**
+   * The latest start among spans the ring has evicted since the last reset,
+   * or null. A window starting after it lost nothing to eviction; one
+   * starting at or before it may have.
+   */
+  evictedMaxStartedAt: number | null
+  recorded: number
+  dropped: number
+  sampledOut: number
+  rejected: number
+  degraded: number
+}
+
 export interface WorkSpanRecorderOptions {
   process: WorkSpanProcess
   /** Ring bound for retained spans; clamped to at least 1. */
@@ -272,6 +292,11 @@ export interface WorkSpanRecorder {
   record(span: WorkSpanRecordInput): void
   /** Retained spans plus aggregates; `reset` windows everything after it. */
   snapshot(options?: { reset?: boolean }): WorkSpanSnapshot
+  /**
+   * The retained spans that started inside `[sinceMs, untilMs)`, without
+   * aggregating or resetting anything. A malformed window reads no spans.
+   */
+  readWindow(window: { sinceMs: number; untilMs: number }): WorkSpanWindowRead
   /**
    * Aggregates without the raw spans, shaped for
    * `createMainPerfInstrumentation({ sections })`: register the property
@@ -440,6 +465,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
   let offeredByResource = new Map<WorkSpanResource, MutableOffered>()
   let recorded = 0
   let dropped = 0
+  let evictedMaxStartedAt: number | null = null
   let sampledOut = 0
   let rejected = 0
   let degraded = 0
@@ -526,6 +552,10 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     if (ring.length < maxRetained) {
       ring.push(span)
     } else {
+      const evicted = ring[ringCursor]
+      if (evictedMaxStartedAt === null || evicted.startedAt > evictedMaxStartedAt) {
+        evictedMaxStartedAt = evicted.startedAt
+      }
       ring[ringCursor] = span
       ringCursor = (ringCursor + 1) % maxRetained
       dropped += 1
@@ -700,6 +730,7 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     byResource = new Map()
     recorded = 0
     dropped = 0
+    evictedMaxStartedAt = null
     sampledOut = 0
     rejected = 0
     degraded = 0
@@ -724,5 +755,23 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
 
   const section = (): WorkSpanAggregates => collectAggregates()
 
-  return { begin, record, snapshot, section }
+  const readWindow = (window: { sinceMs: number; untilMs: number }): WorkSpanWindowRead => {
+    const sinceMs = window?.sinceMs
+    const untilMs = window?.untilMs
+    const valid =
+      typeof sinceMs === 'number' &&
+      typeof untilMs === 'number' &&
+      Number.isFinite(sinceMs) &&
+      Number.isFinite(untilMs) &&
+      untilMs >= sinceMs
+    const spans: WorkSpan[] = []
+    if (valid) {
+      for (const span of orderedRing()) {
+        if (span.startedAt >= sinceMs && span.startedAt < untilMs) spans.push({ ...span })
+      }
+    }
+    return { spans, evictedMaxStartedAt, recorded, dropped, sampledOut, rejected, degraded }
+  }
+
+  return { begin, record, snapshot, section, readWindow }
 }

@@ -736,6 +736,82 @@ describe('createWorkSpanRecorder', () => {
   })
 })
 
+describe('WorkSpanRecorder.readWindow', () => {
+  const at = (startedAt: number, overrides: Partial<WorkSpanAttrs> = {}) => ({
+    ...attrs(overrides),
+    startedAt,
+    durationMs: 5
+  })
+
+  it('returns copies of the retained spans that started inside the window', () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 8 })
+    recorder.record(at(100, { runId: 'early' }))
+    recorder.record(at(200, { runId: 'inside', chatId: 'chat-b' }))
+    recorder.record(at(250, { runId: 'inside-2' }))
+    recorder.record(at(300, { runId: 'at-end' }))
+    const read = recorder.readWindow({ sinceMs: 150, untilMs: 300 })
+    expect(read.spans.map((span) => span.runId)).toEqual(['inside', 'inside-2'])
+    read.spans[0]!.durationMs = 999
+    expect(recorder.readWindow({ sinceMs: 150, untilMs: 300 }).spans[0]!.durationMs).toBe(5)
+    expect(read).toMatchObject({
+      evictedMaxStartedAt: null,
+      recorded: 4,
+      dropped: 0,
+      sampledOut: 0,
+      rejected: 0,
+      degraded: 0
+    })
+  })
+
+  it('names the latest start the ring has evicted, so a later window reads whole', () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 2 })
+    recorder.record(at(100))
+    recorder.record(at(200))
+    expect(recorder.readWindow({ sinceMs: 0, untilMs: 1_000 }).evictedMaxStartedAt).toBeNull()
+    recorder.record(at(300))
+    expect(recorder.readWindow({ sinceMs: 150, untilMs: 1_000 })).toMatchObject({
+      evictedMaxStartedAt: 100,
+      dropped: 1
+    })
+    // A long span recorded late can start before spans already evicted.
+    recorder.record(at(50))
+    recorder.record(at(400))
+    expect(recorder.readWindow({ sinceMs: 0, untilMs: 1_000 })).toMatchObject({
+      evictedMaxStartedAt: 300,
+      dropped: 3
+    })
+    recorder.record(at(500))
+    expect(recorder.readWindow({ sinceMs: 0, untilMs: 1_000 }).evictedMaxStartedAt).toBe(300)
+    recorder.snapshot({ reset: true })
+    expect(recorder.readWindow({ sinceMs: 0, untilMs: 1_000 })).toMatchObject({
+      evictedMaxStartedAt: null,
+      dropped: 0,
+      spans: []
+    })
+  })
+
+  it('reads a wrapped ring in acceptance order, not start order', () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 3 })
+    for (const startedAt of [1_400, 1_100, 1_300, 1_200]) recorder.record(at(startedAt))
+    expect(
+      recorder.readWindow({ sinceMs: 1_000, untilMs: 2_000 }).spans.map((span) => span.startedAt)
+    ).toEqual([1_100, 1_300, 1_200])
+  })
+
+  it('answers a malformed window with no spans instead of throwing', () => {
+    const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4 })
+    recorder.record(at(100))
+    for (const window of [
+      { sinceMs: Number.NaN, untilMs: 200 },
+      { sinceMs: 100, untilMs: Number.POSITIVE_INFINITY },
+      { sinceMs: 200, untilMs: 100 },
+      undefined
+    ]) {
+      expect(recorder.readWindow(window as never)).toMatchObject({ spans: [], recorded: 1 })
+    }
+  })
+})
+
 /**
  * Review3 wave-4 pins (F1/F3/F4): taxonomy lockstep with the collector's
  * frozen copies, a distribution where p95 and p99 genuinely differ, and
