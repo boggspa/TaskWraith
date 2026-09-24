@@ -31,7 +31,6 @@ import {
   DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS,
   migrateApprovalTimeoutDefaults
 } from '../../shared/interactionTimeouts'
-import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import { DEFAULT_THEME_ACCENT_COLOR, resolveThemeAccentColor } from '../../shared/themeAccentColor'
 import { projectChatForCommitAttribution } from '../../shared/commitAttributionProjection'
@@ -98,7 +97,7 @@ import {
   type LegacyStoreWriteAdmissionScope
 } from './LegacyStoreWriteAdmission'
 import { legacyStoreWriterGate } from './LegacyStoreWriterGate'
-import { readRunEventLedgerHead } from './RunEventLedgerHead'
+import { RunEventLedgerWriter } from './RunEventLedgerWriter'
 import {
   createDesktopHostThreadRecordPersistClient,
   HostThreadRecordPersistError,
@@ -148,7 +147,6 @@ import {
   RunEventKind,
   RunEventRecord,
   RunEventReplay,
-  RunEventArtifactRef,
   ToolActivityDetailRef,
   HydratedToolActivityDetail,
   ApprovalLedgerFilter,
@@ -288,10 +286,8 @@ import {
 import {
   createRunEventRecord,
   filterRunEvents,
-  RUN_EVENT_EMPTY_HASH,
   parseRunEventLine,
-  safeRunEventFileName,
-  serializeRunEventRecord
+  safeRunEventFileName
 } from '../RunEventStore'
 import {
   getRunEventReplayAsync as getRunEventReplayCachedAsync,
@@ -1594,8 +1590,7 @@ const introspectionSchedulePath = path.join(userDataPath, 'introspection-schedul
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
 const historyDeletionIntentPath = path.join(userDataPath, 'history-deletion-intent.json')
-const runEventSequenceCache = new Map<string, number>()
-const runEventHashCache = new Map<string, string>()
+const runEventLedgerWriter = new RunEventLedgerWriter({ runEventsDir, runArtifactsDir })
 // Stage 1 — durable per-execution workflow run ledger (one .jsonl per
 // workflowExecutionId, append-only; the run-events model). Single writer per file.
 const workflowRunsDir = path.join(userDataPath, 'workflow-runs')
@@ -4545,7 +4540,7 @@ function workflowRunSummarySortKey(summary: WorkflowRunSummary): number {
 }
 
 // Per-run artifact directory. Mirrors the path derivation in
-// appendRunStreamArtifact (the `.jsonl`-stripped run file name is used as a
+// RunEventLedgerWriter (the `.jsonl`-stripped run file name is used as a
 // dedicated directory holding stdout/stderr/stdin .log files for the run), so
 // every artifact for a given runId lives under exactly this path. Deriving it
 // from `safeRunEventFileName` keeps deletion in lockstep with creation.
@@ -4563,8 +4558,7 @@ function runArtifactDirPath(runId: string): string {
 function deleteRunForensicFiles(runId: string): void {
   if (!runId) return
   deletedRunIds.add(runId)
-  runEventSequenceCache.delete(runId)
-  runEventHashCache.delete(runId)
+  runEventLedgerWriter.forgetHead(runId)
   try {
     fs.rmSync(runEventFilePath(runId), { force: true })
   } catch (e) {
@@ -4592,8 +4586,7 @@ function tombstoneRunEventFiles(): void {
       const runId = path.basename(file, '.jsonl')
       if (!runId) continue
       deletedRunIds.add(runId)
-      runEventSequenceCache.delete(runId)
-      runEventHashCache.delete(runId)
+      runEventLedgerWriter.forgetHead(runId)
     }
   } catch {
     // Best-effort; direct directory deletion below is still authoritative.
@@ -4606,8 +4599,7 @@ function tombstoneRunArtifactDirs(): void {
     for (const entry of fs.readdirSync(runArtifactsDir, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue
       deletedRunIds.add(entry.name)
-      runEventSequenceCache.delete(entry.name)
-      runEventHashCache.delete(entry.name)
+      runEventLedgerWriter.forgetHead(entry.name)
     }
   } catch {
     // Best-effort; direct directory deletion below is still authoritative.
@@ -4753,55 +4745,6 @@ async function readAllRunEventFilesAsync(kinds?: RunEventKind[]): Promise<RunEve
   }
 }
 
-function extractRunStreamText(
-  input: RunEventInput
-): { stream: 'stdout' | 'stderr' | 'stdin'; text: string } | null {
-  if (input.kind === 'provider_raw') {
-    const payload = input.payload as { data?: unknown } | string | undefined
-    const text =
-      typeof payload === 'string' ? payload : typeof payload?.data === 'string' ? payload.data : ''
-    return text ? { stream: 'stdout', text } : null
-  }
-  if (input.kind === 'provider_error') {
-    const payload = input.payload as { error?: unknown } | string | undefined
-    const text =
-      typeof payload === 'string'
-        ? payload
-        : typeof payload?.error === 'string'
-          ? payload.error
-          : ''
-    return text ? { stream: 'stderr', text } : null
-  }
-  return null
-}
-
-function appendRunStreamArtifact(
-  input: RunEventInput,
-  sequence: number
-): RunEventArtifactRef[] | undefined {
-  const stream = extractRunStreamText(input)
-  if (!stream) return undefined
-  const runFileName = safeRunEventFileName(input.runId).replace(/\.jsonl$/, '')
-  const artifactRelativePath = path.join(
-    safeRunEventFileName(input.runId).replace(/\.jsonl$/, ''),
-    `${stream.stream}.log`
-  )
-  const artifactPath = path.join(runArtifactsDir, artifactRelativePath)
-  const bytes = Buffer.from(redactSecrets(stream.text), 'utf8')
-  fs.mkdirSync(path.dirname(artifactPath), { recursive: true })
-  fs.appendFileSync(artifactPath, bytes)
-  return [
-    {
-      id: `${runFileName}:${stream.stream}:${sequence}`,
-      kind: stream.stream,
-      path: artifactRelativePath.split(path.sep).join('/'),
-      sha256: createHash('sha256').update(bytes).digest('hex'),
-      sizeBytes: bytes.byteLength,
-      sequence
-    }
-  ]
-}
-
 function toolActivityDetailCheckpointInput(
   chat: ChatRecord,
   checkpoint: ToolActivityDetailCheckpoint
@@ -4921,8 +4864,7 @@ export class AppStore {
   static resetTransientDeletionGuardsForTests(): void {
     deletedChatIds.clear()
     deletedRunIds.clear()
-    runEventSequenceCache.clear()
-    runEventHashCache.clear()
+    runEventLedgerWriter.clearHeads()
     // Otherwise one test's still-open approval makes the next test's identical
     // approval look like an already-rendered transition, and its barrier
     // silently stops firing.
@@ -10197,8 +10139,7 @@ export class AppStore {
     }
     for (const runId of intent.runIds) {
       deletedRunIds.add(runId)
-      runEventSequenceCache.delete(runId)
-      runEventHashCache.delete(runId)
+      runEventLedgerWriter.forgetHead(runId)
     }
     if (intent.kind === 'global') {
       tombstoneRunEventFiles()
@@ -10350,8 +10291,7 @@ export class AppStore {
       this.chatListIndexWriteAtByChatId.clear()
       this.orphanSubThreadsReaped = false
       this.orphanSubThreadReapCandidates.clear()
-      runEventSequenceCache.clear()
-      runEventHashCache.clear()
+      runEventLedgerWriter.clearHeads()
     }
   }
 
@@ -13910,47 +13850,11 @@ export class AppStore {
       }
       return createRunEventRecord(input, 1, { storeRawPayload: false })
     }
-    const filePath = runEventFilePath(input.runId)
-    const cachedSequence = runEventSequenceCache.get(input.runId)
-    const cachedHash = runEventHashCache.get(input.runId)
-    // Seek the ledger's head rather than reading it: an append needs two
-    // scalars, and these files reach a gigabyte. See RunEventLedgerHead.
-    const ledgerHead =
-      cachedSequence !== undefined && cachedHash !== undefined
-        ? null
-        : readRunEventLedgerHead(filePath)
-    const sequence =
-      cachedSequence !== undefined ? cachedSequence + 1 : (ledgerHead?.sequence ?? 0) + 1
-    const previousHash = cachedHash || ledgerHead?.hash || RUN_EVENT_EMPTY_HASH
     const settings = this.getSettings()
-    const artifacts = settings.storeRawEvents ? appendRunStreamArtifact(input, sequence) : undefined
-    const record = createRunEventRecord(input, sequence, {
-      storeRawPayload: settings.storeRawEvents,
-      previousHash,
-      artifacts
+    return runEventLedgerWriter.append(input, {
+      ...options,
+      storeRawEvents: settings.storeRawEvents
     })
-    const directoryPath = path.dirname(filePath)
-    const directoryExisted = fs.existsSync(directoryPath)
-    const fileExisted = fs.existsSync(filePath)
-    fs.mkdirSync(directoryPath, { recursive: true })
-    if (options.durability === 'strict' && !directoryExisted) {
-      fsyncDirectory(path.dirname(directoryPath))
-    }
-    const fd = fs.openSync(filePath, 'a')
-    try {
-      fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
-      if (options.durability === 'strict' || input.kind === 'lifecycle' || sequence % 25 === 0) {
-        fs.fsyncSync(fd)
-      }
-    } finally {
-      fs.closeSync(fd)
-    }
-    if (options.durability === 'strict' && !fileExisted) {
-      fsyncDirectory(directoryPath)
-    }
-    runEventSequenceCache.set(input.runId, record.sequence)
-    runEventHashCache.set(input.runId, record.hash || previousHash)
-    return record
   }
 
   /**
