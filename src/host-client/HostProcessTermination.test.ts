@@ -13,6 +13,7 @@ import { dirname, join } from 'node:path'
 
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { resolveHostExternalLaunch } from '../main/host/HostExternalLaunchResolver'
 import {
   HostProfileAuthorityLease,
   type HostProfileAuthorityProcessPort
@@ -371,9 +372,10 @@ describe('terminateHostProcess', () => {
     expect(outcome.detail).toBe(
       'a record naming the pid is not contradicted by the process now at it: ' +
         `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)} and the discovery ` +
-        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
-        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
-        'remove those files and stop again'
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is not a TaskWraith Host serving ` +
+        'this profile (`…/host-runtime/cli.js serve … --profile /profiles/host-termination-p …`) ' +
+        'or the TaskWraith app, remove whichever of those files still names pid 4242 and run ' +
+        'stop-all again'
     )
     expect(outcome.steps).toEqual([
       'socket:failed:Host shutdown request timed out',
@@ -407,9 +409,10 @@ describe('terminateHostProcess', () => {
     const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
     const refusal =
       'a record naming the pid is not contradicted by the process now at it: ' +
-      `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)}. If pid 4242 is ` +
-      "neither this profile's Host (host-runtime/cli.js serve --profile " +
-      '/profiles/host-termination-p) nor the TaskWraith app, remove that file and stop again'
+      `the registry entry ${hostRegistryEntryPath(REGISTRY_ROOT, PROFILE)}. If pid 4242 is not ` +
+      'a TaskWraith Host serving this profile (`…/host-runtime/cli.js serve … --profile ' +
+      '/profiles/host-termination-p …`) or the TaskWraith app, and that file still names pid ' +
+      '4242, remove it and run stop-all again'
     expect(outcome).toEqual({
       kind: 'inconsistent',
       pid: PID,
@@ -507,9 +510,9 @@ describe('terminateHostProcess', () => {
     expect(run.sweeps).toEqual([])
     expect(outcome.detail).toBe(
       'a record naming the pid is not contradicted by the process now at it: the discovery ' +
-        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is neither this profile's Host ` +
-        '(host-runtime/cli.js serve --profile /profiles/host-termination-p) nor the TaskWraith app, ' +
-        'remove that file and stop again'
+        `${taskWraithHostDiscoveryPath(PROFILE)}. If pid 4242 is not a TaskWraith Host serving ` +
+        'this profile (`…/host-runtime/cli.js serve … --profile /profiles/host-termination-p …`) ' +
+        'or the TaskWraith app, and that file still names pid 4242, remove it and run stop-all again'
     )
     expect(run.lines.at(-1)).toContain(`inconsistent (${outcome.detail}) after`)
   })
@@ -1079,6 +1082,83 @@ describe('terminateHostProcess with an expected Host', () => {
       swept: []
     })
     expect(run.budgets).toEqual([])
+  })
+})
+
+describe('the reused-pid refusal advice (E1)', () => {
+  /**
+   * The Host command line the advice describes, read the way an operator
+   * reads it: `…` stands for any run of the command line, none at all
+   * included, and the rest is literal.
+   */
+  function describedHostCommand(detail: string): RegExp {
+    const described = /\(`?([^`()]* serve [^`()]*?)`?\)/.exec(detail)?.[1]
+    if (!described) throw new Error(`the advice describes no Host command: ${detail}`)
+    const source = described
+      .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+      .replace(/^…/, '.*')
+      .replace(/ …$/, '(?: .*)?')
+      .replace(/ … /g, ' (?:.* )?')
+    return new RegExp(`^${source}$`)
+  }
+
+  it("describes a Host by the command line every launcher gives it, and no other profile's Host", async () => {
+    const run = harness({
+      evidence: {
+        discovery: null,
+        lease: REGISTRY_EVIDENCE.lease,
+        registry: { pid: PID, birthIdentity: null, bootEpoch: null }
+      },
+      observe: () => live(OTHER, REUSED_START)
+    })
+    const outcome = await terminate({ profilePath: PROFILE, ports: run.ports })
+    expect(outcome.kind).toBe('inconsistent')
+    const described = describedHostCommand(outcome.detail ?? '')
+
+    const payloadVersion = (): string => `sha256:${'0'.repeat(64)}`
+    const launches = await Promise.all([
+      // The app's external Host, packaged and from a checkout.
+      resolveHostExternalLaunch({
+        profilePath: PROFILE,
+        packaged: true,
+        resourcesPath: '/Applications/TaskWraith.app/Contents/Resources',
+        platform: 'darwin',
+        architecture: 'arm64',
+        env: {},
+        pathExists: async () => true,
+        resolvePayloadVersion: payloadVersion
+      }),
+      resolveHostExternalLaunch({
+        profilePath: PROFILE,
+        packaged: false,
+        repoRoot: '/repo',
+        nodeExecutable: '/usr/local/bin/node',
+        isOrdinaryNode: () => true,
+        platform: 'darwin',
+        env: {},
+        pathExists: async () => true,
+        resolvePayloadVersion: payloadVersion
+      })
+    ])
+    // The packaged launcher fixes the mode and passes its caller's options
+    // on, so a Host started through it can carry options after its profile.
+    const launcher = /^exec "\$NODE_BIN" "\$CLI_JS" (serve [^"\n]*)"\$@"$/m.exec(
+      readFileSync(join(process.cwd(), 'build', 'host-launcher', 'taskwraith-host'), 'utf8')
+    )
+    expect(launcher).not.toBeNull()
+    const hosts = [
+      ...launches.map((launch) => [launch!.executable, ...launch!.args].join(' ')),
+      `/opt/tw/node /opt/tw/host/host-runtime/cli.js ${launcher![1]}--profile ${PROFILE} --muse-binary /opt/muse`,
+      HOST_COMMAND
+    ]
+    for (const line of hosts) {
+      expect(isHostServeCommandFor(hostCommand(line), PROFILE, 'darwin')).toBe(true)
+      expect({ line, described: described.test(line) }).toEqual({ line, described: true })
+    }
+    for (const other of [`${PROFILE}-2`, '/profiles/other']) {
+      const line = HOST_COMMAND.replace(PROFILE, other)
+      expect({ line, described: described.test(line) }).toEqual({ line, described: false })
+    }
   })
 })
 

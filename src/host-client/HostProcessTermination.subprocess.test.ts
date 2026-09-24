@@ -1,5 +1,13 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -14,6 +22,7 @@ import {
 import {
   listProcessCommandLines,
   observeProcessBirthIdentity,
+  observeProcessCommandLine,
   type ProcessBirthObservation
 } from '../host-runtime/ProcessBirthIdentity'
 import {
@@ -315,6 +324,59 @@ function alive(pid: number): boolean {
   }
 }
 
+/**
+ * The Host command line a refusal's advice describes, read the way an
+ * operator reads it: `…` stands for any run of the command line, none at all
+ * included, and the rest is literal.
+ */
+function describedHostCommand(detail: string): RegExp {
+  const described = /\(`?([^`()]* serve [^`()]*?)`?\)/.exec(detail)?.[1]
+  if (!described) throw new Error(`the advice describes no Host command: ${detail}`)
+  const source = described
+    .replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+    .replace(/^…/, '.*')
+    .replace(/ …$/, '(?: .*)?')
+    .replace(/ … /g, ' (?:.* )?')
+  return new RegExp(`^${source}$`)
+}
+
+/** The pid a record file names now, or null when it names none. */
+function recordPid(file: string): number | null {
+  try {
+    const { pid } = JSON.parse(readFileSync(file, 'utf8')) as { readonly pid?: unknown }
+    return typeof pid === 'number' ? pid : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * An operator who follows a reused-pid refusal to the letter. Unless pid N
+ * runs the Host command the advice describes (no process in this suite is
+ * the TaskWraith app), each file it names is removed, only while that file
+ * still names pid N when the advice says so, and the stop is run again once
+ * any was. The command line observed is only compared, never printed.
+ */
+async function followRefusalAdvice<T>(
+  detail: string,
+  stopAgain: () => Promise<T>
+): Promise<{ readonly removed: readonly string[]; readonly again: T | null }> {
+  const pid = Number(/If pid (\d+) is /.exec(detail)?.[1])
+  if (!Number.isSafeInteger(pid)) throw new Error(`the advice names no pid: ${detail}`)
+  const command = await observeProcessCommandLine(pid)
+  if (command.state === 'live' && describedHostCommand(detail).test(command.commandLine)) {
+    return { removed: [], again: null }
+  }
+  const whileNaming = detail.includes(`still names pid ${pid}`)
+  const named = [
+    ...detail.matchAll(/the (?:registry entry|authority lease|discovery) (\/\S+?)(?=\.? )/g)
+  ].map((match) => match[1])
+  if (!named.length) throw new Error(`the advice names no file: ${detail}`)
+  const removed = named.filter((file) => !whileNaming || recordPid(file) === pid)
+  for (const file of removed) rmSync(file)
+  return { removed, again: removed.length ? await stopAgain() : null }
+}
+
 describe.skipIf(process.platform === 'win32')('verified termination against real processes', () => {
   it('kills a wedged Host: the ack times out, birth and argv are verified, TERM is ignored, KILL lands, artefacts are swept', async () => {
     const base = scratch('host-termination-sub-')
@@ -613,16 +675,26 @@ describe.skipIf(process.platform === 'win32')(
         'verify:mismatch',
         'evidence:inconsistent'
       ])
-      expect(outcome.detail).toBe(
-        'a record naming the pid is not contradicted by the process now at it: the discovery ' +
-          `${taskWraithHostDiscoveryPath(profile)}. If pid ${host.pid} is neither this profile's ` +
-          `Host (host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove ` +
-          'that file and stop again'
+
+      // E1: the advice describes a Host the way this one's command line reads,
+      // so an operator who follows it leaves the Host and its records alone.
+      // Removing the discovery and stopping again would read the lease alone
+      // as a reused pid and sweep it from under the running Host.
+      const followed = await followRefusalAdvice(outcome.detail ?? '', () =>
+        terminateHostProcess({ profilePath: profile, registryRoot: root, timings: FAST })
       )
       expect(alive(host.pid)).toBe(true)
       expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
       // Still the profile's owner: no contender takes the lease from it.
       expect(contenderAcquires(profile)).toBe(false)
+      expect(followed).toEqual({ removed: [], again: null })
+      expect(outcome.detail).toBe(
+        'a record naming the pid is not contradicted by the process now at it: the discovery ' +
+          `${taskWraithHostDiscoveryPath(profile)}. If pid ${host.pid} is not a TaskWraith Host ` +
+          `serving this profile (\`…/host-runtime/cli.js serve … --profile ${profile} …\`) or ` +
+          `the TaskWraith app, and that file still names pid ${host.pid}, remove it and run ` +
+          'stop-all again'
+      )
     }, 30_000)
 
     it('D1: stop-all --profile refuses a reused pid beside a registry entry without a birth while that process lives, and clears once the file it names is removed', async () => {
@@ -654,9 +726,9 @@ describe.skipIf(process.platform === 'win32')(
 
       const refusal =
         'a record naming the pid is not contradicted by the process now at it: the registry ' +
-        `entry ${entryPath}. If pid ${decoy.pid} is neither this profile's Host ` +
-        `(host-runtime/cli.js serve --profile ${profile}) nor the TaskWraith app, remove that ` +
-        'file and stop again'
+        `entry ${entryPath}. If pid ${decoy.pid} is not a TaskWraith Host serving this profile ` +
+        `(\`…/host-runtime/cli.js serve … --profile ${profile} …\`) or the TaskWraith app, and ` +
+        `that file still names pid ${decoy.pid}, remove it and run stop-all again`
       for (let attempt = 0; attempt < 2; attempt += 1) {
         const report = await stop()
         expect(report.exitCode).toBe(1)
@@ -671,17 +743,85 @@ describe.skipIf(process.platform === 'win32')(
         expect(contenderAcquires(profile)).toBe(false)
       }
 
-      // The operator confirms the pid runs no Host, removes that file, stops again.
-      rmSync(entryPath)
-      const cleared = await stop()
-      expect(cleared.exitCode).toBe(0)
-      expect(cleared.hosts).toMatchObject([
+      // An operator following the advice finds that the pid runs no Host and
+      // that the entry still names it, removes the entry and stops again.
+      const followed = await followRefusalAdvice(refusal, stop)
+      expect(followed.removed).toEqual([entryPath])
+      const cleared = followed.again
+      expect(cleared?.exitCode).toBe(0)
+      expect(cleared?.hosts).toMatchObject([
         { pid: decoy.pid, outcome: { kind: 'pid_reused', swept: ['discovery', 'token', 'lease'] } }
       ])
       expect(alive(decoy.pid)).toBe(true)
       expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
       expect(contenderAcquires(profile)).toBe(true)
     }, 60_000)
+
+    it('E1: a refusal that has gone stale never leads an operator to remove a record that now names another pid', async () => {
+      const base = scratch('host-termination-e1-')
+      for (const survivors of ['entry', 'entry and discovery'] as const) {
+        const variant = survivors === 'entry' ? 'one' : 'two'
+        const root = join(base, `hosts-${variant}`)
+        const profile = scratch(`host-termination-e1-${variant}-`)
+        // As in D1, but the Host that died was a current build: the process
+        // now at its pid contradicts the birth digest in its lease, so a Host
+        // that starts for the profile may reclaim it. A discovery written
+        // after that process started is not contradicted either.
+        const decoy = await startDecoy([])
+        HostProfileAuthorityLease.acquire({
+          profilePath: profile,
+          processPort: {
+            current: {
+              pid: decoy.pid,
+              processStartIdentity: 'c'.repeat(64),
+              processStartedAt: new Date(
+                (decoy.birth.startedAtMs ?? Date.now()) - 60_000
+              ).toISOString()
+            },
+            inspectOwner: () => 'unknown'
+          }
+        })
+        publishDiscovery(profile, decoy, survivors === 'entry' ? -60_000 : 4_000)
+        publishRegistryEntry(profile, root, decoy, { registryBirth: null })
+        const named =
+          `the registry entry ${hostRegistryEntryPath(root, profile)}` +
+          (survivors === 'entry'
+            ? ''
+            : ` and the discovery ${taskWraithHostDiscoveryPath(profile)}`)
+        const stop = () =>
+          stopAllHosts({
+            scope: { kind: 'profile', profilePath: profile },
+            registryRoot: root,
+            ports: { terminate: (input) => terminateHostProcess({ ...input, timings: FAST }) }
+          })
+
+        const refused = await stop()
+        expect(refused.exitCode).toBe(1)
+        expect(refused.hosts).toMatchObject([
+          { pid: decoy.pid, outcome: { kind: 'inconsistent', swept: [] } }
+        ])
+        const advice = refused.hosts[0]?.outcome?.detail ?? ''
+        expect(advice).toContain(`: ${named}. If pid ${decoy.pid} is `)
+
+        // Before the operator acts on it, a Host starts for the profile: it
+        // reclaims the lease and rewrites the same discovery and registry entry.
+        const successor = await startFakeHost(base, profile, 'exit')
+        takeOverProfile(profile, decoy, successor, 'current')
+        publishDiscovery(profile, successor)
+        publishRegistryEntry(profile, root, successor)
+
+        const followed = await followRefusalAdvice(advice, stop)
+        expect(readHostRegistryEntry(root, profile)).toMatchObject({
+          kind: 'present',
+          entry: { pid: successor.pid }
+        })
+        expect(recordPid(taskWraithHostDiscoveryPath(profile))).toBe(successor.pid)
+        expect(alive(successor.pid)).toBe(true)
+        expect(profileArtefacts(profile)).toEqual({ lease: true, discovery: true, token: true })
+        expect(contenderAcquires(profile)).toBe(false)
+        expect(followed).toEqual({ removed: [], again: null })
+      }
+    }, 30_000)
 
     it("N12-e/i: a registry entry naming another profile's Host is refused, and a legacy lease beside the Host's own digest is stopped", async () => {
       const base = scratch('host-termination-n12ei-')

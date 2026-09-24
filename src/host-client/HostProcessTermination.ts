@@ -67,8 +67,10 @@ import { HostShutdownClient } from './HostShutdownClient'
  * carries, the records disagree about whose pid it is: that is refused as
  * `inconsistent`, and nothing is swept. The refusal names each such record's
  * file: only that process's exit can prove a registry entry that recorded no
- * birth stale, so an operator who confirms the process is neither this
- * profile's Host nor the TaskWraith app removes the file and stops again.
+ * birth stale, so an operator who confirms the process is neither a Host
+ * serving this profile nor the TaskWraith app removes each file that still
+ * names that pid, and stops again. A file that names another pid by then was
+ * rewritten by a Host that has since started, and is left alone.
  * After death the socket file and directory, discovery, token, lease and
  * registry entry are removed — each only while it still carries exactly the
  * record read before termination (never by pid alone: a successor may have
@@ -378,8 +380,16 @@ function recordFile(
 
 /**
  * Why a reused pid is refused, and how an operator clears it: each record the
- * process now at the pid cannot contradict, by file. The in-process lane
- * records the TaskWraith app's own pid, so the app is excluded as well.
+ * process now at the pid cannot contradict, by file. The advice holds only
+ * while a file still names that pid: a Host that starts for the profile
+ * rewrites the same files, and removing its registry entry or its lease
+ * stops it or lets a second Host start. A Host is described the way its
+ * command line reads: every launcher runs `<node> …/host-runtime/cli.js
+ * serve --mode production --profile <path>`, the packaged one with its
+ * caller's options after the profile. The in-process lane records the
+ * TaskWraith app's own pid, so the app is excluded as well. The process is
+ * named by pid alone: a command line can carry secrets, and this text
+ * reaches terminals and logs.
  */
 function survivorRefusal(
   pid: number,
@@ -390,11 +400,15 @@ function survivorRefusal(
   const named = survivors
     .map((record) => `the ${RECORD_NOUNS[record]} ${recordFile(record, profilePath, registryRoot)}`)
     .join(' and ')
-  const files = survivors.length === 1 ? 'that file' : 'those files'
+  const clear =
+    survivors.length === 1
+      ? `and that file still names pid ${pid}, remove it`
+      : `remove whichever of those files still names pid ${pid}`
   return (
     `a record naming the pid is not contradicted by the process now at it: ${named}. ` +
-    `If pid ${pid} is neither this profile's Host (host-runtime/cli.js serve --profile ` +
-    `${profilePath}) nor the TaskWraith app, remove ${files} and stop again`
+    `If pid ${pid} is not a TaskWraith Host serving this profile ` +
+    `(\`…/host-runtime/cli.js serve … --profile ${profilePath} …\`) or the TaskWraith app, ` +
+    `${clear} and run stop-all again`
   )
 }
 
