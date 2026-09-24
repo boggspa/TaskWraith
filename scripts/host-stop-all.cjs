@@ -5,7 +5,7 @@
  * Build hook: stop the TaskWraith Hosts that serve THIS checkout's
  * `out/host` before `host:build` clears and rewrites it.
  *
- *   node scripts/host-stop-all.cjs --payload-root out/host --sweep
+ *   node scripts/host-stop-all.cjs --payload-root out/host
  *
  * `host:build` runs it first, so every `npm run build` (the release builds
  * included), `npm run dev` and `host:serve` does too. `npm run host:stop-all`
@@ -24,20 +24,16 @@
  * PER IN-SCOPE ENTRY:
  * - Live pid. This needs a built `out/host/host-runtime/cli.js`, and the
  *   profile's discovery and authority lease must describe the same process
- *   as the entry. Then `cli.js stop-all --profile <p> --json` stops the Host
- *   through verified termination: its birth identity and command line are
- *   re-checked before every signal, and an unverifiable Host is never
- *   signalled. The consistency check matters because `stop-all --profile`
- *   acts on whichever Host the profile's records name now. Handing it a
- *   profile that another Host has since taken over would stop that Host.
+ *   as the entry, which must carry a 64-hex birth digest. Then
+ *   `cli.js stop-all --profile <p> --expect-pid <pid> --expect-birth <digest>
+ *   --json` stops exactly that Host through verified termination. A successor
+ *   taking the profile is left alone, including on the authenticated socket.
  *   Without a usable CLI the Host is left running and named in a warning.
  *   This script never signals a process itself.
- * - Dead pid, with `--sweep`. Its registry entry is removed, but only while
- *   it still names that dead pid. Its `twh2-<uid>-<sha16>` socket directory
- *   goes too, but only when the socket does not answer, no other process
- *   holds the profile's records, and the directory has not changed for a
- *   minute. This script never passes `--sweep` to the CLI, because the CLI's
- *   sweep covers every profile on the machine.
+ * - Dead pid. Listed only. This hook has no sweeping path and rejects
+ *   --sweep; it never removes a registry entry or socket directory itself.
+ * - An older CLI that rejects the identity flags is warned about once for
+ *   that attempt. There is no retry with weaker arguments.
  *
  * FAILURE POLICY. A registry, CLI or termination problem is a warning and
  * exits 0: the build continues. A Host left behind is replaced at the next
@@ -47,7 +43,7 @@
  *   this checkout's out/host, `--all` and an unknown flag.
  * - exit 1: the scope logic cannot be trusted. This covers three cases: the
  *   scope filter fails its built-in self-test, the CLI reports stopping a
- *   Host outside the one profile it was given, or the hook throws
+ *   Host outside the profile and pid it was given, or the hook throws
  *   unexpectedly.
  *
  * BUDGET. Nothing to do costs one directory read. The registry walk is
@@ -64,7 +60,6 @@ const { spawn } = require('node:child_process')
 const { createHash } = require('node:crypto')
 const fs = require('node:fs')
 const fsp = require('node:fs/promises')
-const net = require('node:net')
 const os = require('node:os')
 const path = require('node:path')
 
@@ -73,13 +68,10 @@ const path = require('node:path')
 const HOST_REGISTRY_SCHEMA = 'taskwraith.host-registry.v1'
 const HOST_REGISTRY_ROOT_ENV = 'TASKWRAITH_HOST_REGISTRY_ROOT'
 const HOST_REGISTRY_MAX_ENTRY_BYTES = 16 * 1024
-const HOST_REGISTRY_SOCKET_PROBE_MS = 350
-const HOST_REGISTRY_SWEEP_MIN_AGE_MS = 60_000
 const HOST_DISCOVERY_FILE = 'taskwraith-host-v2.json'
 const HOST_DISCOVERY_MAX_BYTES = 16 * 1024
 const HOST_AUTHORITY_LEASE_FILE = 'taskwraith-host-authority-v1.json'
 const HOST_AUTHORITY_LEASE_MAX_BYTES = 4 * 1024
-const HOST_SOCKET_FILE = 'taskwraith-host-v2.sock'
 
 /** Reading and classifying the registry; a slow or hung filesystem stops here. */
 const WALK_DEADLINE_MS = 5_000
@@ -100,17 +92,15 @@ const EXIT_USAGE = 2
 const ENTRY_ID_PATTERN = /^[0-9a-f]{16}$/
 const LIFETIME_PHASE_PATTERN = /^[a-z][a-z-]{0,31}$/
 const PAYLOAD_VERSION_PATTERN = /^sha256:[a-f0-9]{64}$/
-const BIRTH_DIGEST_PATTERN = /^[0-9a-f]{64}$/
+const BIRTH_DIGEST_PATTERN = /^[0-9a-f]{64}$/i
 
 /** CLI outcomes after which the Host is proven gone (HOST_TERMINATION_SUCCESS_KINDS). */
 const CLI_SUCCESS_KINDS = new Set(['stopped', 'already_gone', 'terminated', 'killed', 'pid_reused'])
 
 const USAGE = [
-  'Usage: node scripts/host-stop-all.cjs --payload-root out/host [--sweep] [--json]',
+  'Usage: node scripts/host-stop-all.cjs --payload-root out/host [--json]',
   '  Stops only the Hosts whose registry entry runs the out/host of this checkout.',
   '  --payload-root  must resolve, against this checkout, to its out/host',
-  '  --sweep         also remove the registry entries and socket directories of',
-  '                  dead Hosts in that scope',
   '  --json          print the report as JSON'
 ].join('\n')
 
@@ -399,7 +389,6 @@ function selfTestScopeFilter(payloadRoot, checkoutRoot, platform = process.platf
 
 function parseArguments(argv) {
   let payloadRoot = null
-  let sweep = false
   let json = false
   const once = (seen, option) => {
     if (seen) throw new HostStopAllUsageError(`${option} may appear once.`)
@@ -414,8 +403,7 @@ function parseArguments(argv) {
       payloadRoot = value
       index += 1
     } else if (option === '--sweep') {
-      once(sweep, option)
-      sweep = true
+      throw new HostStopAllUsageError('--sweep is unavailable here: build hooks never sweep.')
     } else if (option === '--json') {
       once(json, option)
       json = true
@@ -436,7 +424,7 @@ function parseArguments(argv) {
       'Refusing to run without a scope: pass --payload-root out/host.'
     )
   }
-  return { payloadRoot, sweep, json }
+  return { payloadRoot, json }
 }
 
 /**
@@ -534,7 +522,7 @@ function recordsDescribeEntry(entry, records) {
       BIRTH_DIGEST_PATTERN.test(entry.birthIdentity) &&
       typeof lease.processStartIdentity === 'string' &&
       BIRTH_DIGEST_PATTERN.test(lease.processStartIdentity) &&
-      lease.processStartIdentity !== entry.birthIdentity
+      lease.processStartIdentity.toLowerCase() !== entry.birthIdentity.toLowerCase()
     )
       return { ok: false, reason: 'its authority lease belongs to another birth of that pid' }
   }
@@ -562,118 +550,7 @@ async function lstatOrNull(file) {
 }
 
 /**
- * Unlinks the entry only while it is still the exact file whose content was
- * judged (HostRegistry.removeHostRegistryEntryIfStill): the inode is captured
- * before the read and re-checked right before the unlink, so a successor Host
- * that renamed its own entry over the path keeps it.
- */
-async function removeEntryIfStill(file, judge) {
-  const before = await lstatOrNull(file)
-  if (!before) return false
-  const read = await readEntryFile(file)
-  if (read.kind !== 'present' || !judge(read.entry)) return false
-  const after = await lstatOrNull(file)
-  if (!after || !sameStatIdentity(before, after)) return false
-  await fsp.unlink(file)
-  return true
-}
-
-/** Connect probe with HostLocalServer's stale-socket deadline. */
-function socketIsLive(socketPath, timeoutMs = HOST_REGISTRY_SOCKET_PROBE_MS) {
-  return new Promise((resolve) => {
-    const socket = net.createConnection(socketPath)
-    let deadline = null
-    const settle = (value) => {
-      if (deadline) clearTimeout(deadline)
-      socket.removeAllListeners()
-      socket.destroy()
-      resolve(value)
-    }
-    deadline = setTimeout(() => settle(false), timeoutMs)
-    deadline.unref?.()
-    socket.once('connect', () => settle(true))
-    socket.once('error', () => settle(false))
-  })
-}
-
-function newestChange(stat) {
-  return Math.max(stat.mtimeMs, stat.ctimeMs)
-}
-
-function socketUnchanged(probed, current) {
-  if (probed === null || current === null) return probed === current
-  return sameStatIdentity(probed, current) && newestChange(probed) === newestChange(current)
-}
-
-function currentUid() {
-  return typeof process.getuid === 'function' ? String(process.getuid()) : 'user'
-}
-
-/**
- * Removes a dead in-scope Host's registry entry and, on POSIX, its socket
- * directory. The entry goes only while it still names that dead pid and this
- * checkout's CLI. The directory `<tmpdir>/twh2-<uid>-<sha16(profile)>` goes
- * only after that, and only when:
- * - no other live process holds the profile's discovery or authority lease;
- * - nothing in it changed within HOST_REGISTRY_SWEEP_MIN_AGE_MS (a Host
- *   starting on the profile creates it before its entry exists);
- * - its socket does not answer, and is exactly what was probed;
- * - no successor entry has appeared.
- * A directory holding anything else fails rmdir and stays.
- */
-async function sweepDeadEntry(entry, context) {
-  const entryPath = entryPathFor(context.registryRoot, entry.profilePath)
-  let removed = false
-  try {
-    removed = await removeEntryIfStill(
-      entryPath,
-      (current) => sameEntry(current, entry) && context.probePid(entry.pid) === 'dead'
-    )
-  } catch (error) {
-    return {
-      entry: 'kept',
-      socketDirectory: 'kept',
-      note: `entry removal failed: ${describe(error)}`
-    }
-  }
-  if (!removed) {
-    return { entry: 'kept', socketDirectory: 'kept', note: 'entry changed; left in place' }
-  }
-  if (context.platform === 'win32') return { entry: 'removed', socketDirectory: 'none' }
-
-  const directory = path.join(
-    context.temporaryDirectory,
-    `twh2-${context.uid}-${hostRegistryEntryId(entry.profilePath)}`
-  )
-  const kept = (note) => ({ entry: 'removed', socketDirectory: 'kept', note })
-  const directoryStat = await lstatOrNull(directory)
-  if (!directoryStat) return { entry: 'removed', socketDirectory: 'absent' }
-  if (!directoryStat.isDirectory()) return kept('socket directory is not a directory')
-  const records = await context.readProfileRecords(entry.profilePath)
-  for (const [name, record] of Object.entries(records)) {
-    if (record.kind === 'unreadable') return kept(`profile ${name} is unreadable`)
-    if (record.kind === 'present' && context.probePid(record.pid) !== 'dead')
-      return kept(`profile ${name} names live pid ${record.pid}`)
-  }
-  const socketPath = path.join(directory, HOST_SOCKET_FILE)
-  const socketStat = await lstatOrNull(socketPath)
-  const newest = Math.max(newestChange(directoryStat), socketStat ? newestChange(socketStat) : 0)
-  if (context.now() - newest < context.minimumAgeMs) return kept('changed within the last minute')
-  if (socketStat && (await context.socketIsLive(socketPath))) return kept('its socket answers')
-  if (!socketUnchanged(socketStat, await lstatOrNull(socketPath)))
-    return kept('its socket changed during the probe')
-  if (await lstatOrNull(entryPath)) return kept('a new registry entry appeared')
-  try {
-    if (socketStat) await fsp.unlink(socketPath)
-    await fsp.rmdir(directory)
-    return { entry: 'removed', socketDirectory: 'removed' }
-  } catch (error) {
-    return kept(`left in place: ${describe(error)}`)
-  }
-}
-
-/**
- * Runs `cli.js stop-all --profile <p> --json` with the registry root pinned
+ * Runs the identity-bound profile stop with the registry root pinned
  * to the one this script read, collecting bounded output. `children` lets
  * the hook deadline kill a CLI that outlives it (the CLI, never a Host).
  */
@@ -687,7 +564,17 @@ function runCliStop(input) {
     try {
       child = spawn(
         input.execPath,
-        [input.cliPath, 'stop-all', '--profile', input.profilePath, '--json'],
+        [
+          input.cliPath,
+          'stop-all',
+          '--profile',
+          input.profilePath,
+          '--expect-pid',
+          String(input.expected.pid),
+          '--expect-birth',
+          input.expected.birthIdentity,
+          '--json'
+        ],
         {
           env: { ...input.env, [HOST_REGISTRY_ROOT_ENV]: input.registryRoot },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -736,7 +623,7 @@ async function canonicalProfile(profilePath, platform) {
  * the profile it was given (compared the way the CLI selects). Anything else
  * means a Host outside that profile was acted on: a scope failure, exit 1.
  */
-async function judgeCliReport(result, profilePath, platform) {
+async function judgeCliReport(result, profilePath, expectedPid, platform) {
   const log = result.stderr
     .split('\n')
     .map((line) => line.trim())
@@ -773,6 +660,19 @@ async function judgeCliReport(result, profilePath, platform) {
       kind: 'scope-escape',
       log,
       error: `the CLI acted outside the profile it was given (${profilePath}): ${JSON.stringify(foreign)}`
+    }
+  }
+  if (
+    selected.length !== 1 ||
+    selected.some(
+      (host) =>
+        host.pid !== expectedPid || !isRecord(host.outcome) || host.outcome.pid !== expectedPid
+    )
+  ) {
+    return {
+      kind: 'scope-escape',
+      log,
+      error: `the CLI report did not bind every selected row and outcome to expected pid ${expectedPid}`
     }
   }
   const outcome = selected.map((host) => host.outcome).find((value) => isRecord(value))
@@ -819,8 +719,6 @@ async function runHostStopAll(options) {
     readProfileRecords,
     runCliStop,
     cliIsPresent,
-    socketIsLive,
-    now: () => Date.now(),
     ...options.ports
   }
   const registryRoot = options.registryRoot ?? resolveRegistryRoot(env)
@@ -832,7 +730,6 @@ async function runHostStopAll(options) {
     registryRoot,
     cliPath,
     mode: 'fallback',
-    sweep: options.sweep === true,
     hosts: [],
     warnings,
     exitCode: EXIT_OK
@@ -868,19 +765,16 @@ async function runHostStopAll(options) {
   report.mode = cliPresent ? 'cli' : 'fallback'
   report.inScope = inScope.map((entry) => entry.profilePath)
 
-  const sweepContext = {
-    registryRoot,
-    platform,
-    temporaryDirectory: options.temporaryDirectory ?? os.tmpdir(),
-    uid: String(options.uid ?? currentUid()),
-    minimumAgeMs: options.minimumAgeMs ?? HOST_REGISTRY_SWEEP_MIN_AGE_MS,
-    probePid: ports.probePid,
-    readProfileRecords: ports.readProfileRecords,
-    socketIsLive: ports.socketIsLive,
-    now: ports.now
-  }
-
   const stop = async (entry, host) => {
+    if (
+      typeof entry.birthIdentity !== 'string' ||
+      entry.birthIdentity.length !== 64 ||
+      !BIRTH_DIGEST_PATTERN.test(entry.birthIdentity)
+    ) {
+      const note = 'its registry entry has no valid birth digest for an identity-bound stop'
+      warnings.push(`pid ${entry.pid} (${entry.profilePath}) left alone: ${note}`)
+      return { ...host, action: 'left-alone', note }
+    }
     if (!cliPresent) {
       warnings.push(
         `pid ${entry.pid} (${entry.profilePath}) left running: no built ${cliPath} to verify and stop it`
@@ -903,11 +797,12 @@ async function runHostStopAll(options) {
       execPath: options.execPath ?? process.execPath,
       cliPath,
       profilePath: entry.profilePath,
+      expected: { pid: entry.pid, birthIdentity: entry.birthIdentity.toLowerCase() },
       registryRoot,
       env,
       children: options.children
     })
-    const judged = await judgeCliReport(result, entry.profilePath, platform)
+    const judged = await judgeCliReport(result, entry.profilePath, entry.pid, platform)
     if (judged.kind === 'scope-escape') {
       report.error = judged.error
       report.exitCode = EXIT_SCOPE_BROKEN
@@ -932,8 +827,7 @@ async function runHostStopAll(options) {
     }
     try {
       if (liveness === 'dead') {
-        if (!report.sweep) return { ...host, action: 'listed' }
-        return { ...host, action: 'swept', ...(await sweepDeadEntry(entry, sweepContext)) }
+        return { ...host, action: 'listed' }
       }
       if (liveness !== 'alive') {
         warnings.push(`pid ${entry.pid} (${entry.profilePath}) left alone: its pid is ${liveness}`)
@@ -1006,7 +900,6 @@ async function main(argv, io = {}) {
         ...(io.options ?? {}),
         checkoutRoot,
         payloadRoot,
-        sweep: parsed.sweep,
         platform,
         env: io.env ?? process.env,
         children,
@@ -1074,9 +967,6 @@ module.exports = {
   HOST_REGISTRY_MAX_ENTRY_BYTES,
   HOST_REGISTRY_ROOT_ENV,
   HOST_REGISTRY_SCHEMA,
-  HOST_REGISTRY_SOCKET_PROBE_MS,
-  HOST_REGISTRY_SWEEP_MIN_AGE_MS,
-  HOST_SOCKET_FILE,
   WALK_DEADLINE_MS,
   HostStopAllUsageError,
   decodeHostRegistryEntry,
@@ -1091,6 +981,5 @@ module.exports = {
   resolvePayloadRoot,
   resolveRegistryRoot,
   runHostStopAll,
-  selfTestScopeFilter,
-  sweepDeadEntry
+  selfTestScopeFilter
 }

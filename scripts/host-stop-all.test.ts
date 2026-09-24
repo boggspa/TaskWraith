@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { HOST_TERMINATION_SUCCESS_KINDS } from '../src/host-client/HostProcessTermination'
 import {
@@ -28,8 +28,6 @@ import {
   HOST_REGISTRY_MAX_ENTRY_BYTES,
   HOST_REGISTRY_ROOT_ENV,
   HOST_REGISTRY_SCHEMA,
-  HOST_REGISTRY_SOCKET_PROBE_MS,
-  HOST_REGISTRY_SWEEP_MIN_AGE_MS,
   decodeHostRegistryEntry,
   hostRegistryEntryId,
   hostRegistryEntryPath,
@@ -78,6 +76,7 @@ interface CliStopInput {
   readonly execPath: string
   readonly cliPath: string
   readonly profilePath: string
+  readonly expected: { readonly pid: number; readonly birthIdentity: string }
   readonly registryRoot: string
   readonly env: NodeJS.ProcessEnv
 }
@@ -106,20 +105,18 @@ interface HookReport {
 
 interface HookPorts {
   readRegistry?: (root: string) => Promise<unknown>
+  readEntry?: (file: string) => Promise<unknown>
   probePid?: (pid: number) => Liveness
   readProfileRecords?: (
     profilePath: string
   ) => Promise<{ discovery: ProfileRecord; lease: ProfileRecord }>
   runCliStop?: (input: CliStopInput) => Promise<CliRun>
   cliIsPresent?: (cliPath: string) => Promise<boolean>
-  socketIsLive?: (socketPath: string) => Promise<boolean>
-  now?: () => number
 }
 
 interface HookOptions {
   readonly checkoutRoot: string
   readonly payloadRoot: string
-  readonly sweep?: boolean
   readonly registryRoot?: string
   readonly temporaryDirectory?: string
   readonly uid?: string
@@ -149,15 +146,13 @@ interface HookModule {
   readonly HOST_REGISTRY_MAX_ENTRY_BYTES: number
   readonly HOST_REGISTRY_ROOT_ENV: string
   readonly HOST_REGISTRY_SCHEMA: string
-  readonly HOST_REGISTRY_SOCKET_PROBE_MS: number
-  readonly HOST_REGISTRY_SWEEP_MIN_AGE_MS: number
-  readonly HOST_SOCKET_FILE: string
   decodeHostRegistryEntry(value: unknown): unknown
   hostRegistryEntryId(profilePath: string): string
   isUnderPayloadRoot(cliPath: unknown, payloadRoot: string, platform?: NodeJS.Platform): boolean
   main(argv: readonly string[], io?: HookIo): Promise<number>
-  parseArguments(argv: readonly string[]): { payloadRoot: string; sweep: boolean; json: boolean }
+  parseArguments(argv: readonly string[]): { payloadRoot: string; json: boolean }
   readRegistry(root: string): Promise<unknown>
+  readEntryFile(file: string): Promise<unknown>
   resolvePayloadRoot(requested: string, checkoutRoot: string, platform?: NodeJS.Platform): string
   resolveRegistryRoot(env: NodeJS.ProcessEnv, home: string): string
   runHostStopAll(options: HookOptions): Promise<HookReport>
@@ -265,12 +260,14 @@ function cliReport(
   registryRoot: string,
   profilePath: string,
   outcome: string,
+  pid: number,
   others: readonly { profilePath: string; selected: boolean }[] = []
 ): string {
   const row = (path: string, selected: boolean) => ({
     source: 'registry',
     profilePath: path,
-    pid: 4321,
+    pid,
+    birthIdentity: 'b'.repeat(64),
     cliPath: '/somewhere/out/host/host-runtime/cli.js',
     payloadVersion: null,
     startedAt: '2026-09-23T10:00:00.000Z',
@@ -280,7 +277,7 @@ function cliReport(
     liveness: 'live',
     selected,
     ...(selected
-      ? { outcome: { kind: outcome, pid: 4321, steps: ['socket:stopping'], swept: ['registry'] } }
+      ? { outcome: { kind: outcome, pid, steps: ['socket:stopping'], swept: ['registry'] } }
       : {})
   })
   return `${JSON.stringify(
@@ -307,7 +304,7 @@ function recordingCli(registryRoot: string, outcome = 'stopped') {
     return {
       code: 0,
       signal: null,
-      stdout: cliReport(registryRoot, input.profilePath, outcome),
+      stdout: cliReport(registryRoot, input.profilePath, outcome, input.expected.pid),
       stderr: ''
     }
   }
@@ -324,9 +321,6 @@ describe('host-stop-all mirrors the Host registry it reads', () => {
     expect(hook.HOST_REGISTRY_SCHEMA).toBe(HOST_REGISTRY_SCHEMA)
     expect(hook.HOST_REGISTRY_ROOT_ENV).toBe(HOST_REGISTRY_ROOT_ENV)
     expect(hook.HOST_REGISTRY_MAX_ENTRY_BYTES).toBe(HOST_REGISTRY_MAX_ENTRY_BYTES)
-    expect(hook.HOST_REGISTRY_SOCKET_PROBE_MS).toBe(HOST_REGISTRY_SOCKET_PROBE_MS)
-    expect(hook.HOST_REGISTRY_SWEEP_MIN_AGE_MS).toBe(HOST_REGISTRY_SWEEP_MIN_AGE_MS)
-    expect(hook.HOST_SOCKET_FILE).toBe(TASKWRAITH_HOST_SOCKET_FILE)
     expect(hook.HOST_DISCOVERY_FILE).toBe(TASKWRAITH_HOST_DISCOVERY_FILE)
     expect(hook.HOST_DISCOVERY_MAX_BYTES).toBe(HOST_LOCAL_CONTROL_MAX_DISCOVERY_BYTES)
     expect(hook.HOST_AUTHORITY_LEASE_FILE).toBe(HOST_PROFILE_AUTHORITY_LEASE_FILENAME)
@@ -336,7 +330,7 @@ describe('host-stop-all mirrors the Host registry it reads', () => {
       expect(hook.hostRegistryEntryId(profile)).toBe(hostRegistryEntryId(profile))
     }
     if (POSIX) {
-      // The socket directory the sweep names is the one a Host binds in.
+      // Registry identity and Host socket directory derive from the same profile.
       const profile = '/Users/a/Library/Application Support/TaskWraith Dev verify'
       const uid = typeof process.getuid === 'function' ? process.getuid() : 'user'
       expect(dirname(taskWraithHostSocketPath(profile))).toBe(
@@ -517,10 +511,12 @@ describe('host-stop-all scope', () => {
   })
 
   it('refuses to run without a scope, and never offers --all', async () => {
-    for (const argv of [[], ['--sweep'], ['--json'], ['--sweep', '--json']]) {
+    for (const argv of [[], ['--json']]) {
       expect(() => hook.parseArguments(argv)).toThrow(/Refusing to run without a scope/)
     }
     for (const [argv, message] of [
+      [['--sweep'], /--sweep is unavailable here/],
+      [['--payload-root', 'out/host', '--sweep'], /--sweep is unavailable here/],
       [['--payload-root', 'out/host', '--all'], /--all is never available here/],
       [['--all'], /--all is never available here/],
       [['--payload-root', 'out/host', '--profile', '/p'], /--profile is unavailable here/],
@@ -532,9 +528,8 @@ describe('host-stop-all scope', () => {
     ] as const) {
       expect(() => hook.parseArguments(argv), argv.join(' ')).toThrow(message)
     }
-    expect(hook.parseArguments(['--payload-root', 'out/host', '--sweep', '--json'])).toEqual({
+    expect(hook.parseArguments(['--payload-root', 'out/host', '--json'])).toEqual({
       payloadRoot: 'out/host',
-      sweep: true,
       json: true
     })
 
@@ -576,6 +571,146 @@ describe('host-stop-all scope', () => {
 })
 
 describe('host-stop-all build hook', () => {
+  it.each([null, 'legacy-nonce', 'a'.repeat(63), 'g'.repeat(64), `${'a'.repeat(64)}\n`])(
+    'leaves a Host with an unusable birth digest alone (%j)',
+    async (birthIdentity) => {
+      const base = scratch('host-stop-all-birth-')
+      const root = checkout(base, 'AGBench', true)
+      const payloadRoot = join(root, 'out', 'host')
+      const registryRoot = join(base, 'registry')
+      const own = entryFor(join(base, 'profile'), cliOf(payloadRoot), { birthIdentity })
+      const entryPath = writeEntry(registryRoot, own)
+      const before = readFileSync(entryPath, 'utf8')
+      const cli = recordingCli(registryRoot)
+      const report = await hook.runHostStopAll({
+        checkoutRoot: root,
+        payloadRoot,
+        registryRoot,
+        ports: {
+          probePid: () => 'alive',
+          readProfileRecords: MISSING_RECORDS,
+          runCliStop: cli.runCliStop
+        }
+      })
+      expect(report.exitCode).toBe(hook.EXIT_OK)
+      expect(report.warnings.join('\n')).toMatch(/no valid birth digest|unreadable registry/)
+      expect(cli.calls).toEqual([])
+      expect(readFileSync(entryPath, 'utf8')).toBe(before)
+    }
+  )
+
+  it.each([7, 4242, 98765])('keeps selected PID %i in an already-gone report', async (pid) => {
+    const base = scratch('host-stop-all-expected-pid-')
+    const root = checkout(base, 'AGBench', true)
+    const payloadRoot = join(root, 'out', 'host')
+    const registryRoot = join(base, 'registry')
+    const own = entryFor(join(base, 'profile'), cliOf(payloadRoot), {
+      pid,
+      birthIdentity: 'A'.repeat(64)
+    })
+    writeEntry(registryRoot, own)
+    const cli = recordingCli(registryRoot, 'already_gone')
+    const report = await hook.runHostStopAll({
+      checkoutRoot: root,
+      payloadRoot,
+      registryRoot,
+      ports: {
+        probePid: () => 'alive',
+        readProfileRecords: MISSING_RECORDS,
+        runCliStop: cli.runCliStop
+      }
+    })
+    expect(report.exitCode).toBe(hook.EXIT_OK)
+    expect(report.hosts).toMatchObject([{ pid, result: 'gone', outcome: 'already_gone' }])
+    expect(cli.calls).toMatchObject([{ expected: { pid, birthIdentity: 'a'.repeat(64) } }])
+  })
+
+  it.each(['row-missing', 'row-mismatch', 'outcome-missing', 'outcome-mismatch', 'no-row'])(
+    'fails the build on an unbound CLI PID: %s',
+    async (violation) => {
+      const base = scratch('host-stop-all-pid-escape-')
+      const root = checkout(base, 'AGBench', true)
+      const payloadRoot = join(root, 'out', 'host')
+      const registryRoot = join(base, 'registry')
+      const own = entryFor(join(base, 'profile'), cliOf(payloadRoot))
+      writeEntry(registryRoot, own)
+      const report = JSON.parse(cliReport(registryRoot, own.profilePath, 'stopped', own.pid))
+      const target = violation.startsWith('row') ? report.hosts[0] : report.hosts[0].outcome
+      if (violation === 'no-row') report.hosts = []
+      else if (violation.endsWith('missing')) delete target.pid
+      else target.pid = own.pid + 1
+      let stderr = ''
+      const runCliStop = vi.fn(async () => ({
+        code: 0,
+        signal: null,
+        stdout: JSON.stringify(report),
+        stderr: ''
+      }))
+      const code = await hook.main(['--payload-root', 'out/host'], {
+        checkoutRoot: root,
+        stdout: () => undefined,
+        stderr: (text) => {
+          stderr += text
+        },
+        options: {
+          registryRoot,
+          ports: { probePid: () => 'alive', readProfileRecords: MISSING_RECORDS, runCliStop }
+        }
+      })
+      expect(code).toBe(hook.EXIT_SCOPE_BROKEN)
+      expect(stderr).toContain(`expected pid ${own.pid}`)
+      expect(runCliStop).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('warns and continues without stopping anything when the registry is unreadable', async () => {
+    const base = scratch('host-stop-all-unreadable-root-')
+    const root = checkout(base, 'AGBench', true)
+    const registryRoot = join(base, 'not-a-directory')
+    writeFileSync(registryRoot, 'preserve me')
+    const cli = recordingCli(registryRoot)
+    const report = await hook.runHostStopAll({
+      checkoutRoot: root,
+      payloadRoot: join(root, 'out', 'host'),
+      registryRoot,
+      ports: { runCliStop: cli.runCliStop }
+    })
+    expect(report.exitCode).toBe(hook.EXIT_OK)
+    expect(report.warnings.join('\n')).toContain('unreadable registry entry')
+    expect(cli.calls).toEqual([])
+    expect(readFileSync(registryRoot, 'utf8')).toBe('preserve me')
+  })
+
+  it('leaves an EPERM process and its registry entry untouched', async () => {
+    const base = scratch('host-stop-all-eperm-')
+    const root = checkout(base, 'AGBench', true)
+    const payloadRoot = join(root, 'out', 'host')
+    const registryRoot = join(base, 'registry')
+    const own = entryFor(join(base, 'profile'), cliOf(payloadRoot))
+    writeEntry(registryRoot, own)
+    const cli = recordingCli(registryRoot)
+    const kill = vi.spyOn(process, 'kill').mockImplementation((pid, signal) => {
+      expect([pid, signal]).toEqual([own.pid, 0])
+      throw Object.assign(new Error('permission denied'), { code: 'EPERM' })
+    })
+    try {
+      const report = await hook.runHostStopAll({
+        checkoutRoot: root,
+        payloadRoot,
+        registryRoot,
+        ports: { runCliStop: cli.runCliStop }
+      })
+      expect(report.exitCode).toBe(hook.EXIT_OK)
+      expect(report.hosts).toMatchObject([
+        { pid: own.pid, liveness: 'foreign', action: 'left-alone' }
+      ])
+      expect(cli.calls).toEqual([])
+      expect(readHostRegistryEntry(registryRoot, own.profilePath).kind).toBe('present')
+    } finally {
+      kill.mockRestore()
+    }
+  })
+
   it('never stops a Host serving another payload root', async () => {
     const base = scratch('host-stop-all-foreign-')
     const root = checkout(base, 'AGBench', true)
@@ -605,7 +740,6 @@ describe('host-stop-all build hook', () => {
     const report = await hook.runHostStopAll({
       checkoutRoot: root,
       payloadRoot,
-      sweep: true,
       registryRoot,
       ports: {
         probePid: () => 'alive',
@@ -630,7 +764,7 @@ describe('host-stop-all build hook', () => {
   })
 
   it(
-    'keeps a dead out-of-scope entry and its twh2 directory, with or without a built CLI',
+    'preserves dead checkout, installed, sibling and orphan records and sockets with or without a CLI',
     async () => {
       const gone = deadPid()
       for (const withCli of [true, false]) {
@@ -670,15 +804,11 @@ describe('host-stop-all build hook', () => {
         const report = await hook.runHostStopAll({
           checkoutRoot: root,
           payloadRoot,
-          sweep: true,
           registryRoot,
           temporaryDirectory,
           uid,
           ports: {
-            runCliStop: cli.runCliStop,
-            socketIsLive: async () => false,
-            // Every directory is old: only the scope protects the foreign ones.
-            now: () => Date.now() + 10 * 60_000
+            runCliStop: cli.runCliStop
           }
         })
         expect(report.mode).toBe(withCli ? 'cli' : 'fallback')
@@ -687,14 +817,12 @@ describe('host-stop-all build hook', () => {
           expect.objectContaining({
             profilePath: own.profilePath,
             liveness: 'dead',
-            action: 'swept',
-            entry: 'removed',
-            socketDirectory: POSIX ? 'removed' : 'none'
+            action: 'listed'
           })
         ])
-        // Positive control: the in-scope dead Host's records are gone.
-        expect(readHostRegistryEntry(registryRoot, own.profilePath).kind).toBe('missing')
-        if (POSIX) expect(existsSync(socketDirectory(own.profilePath))).toBe(false)
+        // Even the in-scope dead Host's records and socket remain untouched.
+        expect(readHostRegistryEntry(registryRoot, own.profilePath).kind).toBe('present')
+        expect(existsSync(socketDirectory(own.profilePath))).toBe(true)
         // The out-of-scope dead entries and their directories survive, and so
         // does a directory no entry names.
         expect(readHostRegistryEntry(registryRoot, installed.profilePath).kind).toBe('present')
@@ -724,7 +852,7 @@ describe('host-stop-all build hook', () => {
       [main, mainHost]
     ] as const) {
       const cli = recordingCli(registryRoot)
-      const code = await hook.main(['--payload-root', 'out/host', '--sweep'], {
+      const code = await hook.main(['--payload-root', 'out/host'], {
         checkoutRoot,
         stdout: () => undefined,
         stderr: () => undefined,
@@ -744,7 +872,7 @@ describe('host-stop-all build hook', () => {
   })
 
   it(
-    'falls back on a first build with an empty out: never signals, sweeps only dead in-scope records',
+    'continues a first build without signalling or deleting live, dead or foreign records',
     async () => {
       const base = scratch('host-stop-all-first-build-')
       const root = checkout(base, 'AGBench', false)
@@ -761,7 +889,7 @@ describe('host-stop-all build hook', () => {
       const cli = recordingCli(registryRoot)
       let stderr = ''
       let stdout = ''
-      const code = await hook.main(['--payload-root', 'out/host', '--sweep'], {
+      const code = await hook.main(['--payload-root', 'out/host'], {
         checkoutRoot: root,
         stdout: (text) => {
           stdout += text
@@ -782,9 +910,9 @@ describe('host-stop-all build hook', () => {
       expect(cli.calls).toEqual([])
       expect(stderr).toContain(`pid ${live.pid} (${live.profilePath}) left running: no built`)
       expect(stdout).toContain(`pid ${live.pid} alive ${live.profilePath} -> left-running`)
-      expect(stdout).toContain(`pid ${dead.pid} dead ${dead.profilePath} -> swept, entry removed`)
+      expect(stdout).toContain(`pid ${dead.pid} dead ${dead.profilePath} -> listed`)
       expect(readHostRegistryEntry(registryRoot, live.profilePath).kind).toBe('present')
-      expect(readHostRegistryEntry(registryRoot, dead.profilePath).kind).toBe('missing')
+      expect(readHostRegistryEntry(registryRoot, dead.profilePath).kind).toBe('present')
       expect(readHostRegistryEntry(registryRoot, foreignDead.profilePath).kind).toBe('present')
     },
     PROCESS_TEST_TIMEOUT_MS
@@ -803,7 +931,7 @@ describe('host-stop-all build hook', () => {
         const started = Date.now()
         const run = spawnSync(
           process.execPath,
-          [join(root, 'scripts', 'host-stop-all.cjs'), '--payload-root', 'out/host', '--sweep'],
+          [join(root, 'scripts', 'host-stop-all.cjs'), '--payload-root', 'out/host'],
           {
             cwd: root,
             env: { ...process.env, [HOST_REGISTRY_ROOT_ENV]: registryRoot },
@@ -826,12 +954,13 @@ describe('host-stop-all build hook', () => {
   )
 
   it(
-    'hands the built CLI exactly one profile, the registry it read, and never --sweep or --all',
+    'hands the built CLI the exact profile, PID, digest and registry without broader flags',
     async () => {
       const base = scratch('host-stop-all-argv-')
       const root = checkout(base, 'AGBench', true)
       const payloadRoot = join(root, 'out', 'host')
       const registryRoot = join(base, 'registry')
+      const own = entryFor(join(base, 'profiles', 'own'), cliOf(payloadRoot))
       const record = join(base, 'cli-argv.json')
       writeFileSync(
         cliOf(payloadRoot),
@@ -839,16 +968,14 @@ describe('host-stop-all build hook', () => {
           "const fs = require('node:fs')",
           "const profile = process.argv[process.argv.indexOf('--profile') + 1]",
           'fs.writeFileSync(process.env.FAKE_CLI_RECORD, JSON.stringify({ argv: process.argv.slice(2), registryRoot: process.env.TASKWRAITH_HOST_REGISTRY_ROOT }))',
-          `process.stdout.write(${JSON.stringify(cliReport(registryRoot, '@PROFILE@', 'stopped'))}.split('@PROFILE@').join(profile))`,
+          `process.stdout.write(${JSON.stringify(cliReport(registryRoot, '@PROFILE@', 'stopped', own.pid))}.split('@PROFILE@').join(profile))`,
           "process.stderr.write('[host-termination] stopped after socket:stopping\\n')"
         ].join('\n')
       )
-      const own = entryFor(join(base, 'profiles', 'own'), cliOf(payloadRoot))
       writeEntry(registryRoot, own)
       const report = await hook.runHostStopAll({
         checkoutRoot: root,
         payloadRoot,
-        sweep: true,
         registryRoot,
         env: {
           ...process.env,
@@ -861,7 +988,16 @@ describe('host-stop-all build hook', () => {
         argv: string[]
         registryRoot: string
       }
-      expect(seen.argv).toEqual(['stop-all', '--profile', own.profilePath, '--json'])
+      expect(seen.argv).toEqual([
+        'stop-all',
+        '--profile',
+        own.profilePath,
+        '--expect-pid',
+        String(own.pid),
+        '--expect-birth',
+        own.birthIdentity,
+        '--json'
+      ])
       expect(seen.registryRoot).toBe(registryRoot)
       expect(report.hosts).toEqual([
         expect.objectContaining({
@@ -920,6 +1056,11 @@ describe('host-stop-all build hook', () => {
         reason: /another start of that pid/
       },
       {
+        name: 'discovery-socket',
+        discovery: (e) => discovery(e, { socketPath: `${e.socketPath}-successor` }),
+        reason: /another start of that pid/
+      },
+      {
         name: 'discovery-garbage',
         discovery: () => '{"pid": ',
         reason: /its discovery is unreadable/
@@ -928,6 +1069,11 @@ describe('host-stop-all build hook', () => {
         name: 'lease-pid',
         lease: (e) => lease(e, { pid: e.pid + 1 }),
         reason: /its authority lease names pid/
+      },
+      {
+        name: 'lease-unreadable',
+        lease: () => '{"pid": ',
+        reason: /its authority lease is unreadable/
       },
       {
         name: 'lease-birth',
@@ -958,7 +1104,6 @@ describe('host-stop-all build hook', () => {
     const report = await hook.runHostStopAll({
       checkoutRoot: root,
       payloadRoot,
-      sweep: true,
       registryRoot,
       ports: { probePid: () => 'alive', runCliStop: cli.runCliStop }
     })
@@ -980,43 +1125,50 @@ describe('host-stop-all build hook', () => {
     expect(JSON.stringify(report)).not.toContain(token)
   })
 
-  it('leaves a live Host alone when its registry entry changed before the stop', async () => {
-    const base = scratch('host-stop-all-changed-')
-    const root = checkout(base, 'AGBench', true)
-    const payloadRoot = join(root, 'out', 'host')
-    const registryRoot = join(base, 'registry')
-    const judged = entryFor(join(base, 'profiles', 'replaced'), cliOf(payloadRoot))
-    writeEntry(registryRoot, judged)
-    const cli = recordingCli(registryRoot)
-    let probes = 0
-    const report = await hook.runHostStopAll({
-      checkoutRoot: root,
-      payloadRoot,
-      sweep: true,
-      registryRoot,
-      ports: {
-        probePid: () => {
-          probes += 1
-          // Another start on the profile, after the entry was judged in scope.
-          if (probes === 1) {
-            writeEntry(registryRoot, { ...judged, pid: judged.pid + 1, bootEpoch: 'boot-other' })
-          }
-          return 'alive'
-        },
-        readProfileRecords: MISSING_RECORDS,
-        runCliStop: cli.runCliStop
-      }
-    })
-    expect(probes).toBe(1)
-    expect(cli.calls).toEqual([])
-    expect(report.hosts).toEqual([
-      expect.objectContaining({
-        pid: judged.pid,
-        action: 'left-alone',
-        note: 'its registry entry changed'
+  it.each(['pid', 'cliPath'] as const)(
+    'leaves a Host alone when registry %s changes before the stop',
+    async (field) => {
+      const base = scratch('host-stop-all-changed-')
+      const root = checkout(base, 'AGBench', true)
+      const payloadRoot = join(root, 'out', 'host')
+      const registryRoot = join(base, 'registry')
+      const judged = entryFor(join(base, 'profiles', 'replaced'), cliOf(payloadRoot))
+      writeEntry(registryRoot, judged)
+      const cli = recordingCli(registryRoot)
+      let probes = 0
+      const report = await hook.runHostStopAll({
+        checkoutRoot: root,
+        payloadRoot,
+        registryRoot,
+        ports: {
+          probePid: () => {
+            probes += 1
+            // Another start on the profile, after the entry was judged in scope.
+            if (probes === 1) {
+              writeEntry(
+                registryRoot,
+                field === 'pid'
+                  ? { ...judged, pid: judged.pid + 1, bootEpoch: 'boot-other' }
+                  : { ...judged, cliPath: cliOf(`${payloadRoot}2`) }
+              )
+            }
+            return 'alive'
+          },
+          readProfileRecords: MISSING_RECORDS,
+          runCliStop: cli.runCliStop
+        }
       })
-    ])
-  })
+      expect(probes).toBe(1)
+      expect(cli.calls).toEqual([])
+      expect(report.hosts).toEqual([
+        expect.objectContaining({
+          pid: judged.pid,
+          action: 'left-alone',
+          note: 'its registry entry changed'
+        })
+      ])
+    }
+  )
 
   it('fails the build when the CLI reports acting outside the profile it was given', async () => {
     const base = scratch('host-stop-all-escape-')
@@ -1026,17 +1178,17 @@ describe('host-stop-all build hook', () => {
     const own = entryFor(join(base, 'profiles', 'own'), cliOf(payloadRoot))
     writeEntry(registryRoot, own)
     const escapes = [
-      cliReport(registryRoot, own.profilePath, 'stopped', [
+      cliReport(registryRoot, own.profilePath, 'stopped', own.pid, [
         { profilePath: '/Users/a/Library/Application Support/TaskWraith', selected: true }
       ]),
-      cliReport(registryRoot, own.profilePath, 'stopped').replace(
+      cliReport(registryRoot, own.profilePath, 'stopped', own.pid).replace(
         '"kind": "profile"',
         '"kind": "all"'
       )
     ]
     for (const stdout of escapes) {
       let stderr = ''
-      const code = await hook.main(['--payload-root', 'out/host', '--sweep'], {
+      const code = await hook.main(['--payload-root', 'out/host'], {
         checkoutRoot: root,
         stdout: () => undefined,
         stderr: (text) => {
@@ -1060,7 +1212,7 @@ describe('host-stop-all build hook', () => {
     const slow = entryFor(join(base, 'profiles', 'slow'), cliOf(payloadRoot))
     writeEntry(registryRoot, slow)
     let stderr = ''
-    const code = await hook.main(['--payload-root', 'out/host', '--sweep'], {
+    const code = await hook.main(['--payload-root', 'out/host'], {
       checkoutRoot: root,
       hookDeadlineMs: 500,
       stdout: () => undefined,
@@ -1084,7 +1236,7 @@ describe('host-stop-all build hook', () => {
     expect(stderr).toContain('ERROR the CLI acted outside the profile it was given')
   })
 
-  it('warns and continues when the CLI predates stop-all or refuses to signal', async () => {
+  it('warns once without weaker retry when the prior CLI rejects identity flags or refuses', async () => {
     const base = scratch('host-stop-all-refused-')
     const root = checkout(base, 'AGBench', true)
     const payloadRoot = join(root, 'out', 'host')
@@ -1097,7 +1249,7 @@ describe('host-stop-all build hook', () => {
           code: 2,
           signal: null,
           stdout: '',
-          stderr: 'taskwraith-host: Usage: taskwraith-host serve'
+          stderr: 'taskwraith-host: Unknown argument --expect-pid'
         },
         'no-report',
         /printed no stop-all report \(exit 2; it predates stop-all or refused the arguments\)/
@@ -1106,7 +1258,7 @@ describe('host-stop-all build hook', () => {
         {
           code: 1,
           signal: null,
-          stdout: cliReport(registryRoot, own.profilePath, 'identity_unavailable'),
+          stdout: cliReport(registryRoot, own.profilePath, 'identity_unavailable', own.pid),
           stderr: ''
         },
         'refused',
@@ -1119,6 +1271,7 @@ describe('host-stop-all build hook', () => {
       ]
     ]
     for (const [run, result, warning] of runs) {
+      const runCliStop = vi.fn(async () => run)
       const report = await hook.runHostStopAll({
         checkoutRoot: root,
         payloadRoot,
@@ -1126,16 +1279,23 @@ describe('host-stop-all build hook', () => {
         ports: {
           probePid: () => 'alive',
           readProfileRecords: MISSING_RECORDS,
-          runCliStop: async () => run
+          runCliStop
         }
       })
       expect(report.exitCode).toBe(hook.EXIT_OK)
       expect(report.hosts[0]).toMatchObject({ action: 'cli-stop', result })
       expect(report.warnings.join('\n')).toMatch(warning)
+      expect(report.warnings).toHaveLength(1)
+      expect(runCliStop).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          profilePath: own.profilePath,
+          expected: { pid: own.pid, birthIdentity: own.birthIdentity }
+        })
+      )
     }
   })
 
-  it('never sweeps an entry a successor Host rewrote after it was judged dead', async () => {
+  it('preserves an entry a successor rewrites immediately after the dead-PID probe', async () => {
     const base = scratch('host-stop-all-successor-')
     const root = checkout(base, 'AGBench', true)
     const payloadRoot = join(root, 'out', 'host')
@@ -1150,7 +1310,6 @@ describe('host-stop-all build hook', () => {
     const report = await hook.runHostStopAll({
       checkoutRoot: root,
       payloadRoot,
-      sweep: true,
       registryRoot,
       temporaryDirectory,
       uid: '501',
@@ -1160,19 +1319,14 @@ describe('host-stop-all build hook', () => {
           // A successor starts on the profile right after the dead one is judged.
           if (probes === 1) writeEntry(registryRoot, successor)
           return pid === dead.pid ? 'dead' : 'alive'
-        },
-        socketIsLive: async () => false,
-        now: () => Date.now() + 10 * 60_000
+        }
       }
     })
     expect(probes).toBeGreaterThan(0)
     expect(report.hosts).toEqual([
       expect.objectContaining({
         pid: dead.pid,
-        action: 'swept',
-        entry: 'kept',
-        socketDirectory: 'kept',
-        note: 'entry changed; left in place'
+        action: 'listed'
       })
     ])
     const read = readHostRegistryEntry(registryRoot, dead.profilePath)
@@ -1180,7 +1334,7 @@ describe('host-stop-all build hook', () => {
     expect(existsSync(directory)).toBe(true)
   })
 
-  it('lists a dead entry without --sweep, and leaves an unobservable pid alone', async () => {
+  it('lists a dead entry and leaves an unobservable pid alone', async () => {
     const base = scratch('host-stop-all-listed-')
     const root = checkout(base, 'AGBench', true)
     const payloadRoot = join(root, 'out', 'host')
@@ -1193,7 +1347,6 @@ describe('host-stop-all build hook', () => {
     const report = await hook.runHostStopAll({
       checkoutRoot: root,
       payloadRoot,
-      sweep: false,
       registryRoot,
       ports: {
         probePid: (pid) => (pid === dead.pid ? 'dead' : 'foreign'),
@@ -1207,98 +1360,6 @@ describe('host-stop-all build hook', () => {
     expect(readHostRegistry(registryRoot).entries).toHaveLength(2)
   })
 
-  it.skipIf(!POSIX)(
-    'never removes a socket directory that answers, changed recently, holds more, or whose profile is held',
-    async () => {
-      const base = scratch('host-stop-all-sweep-guards-')
-      const root = checkout(base, 'AGBench', true)
-      const payloadRoot = join(root, 'out', 'host')
-      const registryRoot = join(base, 'registry')
-      const temporaryDirectory = join(base, 'tmp')
-      const uid = '501'
-      const directoryOf = (entry: HostRegistryEntry) =>
-        join(temporaryDirectory, `twh2-${uid}-${hostRegistryEntryId(entry.profilePath)}`)
-      const gone = deadPid()
-      const make = (name: string) => {
-        const entry = entryFor(join(base, 'profiles', name), cliOf(payloadRoot), { pid: gone })
-        writeEntry(registryRoot, entry)
-        mkdirSync(directoryOf(entry), { recursive: true })
-        writeFileSync(join(directoryOf(entry), TASKWRAITH_HOST_SOCKET_FILE), '')
-        return entry
-      }
-      const answers = make('answers')
-      const held = make('held')
-      mkdirSync(held.profilePath, { recursive: true })
-      writePrivate(
-        join(held.profilePath, HOST_PROFILE_AUTHORITY_LEASE_FILENAME),
-        JSON.stringify({ pid: process.pid, processStartIdentity: 'd'.repeat(64) })
-      )
-      const crowded = make('crowded')
-      writeFileSync(join(directoryOf(crowded), 'other-file'), '')
-      const linked = entryFor(join(base, 'profiles', 'linked'), cliOf(payloadRoot), {
-        pid: gone
-      })
-      writeEntry(registryRoot, linked)
-      mkdirSync(join(base, 'elsewhere'))
-      mkdirSync(temporaryDirectory, { recursive: true })
-      symlinkSync(join(base, 'elsewhere'), directoryOf(linked))
-      const report = await hook.runHostStopAll({
-        checkoutRoot: root,
-        payloadRoot,
-        sweep: true,
-        registryRoot,
-        temporaryDirectory,
-        uid,
-        ports: {
-          socketIsLive: async (socketPath) => socketPath.startsWith(directoryOf(answers)),
-          now: () => Date.now() + 10 * 60_000
-        }
-      })
-      const noteOf = (entry: HostRegistryEntry) =>
-        report.hosts.find((host) => host.profilePath === entry.profilePath)
-      expect(noteOf(answers)).toMatchObject({
-        entry: 'removed',
-        socketDirectory: 'kept',
-        note: 'its socket answers'
-      })
-      expect(noteOf(held)).toMatchObject({
-        entry: 'removed',
-        socketDirectory: 'kept',
-        note: `profile lease names live pid ${process.pid}`
-      })
-      expect(noteOf(crowded)).toMatchObject({ entry: 'removed', socketDirectory: 'kept' })
-      expect(noteOf(crowded)?.note).toMatch(/^left in place: /)
-      expect(noteOf(linked)).toMatchObject({
-        entry: 'removed',
-        socketDirectory: 'kept',
-        note: 'socket directory is not a directory'
-      })
-      for (const entry of [answers, held, crowded, linked]) {
-        expect(existsSync(directoryOf(entry)), entry.profilePath).toBe(true)
-      }
-      expect(existsSync(join(base, 'elsewhere'))).toBe(true)
-
-      // A directory changed within the last minute is a Host starting in it.
-      const fresh = make('fresh')
-      const recent = await hook.runHostStopAll({
-        checkoutRoot: root,
-        payloadRoot,
-        sweep: true,
-        registryRoot,
-        temporaryDirectory,
-        uid,
-        ports: { socketIsLive: async () => false }
-      })
-      expect(recent.hosts.find((host) => host.profilePath === fresh.profilePath)).toMatchObject({
-        entry: 'removed',
-        socketDirectory: 'kept',
-        note: 'changed within the last minute'
-      })
-      expect(existsSync(directoryOf(fresh))).toBe(true)
-    },
-    PROCESS_TEST_TIMEOUT_MS
-  )
-
   it(
     'bounds a hung registry walk and a hung CLI, and lets the build continue',
     async () => {
@@ -1311,7 +1372,6 @@ describe('host-stop-all build hook', () => {
       const walk = await hook.runHostStopAll({
         checkoutRoot: root,
         payloadRoot,
-        sweep: true,
         registryRoot,
         walkDeadlineMs: 50,
         ports: { readRegistry: () => new Promise(() => undefined) }
@@ -1331,7 +1391,7 @@ describe('host-stop-all build hook', () => {
       writeEntry(registryRoot, hung)
       let stderr = ''
       let stdout = ''
-      const code = await hook.main(['--payload-root', 'out/host', '--sweep'], {
+      const code = await hook.main(['--payload-root', 'out/host'], {
         checkoutRoot: root,
         env: { ...process.env, FAKE_CLI_PID: pidFile },
         hookDeadlineMs: 1_500,
@@ -1384,7 +1444,7 @@ describe('host-stop-all build hook', () => {
     let reads = 0
     let stops = 0
     let stderr = ''
-    const code = await mutated.main(['--payload-root', 'out/host', '--sweep'], {
+    const code = await mutated.main(['--payload-root', 'out/host'], {
       checkoutRoot: root,
       stdout: () => undefined,
       stderr: (text) => {
@@ -1457,13 +1517,7 @@ function runHook(checkoutRoot: string, registryRoot: string): Promise<CliRun> {
   return new Promise((resolve) => {
     const child = spawn(
       process.execPath,
-      [
-        join(checkoutRoot, 'scripts', 'host-stop-all.cjs'),
-        '--payload-root',
-        'out/host',
-        '--sweep',
-        '--json'
-      ],
+      [join(checkoutRoot, 'scripts', 'host-stop-all.cjs'), '--payload-root', 'out/host', '--json'],
       { cwd: checkoutRoot, env: { ...process.env, [HOST_REGISTRY_ROOT_ENV]: registryRoot } }
     )
     let stdout = ''
@@ -1481,7 +1535,7 @@ function runHook(checkoutRoot: string, registryRoot: string): Promise<CliRun> {
 }
 
 describe.skipIf(!POSIX)('host-stop-all against real Hosts', () => {
-  it('stops only the Host serving this checkout, sweeps only its dead records, and a sibling stops only its own', async () => {
+  it('stops only its own live Host, preserves every dead record, and a sibling stops only its own', async () => {
     const base = scratch('host-stop-all-real-')
     const checkoutA = join(base, 'AGBench')
     const checkoutB = join(base, 'AGBench-wt')
@@ -1591,16 +1645,13 @@ describe.skipIf(!POSIX)('host-stop-all against real Hosts', () => {
       firstReport.hosts.find((host) => host.profilePath === profile('own-dead'))
     ).toMatchObject({
       liveness: 'dead',
-      action: 'swept',
-      entry: 'removed',
-      socketDirectory: 'kept',
-      note: 'changed within the last minute'
+      action: 'listed'
     })
     await ownLive.exited
     expect(await isAlive(ownLive)).toBe(false)
     expect(readHostRegistryEntry(registryRoot, profile('own-live')).kind).toBe('missing')
     expect(existsSync(socketDirectoryOf('own-live'))).toBe(false)
-    expect(readHostRegistryEntry(registryRoot, profile('own-dead')).kind).toBe('missing')
+    expect(readHostRegistryEntry(registryRoot, profile('own-dead')).kind).toBe('present')
     // The sibling's live Host and the dead out/host2 Host's records survive.
     expect(await isAlive(siblingLive)).toBe(true)
     expect(readHostRegistryEntry(registryRoot, profile('sibling-live')).kind).toBe('present')
@@ -1622,6 +1673,43 @@ describe.skipIf(!POSIX)('host-stop-all against real Hosts', () => {
     await siblingLive.exited
     expect(readHostRegistryEntry(registryRoot, profile('host2-dead')).kind).toBe('present')
     expect(existsSync(socketDirectoryOf('host2-dead'))).toBe(true)
+    expect(existsSync(socketDirectoryOf('own-dead'))).toBe(true)
+
+    // A real Host from another payload takes the selected profile immediately
+    // after the final registry read. The CLI must still act only on A's identity.
+    const replacedProfile = profile('replaced-after-check')
+    const original = await startHost(payloadA, replacedProfile)
+    let successor: Tracked | undefined
+    const selectedEntry = hostRegistryEntryPath(registryRoot, replacedProfile)
+    const swapped = await hook.runHostStopAll({
+      checkoutRoot: checkoutA,
+      payloadRoot: payloadA,
+      registryRoot,
+      env: hostEnv,
+      ports: {
+        readEntry: async (file) => {
+          const captured = await hook.readEntryFile(file)
+          if (file === selectedEntry && !successor) {
+            await kill(original)
+            successor = await startHost(join(checkoutB, 'out', 'host'), replacedProfile)
+          }
+          return captured
+        }
+      }
+    })
+    expect(successor).toBeDefined()
+    expect(swapped.exitCode).toBe(hook.EXIT_OK)
+    expect(swapped.hosts.find((row) => row.profilePath === replacedProfile)).toMatchObject({
+      pid: original.pid,
+      action: 'cli-stop',
+      result: 'refused',
+      outcome: 'inconsistent'
+    })
+    expect(await isAlive(successor!)).toBe(true)
+    expect(await hostSocketIsLive(taskWraithHostSocketPath(replacedProfile))).toBe(true)
+    const surviving = readHostRegistryEntry(registryRoot, replacedProfile)
+    expect(surviving.kind === 'present' ? surviving.entry.pid : null).toBe(successor!.pid)
+    expect(readHostRegistryEntry(registryRoot, profile('own-dead')).kind).toBe('present')
     expect(existsSync(socketDirectoryOf('own-dead'))).toBe(true)
   }, 180_000)
 })
