@@ -22,6 +22,7 @@ import {
   readHostTerminationEvidence,
   terminateHostProcess,
   type HostTerminationEvidence,
+  type HostTerminationExpectedHost,
   type HostTerminationOutcome
 } from './HostProcessTermination'
 
@@ -30,12 +31,25 @@ import {
  *
  * Scope is always explicit: with no scope the verb only lists (the CLI exits
  * 3), `--profile` names one profile, `--payload-root` selects the Hosts whose
- * recorded CLI lives under one payload directory (the build hook passes this
- * repository's `out/host`, so a rebuild never touches the production app's
- * Host or a peer's `/verify` Host), and `--all` selects every verified Host
- * (the install script and the TUI verb, after confirmation). Each selected
- * Host goes through verified termination, which never signals a pid whose
- * birth or command line it cannot confirm.
+ * registry entry recorded a CLI under one payload directory, and `--all`
+ * selects every verified Host (the install script and the TUI verb, after
+ * confirmation). Each selected Host goes through verified termination, which
+ * never signals a pid whose birth or command line it cannot confirm.
+ *
+ * Termination by profile acts on whichever Host holds the profile when it
+ * runs, which is what `--profile` means. `--payload-root` does not work that
+ * way: each selected entry names one Host by pid and birth, and termination
+ * acts on that Host or on none (HostTerminationInput.expected), so it never
+ * reaches the installed app's Host, a build that publishes no entry, or a
+ * Host whose registry write failed. When the entry's Host is gone and another
+ * Host holds its profile, only the entry's own proven-stale records go: that
+ * is a success, and a note names the other Host, which keeps running. When a
+ * Host that was running when listed has been replaced by another by the time
+ * it is stopped, the run refuses it, names the new Host, and exits 1. An
+ * entry that recorded no birth cannot show which process it names, so it is
+ * refused unless its pid is dead; `--profile` stops it. `--all` checks
+ * nothing of this: a dead entry under `--all` stops whichever Host holds its
+ * profile now, even one the listing never showed.
  *
  * `--scan-argv` adds Hosts started before the registry existed (one release
  * only): a `host-runtime/cli.js serve … --profile <p>` process is a candidate
@@ -44,7 +58,9 @@ import {
  * PROCESS_BIRTH_START_TOLERANCE_MS of the observed start. Every process that
  * names a profile is judged, so a look-alike (a wrapper, a hand-typed
  * command) can never hide the genuine Host; anything unverified is listed and
- * left alone. Windows has no argv scan here.
+ * left alone. Under `--payload-root` a scanned Host is named by its pid and
+ * the birth observed while scanning, like an entry. Windows has no argv scan
+ * here.
  *
  * `--sweep` then removes dead registry entries and socket directories: with
  * `--profile` or `--payload-root` only the selected Hosts' own (termination
@@ -105,6 +121,8 @@ export interface HostStopAllPorts {
   terminate(input: {
     readonly profilePath: string
     readonly registryRoot: string
+    /** Under `--payload-root`: the one Host this termination may act on. */
+    readonly expected?: HostTerminationExpectedHost
   }): Promise<HostTerminationOutcome>
   /** The registry sweep over these profiles' records only, or machine-wide when null. */
   sweep(
@@ -214,6 +232,8 @@ interface Candidate extends Omit<HostStopAllHost, 'selected' | 'outcome'> {
   readonly key: string
   /** For a scanned Host: the joined command line, for payload-root matching. */
   readonly commandLine?: string
+  /** The Host this candidate names: the entry's pid and birth, or the scanned ones. */
+  readonly identity?: HostTerminationExpectedHost
 }
 
 async function registryCandidates(
@@ -235,7 +255,8 @@ async function registryCandidates(
         holders: entry.holders,
         implicitHolders: entry.implicitHolders,
         persist: entry.persist,
-        liveness: registryLiveness(entry, observation)
+        liveness: registryLiveness(entry, observation),
+        identity: { pid: entry.pid, birthIdentity: entry.birthIdentity }
       }
     })
   )
@@ -296,6 +317,9 @@ async function scannedCandidates(
       persist: null,
       liveness,
       commandLine: process_.commandLine,
+      ...(observation.state === 'live'
+        ? { identity: { pid: process_.pid, birthIdentity: observation.birthIdentity } }
+        : {}),
       ...(note ? { note } : {})
     })
   }
@@ -305,8 +329,10 @@ async function scannedCandidates(
 function reportedHost(
   candidate: Candidate,
   selected: boolean,
-  outcome: HostTerminationOutcome | undefined
+  outcome: HostTerminationOutcome | undefined,
+  outcomeNote?: string
 ): HostStopAllHost {
+  const note = [candidate.note, outcomeNote].filter(Boolean).join('; ')
   return {
     source: candidate.source,
     profilePath: candidate.profilePath,
@@ -320,7 +346,35 @@ function reportedHost(
     liveness: candidate.liveness,
     selected,
     ...(outcome ? { outcome } : {}),
-    ...(candidate.note ? { note: candidate.note } : {})
+    ...(note ? { note } : {})
+  }
+}
+
+/**
+ * With an expected Host, termination acts only on that Host, and `heldBy`
+ * names another Host that holds the profile instead; that Host was left
+ * alone. An expected Host already gone when it was selected (a dead entry, or
+ * a reused pid) needed only its own records swept, so the outcome stands and
+ * gains a note. Otherwise the expected Host was replaced after it was
+ * selected: even though it is gone, that is refused, and counts as a failure.
+ */
+function expectedHostOutcome(
+  outcome: HostTerminationOutcome,
+  goneWhenSelected: boolean
+): { readonly outcome: HostTerminationOutcome; readonly note?: string } {
+  if (outcome.heldBy === undefined) return { outcome }
+  if (goneWhenSelected) {
+    return {
+      outcome,
+      note: `another Host (pid ${outcome.heldBy}) holds the profile now, outside this scope`
+    }
+  }
+  const note = `another Host (pid ${outcome.heldBy}) holds the profile now, not the expected one; it was left running`
+  return {
+    outcome: HOST_TERMINATION_SUCCESS_KINDS.has(outcome.kind)
+      ? { ...outcome, kind: 'inconsistent', detail: note }
+      : outcome,
+    note
   }
 }
 
@@ -388,13 +442,22 @@ export async function stopAllHosts(options: HostStopAllOptions): Promise<HostSto
     })
   }
 
+  const payloadRoot = options.scope.kind === 'payload-root'
   const hosts = await Promise.all(
     candidates.map(async (candidate): Promise<HostStopAllHost> => {
-      const selected = selects(candidate, options.scope, platform)
-      const outcome = selected
-        ? await ports.terminate({ profilePath: candidate.profilePath, registryRoot })
-        : undefined
-      return reportedHost(candidate, selected, outcome)
+      if (!selects(candidate, options.scope, platform)) {
+        return reportedHost(candidate, false, undefined)
+      }
+      const expected = payloadRoot ? candidate.identity : undefined
+      const outcome = await ports.terminate({
+        profilePath: candidate.profilePath,
+        registryRoot,
+        ...(expected ? { expected } : {})
+      })
+      if (!expected) return reportedHost(candidate, true, outcome)
+      const gone = candidate.liveness === 'dead' || candidate.liveness === 'pid_reused'
+      const scoped = expectedHostOutcome(outcome, gone)
+      return reportedHost(candidate, true, scoped.outcome, scoped.note)
     })
   )
   // A listing changes nothing, a sweep included. A scoped sweep stays in its

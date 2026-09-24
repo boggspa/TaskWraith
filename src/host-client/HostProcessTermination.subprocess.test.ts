@@ -281,6 +281,31 @@ function publishRegistryEntry(
   })
 }
 
+/**
+ * `successor` takes the profile over from `dead` the way a starting Host
+ * does: it reclaims the dead owner's authority lease, recording its birth as
+ * a digest (a current build) or a nonce (a build from before birth identity).
+ */
+function takeOverProfile(
+  profile: string,
+  dead: Tracked,
+  successor: Tracked,
+  build: 'current' | 'legacy'
+): void {
+  HostProfileAuthorityLease.acquire({
+    profilePath: profile,
+    processPort: {
+      current: {
+        pid: successor.pid,
+        processStartIdentity:
+          build === 'current' ? successor.birth.birthIdentity : `node:${successor.pid}:5e1b`,
+        processStartedAt: new Date(successor.birth.startedAtMs ?? Date.now()).toISOString()
+      },
+      inspectOwner: (owner) => (owner.pid === dead.pid ? 'stale' : 'unknown')
+    }
+  })
+}
+
 function alive(pid: number): boolean {
   try {
     process.kill(pid, 0)
@@ -697,6 +722,121 @@ describe.skipIf(process.platform === 'win32')(
       await expect(host.exited).resolves.toBe(0)
       expect(profileArtefacts(profile)).toEqual({ lease: false, discovery: false, token: false })
       expect(readHostRegistryEntry(root, profile).kind).toBe('missing')
+    }, 60_000)
+  }
+)
+
+/**
+ * S1b: `--payload-root` selects registry entries by the CLI they recorded,
+ * and each entry names one Host by pid and birth. Termination by profile acts
+ * on whichever Host holds the profile now, so a selected entry whose Host has
+ * gone must never reach another Host that took the profile over.
+ */
+describe.skipIf(process.platform === 'win32')(
+  'stop-all --payload-root acts only on the Host each selected entry names',
+  () => {
+    it('S1b: a dead entry whose profile another Host now holds is swept, and that Host keeps running with its lease, discovery and token', async () => {
+      const base = scratch('host-stop-all-s1b-')
+      const root = join(base, 'hosts')
+      const cli = payloadCli(base)
+      const payloadRoot = dirname(dirname(cli))
+      for (const build of ['current', 'legacy'] as const) {
+        const profile = scratch(`host-stop-all-s1b-${build}-`)
+        // Host A, served from the selected payload root, published its entry and died.
+        const hostA = await startFakeHost(base, profile, 'exit')
+        publishArtefacts(profile, root, hostA, { cliPath: cli })
+        process.kill(hostA.pid, 'SIGKILL')
+        await hostA.exited
+        // Host B, from another payload root, took the profile over and published
+        // no entry (its registry write failed, or it predates the registry).
+        const hostB = await startFakeHost(scratch('host-stop-all-s1b-other-'), profile, 'exit')
+        takeOverProfile(profile, hostA, hostB, build)
+        publishDiscovery(profile, hostB)
+
+        const report = await stopAllHosts({
+          scope: { kind: 'payload-root', payloadRoot },
+          registryRoot: root,
+          sweep: true,
+          ports: { terminate: (input) => terminateHostProcess({ ...input, timings: FAST }) }
+        })
+
+        expect({
+          hostB: alive(hostB.pid) ? 'running' : 'stopped',
+          artefacts: profileArtefacts(profile),
+          socket: existsSync(taskWraithHostSocketPath(profile)),
+          outcome: report.hosts.map((host) => [host.pid, host.outcome?.kind, host.outcome?.pid])
+        }).toEqual({
+          hostB: 'running',
+          artefacts: { lease: true, discovery: true, token: true },
+          socket: true,
+          outcome: [[hostA.pid, 'already_gone', hostA.pid]]
+        })
+        expect(report.exitCode).toBe(0)
+        expect(report.hosts).toMatchObject([
+          {
+            pid: hostA.pid,
+            liveness: 'dead',
+            selected: true,
+            outcome: { heldBy: hostB.pid, swept: ['registry'] },
+            note: `another Host (pid ${hostB.pid}) holds the profile now, outside this scope`
+          }
+        ])
+        expect(report.hosts[0]?.outcome?.steps.some((step) => step.startsWith('signal:'))).toBe(
+          false
+        )
+        // B still owns the profile, and only A's own entry is gone.
+        expect(contenderAcquires(profile)).toBe(false)
+        expect(readHostRegistryEntry(root, profile).kind).toBe('missing')
+      }
+    }, 60_000)
+
+    it('S1b race: a Host running when listed but replaced before its stop is refused (exit 1), and the new Host keeps running', async () => {
+      const base = scratch('host-stop-all-s1b-race-')
+      const root = join(base, 'hosts')
+      const cli = payloadCli(base)
+      const payloadRoot = dirname(dirname(cli))
+      const profile = scratch('host-stop-all-s1b-race-profile-')
+      const hostA = await startFakeHost(base, profile, 'exit')
+      publishArtefacts(profile, root, hostA, { cliPath: cli })
+      const swapped: { host?: Tracked } = {}
+
+      const report = await stopAllHosts({
+        scope: { kind: 'payload-root', payloadRoot },
+        registryRoot: root,
+        ports: {
+          terminate: async (input) => {
+            // Listed live; before its stop, A dies and B takes the profile over.
+            process.kill(hostA.pid, 'SIGKILL')
+            await hostA.exited
+            const hostB = await startFakeHost(scratch('host-stop-all-s1b-race-b-'), profile, 'exit')
+            takeOverProfile(profile, hostA, hostB, 'current')
+            publishDiscovery(profile, hostB)
+            swapped.host = hostB
+            return terminateHostProcess({ ...input, timings: FAST })
+          }
+        }
+      })
+
+      const hostB = swapped.host!
+      expect({
+        hostB: alive(hostB.pid) ? 'running' : 'stopped',
+        artefacts: profileArtefacts(profile),
+        outcome: report.hosts.map((host) => [host.liveness, host.outcome?.kind])
+      }).toEqual({
+        hostB: 'running',
+        artefacts: { lease: true, discovery: true, token: true },
+        outcome: [['live', 'inconsistent']]
+      })
+      expect(report.exitCode).toBe(1)
+      expect(report.hosts).toMatchObject([
+        {
+          pid: hostA.pid,
+          outcome: { pid: hostA.pid, heldBy: hostB.pid, swept: ['registry'] },
+          note: `another Host (pid ${hostB.pid}) holds the profile now, not the expected one; it was left running`
+        }
+      ])
+      expect(report.hosts[0]?.outcome?.steps.some((step) => step.startsWith('signal:'))).toBe(false)
+      expect(contenderAcquires(profile)).toBe(false)
     }, 60_000)
   }
 )
