@@ -1,13 +1,120 @@
+import type { ComponentProps } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it, vi } from 'vitest'
 import {
   SETTINGS_TABS,
+  SettingsPanel,
   getVisibleSettingsTabs,
   isSettingsTabVisible,
   resolveVisibleSettingsTab,
   settingsTabMatchesQuery
 } from './SettingsPanel'
 import { SettingsSidebar } from './SettingsSidebar'
+import { DEFAULT_AGENTIC_SERVICES } from '../lib/agenticServicesDefaults'
+import { resolveSettingsTabFromSlashArg } from '../lib/resolveSettingsSlashTab'
+import {
+  DEFAULT_APPROVAL_TIMEOUTS_MS,
+  DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+} from '../../../shared/interactionTimeouts'
+
+type SettingsPanelProps = ComponentProps<typeof SettingsPanel>
+
+function makeSettingsProps(overrides: Partial<SettingsPanelProps> = {}): SettingsPanelProps {
+  return {
+    mode: 'solid',
+    visualEffectStyle: 'auto',
+    themeAppearance: 'dark',
+    themeCornerStyle: 'rounded',
+    themeAccentColor: '#5A8CFF',
+    diffStatColors: { additions: '#2DB777', deletions: '#EC3D35' },
+    appIconVariant: 'regular',
+    promptSurfaceStyle: 'theme',
+    composerStyle: 'default',
+    transcriptFontFamily: 'system',
+    composerFontFamily: 'system',
+    persistedTranscriptFontFamily: 'system',
+    persistedComposerFontFamily: 'system',
+    keyCommandBindings: {},
+    reduceTransparency: false,
+    reduceMotion: false,
+    compactDensity: false,
+    liveActivityViewport: true,
+    sidebarOpacity: 100,
+    mainPaneOpacity: 100,
+    geminiCheckpointingEnabled: false,
+    chatContextTurns: 6,
+    currency: 'USD',
+    currencyOverestimatePercent: 0,
+    dashboardStatPrefs: {},
+    welcomeHeatmapPrefs: {},
+    kimiSanitiserEnabled: false,
+    kimiSanitiserCustomKeywords: '',
+    claudeBinaryPath: '',
+    kimiBinaryPath: '',
+    ollamaBaseUrl: 'http://127.0.0.1:11434',
+    ollamaDefaultModel: 'gpt-oss:20b',
+    agenticServices: DEFAULT_AGENTIC_SERVICES,
+    nativeSubAgentRequests: 'ask',
+    agenticWorkspaceGrantCount: 0,
+    agenticWorkspaceGrants: [],
+    activeProvider: 'codex',
+    providerCapabilities: null,
+    providerCapabilitiesByProvider: {},
+    mcpStatusByProvider: {},
+    geminiMcpBridgeEnabled: false,
+    codexSandboxFallback: 'ask_rerun',
+    funFxEnabled: false,
+    funFxMode: 'off',
+    advancedFx: {
+      agentAura: false,
+      livingWorkspace: false,
+      dataViz: false,
+      refraction: false,
+      intensity: 'subtle'
+    },
+    autoUpdateEnabled: true,
+    updateChannel: 'stable',
+    approvalTimeouts: {
+      enabled: true,
+      perProviderMs: { ...DEFAULT_APPROVAL_TIMEOUTS_MS },
+      mainAuthorityMs: DEFAULT_MAIN_AUTHORITY_APPROVAL_TIMEOUT_MS
+    },
+    productOperationsStatus: null,
+    auditRetention: {
+      enabled: false,
+      maxAgeDays: {
+        approvalLedger: 365,
+        runEvents: 180,
+        workspaceChanges: 180,
+        auditRuns: 365,
+        messageFeedback: 365,
+        externalPublish: 365,
+        productCrashes: 90
+      }
+    },
+    codexStatus: null,
+    claudeAuthStatus: null,
+    kimiAuthStatus: null,
+    ollamaStatus: null,
+    cursorProviderAvailable: true,
+    grokProviderAvailable: true,
+    providerCliUpgradeState: {},
+    onInstallGeminiMcpBridge: () => {},
+    onRefreshGeminiMcpBridgeStatus: () => {},
+    onRefreshProductOperationsStatus: () => {},
+    onExportProductDiagnostics: () => {},
+    onExportProductAuditBundle: () => {},
+    onVerifyProductAuditBundle: () => {},
+    onDryRunAuditRetention: () => {},
+    onPurgeAuditRetention: () => {},
+    onRepairProductInstall: () => {},
+    onChange: () => {},
+    onClose: () => {},
+    activeTab: 'providers',
+    layout: 'takeover',
+    ...overrides
+  }
+}
 
 describe('Settings tabs', () => {
   it('retires the messages and Shares tabs while exposing Channels and Devices by default', () => {
@@ -189,5 +296,99 @@ describe('Settings tabs', () => {
     )
     expect(hooksHtml).toContain('Hooks')
     expect(hooksHtml).toContain('aria-selected="true"')
+  })
+})
+
+describe('TaskWraith Host tab', () => {
+  const HOST_QUERIES = ['host', 'restart', 'pid', 'uptime', 'payload', 'clients', 'lease']
+
+  it('sits in the App group just before About, visible without any flag', () => {
+    const tabsById = Object.fromEntries(SETTINGS_TABS.map((tab) => [tab.id, tab]))
+    expect(tabsById.host).toMatchObject({ label: 'TaskWraith Host', group: 'app', scope: 'global' })
+    const appTabs = getVisibleSettingsTabs()
+      .filter((tab) => tab.group === 'app')
+      .map((tab) => tab.id)
+    expect(appTabs.indexOf('host')).toBe(appTabs.indexOf('about') - 1)
+    expect(isSettingsTabVisible('host')).toBe(true)
+    expect(resolveVisibleSettingsTab('host')).toBe('host')
+  })
+
+  it('routes the Host queries to the host tab by MATCH, not by fallback', () => {
+    // The disarming has to point AWAY from the tab under test: an unmatched
+    // query returns `defaultTab`, so force it to 'appearance' and prove it,
+    // or every line below could pass with no alias at all.
+    const opts = { settingsTabs: SETTINGS_TABS, defaultTab: 'appearance' as const }
+    expect(resolveSettingsTabFromSlashArg('zzzz no such settings tab', opts)).toBe('appearance')
+
+    for (const query of HOST_QUERIES) {
+      expect({ query, tab: resolveSettingsTabFromSlashArg(query, opts) }).toEqual({
+        query,
+        tab: 'host'
+      })
+    }
+  })
+
+  it('wins the Host queries on score, not on the alphabetical tie-break', () => {
+    // Ties break by tab id ascending and 'host' already loses them to
+    // 'behavior' and 'hooks'; a last-sorting id takes even that away.
+    const relabelled = SETTINGS_TABS.map((tab) =>
+      tab.id === 'host' ? { ...tab, id: 'zzzz-host' as typeof tab.id } : tab
+    )
+    const opts = { settingsTabs: relabelled, defaultTab: 'appearance' as const }
+    expect(resolveSettingsTabFromSlashArg('zzzz no such settings tab', opts)).toBe('appearance')
+
+    for (const query of HOST_QUERIES) {
+      expect({ query, tab: resolveSettingsTabFromSlashArg(query, opts) }).toEqual({
+        query,
+        tab: 'zzzz-host'
+      })
+    }
+  })
+
+  it('surfaces the host tab in sidebar search', () => {
+    const search = (query: string) =>
+      getVisibleSettingsTabs()
+        .filter((tab) => settingsTabMatchesQuery(tab, query))
+        .map((tab) => tab.id)
+
+    expect(search('zzzz no such settings tab')).toEqual([])
+    for (const query of HOST_QUERIES) {
+      expect(search(query)).toContain('host')
+    }
+  })
+
+  it('gives the host tab the TaskWraith ghost in the settings sidebar', () => {
+    const html = renderToStaticMarkup(
+      <SettingsSidebar
+        activeTab="host"
+        onTabChange={vi.fn()}
+        onBackToApp={vi.fn()}
+        appVersion="1.1.0"
+      />
+    )
+    const hostTab =
+      /<button[^>]*title="The independent TaskWraith Host process[^"]*"[^>]*>(.*?)<\/button>/.exec(
+        html
+      )?.[1]
+
+    expect(hostTab).toContain('<span class="settings-sidebar-tab-label">TaskWraith Host</span>')
+    expect(hostTab).toContain('<svg class="mascot-ghost"')
+    // Not the three-line glyph every unmapped tab falls back to.
+    expect(hostTab).not.toContain('M3 4.4h10M3 8h10M3 11.6h10')
+  })
+
+  it('reaches the Host card from the host tab, and from no other tab', () => {
+    const hostMarkup = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'host' })} />
+    )
+    expect(hostMarkup).toContain(
+      '<h4 id="settings-host-title" class="sidebar-section-title">TaskWraith Host</h4>'
+    )
+    expect(hostMarkup).toContain('<dt>pid</dt>')
+
+    const aboutMarkup = renderToStaticMarkup(
+      <SettingsPanel {...makeSettingsProps({ activeTab: 'about' })} />
+    )
+    expect(aboutMarkup).not.toContain('settings-host-title')
   })
 })

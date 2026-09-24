@@ -8,6 +8,7 @@ import { IOS_REMOTE_ENABLED } from '../../lib/featureFlags'
 export type SettingsTab =
   | 'appearance'
   | 'behavior'
+  | 'host'
   | 'about'
   | 'providers'
   | 'roster'
@@ -137,6 +138,17 @@ export const SETTINGS_TABS: SettingsTabDefinition[] = [
     group: 'app',
     description: 'Editable app keybindings and command shortcuts.',
     aliases: ['key commands', 'hotkeys', 'keybindings', 'commands', 'record shortcut'],
+    scope: 'global'
+  },
+  {
+    id: 'host',
+    label: 'TaskWraith Host',
+    group: 'app',
+    description:
+      'The independent TaskWraith Host process: its identity, lifetime, attached apps, and controls.',
+    // Findability is tab-level. The description deliberately avoids these
+    // words, so each one reaches this tab through its alias alone.
+    aliases: ['host', 'restart', 'pid', 'uptime', 'payload', 'clients', 'lease'],
     scope: 'global'
   },
   {

@@ -16,6 +16,7 @@
  * renamed in the future.
  */
 import { useMemo, useState } from 'react'
+import { MascotGhost } from './AppChromeSymbols'
 import {
   SETTINGS_TAB_GROUP_LABELS,
   getVisibleSettingsTabs,
@@ -96,6 +97,9 @@ function SettingsTabSymbolIcon({ tab }: { tab: SettingsTab }) {
         <rect x="2" y="4" width="12" height="8.2" rx="1.6" />
         <path d="M4.5 6.6h.1M6.8 6.6h.1M9.1 6.6h.1M11.4 6.6h.1M4.5 9.4h3.8M9.7 9.4h1.8" />
       </svg>
+    ) : tab === 'host' ? (
+      // The Host is TaskWraith's own process, so it wears the app's ghost.
+      <MascotGhost size={17} />
     ) : tab === 'providers' ? (
       <svg {...common}>
         <path d="M8 2.2 13 5v6L8 13.8 3 11V5Z" />

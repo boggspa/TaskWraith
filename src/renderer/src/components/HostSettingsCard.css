@@ -1,0 +1,116 @@
+/* Settings → TaskWraith Host. Co-located with HostSettingsCard.tsx; the
+ * section chrome (settings-group, title row, scope pill, hint) is shared. */
+
+.settings-host-page {
+  display: grid;
+  gap: 16px;
+}
+
+.settings-host-note {
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--warning) 10%, transparent);
+  color: var(--text-primary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.settings-host-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px 16px;
+  margin: 4px 0 0;
+}
+
+.settings-host-fact {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.settings-host-fact dt {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.settings-host-fact dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+
+.settings-host-fact .settings-host-payload {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.settings-host-actions,
+.settings-host-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-host-actions {
+  margin-top: 6px;
+}
+
+.settings-host-action--refresh {
+  margin-left: auto;
+}
+
+.settings-host-confirm {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: 8px;
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.settings-host-confirm > span {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.settings-host-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.settings-host-client-scroll {
+  overflow-x: auto;
+}
+
+.settings-host-client-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.settings-host-client-table th,
+.settings-host-client-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 60%, transparent);
+  text-align: left;
+  white-space: nowrap;
+}
+
+.settings-host-client-table th {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.settings-host-client-table td {
+  color: var(--text-primary);
+}
+
+.settings-host-client-table td:first-child {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
