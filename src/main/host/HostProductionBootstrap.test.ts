@@ -23,6 +23,22 @@ import {
 import type { HostProductionBootstrapOptions } from './HostProductionBootstrap'
 import type { HostProductionQueuedStartAdapter } from './HostProductionBootstrap'
 import type { HostProductionContextResolverDeps } from './HostProductionContextResolvers'
+import { createHostBridgeQueuedStartProducerBinding } from './HostBridgeQueuedStartProducerBinding'
+import {
+  verifyHostBridgeQueuedStartRecord,
+  type createHostBridgeQueuedStartProducer,
+  type HostBridgeQueuedStartIdentity
+} from './HostBridgeQueuedStartProducer'
+import {
+  dispatchObservedHostBridgeRound,
+  verifyHostBridgeQueuedRoundStartRecord,
+  type createHostBridgeQueuedRoundStartProducer,
+  type HostBridgeQueuedRoundStartIdentity
+} from './HostBridgeQueuedRoundStartProducer'
+import { createEnsembleRoundStartObservation } from '../services/EnsembleRoundStartObserver'
+import type { ChatRecord, ChatRun } from '../store/types'
+import type { HostCursorPosition } from '../../shared/hostProtocol'
+import type { HostDeltaAppendEvent } from '../../host-runtime/HostDeltaStore'
 import type {
   HostProductionChatListPort,
   HostProductionProviderListPort
@@ -34,7 +50,7 @@ import {
   type HostMainComposition,
   type HostMainCompositionInput
 } from '../../host-runtime/HostMainComposition'
-import type { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
+import { HostRuntimeBootstrap } from '../../host-runtime/HostRuntimeBootstrap'
 import type { HostSupervisor, HostSupervisorInput } from '../../host-runtime/HostSupervisor'
 
 /* ------------------------------------------------------------------ */
@@ -1212,6 +1228,388 @@ describe('HostProductionBootstrap queued start (producer step 3a)', () => {
       await supervisor.stop()
     }
   })
+})
+
+/* ------------------------------------------------------------------ */
+/*  Queued-start receipt integration                                  */
+/* ------------------------------------------------------------------ */
+
+describe('HostProductionBootstrap queued-start receipt integration', () => {
+  it.each(['solo', 'ensemble'] as const)(
+    'publishes a durable %s start before terminal success and serializes other projection work',
+    async (mode) => {
+      const gate = () => {
+        let resolve!: () => void
+        const promise = new Promise<void>((done) => {
+          resolve = done
+        })
+        return { promise, resolve }
+      }
+      const journal = gate()
+      const publication = gate()
+      const publicationEntered = vi.fn()
+      const startedAt = '2026-09-24T00:00:00.000Z'
+      const runId = 'provider-run-bootstrap'
+      const roundId = 'ensemble-round-bootstrap'
+      const promptMessageId = 'prompt-bootstrap'
+      const stored: Pick<ChatRecord, 'appChatId' | 'messages' | 'ensemble'> & {
+        runs: Array<ChatRun & { provider: 'codex' }>
+      } = {
+        appChatId: 'thread-1',
+        runs: [],
+        messages: [],
+        ...(mode === 'ensemble'
+          ? { ensemble: { enabled: true, maxParticipants: 2, participants: [] } }
+          : {})
+      }
+      const producers: {
+        solo: ReturnType<typeof createHostBridgeQueuedStartProducer> | null
+        round: ReturnType<typeof createHostBridgeQueuedRoundStartProducer> | null
+      } = { solo: null, round: null }
+      const soloBarrier = vi.fn((_identity: HostBridgeQueuedStartIdentity) => journal.promise)
+      const roundBarrier = vi.fn((_identity: HostBridgeQueuedRoundStartIdentity) => journal.promise)
+      const binding = createHostBridgeQueuedStartProducerBinding({
+        persistenceEnabled: () => true,
+        awaitPromptAndStartDurable: soloBarrier,
+        verifyPromptAndStart: (identity) => verifyHostBridgeQueuedStartRecord(stored, identity),
+        onCurrentProducer: (producer) => {
+          producers.solo = producer
+        },
+        roundStart: {
+          persistenceEnabled: () => true,
+          awaitPromptAndRoundDurable: roundBarrier,
+          verifyPromptAndRound: (identity) =>
+            verifyHostBridgeQueuedRoundStartRecord(stored, identity),
+          onCurrentProducer: (producer) => {
+            producers.round = producer
+          }
+        }
+      })
+      const compositions: HostMainComposition[] = []
+      const runtimes: HostRuntimeBootstrap[] = []
+      const durableEvents: HostDeltaAppendEvent[] = []
+      const order: string[] = []
+      let title = 'Queued-start integration'
+      let holdNextSnapshot = false
+      let beforeParticipants: Promise<void> | undefined
+      let positionBeforeSelection: HostCursorPosition | undefined
+      let receiptBeforeSelection:
+        | ReturnType<HostRuntimeBootstrap['receiptStore']['getByCommandId']>
+        | undefined
+      let receiptAtStartAppend:
+        | ReturnType<HostRuntimeBootstrap['receiptStore']['getByCommandId']>
+        | undefined
+      const executeComposerPrompt = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeComposerPrompt']
+      >(async (action) => {
+        stored.messages.push({
+          id: promptMessageId,
+          role: 'user',
+          content: action.text,
+          timestamp: startedAt
+        })
+        stored.runs.push({
+          runId,
+          promptMessageId,
+          provider: 'codex',
+          status: 'running',
+          startedAt
+        })
+        const observation = producers.solo?.observeDispatch({
+          hostCommandActionId: action.actionId,
+          threadId: action.threadId,
+          runId,
+          promptMessageId,
+          provider: 'codex'
+        })
+        // Controlled provider boundary: invocation is observed, but the full
+        // turn never completes in this test. Its result cannot prove a start.
+        observation?.observer.onAdapterInvoked?.({ appRunId: runId, provider: 'codex' })
+        return { executed: true, message: 'Solo dispatch registered', data: { appRunId: runId } }
+      })
+      const executeEnsembleSteer = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeEnsembleSteer']
+      >(async (action) => {
+        const observation = producers.round?.observeRound({
+          hostCommandActionId: action.actionId,
+          threadId: action.threadId
+        })
+        const result = dispatchObservedHostBridgeRound(observation, (observer) => {
+          if (!stored.ensemble) throw new Error('expected an Ensemble fixture')
+          stored.ensemble.activeRound = {
+            roundId,
+            status: 'running',
+            prompt: action.text,
+            startedAt,
+            participants: []
+          }
+          stored.messages.push({
+            id: `ensemble-user-${roundId}`,
+            role: 'user',
+            content: action.text,
+            timestamp: startedAt,
+            metadata: { kind: 'ensembleRoundPrompt', ensembleRoundId: roundId }
+          })
+          const observed = createEnsembleRoundStartObservation(observer, roundId)
+          observed.reserved()
+          beforeParticipants = observed.beforeParticipants()
+          return { status: 'started', roundId }
+        })
+        return {
+          executed: true,
+          message: 'Ensemble round started',
+          data: { actionKind: 'ensembleSteer', result }
+        }
+      })
+      const executeSetWatchedThread = vi.fn<
+        HostProductionBootstrapOptions['bridge']['executeSetWatchedThread']
+      >(async () => {
+        order.push('ordinary-command')
+        const runtime = runtimes[0]
+        positionBeforeSelection = runtime.getPosition()
+        receiptBeforeSelection = runtime.receiptStore.getByCommandId(COMMAND_ID, ACTOR)
+        // A real projection change gives this command its own later cursor.
+        title = 'Selected after durable start'
+        return { executed: true, message: 'Thread selected' }
+      })
+      const supervisor = createHostProductionBootstrap(
+        validOptions({
+          userDataPath: profilePath(),
+          contextSources: {
+            ...soloChatSources(),
+            getChat: (threadId) =>
+              threadId === stored.appChatId
+                ? { ...stored, workspaceId: 'workspace-1', scope: 'workspace', provider: 'codex' }
+                : null
+          },
+          chatList: {
+            getChatList: () => [
+              {
+                appChatId: stored.appChatId,
+                workspaceId: 'workspace-1',
+                title,
+                archived: false,
+                updatedAt: Date.parse(startedAt) + stored.messages.length,
+                messageCount: stored.messages.length,
+                provider: 'codex'
+              }
+            ]
+          },
+          runs: {
+            listRuns: () =>
+              stored.runs.map((run) => ({
+                runId: run.runId,
+                threadId: stored.appChatId,
+                providerId: run.provider,
+                providerOutcome: 'running',
+                startedAt: Date.parse(startedAt)
+              }))
+          },
+          rounds: {
+            listRounds: () =>
+              stored.ensemble?.activeRound
+                ? [
+                    {
+                      roundId: stored.ensemble.activeRound.roundId,
+                      threadId: stored.appChatId,
+                      status: 'running',
+                      startedAt: Date.parse(startedAt),
+                      participantIds: [],
+                      providerRunIds: []
+                    }
+                  ]
+                : []
+          },
+          bridge: {
+            ...mockBridge(),
+            executeComposerPrompt,
+            executeEnsembleSteer,
+            executeSetWatchedThread
+          },
+          queuedStart: binding,
+          createComposition: (input) => {
+            const composition = createHostMainComposition({
+              ...input,
+              // Explicit test authorization. Production's default deferral
+              // policy is covered separately; no approval service runs here.
+              authorityEvaluator: () => ({ decision: 'allowed' }),
+              pipelineFactory: (runtime) => {
+                runtimes.push(runtime)
+                return input.pipelineFactory!(runtime)
+              },
+              snapshotDonor: async () => {
+                if (holdNextSnapshot) {
+                  // One-shot hold at the publication's AFTER snapshot. Other
+                  // readers are free to run, so only the real shared queue can
+                  // keep the command and reconciler behind this publication.
+                  holdNextSnapshot = false
+                  publicationEntered()
+                  await publication.promise
+                }
+                return input.snapshotDonor()
+              }
+            })
+            compositions.push(composition)
+            return composition
+          }
+        })
+      )
+      let selection: ReturnType<HostMainComposition['authority']['command']> | undefined
+      let reconciliation: ReturnType<HostMainComposition['reconcileProjection']> | undefined
+      try {
+        await supervisor.start()
+        const composition = compositions[0]
+        const runtime = runtimes[0]
+        const initialPosition = composition.getPosition()
+        const startFamily = mode === 'solo' ? 'run' : 'round'
+        const startEntityId = mode === 'solo' ? runId : roundId
+        composition.subscribeDeltas((event) => {
+          durableEvents.push(event)
+          if (event.record.envelope.family === startFamily) {
+            order.push('start-effect')
+            receiptAtStartAppend = runtime.receiptStore.getByCommandId(COMMAND_ID, ACTOR)
+          }
+        })
+
+        const queued = await composition.authority.command(callContext(), composerSendCommand())
+        expect(queued).toMatchObject({ ok: true, value: { status: 'pending', phase: 'queued' } })
+        const barrier = mode === 'solo' ? soloBarrier : roundBarrier
+        expect(barrier).toHaveBeenCalledExactlyOnceWith({
+          hostCommandActionId: ACTION_ID,
+          threadId: stored.appChatId,
+          ...(mode === 'solo' ? { runId, promptMessageId, provider: 'codex' } : { roundId })
+        })
+        // Leave the journal unresolved across a real scheduling window: an
+        // early Bridge result or an ignored barrier must not certify a start.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        await expect(
+          composition.authority.receipt(callContext(), { commandId: COMMAND_ID })
+        ).resolves.toMatchObject({
+          ok: true,
+          outcome: 'found',
+          receipt: { status: 'pending', phase: 'queued' }
+        })
+        expect(durableEvents).toEqual([])
+        expect(composition.getPosition()).toEqual(initialPosition)
+
+        holdNextSnapshot = true
+        journal.resolve()
+        await vi.waitFor(() => expect(publicationEntered).toHaveBeenCalledOnce())
+        await expect(
+          composition.authority.receipt(callContext(), { commandId: COMMAND_ID })
+        ).resolves.toMatchObject({
+          ok: true,
+          outcome: 'found',
+          receipt: { status: 'pending', phase: 'started' }
+        })
+        expect(durableEvents).toEqual([])
+
+        selection = composition.authority.command(callContext(), {
+          ...composerSendCommand('thread.select'),
+          commandId: '33333333-3333-4333-8333-333333333333',
+          idempotencyKey: 'desktop:client-1:44444444-4444-4444-8444-444444444444',
+          arguments: {}
+        })
+        reconciliation = composition.reconcileProjection().then((result) => {
+          order.push('reconcile')
+          return result
+        })
+        // A real timer window makes the serialization assertion sensitive to
+        // removing either queue injection, rather than to microtask ordering.
+        await new Promise((resolve) => setTimeout(resolve, 50))
+        expect(executeSetWatchedThread).not.toHaveBeenCalled()
+        expect(order).toEqual([])
+        expect(composition.getPosition()).toEqual(initialPosition)
+
+        publication.resolve()
+        const selected = await selection
+        expect(selected).toMatchObject({ ok: true, value: { status: 'succeeded' } })
+        expect(['unchanged', 'published']).toContain((await reconciliation).kind)
+        await beforeParticipants
+        expect(order).toEqual(['start-effect', 'ordinary-command', 'reconcile'])
+        expect(receiptAtStartAppend).toMatchObject({
+          kind: 'found',
+          receipt: { status: 'pending' }
+        })
+        expect(receiptBeforeSelection).toMatchObject({
+          kind: 'found',
+          receipt: { status: 'succeeded', phase: 'started', resultSummary: 'run_started' }
+        })
+        const terminal = await composition.authority.receipt(callContext(), {
+          commandId: COMMAND_ID
+        })
+        if (!terminal.ok || terminal.outcome !== 'found') throw new Error('missing start receipt')
+        const receipt = terminal.receipt
+        expect(receipt).toMatchObject({
+          status: 'succeeded',
+          phase: 'started',
+          resultSummary: 'run_started'
+        })
+        expect(positionBeforeSelection).toEqual({
+          generation: receipt.generation,
+          cursor: receipt.cursor
+        })
+        expect(receipt.cursor).toBeGreaterThan(initialPosition.cursor)
+        if (!selected.ok) throw new Error('ordinary command failed')
+        expect(selected.value.cursor).toBeGreaterThan(receipt.cursor)
+        const startBatch = durableEvents.filter((event) => event.position.cursor <= receipt.cursor)
+        expect(startBatch.map((event) => event.record.envelope.family)).toEqual(
+          mode === 'solo' ? ['run', 'thread'] : ['thread', 'round']
+        )
+        const startEffect = startBatch.find((event) => event.record.envelope.family === startFamily)
+        expect(startEffect?.record.envelope).toMatchObject({
+          kind: 'upsert',
+          entityId: startEntityId,
+          payload: { threadId: stored.appChatId }
+        })
+        expect(startBatch.at(-1)?.position).toEqual({
+          generation: receipt.generation,
+          cursor: receipt.cursor
+        })
+        if (mode === 'ensemble') {
+          expect(startEffect?.record.envelope.payload).toMatchObject({ providerRunIds: [] })
+          expect(executeComposerPrompt).not.toHaveBeenCalled()
+          expect(executeEnsembleSteer).toHaveBeenCalledOnce()
+        } else {
+          expect(executeComposerPrompt).toHaveBeenCalledOnce()
+          expect(executeEnsembleSteer).not.toHaveBeenCalled()
+        }
+        // Replaying the same Host command returns its receipt, never a second
+        // Bridge invocation or a second provider/round start.
+        await expect(
+          composition.authority.command(callContext(), composerSendCommand())
+        ).resolves.toEqual({ ok: true, value: receipt })
+        expect(
+          executeComposerPrompt.mock.calls.length + executeEnsembleSteer.mock.calls.length
+        ).toBe(1)
+
+        await supervisor.stop()
+        expect(producers).toEqual({ solo: null, round: null })
+        const recovered = new HostRuntimeBootstrap({ hostDataDir: composition.hostDataDir })
+        expect(recovered.receiptStore.getByCommandId(COMMAND_ID, ACTOR)).toMatchObject({
+          kind: 'found',
+          receipt: {
+            status: 'succeeded',
+            resultSummary: 'run_started',
+            generation: receipt.generation,
+            cursor: receipt.cursor
+          }
+        })
+        // Reload the real journal/checkpoint: the exact start effect and the
+        // final effect at the receipt cursor must both survive teardown.
+        for (const event of startBatch) {
+          expect(recovered.deltaStore.getByCursor(event.position.cursor)?.envelope).toEqual(
+            event.record.envelope
+          )
+        }
+      } finally {
+        journal.resolve()
+        publication.resolve()
+        await Promise.allSettled([selection, reconciliation, beforeParticipants])
+        await supervisor.stop()
+      }
+    }
+  )
 })
 
 /* ------------------------------------------------------------------ */
