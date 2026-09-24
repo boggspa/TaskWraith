@@ -245,7 +245,7 @@ function deferredStartPublication(mode: 'solo' | 'ensemble') {
         id: THREAD_ID,
         workspaceId: 'workspace-1',
         title: mode === 'solo' ? 'Solo' : 'Ensemble',
-        chatKind: mode,
+        chatKind: mode === 'solo' ? 'single' : 'ensemble',
         archived: false,
         pinned: false,
         updatedAt: 0,
