@@ -4,6 +4,14 @@ import { execFileSync } from 'node:child_process'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  cooldownFixture,
+  exactCloseFixture,
+  ownedSample,
+  resourceIdentity,
+  warmPlanFixture,
+  workloadFixture
+} from './studio-resource-evidence.test-fixtures'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const runner = require('./studio-s10-live-runner.cjs') as {
@@ -53,7 +61,16 @@ const runner = require('./studio-s10-live-runner.cjs') as {
     assetId: string
   ) => Record<string, unknown>
   validateS10ResourceVerdict: (resources: Array<Record<string, unknown>>) => Record<string, unknown>
-  validateFinalCooldown: (cooldown: Record<string, unknown>) => Record<string, unknown>
+  validateWorkloadResourceVerdict: (
+    resources: Array<Record<string, unknown>>,
+    identity: Record<string, unknown>,
+    resourcePlan: unknown
+  ) => Record<string, unknown>
+  validateFinalCooldown: (
+    cooldown: Record<string, unknown>,
+    live: Record<string, unknown>
+  ) => Record<string, unknown>
+  validateCompleteS10Journey: (...args: unknown[]) => boolean
   validateLoopAwareAvVerdict: (
     evidence: Record<string, unknown>,
     samples: Array<Record<string, unknown>>,
@@ -168,6 +185,162 @@ function goodResources() {
   }))
 }
 
+function completeJourneyFixture(artifactRoot = '/tmp/s10/artifacts') {
+  const { samples, plan } = workloadFixture()
+  const resources = runner.validateWorkloadResourceVerdict(samples, resourceIdentity, plan)
+  const assets = {
+    primary: { ...assetA, byteLength: 10_000 },
+    secondary: { ...assetB, byteLength: 20_000 }
+  }
+  const companion = { pid: 12, pgid: 12, ppid: 10, command: resourceIdentity.executablePath }
+  const sha = (text: string) => createHash('sha256').update(text).digest('hex')
+  const pixelFiles: Array<[string, string]> = []
+  const loopSamples = goodLoopSamples().map((sample, index) => {
+    const screenshotPath = path.join(artifactRoot, `capture-${index}.png`)
+    const screenshotBytes = `captured frame ${index}`
+    const referencePath = path.join(artifactRoot, `reference-${index}.png`)
+    const referenceBytes = `source frame ${index}`
+    pixelFiles.push([screenshotPath, screenshotBytes], [referencePath, referenceBytes])
+    const referenceCommand =
+      require('./studio-bounded-diagnostics-runner.cjs').buildReferenceExtractCommand({
+        assetPath: assets.primary.assetPath,
+        exactSourcePtsSeconds: sample.observedPtsSeconds,
+        referencePath
+      }) as string[]
+    return {
+      ...sample,
+      loopActive: true,
+      assetId: assets.primary.sha256,
+      captureMonotonicMs: 1000 + sample.monotonicMs,
+      observed: {
+        state: 'PLAY',
+        contentPtsSeconds: sample.observedPtsSeconds,
+        assetMatch: { matched: true, distance: 0, assetId: assets.primary.sha256 }
+      },
+      resource: samples[index],
+      referencePixel: {
+        exactSourcePtsSeconds: sample.observedPtsSeconds,
+        referencePath,
+        referenceSha256: sha(referenceBytes),
+        referenceByteLength: Buffer.byteLength(referenceBytes),
+        referenceCommand,
+        referenceExecution: {
+          command: ['/usr/local/bin/ffmpeg', ...referenceCommand],
+          stdoutSha256: sha(''),
+          stderrSha256: sha('')
+        },
+        pixelComparison: { clean: true }
+      },
+      raw: {
+        ...sample.raw,
+        capture: {
+          screenshotPath,
+          screenshotSha256: sha(screenshotBytes),
+          screenshotByteLength: Buffer.byteLength(screenshotBytes),
+          rawOcrText: '[]',
+          rawOcrSha256: sha('[]'),
+          windowBounds: { x: 0, y: 0, width: 640, height: 480 },
+          sourceHostFrame: { x: 0, y: 0, width: 640, height: 360 }
+        }
+      }
+    }
+  })
+  const journey = {
+    green: true,
+    phasesComplete: true,
+    blockers: [],
+    loop: {
+      proof: {
+        ...goodLoopProof(),
+        loopEndTicks: 300_000,
+        loopTimebaseTicks: 1000,
+        endPositioning: { observedPlayheadTicks: 300_000 }
+      },
+      avEndurance: { ...goodAvEvidence(), samples: structuredClone(loopSamples) },
+      samples: loopSamples,
+      sourcePtsCensus: { values: Array.from({ length: 301 }, (_, index) => index) },
+      bounds: { startTicks: 0, endTicks: 300_000, timebaseTicks: 1000 }
+    },
+    seeks: {
+      receipts: Array.from({ length: 100 }, (_, index) => {
+        const ticks = Math.floor((300_000 * (index + 1)) / 101)
+        return {
+          index,
+          assetId: assetA.sha256,
+          action: 'set-playhead-ticks',
+          backgroundInput: true,
+          requestedPlayheadTicks: ticks,
+          playheadTicks: ticks,
+          rawAction: { type: 'set-playhead-ticks', observedPlayheadTicks: ticks },
+          resourceSample: samples[21 + index]
+        }
+      })
+    },
+    alternatingOpens: {
+      receipts: Array.from({ length: 20 }, (_, index) => ({
+        index,
+        assetId: index % 2 ? assetB.sha256 : assetA.sha256,
+        foregroundInput: false,
+        inputDelivery: 'background-observation-only',
+        journalRevision: index + 1,
+        journalPath: index % 2 ? assetB.assetPath : assetA.assetPath,
+        hudAssetId: index % 2 ? assetB.sha256 : assetA.sha256,
+        resourceSample: samples[121 + index]
+      }))
+    },
+    routeCycles: {
+      receipts: Array.from({ length: 10 }, (_, index) => ({
+        index,
+        action: 'AXPress',
+        inputDelivery: 'background-observation-only',
+        foregroundInput: false,
+        transitions: ['timeline-show', 'source-hide', 'source-show', 'timeline-hide'].map(
+          (name, step) => ({
+            name,
+            accessibilityAction: 'AXPress',
+            routeValueBefore: step % 2 ? 'selected' : 'not selected',
+            routeValueAfter: step % 2 ? 'not selected' : 'selected',
+            pairedRouteValueBefore: 'selected',
+            pairedRouteValueAfter: 'selected'
+          })
+        ),
+        sourceVisible: true,
+        timelineVisible: false,
+        hudAssetId: assetB.sha256,
+        resource: {},
+        resourceSamples: samples.slice(141 + index * 4, 145 + index * 4),
+        visibilitySnapshots: [
+          { source: true, timeline: true },
+          { source: false, timeline: true },
+          { source: true, timeline: true },
+          { source: true, timeline: false }
+        ]
+      }))
+    },
+    closeReopenCycles: {
+      receipts: Array.from({ length: 10 }, (_, index) => ({
+        index,
+        helperPath: runner.EXPECTED_CLOSE_HELPER,
+        closed: true,
+        windowAbsence: { closed: true, exactPid: 12 },
+        cooldownSample: samples[181 + index * 2],
+        reopenSample: samples[182 + index * 2],
+        windowIdBefore: 7 + index,
+        windowIdAfter: 8 + index,
+        journalRevisionBefore: 20 + index,
+        journalRevisionAfter: 21 + index,
+        assetId: assetB.sha256,
+        paused: true,
+        readiness: 'exact-asset-paused',
+        rawCloseReceipt: exactCloseFixture(7 + index)
+      }))
+    },
+    resources,
+    finalCloseCooldown: cooldownFixture(resources)
+  }
+  return { journey, assets, companion, pixelFiles }
+}
+
 async function finalEvidenceFixture(launchMode = 'direct') {
   const root = await tempRoot()
   const instanceId = 's10Fixture01'
@@ -178,6 +351,7 @@ async function finalEvidenceFixture(launchMode = 'direct') {
   const zeroCopyBefore: Record<string, { sha256: string; headBlob: string }> = {}
   for (const relativePath of [
     runnerRelativePath,
+    'scripts/studio-resource-evidence.cjs',
     'swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioVideoTextureBridge.swift',
     'swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioVideoFrameSource.swift',
     'src/renderer/src/App.tsx'
@@ -290,7 +464,10 @@ async function finalEvidenceFixture(launchMode = 'direct') {
     runnerCustodyBefore: {
       gitHead: git.head,
       sha256: sha256(source),
-      headBlob: 'b'.repeat(40)
+      headBlob: 'b'.repeat(40),
+      dependencies: {
+        'scripts/studio-resource-evidence.cjs': { sha256: sha256(source), headBlob: 'b'.repeat(40) }
+      }
     },
     zeroCopyBefore
   }
@@ -315,7 +492,341 @@ async function finalEvidenceFixture(launchMode = 'direct') {
   }
 }
 
+async function greenFinalEvidenceFixture() {
+  const fixture = await finalEvidenceFixture()
+  const complete = completeJourneyFixture(fixture.plan.artifactRoot)
+  Object.assign(fixture.result.evidence, { journey: complete.journey })
+  Object.assign(fixture.baseEvidence, { journey: complete.journey, companion: complete.companion })
+  Object.assign(fixture.assets.primary, complete.assets.primary)
+  Object.assign(fixture.assets.secondary, complete.assets.secondary)
+  for (const [filePath, bytes] of complete.pixelFiles) await fsPromises.writeFile(filePath, bytes)
+  await fixture.writeReceipts()
+  return { fixture, ...complete }
+}
+
+describe('S10 green final-seal semantic joins', () => {
+  type Journey = ReturnType<typeof completeJourneyFixture>['journey']
+  type LoopSample = Journey['loop']['samples'][number]
+  const bothLoops = (mutate: (sample: LoopSample) => void) => (journey: Journey) => {
+    mutate(journey.loop.samples[0])
+    mutate(journey.loop.avEndurance.samples[0])
+  }
+  const cases: Array<{ name: string; mutate: (journey: Journey) => void; error: RegExp }> = [
+    {
+      name: 'missing screenshot hash',
+      mutate: bothLoops((sample) => {
+        Reflect.deleteProperty(sample.raw.capture, 'screenshotSha256')
+      }),
+      error: /capture\/reference custody/
+    },
+    {
+      name: 'missing reference hash',
+      mutate: bothLoops((sample) => {
+        Reflect.deleteProperty(sample.referencePixel, 'referenceSha256')
+      }),
+      error: /capture\/reference custody/
+    },
+    {
+      name: 'missing exact source PTS',
+      mutate: bothLoops((sample) => {
+        Reflect.deleteProperty(sample.referencePixel, 'exactSourcePtsSeconds')
+      }),
+      error: /exact primary source PTS/
+    },
+    {
+      name: 'changed screenshot bytes',
+      mutate: bothLoops((sample) => {
+        sample.raw.capture.screenshotSha256 = '0'.repeat(64)
+      }),
+      error: /capture bytes differ/
+    },
+    {
+      name: 'changed reference bytes',
+      mutate: bothLoops((sample) => {
+        sample.referencePixel.referenceSha256 = '0'.repeat(64)
+      }),
+      error: /reference bytes differ/
+    },
+    {
+      name: 'wrong primary loop asset',
+      mutate: bothLoops((sample) => {
+        sample.assetId = assetB.sha256
+      }),
+      error: /primary-asset identity/
+    },
+    {
+      name: 'wrong exact source PTS',
+      mutate: bothLoops((sample) => {
+        sample.referencePixel.exactSourcePtsSeconds += 1
+      }),
+      error: /exact primary source PTS/
+    },
+    {
+      name: 'wrong reference source command',
+      mutate: bothLoops((sample) => {
+        sample.referencePixel.referenceCommand[4] = assetB.assetPath
+      }),
+      error: /exact primary source PTS/
+    },
+    {
+      name: 'divergent pixel arrays',
+      mutate: (journey) => {
+        journey.loop.avEndurance.samples[0].referencePixel.referenceSha256 = '0'.repeat(64)
+      },
+      error: /canonical A\/V\/reference/
+    },
+    {
+      name: 'divergent raw A/V arrays',
+      mutate: (journey) => {
+        journey.loop.avEndurance.samples[0].raw.peak = 'different'
+      },
+      error: /canonical A\/V\/reference/
+    },
+    {
+      name: 'divergent capture clock arrays',
+      mutate: (journey) => {
+        journey.loop.avEndurance.samples[0].captureMonotonicMs += 1
+      },
+      error: /canonical A\/V\/reference/
+    },
+    {
+      name: 'divergent native arrays',
+      mutate: (journey) => {
+        journey.loop.avEndurance.samples[0].resource.native.nonce = '0'.repeat(48)
+      },
+      error: /canonical A\/V\/reference/
+    },
+    {
+      name: 'different setup marks',
+      mutate: (journey) => {
+        journey.loop.proof.loopEndTicks += 1000
+        journey.loop.proof.endPositioning.observedPlayheadTicks += 1000
+      },
+      error: /setup marks\/timebase/
+    },
+    {
+      name: 'different setup timebase',
+      mutate: (journey) => {
+        journey.loop.proof.loopTimebaseTicks += 1
+      },
+      error: /setup marks\/timebase/
+    },
+    {
+      name: 'different native A/V timebase',
+      mutate: bothLoops((sample) => {
+        sample.raw.current = sample.raw.current.replace('ts=1000', 'ts=2000')
+      }),
+      error: /clock\/timebase/
+    },
+    {
+      name: 'foreign route HUD asset',
+      mutate: (journey) => {
+        journey.routeCycles.receipts[0].hudAssetId = 'c'.repeat(43)
+      },
+      error: /expected secondary asset/
+    },
+    {
+      name: 'route sample from another cycle',
+      mutate: (journey) => {
+        journey.routeCycles.receipts[0].resourceSamples[0] =
+          journey.routeCycles.receipts[1].resourceSamples[0]
+      },
+      error: /canonical native observation/
+    },
+    {
+      name: 'arbitrary unequal route values',
+      mutate: (journey) => {
+        journey.routeCycles.receipts[0].transitions[0].routeValueBefore = 'before'
+        journey.routeCycles.receipts[0].transitions[0].routeValueAfter = 'after'
+      },
+      error: /exact selected-state transition/
+    },
+    ...[0, 1, 2, 3].map((step) => ({
+      name: `native source attachment contradicting route step ${step}`,
+      mutate: (journey: Journey) => {
+        const sample = journey.routeCycles.receipts[0].resourceSamples[step]
+        expect(journey.resources.samples[141 + step]).toBe(sample)
+        sample.native.workspace.sourcePresentationAttached = step === 1
+      },
+      error: /native presentation contradicts source visibility/
+    })),
+    {
+      name: 'native review attachment retained after the Timeline route hides',
+      mutate: (journey) => {
+        const sample = journey.routeCycles.receipts[0].resourceSamples[3]
+        expect(journey.resources.samples[144]).toBe(sample)
+        sample.native.workspace.reviewPresentationAttached = true
+      },
+      error: /native Review stays attached while Timeline is hidden/
+    },
+    {
+      name: 'warm-route review attachment retained after the Timeline route hides',
+      mutate: (journey) => {
+        const { plan } = journey.resources.owned as {
+          plan: { samples: Array<ReturnType<typeof ownedSample>> }
+        }
+        expect(plan.samples[4]).toMatchObject({ phase: 'warm-route', index: 3 })
+        plan.samples[4].native.workspace.reviewPresentationAttached = true
+      },
+      error: /fixed route schedule/
+    },
+    {
+      name: 'seek sample from another index',
+      mutate: (journey) => {
+        journey.seeks.receipts[0].resourceSample = journey.seeks.receipts[1].resourceSample
+      },
+      error: /canonical native observation/
+    },
+    {
+      name: 'seek action contradicting request',
+      mutate: (journey) => {
+        journey.seeks.receipts[0].rawAction.observedPlayheadTicks += 1
+      },
+      error: /requested\/observed action/
+    },
+    {
+      name: 'open revisions disconnected from native',
+      mutate: (journey) => {
+        journey.alternatingOpens.receipts.forEach((receipt) => {
+          receipt.journalRevision += 100
+        })
+      },
+      error: /native\/journal revision/
+    },
+    {
+      name: 'minimal closed flag',
+      mutate: (journey) => {
+        Reflect.set(journey.closeReopenCycles.receipts[0], 'cooldownSample', { closed: true })
+      },
+      error: /canonical native observation/
+    },
+    {
+      name: 'closed sample from another cycle',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].cooldownSample =
+          journey.closeReopenCycles.receipts[1].cooldownSample
+      },
+      error: /canonical native observation/
+    },
+    ...(['sourcePresentationAttached', 'reviewPresentationAttached'] as const).map((field) => ({
+      name: `closed native sample retaining ${field}`,
+      mutate: (journey: Journey) => {
+        const sample = journey.closeReopenCycles.receipts[0].cooldownSample
+        expect(journey.resources.samples[181]).toBe(sample)
+        sample.native.workspace[field] = true
+      },
+      error: /closed native snapshot still has a visible\/attached presentation/
+    })),
+    {
+      name: 'missing raw close receipt',
+      mutate: (journey) => {
+        Reflect.deleteProperty(journey.closeReopenCycles.receipts[0], 'rawCloseReceipt')
+      },
+      error: /close receipt is not exact/
+    },
+    {
+      name: 'foreign close process',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].rawCloseReceipt.pid = 99
+      },
+      error: /close receipt is not exact/
+    },
+    {
+      name: 'foreign close window',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].rawCloseReceipt.windowId = 99
+      },
+      error: /close receipt is not exact/
+    },
+    {
+      name: 'reopen sample from another cycle',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].reopenSample =
+          journey.closeReopenCycles.receipts[1].reopenSample
+      },
+      error: /canonical native observation/
+    },
+    {
+      name: 'contradictory reopened window',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].windowIdAfter = 99
+      },
+      error: /window\/process\/revision history/
+    },
+    {
+      name: 'contradictory closed revision',
+      mutate: (journey) => {
+        journey.closeReopenCycles.receipts[0].journalRevisionBefore = 0
+      },
+      error: /window\/process\/revision history/
+    },
+    {
+      name: 'missing final close receipt',
+      mutate: (journey) => {
+        Reflect.deleteProperty(journey.finalCloseCooldown, 'rawCloseReceipt')
+      },
+      error: /close receipt is not exact/
+    }
+  ]
+
+  it('seals the complete green journey with canonical native receipts and rehashed captures', async () => {
+    const { fixture } = await greenFinalEvidenceFixture()
+    const result = await runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+    expect(result).toMatchObject({ evidence: { green: true } })
+  })
+
+  it('accepts an optional review controller attached only while its route is visible', async () => {
+    const { fixture, journey } = await greenFinalEvidenceFixture()
+    for (const receipt of journey.routeCycles.receipts) {
+      receipt.resourceSamples.forEach((sample, step) => {
+        sample.native.workspace.reviewPresentationAttached = step < 3
+      })
+    }
+    await fixture.writeReceipts()
+    const result = await runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+    expect(result).toMatchObject({ evidence: { green: true } })
+  })
+
+  it.each(cases)(
+    'refuses $name even when disk and promoted green evidence agree',
+    async ({ mutate, error }) => {
+      const { fixture, journey } = await greenFinalEvidenceFixture()
+      mutate(journey)
+      // Both copies deliberately contain the same bad journey. The semantic seal,
+      // not the earlier disk/promoted equality check, must refuse it.
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(error)
+      await expect(
+        fsPromises.access(path.join(fixture.plan.artifactRoot, 's10-final-evidence.json'))
+      ).rejects.toThrow()
+    }
+  )
+})
+
 describe('S10 final custody joins', () => {
+  it('refuses a modified resource helper even when the runner itself is unchanged', async () => {
+    const fixture = await finalEvidenceFixture()
+    await fsPromises.writeFile(
+      path.join(fixture.root, 'scripts/studio-resource-evidence.cjs'),
+      'changed helper\n'
+    )
+    await expect(
+      runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+    ).rejects.toThrow(/resource helper.*HEAD/)
+  })
+
+  it('refuses a bare green flag without the complete native journey evidence', async () => {
+    const fixture = await finalEvidenceFixture()
+    Object.assign(fixture.result.evidence.journey, { green: true })
+    Object.assign(fixture.baseEvidence.journey, { green: true })
+    await fixture.writeReceipts()
+    await expect(
+      runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+    ).rejects.toThrow()
+  })
+
   it.each(['both', 'disk', 'terminal'])(
     'rejects stripped LaunchServices adoption proof from %s receipts',
     async (side) => {
@@ -868,7 +1379,7 @@ describe('S10 loop authenticity and exact phase controls', () => {
     expect(proof).toMatchObject({ loopStartTicks: 10, loopEndTicks: 610 })
   })
 
-  it('rejects missing PTS wrap and accepts a real wrap receipt', async () => {
+  it('refuses incomplete native process custody before starting a journey', async () => {
     const sample = {
       loopActive: true,
       assetId: assetA.sha256,
@@ -916,7 +1427,7 @@ describe('S10 loop authenticity and exact phase controls', () => {
           stopLoopAndReadFinal: async () => ({})
         }
       )
-    ).rejects.toThrow(/PTS wrap|resource sample/)
+    ).rejects.toThrow(/resource sample requires the actual harness process and renderer/)
   })
 
   it('requires exactly 100 ordered background seeks with first/selected/last identity', () => {
@@ -1084,75 +1595,98 @@ describe('S10 loop authenticity and exact phase controls', () => {
     ).toThrow(/no-op/)
   })
 
-  it('derives route-cycle evidence from 40 real action receipts and snapshots', async () => {
-    let call = 0
+  function routeCycleAdapters(
+    observeWorkloadResource: (phase: string, index: number) => Promise<unknown>
+  ) {
     const snapshots = [
       { source: true, timeline: true },
       { source: false, timeline: true },
       { source: true, timeline: true },
       { source: true, timeline: false }
     ]
+    const driver = { calls: 0 }
+    const adapters = {
+      observeWorkloadResource,
+      hudContainsAsset: () => ({ matched: true, assetId: assetA.sha256, distance: 0 }),
+      ocrScreenshot: () => ({
+        texts: ['00:00:01.000', 'PAUSE', 'drop 0 held 0 shown 1 cache 1 tex 1', 'play 1 rss 1 MB'],
+        stdoutSha256: 'a'.repeat(64)
+      }),
+      resourceSample: () => ({
+        physicalFootprintBytes: 1,
+        mallocAllocatedBytes: 1,
+        residentBytes: 1
+      }),
+      runStudioUiDriver: async (
+        _plan: unknown,
+        _target: unknown,
+        actions: Array<Record<string, unknown>>
+      ) => {
+        const phase = driver.calls++ % 4
+        const press = actions[0]
+        const selectedAfter = press.selectedAfter === true
+        return {
+          actions: actions.map((action) => {
+            if (action.type === 'press-workspace-route')
+              return {
+                ...action,
+                accessibilityAction: 'AXPress',
+                routeValueBefore: selectedAfter ? 'not selected' : 'selected',
+                routeValueAfter: selectedAfter ? 'selected' : 'not selected',
+                pairedRouteValueBefore: 'selected',
+                pairedRouteValueAfter: 'selected'
+              }
+            if (action.type === 'read-workspace')
+              return {
+                ...action,
+                workspace: {
+                  sourceHost: { visible: snapshots[phase].source },
+                  timelineHost: { visible: snapshots[phase].timeline }
+                }
+              }
+            if (action.type === 'read-av-sync')
+              return {
+                ...action,
+                resourceDetailValue: 'res1 dec=1 cap=4 surf=1 ids=00000001'
+              }
+            if (action.type === 'screenshot') return { ...action, screenshotPath: '/tmp/x.png' }
+            return action
+          })
+        }
+      }
+    }
+    return { driver, adapters }
+  }
+
+  it('derives route-cycle evidence from 40 real action receipts and snapshots', async () => {
+    const { driver, adapters } = routeCycleAdapters(async (_phase, index) =>
+      ownedSample('route', index, index, assetA.sha256)
+    )
     const receipts = await runner.defaultPerformRouteCycles(
       { artifactRoot: '/tmp/s10' },
       { companion: { pid: 12 }, asset: assetA },
       10,
-      {
-        hudContainsAsset: () => ({ matched: true, assetId: assetA.sha256, distance: 0 }),
-        ocrScreenshot: () => ({
-          texts: [
-            '00:00:01.000',
-            'PAUSE',
-            'drop 0 held 0 shown 1 cache 1 tex 1',
-            'play 1 rss 1 MB'
-          ],
-          stdoutSha256: 'a'.repeat(64)
-        }),
-        resourceSample: () => ({
-          physicalFootprintBytes: 1,
-          mallocAllocatedBytes: 1,
-          residentBytes: 1
-        }),
-        runStudioUiDriver: async (
-          _plan: unknown,
-          _target: unknown,
-          actions: Array<Record<string, unknown>>
-        ) => {
-          const phase = call++ % 4
-          const press = actions[0]
-          const selectedAfter = press.selectedAfter === true
-          return {
-            actions: actions.map((action) => {
-              if (action.type === 'press-workspace-route')
-                return {
-                  ...action,
-                  accessibilityAction: 'AXPress',
-                  routeValueBefore: selectedAfter ? 'not selected' : 'selected',
-                  routeValueAfter: selectedAfter ? 'selected' : 'not selected',
-                  pairedRouteValueBefore: 'selected',
-                  pairedRouteValueAfter: 'selected'
-                }
-              if (action.type === 'read-workspace')
-                return {
-                  ...action,
-                  workspace: {
-                    sourceHost: { visible: snapshots[phase].source },
-                    timelineHost: { visible: snapshots[phase].timeline }
-                  }
-                }
-              if (action.type === 'read-av-sync')
-                return {
-                  ...action,
-                  resourceDetailValue: 'res1 dec=1 cap=4 surf=1 ids=00000001'
-                }
-              if (action.type === 'screenshot') return { ...action, screenshotPath: '/tmp/x.png' }
-              return action
-            })
-          }
-        }
-      }
+      adapters
     )
-    expect(call).toBe(40)
+    expect(driver.calls).toBe(40)
     expect(runner.validateRouteCycles(receipts)).toEqual({ count: 10 })
+  })
+
+  it('refuses a live route step whose native Review stays attached after Timeline hides', async () => {
+    const { driver, adapters } = routeCycleAdapters(async (_phase, index) => {
+      const sample = ownedSample('route', index, index, assetA.sha256)
+      sample.native.workspace.reviewPresentationAttached = true
+      return sample
+    })
+    await expect(
+      runner.defaultPerformRouteCycles(
+        { artifactRoot: '/tmp/s10' },
+        { companion: { pid: 12 }, asset: assetA },
+        1,
+        adapters
+      )
+    ).rejects.toThrow(/native Review stays attached while Timeline is hidden/)
+    expect(driver.calls).toBe(4)
   })
 
   it('requires 10 close/reopen helper receipts with new window IDs and paused readiness', () => {
@@ -1272,6 +1806,108 @@ describe('S10 loop authenticity and exact phase controls', () => {
 })
 
 describe('S10 resource verdict and evidence custody', () => {
+  const workloadIdentity = resourceIdentity
+
+  function workloadResources() {
+    return workloadFixture().samples
+  }
+
+  it('rechecks all phase receipts and the same native history before promoting a complete journey', () => {
+    const { journey, assets, companion } = completeJourneyFixture()
+    expect(runner.validateCompleteS10Journey(journey, assets, companion)).toBe(true)
+    const substituted = structuredClone(journey)
+    substituted.loop.samples[0].resource.native.processInstanceId =
+      '12345678-1234-1234-1234-123456789012'
+    expect(() => runner.validateCompleteS10Journey(substituted, assets, companion)).toThrow()
+    const missingPhase = structuredClone(journey)
+    missingPhase.seeks.receipts.pop()
+    expect(() => runner.validateCompleteS10Journey(missingPhase, assets, companion)).toThrow(
+      /100 receipts/
+    )
+    expect(() =>
+      runner.validateCompleteS10Journey(journey, assets, { ...companion, pid: 99 })
+    ).toThrow(/custody/)
+  })
+
+  it('preserves every workload measurement and uses the actual post-stress final and peak', () => {
+    const samples = workloadResources()
+    const peak = samples.find((sample) => sample.phase === 'switch' && sample.index === 7)!
+    peak.rssBytes += 4_000_000
+    const verdict = runner.validateWorkloadResourceVerdict(
+      samples,
+      workloadIdentity,
+      warmPlanFixture()
+    )
+    expect(verdict).toMatchObject({ status: 'green', sampleCount: 202 })
+    expect(verdict.samples).toEqual(samples)
+    expect(verdict.baseline).toEqual(samples[0])
+    expect(verdict.peak).toEqual(peak)
+    expect(verdict.final).toEqual(samples.at(-1))
+  })
+
+  it.each(['seek', 'switch', 'route', 'reopen'])(
+    'rejects a memory peak confined to the %s phase even when final cooldown would be clean',
+    (phase) => {
+      const samples = workloadResources()
+      const leaked = samples.find((sample) => sample.phase === phase && sample.index === 5)!
+      leaked.rssBytes += 25 * 1_048_576
+      expect(() =>
+        runner.validateWorkloadResourceVerdict(samples, workloadIdentity, warmPlanFixture())
+      ).toThrow(/workload.*budget/)
+    }
+  )
+
+  it.each(['switch', 'route', 'reopen'])(
+    'rejects post-warmup monotonic growth limited to the %s phase',
+    (phase) => {
+      const samples = workloadResources()
+      for (const sample of samples.filter((value) => value.phase === phase)) {
+        sample.rssBytes += (sample.index + 1) * 1024
+      }
+      expect(() =>
+        runner.validateWorkloadResourceVerdict(samples, workloadIdentity, warmPlanFixture())
+      ).toThrow(/workload.*monotonic/)
+    }
+  )
+
+  it('rejects a transient decoder leak with flat RSS and a later clean final', () => {
+    const samples = workloadResources()
+    samples.find(
+      (sample) => sample.phase === 'switch' && sample.index === 5
+    )!.residentDecoderCount = 3
+    expect(() =>
+      runner.validateWorkloadResourceVerdict(samples, workloadIdentity, warmPlanFixture())
+    ).toThrow(/workload.*decoder/)
+  })
+
+  it.each(['missing', 'phase', 'index', 'pid', 'asset', 'stale-clock', 'capacity'])(
+    'refuses incomplete or contradictory workload custody: %s',
+    (mutation) => {
+      const samples = workloadResources()
+      const sample = samples[125]
+      if (mutation === 'missing') samples.splice(125, 1)
+      if (mutation === 'phase') sample.phase = 'loop'
+      if (mutation === 'index') sample.index += 1
+      if (mutation === 'pid') sample.processPid += 1
+      if (mutation === 'asset') sample.assetId = 'foreign'
+      if (mutation === 'stale-clock') sample.monotonicMs = samples[124].monotonicMs
+      if (mutation === 'capacity') sample.ioSurfaceCapacity += 1
+      expect(() =>
+        runner.validateWorkloadResourceVerdict(samples, workloadIdentity, warmPlanFixture())
+      ).toThrow(/workload/)
+    }
+  )
+
+  it.each(['rssBytes', 'physicalFootprintBytes', 'mallocLiveBytes'] as const)(
+    'refuses a workload %s above the fixed warm allocation ceiling',
+    (field) => {
+      const { samples, plan } = workloadFixture()
+      samples[125][field] = plan.memoryCeilings[field] + 1
+      const verdict = () => runner.validateWorkloadResourceVerdict(samples, workloadIdentity, plan)
+      expect(verdict).toThrow(`exceeds the ${field} allocation-class budget`)
+    }
+  )
+
   it('accepts bounded resource readings only when the shared growth classifier is green', () => {
     expect(runner.validateS10ResourceVerdict(goodResources())).toMatchObject({ status: 'green' })
     const leaking = goodResources().map((sample, index) => ({
@@ -1294,118 +1930,47 @@ describe('S10 resource verdict and evidence custody', () => {
     ).toThrow(/bounded counters/)
   })
 
-  it('requires baseline/peak/final/cooldown counters and an evidenced memory return budget', () => {
-    const snapshots = ['baseline', 'peak', 'final', 'cooldown'].map((label) => ({
-      label,
-      rssBytes: 1,
-      physicalFootprintBytes: 2,
-      mallocLiveBytes: 3,
-      players: 1,
-      frames: 1,
-      textures: 1,
-      cacheHits: 1,
-      droppedFrames: 0,
-      cpuPercent: 0,
-      windowReappeared: false,
-      ioSurfaceIds: [1]
-    }))
-    expect(
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: true,
-        resourceSnapshots: snapshots,
-        memoryReturnedWithinBudget: true,
-        memoryReturnBudgetBytes: 100
-      })
-    ).toMatchObject({ closed: true })
+  it('requires native cooldown proof joined to the actual workload and immutable budget', () => {
+    const { samples, plan } = workloadFixture()
+    const live = runner.validateWorkloadResourceVerdict(samples, workloadIdentity, plan)
+    const receipt = cooldownFixture(live)
+    expect(runner.validateFinalCooldown(receipt, live)).toMatchObject({ closed: true })
+    expect(() => runner.validateFinalCooldown({ ...receipt, decodeStopped: false }, live)).toThrow(
+      /decode-stopped/
+    )
     expect(() =>
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: false,
-        resourceSnapshots: snapshots,
-        memoryReturnedWithinBudget: true,
-        memoryReturnBudgetBytes: 100
-      })
-    ).toThrow(/decode-stopped/)
-    expect(() =>
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: true,
-        resourceSnapshots: snapshots,
-        memoryReturnedWithinBudget: false,
-        memoryReturnBudgetBytes: 100
-      })
+      runner.validateFinalCooldown({ ...receipt, memoryReturnedWithinBudget: false }, live)
     ).toThrow(/memory return budget/)
-    expect(() =>
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: true,
-        resourceSnapshots: snapshots.map((sample, index) =>
-          index === 3 ? { ...sample, cpuPercent: 2 } : sample
-        ),
-        memoryReturnedWithinBudget: true,
-        memoryReturnBudgetBytes: 100
-      })
-    ).toThrow(/CPU remained active/)
-    expect(() =>
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: true,
-        resourceSnapshots: snapshots.map((sample, index) =>
-          index === 3 ? { ...sample, windowReappeared: true } : sample
-        ),
-        memoryReturnedWithinBudget: true,
-        memoryReturnBudgetBytes: 100
-      })
-    ).toThrow(/window reappeared/)
-    expect(() =>
-      runner.validateFinalCooldown({
-        closed: true,
-        processPid: 12,
-        processPgid: 12,
-        executablePath: '/tmp/TaskWraithStudioCompanion',
-        targetAssetId: assetA.sha256,
-        cooldown: { closed: true },
-        terminalCounters: { status: 'blocked', reason: 'no HUD after close' },
-        decodeStopped: true,
-        resourceSnapshots: snapshots.map((sample, index) =>
-          index === 3 ? { ...sample, rssBytes: 1_000 } : sample
-        ),
-        memoryReturnedWithinBudget: true,
-        memoryReturnBudgetBytes: 100
-      })
-    ).toThrow(/memory remained over budget/)
+    const windowReturned = structuredClone(receipt)
+    windowReturned.resourceSnapshots[3].windowReappeared = true
+    expect(() => runner.validateFinalCooldown(windowReturned, live)).toThrow(/window reappeared/)
+    const oldHud = structuredClone(receipt)
+    oldHud.terminalCounters.status = 'blocked'
+    expect(() => runner.validateFinalCooldown(oldHud, live)).toThrow(/measured native/)
+    const changedTerminal = structuredClone(receipt)
+    changedTerminal.resourceSnapshots[3].rssBytes += 1
+    expect(() => runner.validateFinalCooldown(changedTerminal, live)).toThrow(/terminal snapshot/)
+    const unrelatedBaseline = structuredClone(receipt)
+    unrelatedBaseline.resourceSnapshots[0].rssBytes += 1
+    expect(() => runner.validateFinalCooldown(unrelatedBaseline, live)).toThrow(
+      /actual whole-workload/
+    )
   })
+
+  it.each(['rssBytes', 'physicalFootprintBytes', 'mallocLiveBytes'] as const)(
+    'refuses a cooldown %s above the fixed warm return ceiling',
+    (field) => {
+      const { samples, plan } = workloadFixture()
+      const live = runner.validateWorkloadResourceVerdict(samples, workloadIdentity, plan)
+      const receipt = structuredClone(cooldownFixture(live))
+      const excess = plan.cooldownMemoryCeilings[field] + 1
+      receipt.terminalCounters.second[field] = excess
+      receipt.resourceSnapshots[3][field] = excess
+      expect(() => runner.validateFinalCooldown(receipt, live)).toThrow(
+        `cooldown ${field} exceeds warm budget`
+      )
+    }
+  )
 
   it('captures live resource snapshots before final close and never calls the UI driver after close', async () => {
     const root = await tempRoot()
@@ -1418,21 +1983,11 @@ describe('S10 resource verdict and evidence custody', () => {
         visibleWindowCount: 1,
         windows: [{ title: 'TaskWraith Studio', windowId: 7 }]
       },
-      asset: assetA
+      asset: assetB
     }
-    const live = ['baseline', 'peak', 'final'].map((label) => ({
-      label,
-      rssBytes: 100,
-      physicalFootprintBytes: 100,
-      mallocLiveBytes: 100,
-      players: 1,
-      frames: 10,
-      textures: 2,
-      cacheHits: 3,
-      droppedFrames: 0,
-      ioSurfaceIds: [1],
-      windowReappeared: false
-    }))
+    const { samples, plan: resourcePlan } = workloadFixture()
+    const live = runner.validateWorkloadResourceVerdict(samples, workloadIdentity, resourcePlan)
+    const closedEvidence = cooldownFixture(live)
     const result = await runner.defaultStopLoopAndReadFinal(
       { artifactRoot: root, repoRoot: '/Users/chrisizatt/Documents/AGBench-studio-continuation' },
       target,
@@ -1443,7 +1998,7 @@ describe('S10 resource verdict and evidence custody', () => {
           expect(actions).toEqual([{ type: 'screenshot', name: 's10-final-paused-before-close' }])
           return { actions: [{ type: 'screenshot', screenshotPath: '/tmp/final-paused.png' }] }
         },
-        hudContainsAsset: () => ({ matched: true, assetId: assetA.sha256, distance: 0 }),
+        hudContainsAsset: () => ({ matched: true, assetId: assetB.sha256, distance: 0 }),
         ocrScreenshot: () => ({
           texts: [
             '00:00:01.000',
@@ -1482,23 +2037,25 @@ describe('S10 resource verdict and evidence custody', () => {
           expect(milliseconds).toBe(2_000)
           cooldownWaits += 1
         },
-        resourceSample: async () => ({
-          ps: { rssKilobytes: 1 },
-          physicalFootprintBytes: 100,
-          mallocAllocatedBytes: 100,
-          top: { cpuPercent: 0 },
-          mappedRegionIdentities: ['1']
-        })
+        observeWorkloadResource: async (phase: string, index: number) => {
+          expect(phase).toBe('cooldown')
+          expect(closed).toBe(true)
+          return structuredClone(
+            index === 0
+              ? closedEvidence.terminalCounters.first
+              : closedEvidence.terminalCounters.second
+          )
+        }
       },
-      { liveResourceEvidence: { baseline: live[0], peak: live[1], final: live[2] } }
+      { liveResourceEvidence: live }
     )
     expect(driverCalls).toBe(1)
-    expect(cooldownWaits).toBe(1)
+    expect(cooldownWaits).toBe(2)
     expect(result.resourceSnapshots.map((sample: Record<string, unknown>) => sample.label)).toEqual(
       ['baseline', 'peak', 'final', 'cooldown']
     )
     expect(result.decodeStopped).toBe(true)
-    expect(result.terminalCounters).toMatchObject({ status: 'blocked' })
+    expect(result.terminalCounters).toMatchObject({ status: 'measured' })
   })
 
   it('distinguishes exact zero-window refusal from an indeterminate probe error', async () => {

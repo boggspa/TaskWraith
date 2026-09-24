@@ -25,6 +25,7 @@ const avAcceptance = require('./studio-av-endurance-acceptance-runner.cjs')
 const avCore = require('./studio-av-endurance-runner.cjs')
 const avLive = require('./studio-av-endurance-live-runner.cjs')
 const pixelVerifier = require('./studio-pixel-evidence-verifier.cjs')
+const ownedResourceEvidence = require('./studio-resource-evidence.cjs')
 
 const S10_SCHEMA_VERSION = 1
 const PRIMARY_MIN_DURATION_SECONDS = 630
@@ -38,9 +39,9 @@ const LOOP_SETUP_KEYS = ['i', 'o', 'l', 'p']
 const MAX_VIDEO_BYTES = mediaLimits.transcriptMediaMaxVideoBytes
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024
 const S10_RUNNER_RELATIVE_PATH = 'scripts/studio-s10-live-runner.cjs'
+const S10_RESOURCE_HELPER_RELATIVE_PATH = 'scripts/studio-resource-evidence.cjs'
 const EXPECTED_CLOSE_HELPER = 'scripts/studio-endurance-window-control.swift'
 const COOLDOWN_MEMORY_RETURN_BUDGET_BYTES = 24 * 1_048_576
-const COOLDOWN_CPU_PERCENT_BUDGET = 1
 const COOLDOWN_SAMPLE_INTERVAL_MS = 2_000
 const ZERO_COPY_PATHS = [
   'swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioVideoTextureBridge.swift',
@@ -157,11 +158,23 @@ async function measureS10RunnerCustody(repoRoot, adapters = {}) {
   const headSource = (await runGit(['show', headSpec], MAX_EVIDENCE_BYTES)).stdout
   const sha256 = await sha256File(path.join(repoRoot, S10_RUNNER_RELATIVE_PATH))
   invariant(sha256 === sha256Text(headSource), 'S10 runner bytes differ from HEAD')
+  const dependencies = await measureHeadBoundSources(
+    repoRoot,
+    [S10_RESOURCE_HELPER_RELATIVE_PATH],
+    adapters
+  )
+  const dependencySource = (
+    await runGit(['show', `${gitHead}:${S10_RESOURCE_HELPER_RELATIVE_PATH}`], MAX_EVIDENCE_BYTES)
+  ).stdout
+  invariant(
+    dependencies[S10_RESOURCE_HELPER_RELATIVE_PATH].sha256 === sha256Text(dependencySource),
+    'S10 resource helper bytes differ from HEAD'
+  )
   invariant(
     gitHead === String((await runGit(['rev-parse', 'HEAD'])).stdout).trim(),
     'S10 runner git HEAD changed while measuring source custody'
   )
-  return { gitHead, headBlob, sha256 }
+  return { gitHead, headBlob, sha256, dependencies }
 }
 
 function originallyAbsolute(value, label) {
@@ -187,14 +200,6 @@ function companionExecutablePath(target) {
   const suffixIndex = command.indexOf(suffix)
   invariant(suffixIndex >= 0, 'S10 exact Companion executable path is unavailable')
   return command.slice(0, suffixIndex + suffix.length)
-}
-
-function parsePsIdentity(stdout, label) {
-  const match = String(stdout || '')
-    .trim()
-    .match(/^(\d+)\s+(\d+)\s+(.+)$/)
-  invariant(match, `${label} process identity receipt is malformed`)
-  return { pid: Number(match[1]), pgid: Number(match[2]), command: match[3] }
 }
 
 function parseS10Cli(argv = []) {
@@ -549,7 +554,8 @@ async function establishS10Loop(plan, target, adapters) {
       inputDelivery: 'foreground-global-explicit',
       allowForegroundInput: true,
       loopStartTicks: adapters.loopStartTicks,
-      loopEndTicks: adapters.loopEndTicks
+      loopEndTicks: adapters.loopEndTicks,
+      loopTimebaseTicks: adapters.loopTimebaseTicks
     },
     adapters
   )
@@ -802,7 +808,133 @@ function validateS10ResourceVerdict(resources, options = {}) {
   }
 }
 
-function validateFinalCooldown(cooldown) {
+function validateWorkloadResourceVerdict(resources, identity, resourcePlan) {
+  const fixedPlan = ownedResourceEvidence.validateWarmPlan(resourcePlan)
+  const schedule = [
+    ...Array.from({ length: SAMPLE_COUNT }, (_, index) => ({ phase: 'loop', index })),
+    ...Array.from({ length: SEEK_COUNT }, (_, index) => ({ phase: 'seek', index })),
+    ...Array.from({ length: ALTERNATING_OPEN_COUNT }, (_, index) => ({ phase: 'switch', index })),
+    ...Array.from({ length: ROUTE_CYCLE_COUNT * 4 }, (_, index) => ({ phase: 'route', index })),
+    ...Array.from({ length: CLOSE_REOPEN_COUNT }, (_, index) => [
+      { phase: 'closed', index },
+      { phase: 'reopen', index }
+    ]).flat(),
+    { phase: 'final', index: 0 }
+  ]
+  exactCount(resources, schedule.length, 'S10 workload resource observations')
+  invariant(
+    Number.isSafeInteger(identity?.processPid) &&
+      identity.processPid > 0 &&
+      Number.isSafeInteger(identity?.processPgid) &&
+      identity.processPgid > 0 &&
+      typeof identity?.executablePath === 'string' &&
+      identity.executablePath.endsWith('TaskWraithStudioCompanion') &&
+      typeof identity?.primaryAssetId === 'string' &&
+      identity.primaryAssetId.length > 0 &&
+      typeof identity?.secondaryAssetId === 'string' &&
+      identity.secondaryAssetId.length > 0 &&
+      identity.primaryAssetId !== identity.secondaryAssetId,
+    'S10 workload expected process/asset identity is incomplete'
+  )
+  const memoryFields = ['rssBytes', 'physicalFootprintBytes', 'mallocLiveBytes']
+  const baseline = resources[0]
+  const memoryBudgetBytes = COOLDOWN_MEMORY_RETURN_BUDGET_BYTES
+  const phases = new Map()
+  resources.forEach((sample, sequence) => {
+    const expected = schedule[sequence]
+    const expectedAssetId =
+      expected.phase === 'loop' ||
+      expected.phase === 'seek' ||
+      (expected.phase === 'switch' && expected.index % 2 === 0)
+        ? identity.primaryAssetId
+        : identity.secondaryAssetId
+    invariant(
+      isRecord(sample) &&
+        sample.phase === expected.phase &&
+        sample.index === expected.index &&
+        sample.sequence === sequence &&
+        sample.assetId === expectedAssetId &&
+        sample.processPid === identity.processPid &&
+        sample.processPgid === identity.processPgid &&
+        sample.executablePath === identity.executablePath &&
+        Number.isFinite(sample.monotonicMs) &&
+        sample.monotonicMs >= 0 &&
+        (sequence === 0 || sample.monotonicMs > resources[sequence - 1].monotonicMs),
+      `S10 workload sample ${sequence} has contradictory phase/process/asset/clock custody`
+    )
+    for (const field of memoryFields) {
+      invariant(
+        Number.isSafeInteger(sample[field]) && sample[field] >= 0,
+        `S10 workload sample ${sequence} lacks measured ${field}`
+      )
+      invariant(
+        sample[field] <= fixedPlan.memoryCeilings[field],
+        `S10 workload sample ${sequence} exceeds the ${field} allocation-class budget`
+      )
+    }
+    invariant(
+      Number.isSafeInteger(sample.ioSurfaceCapacity) &&
+        sample.ioSurfaceCapacity > 0 &&
+        sample.ioSurfaceCapacity === baseline.ioSurfaceCapacity &&
+        Array.isArray(sample.ioSurfaceIds) &&
+        sample.ioSurfaceIds.every((id) => Number.isSafeInteger(id) && id > 0 && id <= 0xffffffff) &&
+        new Set(sample.ioSurfaceIds).size === sample.ioSurfaceIds.length &&
+        sample.ioSurfaceIds.length <= sample.ioSurfaceCapacity,
+      `S10 workload sample ${sequence} lacks stable bounded IOSurface custody`
+    )
+    invariant(
+      Number.isSafeInteger(sample.residentDecoderCount) &&
+        sample.residentDecoderCount >= 0 &&
+        sample.residentDecoderCount <= fixedPlan.budget.decoderSessions,
+      `S10 workload sample ${sequence} exceeds the resident decoder bound`
+    )
+    if (!phases.has(sample.phase)) phases.set(sample.phase, [])
+    phases.get(sample.phase).push(sample)
+  })
+  const phaseSummaries = []
+  for (const [phase, samples] of phases) {
+    for (const field of memoryFields) {
+      invariant(
+        samples.length < 3 ||
+          !samples.slice(1).every((sample, index) => sample[field] > samples[index][field]),
+        `S10 workload ${phase} has sustained monotonic ${field} growth`
+      )
+    }
+    let accumulatingTransitions = 0
+    for (let index = 1; index < samples.length; index += 1) {
+      const previous = samples[index - 1].ioSurfaceIds
+      const current = new Set(samples[index].ioSurfaceIds)
+      accumulatingTransitions =
+        current.size > previous.length && previous.every((id) => current.has(id))
+          ? accumulatingTransitions + 1
+          : 0
+      invariant(accumulatingTransitions < 2, `S10 workload ${phase} accumulates live IOSurfaces`)
+    }
+    phaseSummaries.push({ phase, count: samples.length, first: samples[0], final: samples.at(-1) })
+  }
+  const peaks = Object.fromEntries(
+    memoryFields.map((field) => [
+      field,
+      resources.reduce((peak, sample) => (sample[field] > peak[field] ? sample : peak), baseline)
+    ])
+  )
+  const owned = ownedResourceEvidence.validateOwnedWorkload(resources, fixedPlan)
+  return {
+    status: 'green',
+    scope: 'whole-workload-process-memory-and-application-owned-resource-bounds',
+    owned,
+    memoryBudgetBytes,
+    sampleCount: resources.length,
+    samples: resources,
+    phaseSummaries,
+    baseline,
+    peak: peaks.rssBytes,
+    peaks,
+    final: resources.at(-1)
+  }
+}
+
+function validateFinalCooldown(cooldown, live) {
   invariant(isRecord(cooldown), 'S10 final cooldown receipt is missing')
   invariant(
     cooldown.closed === true &&
@@ -811,71 +943,68 @@ function validateFinalCooldown(cooldown) {
     'S10 final cooldown did not prove closed/decode-stopped state'
   )
   invariant(
-    cooldown.terminalCounters?.status === 'blocked' &&
-      typeof cooldown.terminalCounters.reason === 'string' &&
-      cooldown.terminalCounters.reason.length > 0,
-    'S10 cooldown must explicitly block terminal HUD counters after exact window close'
+    live?.status === 'green' && live.owned?.status === 'measured',
+    'S10 cooldown lacks the validated whole-workload resource evidence'
+  )
+  invariant(
+    cooldown.terminalCounters?.status === 'measured',
+    'S10 cooldown requires two measured native observations'
   )
   invariant(
     Number.isSafeInteger(cooldown.processPid) &&
       Number.isSafeInteger(cooldown.processPgid) &&
       typeof cooldown.executablePath === 'string' &&
       cooldown.executablePath.endsWith('TaskWraithStudioCompanion') &&
-      typeof cooldown.targetAssetId === 'string',
+      cooldown.targetAssetId === live.final.assetId,
     'S10 final cooldown process/asset join is missing'
   )
   exactCount(cooldown.resourceSnapshots, 4, 'S10 baseline/peak/final/cooldown resource snapshots')
-  const labels = ['baseline', 'peak', 'final', 'cooldown']
-  cooldown.resourceSnapshots.forEach((sample, index) => {
+  for (const [index, label] of ['baseline', 'peak', 'final'].entries()) {
     invariant(
-      sample.label === labels[index],
-      `S10 cooldown resource snapshot ${index} has wrong label`
+      JSON.stringify(cooldown.resourceSnapshots[index]) ===
+        JSON.stringify({ ...live[label], label }),
+      `S10 cooldown ${label} is not the actual whole-workload observation`
     )
-    const fields =
-      index < 3
-        ? [
-            'rssBytes',
-            'physicalFootprintBytes',
-            'mallocLiveBytes',
-            'players',
-            'frames',
-            'textures',
-            'cacheHits',
-            'droppedFrames'
-          ]
-        : ['rssBytes', 'physicalFootprintBytes', 'mallocLiveBytes']
-    for (const field of fields) {
-      invariant(Number.isFinite(sample[field]), `S10 cooldown snapshot ${index} lacks ${field}`)
-    }
-    invariant(
-      Array.isArray(sample.ioSurfaceIds),
-      `S10 cooldown snapshot ${index} lacks IOSurface identities`
-    )
-  })
+  }
   invariant(
     cooldown.memoryReturnedWithinBudget === true &&
-      Number.isSafeInteger(cooldown.memoryReturnBudgetBytes) &&
-      cooldown.memoryReturnBudgetBytes >= 0,
-    'S10 cooldown memory return budget is missing'
+      cooldown.memoryReturnBudgetBytes === COOLDOWN_MEMORY_RETURN_BUDGET_BYTES,
+    'S10 cooldown memory return budget is missing or changed'
   )
-  const terminal = cooldown.resourceSnapshots.at(-1)
+  const { first, second } = cooldown.terminalCounters
+  const terminal = cooldown.resourceSnapshots[3]
   invariant(
-    Number.isFinite(terminal.cpuPercent) && terminal.cpuPercent <= COOLDOWN_CPU_PERCENT_BUDGET,
-    'S10 cooldown CPU remained active'
+    first?.windowReappeared === false &&
+      second?.windowReappeared === false &&
+      terminal?.windowReappeared === false,
+    'S10 cooldown window reappeared'
   )
-  invariant(terminal.windowReappeared === false, 'S10 cooldown window reappeared')
-  const baseline = cooldown.resourceSnapshots[0]
   invariant(
-    terminal.rssBytes <= baseline.rssBytes + cooldown.memoryReturnBudgetBytes &&
-      terminal.physicalFootprintBytes <=
-        baseline.physicalFootprintBytes + cooldown.memoryReturnBudgetBytes &&
-      terminal.mallocLiveBytes <= baseline.mallocLiveBytes + cooldown.memoryReturnBudgetBytes,
-    'S10 cooldown memory remained over budget'
+    JSON.stringify(terminal) === JSON.stringify({ ...second, label: 'cooldown' }),
+    'S10 cooldown terminal snapshot does not match its measured counter receipt'
   )
-  const baselineSurfaces = new Set(baseline.ioSurfaceIds.map(String))
+  for (const sample of [first, second]) {
+    invariant(
+      sample.processPid === cooldown.processPid &&
+        sample.processPgid === cooldown.processPgid &&
+        sample.executablePath === cooldown.executablePath &&
+        sample.assetId === cooldown.targetAssetId &&
+        sample.closed === true &&
+        sample.windowAbsence?.closed === true &&
+        sample.windowAbsence.exactPid === cooldown.processPid,
+      'S10 cooldown native/memory/window receipt departed from process/asset custody'
+    )
+  }
+  ownedResourceEvidence.validateProgress(first.native, live.final.native)
+  const measured = ownedResourceEvidence.validateNativeCooldown(
+    first,
+    second,
+    live.baseline,
+    live.owned.plan
+  )
   invariant(
-    terminal.ioSurfaceIds.every((id) => baselineSurfaces.has(String(id))),
-    'S10 cooldown IOSurface set remained over baseline'
+    JSON.stringify(measured) === JSON.stringify(cooldown.terminalCounters),
+    'S10 cooldown measured verdict or fixed budget changed'
   )
   return cooldown
 }
@@ -1152,6 +1281,7 @@ async function defaultEstablishLoop(plan, target, context, adapters = {}) {
     endPositioning: endAction,
     loopStartTicks: startTicks,
     loopEndTicks: endTicks,
+    loopTimebaseTicks: context.loopTimebaseTicks,
     windowBounds: bounds
   }
 }
@@ -1259,7 +1389,7 @@ async function defaultCaptureLoopSample(plan, target, entry, state, adapters = {
       },
       pixelComparison
     },
-    resource: {
+    hudCounters: {
       index: entry.index,
       rssBytes: resource.residentBytes,
       physicalFootprintBytes: resource.physicalFootprintBytes,
@@ -1268,8 +1398,8 @@ async function defaultCaptureLoopSample(plan, target, entry, state, adapters = {
       ioSurfaceCapacity: parsedResource.ioSurfaceCapacity,
       residentDecoderCount: parsedResource.residentDecoderCount,
       players: rawSample.observed.players.count,
-      frames: rawSample.observed.diagnostics.shownFrames,
-      textures: rawSample.observed.diagnostics.textures,
+      presentedFrames: rawSample.observed.diagnostics.shownFrames,
+      cumulativeTextureBinds: rawSample.observed.diagnostics.textures,
       cacheHits: rawSample.observed.diagnostics.cacheHits,
       droppedFrames: rawSample.observed.diagnostics.droppedFrames
     },
@@ -1280,6 +1410,7 @@ async function defaultCaptureLoopSample(plan, target, entry, state, adapters = {
       capture: {
         screenshotPath: rawSample.capture.path,
         screenshotSha256: rawSample.capture.sha256,
+        screenshotByteLength: screenshotFile.byteLength,
         windowBounds: bounds,
         sourceHostFrame: rawSample.sourceHostFrame,
         rawOcrText,
@@ -1322,7 +1453,10 @@ async function defaultPerformSeeks(plan, target, count, context, adapters = {}) 
       assetId: target.asset.sha256,
       action: action?.type,
       backgroundInput: true,
-      playheadTicks: action?.observedPlayheadTicks
+      requestedPlayheadTicks: ticks[index],
+      playheadTicks: action?.observedPlayheadTicks,
+      rawAction: action,
+      resourceSample: await adapters.observeWorkloadResource?.('seek', index, target)
     })
   }
   return receipts
@@ -1388,6 +1522,8 @@ async function defaultPerformAlternatingOpens(plan, target, assets, adapters = {
         observed.assetMatch.distance === 0,
       `S10 alternating open ${index} HUD was not exact paused asset`
     )
+    target.asset = asset
+    const resourceSample = await adapters.observeWorkloadResource?.('switch', index, target)
     receipts.push({
       index,
       assetId: asset.sha256,
@@ -1395,11 +1531,36 @@ async function defaultPerformAlternatingOpens(plan, target, assets, adapters = {
       journalPath: asset.assetPath,
       hudAssetId: observed.assetMatch.assetId,
       foregroundInput: false,
-      inputDelivery: 'background-observation-only'
+      inputDelivery: 'background-observation-only',
+      resourceSample
     })
-    target.asset = asset
   }
   return receipts
+}
+
+function assertRouteNativePresentation(sample, visibility) {
+  invariant(
+    typeof visibility?.source === 'boolean' &&
+      typeof visibility.timeline === 'boolean' &&
+      sample?.native?.workspace?.windowVisible === true &&
+      sample.native.workspace.sourcePresentationAttached === visibility.source,
+    'S10 route native presentation contradicts source visibility'
+  )
+  // A visible Timeline does not require an attached Review presentation, but
+  // native detaches Review whenever the Timeline route is hidden.
+  invariant(
+    visibility.timeline || sample.native.workspace.reviewPresentationAttached === false,
+    'S10 route native Review stays attached while Timeline is hidden'
+  )
+}
+
+function assertClosedNativePresentation(sample) {
+  invariant(
+    sample?.native?.workspace?.windowVisible === false &&
+      sample.native.workspace.sourcePresentationAttached === false &&
+      sample.native.workspace.reviewPresentationAttached === false,
+    'S10 closed native snapshot still has a visible/attached presentation'
+  )
 }
 
 async function defaultPerformRouteCycles(plan, target, count, adapters = {}) {
@@ -1414,12 +1575,16 @@ async function defaultPerformRouteCycles(plan, target, count, adapters = {}) {
     ]
     const transitions = []
     const visibilitySnapshots = []
+    const resourceSamples = []
     let terminalReceipt = null
     for (let stepIndex = 0; stepIndex < routeSteps.length; stepIndex += 1) {
       const step = routeSteps[stepIndex]
       const actions = [{ type: 'press-workspace-route', ...step }, { type: 'read-workspace' }]
       if (stepIndex === routeSteps.length - 1) {
-        actions.push({ type: 'read-av-sync' }, { type: 'screenshot', name: `s10-route-${index}` })
+        actions.push(
+          { type: 'read-av-sync' },
+          { type: 'screenshot', name: `${adapters.routeScreenshotPrefix || 's10-route'}-${index}` }
+        )
       }
       const receipt = await runDriver(plan, target, actions, {
         ...(adapters.driverAdapters || {}),
@@ -1451,6 +1616,13 @@ async function defaultPerformRouteCycles(plan, target, count, adapters = {}) {
         timeline: workspace?.timelineHost?.visible === true
       })
       terminalReceipt = receipt
+      const resourceSample = await adapters.observeWorkloadResource?.(
+        'route',
+        index * 4 + stepIndex,
+        target
+      )
+      assertRouteNativePresentation(resourceSample, visibilitySnapshots.at(-1))
+      resourceSamples.push(resourceSample)
     }
     const terminalWorkspace = terminalReceipt.actions?.find(
       (action) => action.type === 'read-workspace'
@@ -1478,6 +1650,7 @@ async function defaultPerformRouteCycles(plan, target, count, adapters = {}) {
       foregroundInput: false,
       transitions,
       visibilitySnapshots,
+      resourceSamples,
       sourceVisible: terminalWorkspace?.sourceHost?.visible === true,
       timelineVisible: terminalWorkspace?.timelineHost?.visible === true,
       hudAssetId:
@@ -1496,36 +1669,18 @@ async function defaultPerformRouteCycles(plan, target, count, adapters = {}) {
   return receipts
 }
 
-async function defaultObserveClosedResource(plan, target, index, adapters = {}) {
-  const resourceSample = adapters.resourceSample || acceptanceSession.resourceSample
-  const raw = await resourceSample(target.companion.pid, index, 0, adapters.resourceAdapters || {})
-  const identity = (adapters.runExact || acceptanceSession.runExact)(
-    '/bin/ps',
-    ['-p', String(target.companion.pid), '-o', 'pid=,pgid=,command='],
-    { timeout: 5_000 }
-  )
-  const observedIdentity = parsePsIdentity(identity.stdout, `S10 closed sample ${index}`)
-  const expectedExecutablePath = companionExecutablePath(target)
+async function defaultObserveClosedResource(plan, target, index, adapters = {}, phase = 'closed') {
   invariant(
-    observedIdentity.pid === target.companion.pid &&
-      observedIdentity.pgid === target.companion.pgid &&
-      (observedIdentity.command === expectedExecutablePath ||
-        observedIdentity.command.startsWith(`${expectedExecutablePath} `)),
-    `S10 closed sample ${index} process identity changed`
+    typeof adapters.observeWorkloadResource === 'function',
+    'S10 closed resource query is unavailable'
   )
+  const sample = await adapters.observeWorkloadResource(phase, index, target)
+  assertClosedNativePresentation(sample)
   const windowAbsence = await assertNoVisibleStudioWindow(target.companion.pid, (pid) =>
     (adapters.probeNativeWindow || harness.probeNativeWindow)(pid, adapters)
   )
-  return {
-    closed: true,
-    windowReappeared: false,
-    windowAbsence,
-    rssBytes: raw.ps.rssKilobytes * 1024,
-    physicalFootprintBytes: raw.physicalFootprintBytes,
-    mallocLiveBytes: raw.mallocAllocatedBytes,
-    cpuPercent: raw.top?.cpuPercent,
-    ioSurfaceIds: raw.mappedRegionIdentities || []
-  }
+  Object.assign(sample, { closed: true, windowReappeared: false, windowAbsence })
+  return sample
 }
 
 async function defaultPerformCloseReopenCycles(plan, target, count, adapters = {}) {
@@ -1656,14 +1811,18 @@ async function defaultPerformCloseReopenCycles(plan, target, count, adapters = {
       `S10 close/reopen ${index} paused readiness was not exact`
     )
     target.window = reopenedWindow
+    const reopenSample = await adapters.observeWorkloadResource?.('reopen', index, target)
     receipts.push({
       index,
       helperPath: EXPECTED_CLOSE_HELPER,
       closed: true,
       windowAbsence,
       cooldownSample,
+      reopenSample,
       windowIdBefore,
       windowIdAfter,
+      journalRevisionBefore: revisionBefore,
+      journalRevisionAfter: reopenedJournal.revision,
       assetId: target.asset.sha256,
       paused: true,
       readiness: 'exact-asset-paused',
@@ -1748,115 +1907,147 @@ async function defaultStopLoopAndReadFinal(plan, target, adapters = {}, context 
     isRecord(live?.baseline) && isRecord(live?.peak) && isRecord(live?.final),
     'S10 final stop requires live baseline/peak/final resource evidence captured before close'
   )
-  const snapshots = [
-    { label: 'baseline', ...live.baseline, windowReappeared: false },
-    { label: 'peak', ...live.peak, windowReappeared: false },
-    { label: 'final', ...live.final, windowReappeared: false }
-  ]
-  const resourceSample = adapters.resourceSample || acceptanceSession.resourceSample
-  const observeClosed = async (index) => {
-    const raw = await resourceSample(
-      target.companion.pid,
-      index,
-      0,
-      adapters.resourceAdapters || {}
-    )
-    const identity = (adapters.runExact || acceptanceSession.runExact)(
-      '/bin/ps',
-      ['-p', String(target.companion.pid), '-o', 'pid=,pgid=,command='],
-      { timeout: 5_000 }
-    )
-    const observedIdentity = parsePsIdentity(identity.stdout, 'S10 cooldown')
-    const expectedExecutablePath = companionExecutablePath(target)
-    invariant(
-      observedIdentity.pid === target.companion.pid &&
-        observedIdentity.pgid === target.companion.pgid &&
-        (observedIdentity.command === expectedExecutablePath ||
-          observedIdentity.command.startsWith(`${expectedExecutablePath} `)),
-      'S10 cooldown process identity changed'
-    )
-    const exactWindowAbsence = await assertNoVisibleStudioWindow(target.companion.pid, (pid) =>
-      (adapters.probeNativeWindow || harness.probeNativeWindow)(pid, adapters)
-    )
-    return {
-      raw,
-      cpuPercent: raw.top?.cpuPercent,
-      rssBytes: raw.ps.rssKilobytes * 1024,
-      physicalFootprintBytes: raw.physicalFootprintBytes,
-      mallocLiveBytes: raw.mallocAllocatedBytes,
-      ioSurfaceIds: raw.mappedRegionIdentities || [],
-      closed: true,
-      windowReappeared: false,
-      windowAbsence: exactWindowAbsence
-    }
-  }
-  const closed = await observeClosed('cooldown-0')
-  await (
+  const snapshots = ['baseline', 'peak', 'final'].map((label) => ({ ...live[label], label }))
+  const wait =
     adapters.waitCooldownInterval || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
-  )(COOLDOWN_SAMPLE_INTERVAL_MS)
-  const closedAgain = await observeClosed('cooldown-1')
-  invariant(
-    Number.isFinite(closed.cpuPercent) &&
-      Number.isFinite(closedAgain.cpuPercent) &&
-      closedAgain.cpuPercent <= COOLDOWN_CPU_PERCENT_BUDGET,
-    'S10 cooldown CPU remained active'
+  // Fixed settling interval allows already committed GPU work to retire. Neither
+  // query flushes a cache, clears a counter, stops an engine or renders a frame.
+  await wait(COOLDOWN_SAMPLE_INTERVAL_MS)
+  const first = await defaultObserveClosedResource(plan, target, 0, adapters, 'cooldown')
+  await wait(COOLDOWN_SAMPLE_INTERVAL_MS)
+  const second = await defaultObserveClosedResource(plan, target, 1, adapters, 'cooldown')
+  const terminalCounters = ownedResourceEvidence.validateNativeCooldown(
+    first,
+    second,
+    live.baseline,
+    live.owned.plan
   )
-  const memoryReturnedWithinBudget =
-    closedAgain.rssBytes <= snapshots[0].rssBytes + COOLDOWN_MEMORY_RETURN_BUDGET_BYTES &&
-    closedAgain.physicalFootprintBytes <=
-      snapshots[0].physicalFootprintBytes + COOLDOWN_MEMORY_RETURN_BUDGET_BYTES &&
-    closedAgain.mallocLiveBytes <=
-      snapshots[0].mallocLiveBytes + COOLDOWN_MEMORY_RETURN_BUDGET_BYTES
-  invariant(memoryReturnedWithinBudget, 'S10 cooldown memory did not return within fixed budget')
-  const baselineSurfaces = new Set(snapshots[0].ioSurfaceIds.map(String))
-  const cooldownSurfaces = new Set(closedAgain.ioSurfaceIds.map(String))
-  const surfacesReturnedWithinBaseline = [...cooldownSurfaces].every((id) =>
-    baselineSurfaces.has(id)
-  )
-  invariant(
-    surfacesReturnedWithinBaseline,
-    'S10 cooldown IOSurface identities grew beyond the warm baseline'
-  )
-  snapshots.push({
-    label: 'cooldown',
-    ...closedAgain,
-    memoryReturnedWithinBudget,
-    memoryReturnBudgetBytes: COOLDOWN_MEMORY_RETURN_BUDGET_BYTES,
-    decodeStopped:
-      memoryReturnedWithinBudget &&
-      surfacesReturnedWithinBaseline &&
-      closedAgain.cpuPercent <= COOLDOWN_CPU_PERCENT_BUDGET,
-    repeatedCooldown: closed
-  })
+  snapshots.push({ ...second, label: 'cooldown' })
   return {
     closed: true,
     cooldown: { closed: true },
-    decodeStopped:
-      memoryReturnedWithinBudget &&
-      surfacesReturnedWithinBaseline &&
-      closedAgain.cpuPercent <= COOLDOWN_CPU_PERCENT_BUDGET,
+    decodeStopped: terminalCounters.decodeStopped,
     resourceSnapshots: snapshots,
-    memoryReturnedWithinBudget,
+    memoryReturnedWithinBudget: true,
     memoryReturnBudgetBytes: COOLDOWN_MEMORY_RETURN_BUDGET_BYTES,
     processPid: target.companion.pid,
     processPgid: target.companion.pgid,
     executablePath,
     targetAssetId: target.asset.sha256,
     windowAbsence,
-    terminalCounters: {
-      status: 'blocked',
-      reason:
-        'terminal players/frames/textures/cache counters are unavailable after exact no-window proof'
-    }
+    rawCloseReceipt: closeReceipt,
+    terminalCounters
   }
 }
 
+async function prewarmS10Resources(plan, target, collector, adapters = {}) {
+  const ordered = [target.s10Assets.primary, target.s10Assets.secondary]
+  const declarations = []
+  const runExact = adapters.runExact || acceptanceSession.runExact
+  const ffprobe = (adapters.resolveMediaTool || diagnostics.resolveMediaTool)('ffprobe')
+  for (const asset of ordered) {
+    const stat = await fsPromises.lstat(asset.assetPath)
+    invariant(
+      stat.isFile() &&
+        !stat.isSymbolicLink() &&
+        stat.size === asset.byteLength &&
+        Buffer.from(await sha256File(asset.assetPath), 'hex').toString('base64url') ===
+          asset.sha256,
+      'S10 resource preflight asset bytes departed from harness custody'
+    )
+    const probe = await runExact(
+      ffprobe,
+      [
+        '-v',
+        'error',
+        '-protocol_whitelist',
+        'file',
+        '-show_streams',
+        '-of',
+        'json',
+        asset.assetPath
+      ],
+      { timeout: 120_000, maxBuffer: 256 * 1024 }
+    )
+    const metadata = JSON.parse(probe.stdout)
+    invariant(
+      Array.isArray(metadata.streams),
+      'S10 resource preflight stream metadata is unavailable'
+    )
+    const video = metadata.streams.find(
+      (stream) => stream.codec_type === 'video' && !stream.disposition?.attached_pic
+    )
+    invariant(
+      Number.isSafeInteger(video?.width) &&
+        video.width > 0 &&
+        Number.isSafeInteger(video?.height) &&
+        video.height > 0,
+      'S10 resource preflight video dimensions are unavailable'
+    )
+    declarations.push({
+      assetId: asset.sha256,
+      byteLength: asset.byteLength,
+      audioExpected: metadata.streams.some((stream) => stream.codec_type === 'audio'),
+      video: {
+        width: video.width,
+        height: video.height,
+        codec: video.codec_name,
+        pixelFormat: video.pix_fmt
+      },
+      probe: {
+        command: probe.command,
+        stdout: probe.stdout,
+        stdoutSha256: sha256Text(probe.stdout),
+        stderrSha256: sha256Text(probe.stderr || '')
+      }
+    })
+  }
+  const invokeOpen = adapters.invokeStudioOpen || harness.invokeAuthorizedStudioOpen
+  const verifyOpen = adapters.verifyDurableOpen || harness.verifyDurableOpen
+  for (let pass = 0; pass < 3; pass += 1) {
+    target.asset = ordered[pass % 2]
+    await invokeOpen(target.renderer, target.asset, {
+      timeoutMs: adapters.openTimeoutMs || 180_000
+    })
+    await verifyOpen(plan, target.asset)
+    await (
+      adapters.waitCooldownInterval || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
+    )(COOLDOWN_SAMPLE_INTERVAL_MS)
+    await collector.observe('warm-open', pass, target)
+    await defaultPerformRouteCycles(plan, target, 1, {
+      ...adapters,
+      routeScreenshotPrefix: `s10-warm-${pass}`,
+      observeWorkloadResource: (_phase, index, observedTarget) =>
+        collector.observe('warm-route', pass * 4 + index, observedTarget)
+    })
+  }
+  return collector.finishWarmup(declarations)
+}
+
 async function runS10Journey(plan, target, adapters = {}) {
+  invariant(
+    target.renderer &&
+      Number.isSafeInteger(target.companion?.pid) &&
+      Number.isSafeInteger(target.companion?.pgid),
+    'S10 resource sample requires the actual harness process and renderer'
+  )
+  const resourceCollector = ownedResourceEvidence.createResourceCollector(target, {
+    runExact: adapters.runExact || acceptanceSession.runExact,
+    evaluateByValue: adapters.evaluateByValue || harness.evaluateByValue,
+    resourceSample: adapters.resourceSample || acceptanceSession.resourceSample,
+    resourceAdapters: adapters.resourceAdapters || {}
+  })
+  adapters = {
+    ...adapters,
+    observeWorkloadResource: (phase, index, observedTarget = target) =>
+      resourceCollector.observe(phase, index, observedTarget)
+  }
   const assets = target.s10Assets
   invariant(
     isRecord(assets?.primary) && isRecord(assets?.secondary),
     'S10 target assets are incomplete'
   )
+  const resourcePlan = await prewarmS10Resources(plan, target, resourceCollector, adapters)
   const loopProof = await establishS10Loop(plan, target, adapters)
   const prepared = (
     adapters.prepareAvEnduranceSourceEvidence || avAcceptance.prepareAvEnduranceSourceEvidence
@@ -1899,6 +2090,7 @@ async function runS10Journey(plan, target, adapters = {}) {
     sample.monotonicMs = elapsedMs
     sample.wallClockElapsedMs = Date.now() - sampleWallAnchor
     sample.syntheticClock = false
+    sample.resource = await adapters.observeWorkloadResource('loop', entry.index, target)
     sampleReceipts.push(sample)
     return sample.raw || sample
   }
@@ -1963,16 +2155,23 @@ async function runS10Journey(plan, target, adapters = {}) {
     adapters
   )
   const closeEvidence = validateCloseReopenCycles(closes, target.asset.sha256)
-  const resources = sampleReceipts.map((sample) => sample.resource)
-  const resourceEvidence = validateS10ResourceVerdict(resources, {
-    observedSamples: sampleReceipts.map((sample) => sample.observed),
-    rawResources: sampleReceipts.map((sample) => sample.raw?.resource),
-    expectedAssetId: assets.primary.sha256
-  })
+  await adapters.observeWorkloadResource('final', 0, target)
+  const resourceEvidence = validateWorkloadResourceVerdict(
+    [...resourceCollector.samples],
+    {
+      processPid: target.companion.pid,
+      processPgid: target.companion.pgid,
+      executablePath: companionExecutablePath(target),
+      primaryAssetId: assets.primary.sha256,
+      secondaryAssetId: assets.secondary.sha256
+    },
+    resourcePlan
+  )
   const loopEnd = validateFinalCooldown(
     await (adapters.stopLoopAndReadFinal || defaultStopLoopAndReadFinal)(plan, target, adapters, {
       liveResourceEvidence: resourceEvidence
-    })
+    }),
+    resourceEvidence
   )
   return {
     schemaVersion: S10_SCHEMA_VERSION,
@@ -1981,24 +2180,303 @@ async function runS10Journey(plan, target, adapters = {}) {
       proof: loopProof,
       avEndurance: avResult.evidence,
       avVerdict: loopAvVerdict,
+      sourcePtsCensus: prepared.sourcePtsCensus,
+      bounds: {
+        startTicks: adapters.loopStartTicks,
+        endTicks: adapters.loopEndTicks,
+        timebaseTicks: adapters.loopTimebaseTicks
+      },
       samples: sampleReceipts,
       loopSeconds: LOOP_MIN_DURATION_SECONDS
     },
-    seeks: seekEvidence,
-    alternatingOpens: openEvidence,
-    routeCycles: routeEvidence,
-    closeReopenCycles: closeEvidence,
+    seeks: { ...seekEvidence, receipts: seeks },
+    alternatingOpens: { ...openEvidence, receipts: opens },
+    routeCycles: { ...routeEvidence, receipts: routes },
+    closeReopenCycles: { ...closeEvidence, receipts: closes },
     resources: resourceEvidence,
     finalCloseCooldown: loopEnd,
     phasesComplete: true,
-    green: false,
+    green: (avResult.evidence.verdict.blockers || []).length === 0,
     blockers: [
       ...(Array.isArray(avResult.evidence.verdict.blockers)
         ? avResult.evidence.verdict.blockers
-        : []),
-      loopEnd.terminalCounters.reason
+        : [])
     ]
   }
+}
+
+function validateCanonicalLoopEvidence(loop, primary) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  const digest = (value) => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value)
+  invariant(
+    loop.proof.loopStartTicks === loop.bounds.startTicks &&
+      loop.proof.loopEndTicks === loop.bounds.endTicks &&
+      loop.proof.loopTimebaseTicks === loop.bounds.timebaseTicks,
+    'S10 loop setup marks/timebase differ from the adjudicated bounds'
+  )
+  loop.samples.forEach((sample, index) => {
+    invariant(
+      same(sample, loop.avEndurance.samples[index]),
+      `S10 loop ${index} differs from its canonical A/V/reference record`
+    )
+    invariant(
+      sample.index === index &&
+        sample.loopActive === true &&
+        sample.assetId === primary.sha256 &&
+        sample.observed?.state === 'PLAY' &&
+        sample.observed.assetMatch?.matched === true &&
+        sample.observed.assetMatch.distance === 0 &&
+        sample.observed.assetMatch.assetId === primary.sha256 &&
+        sample.observed.contentPtsSeconds === sample.observedPtsSeconds,
+      `S10 loop ${index} lacks exact playing primary-asset identity`
+    )
+    invariant(
+      Number.isFinite(sample.captureMonotonicMs) &&
+        sample.captureMonotonicMs >= 0 &&
+        sample.captureMonotonicMs - loop.samples[0].captureMonotonicMs === sample.monotonicMs &&
+        avCore.parseAvSyncCurrentExport(sample.raw.current).timebase.timescale ===
+          loop.bounds.timebaseTicks,
+      `S10 loop ${index} clock/timebase differs from its captured A/V record`
+    )
+    const capture = sample.raw.capture
+    const reference = sample.referencePixel
+    invariant(
+      isRecord(capture) &&
+        isRecord(reference) &&
+        typeof capture.screenshotPath === 'string' &&
+        path.isAbsolute(capture.screenshotPath) &&
+        digest(capture.screenshotSha256) &&
+        Number.isSafeInteger(capture.screenshotByteLength) &&
+        capture.screenshotByteLength > 0 &&
+        typeof reference.referencePath === 'string' &&
+        path.isAbsolute(reference.referencePath) &&
+        digest(reference.referenceSha256) &&
+        Number.isSafeInteger(reference.referenceByteLength) &&
+        reference.referenceByteLength > 0 &&
+        typeof capture.rawOcrText === 'string' &&
+        digest(capture.rawOcrSha256) &&
+        sha256Text(capture.rawOcrText) === capture.rawOcrSha256 &&
+        isRecord(capture.windowBounds) &&
+        isRecord(capture.sourceHostFrame) &&
+        reference.pixelComparison?.clean === true,
+      `S10 loop ${index} lacks complete capture/reference custody`
+    )
+    const exactPts = diagnostics.resolveExactSourcePts(
+      loop.sourcePtsCensus.values,
+      sample.observedPtsSeconds
+    )
+    const command = diagnostics.buildReferenceExtractCommand({
+      assetPath: primary.assetPath,
+      exactSourcePtsSeconds: exactPts,
+      referencePath: reference.referencePath
+    })
+    invariant(
+      reference.exactSourcePtsSeconds === exactPts &&
+        same(reference.referenceCommand, command) &&
+        Array.isArray(reference.referenceExecution?.command) &&
+        path.basename(reference.referenceExecution.command[0] || '') === 'ffmpeg' &&
+        same(reference.referenceExecution.command.slice(1), command) &&
+        digest(reference.referenceExecution.stdoutSha256) &&
+        digest(reference.referenceExecution.stderrSha256),
+      `S10 loop ${index} reference does not bind the exact primary source PTS/command`
+    )
+  })
+}
+
+function validateCanonicalPhaseEvidence(journey, assets, companion, measured) {
+  const same = (a, b) => JSON.stringify(a) === JSON.stringify(b)
+  const join = (receiptSample, phase, index, assetId) => {
+    const sample = measured.samples.find((value) => value.phase === phase && value.index === index)
+    invariant(
+      sample && sample.assetId === assetId && same(receiptSample, sample),
+      `S10 ${phase} ${index} receipt differs from its canonical native observation`
+    )
+    return sample
+  }
+  journey.loop.samples.forEach((sample, index) =>
+    join(sample.resource, 'loop', index, assets.primary.sha256)
+  )
+  journey.seeks.receipts.forEach((receipt, index) => {
+    join(receipt.resourceSample, 'seek', index, assets.primary.sha256)
+    const ticks =
+      journey.loop.bounds.startTicks +
+      Math.floor(
+        ((journey.loop.bounds.endTicks - journey.loop.bounds.startTicks) * (index + 1)) /
+          (SEEK_COUNT + 1)
+      )
+    invariant(
+      receipt.requestedPlayheadTicks === ticks &&
+        receipt.playheadTicks === ticks &&
+        receipt.rawAction?.type === 'set-playhead-ticks' &&
+        receipt.rawAction.observedPlayheadTicks === ticks,
+      `S10 seek ${index} does not bind its exact requested/observed action`
+    )
+  })
+  journey.alternatingOpens.receipts.forEach((receipt, index) => {
+    const sample = join(
+      receipt.resourceSample,
+      'switch',
+      index,
+      [assets.primary, assets.secondary][index % 2].sha256
+    )
+    invariant(
+      sample.native.documentRevision === receipt.journalRevision,
+      `S10 switch ${index} native/journal revision differs`
+    )
+  })
+  journey.routeCycles.receipts.forEach((receipt, index) => {
+    invariant(
+      receipt.hudAssetId === assets.secondary.sha256,
+      `S10 route ${index} HUD is not the expected secondary asset`
+    )
+    exactCount(receipt.resourceSamples, 4, `S10 route ${index} native observations`)
+    receipt.transitions.forEach((transition, step) => {
+      const selectedAfter = step === 0 || step === 2
+      invariant(
+        transition.routeValueBefore === (selectedAfter ? 'not selected' : 'selected') &&
+          transition.routeValueAfter === (selectedAfter ? 'selected' : 'not selected') &&
+          transition.pairedRouteValueBefore === 'selected' &&
+          transition.pairedRouteValueAfter === 'selected',
+        `S10 route ${index}/${step} is not the exact selected-state transition`
+      )
+      const sample = join(
+        receipt.resourceSamples[step],
+        'route',
+        index * 4 + step,
+        assets.secondary.sha256
+      )
+      assertRouteNativePresentation(sample, receipt.visibilitySnapshots[step])
+    })
+  })
+  const closeRequest = (windowId) => ({
+    expectedPid: companion.pid,
+    expectedPgid: companion.pgid,
+    expectedExecutablePath: companionExecutablePath({ companion }),
+    windowId,
+    windowTitle: 'TaskWraith Studio'
+  })
+  journey.closeReopenCycles.receipts.forEach((receipt, index) => {
+    const closed = join(receipt.cooldownSample, 'closed', index, assets.secondary.sha256)
+    assertClosedNativePresentation(closed)
+    const reopened = join(receipt.reopenSample, 'reopen', index, assets.secondary.sha256)
+    const preceding = measured.samples[closed.sequence - 1]
+    validateExactCloseReceipt(
+      receipt.rawCloseReceipt,
+      closeRequest(receipt.windowIdBefore),
+      `S10 close/reopen ${index}`
+    )
+    invariant(
+      receipt.windowAbsence?.closed === true &&
+        receipt.windowAbsence.exactPid === companion.pid &&
+        preceding.native.workspace.windowVisible === true &&
+        preceding.native.workspace.windowNumber === receipt.windowIdBefore &&
+        (closed.native.workspace.windowNumber === null ||
+          closed.native.workspace.windowNumber === receipt.windowIdBefore) &&
+        reopened.native.workspace.windowNumber === receipt.windowIdAfter &&
+        receipt.journalRevisionBefore === closed.native.documentRevision &&
+        receipt.journalRevisionBefore >= preceding.native.documentRevision &&
+        receipt.journalRevisionAfter === reopened.native.documentRevision &&
+        receipt.journalRevisionAfter > receipt.journalRevisionBefore,
+      `S10 close/reopen ${index} window/process/revision history differs`
+    )
+  })
+  const lastReopen = journey.closeReopenCycles.receipts.at(-1).reopenSample
+  invariant(
+    measured.final.native.workspace.windowNumber === lastReopen.native.workspace.windowNumber &&
+      measured.final.native.documentRevision === lastReopen.native.documentRevision,
+    'S10 final observation differs from the last reopened workspace'
+  )
+  validateExactCloseReceipt(
+    journey.finalCloseCooldown.rawCloseReceipt,
+    closeRequest(measured.final.native.workspace.windowNumber),
+    'S10 final'
+  )
+  for (const sample of [
+    journey.finalCloseCooldown.terminalCounters.first,
+    journey.finalCloseCooldown.terminalCounters.second
+  ]) {
+    invariant(
+      sample.native.documentRevision === measured.final.native.documentRevision &&
+        (sample.native.workspace.windowNumber === null ||
+          sample.native.workspace.windowNumber === measured.final.native.workspace.windowNumber),
+      'S10 final cooldown differs from the closed workspace/revision'
+    )
+  }
+}
+
+async function verifyCanonicalLoopFiles(loop, artifactRoot) {
+  for (const sample of loop.samples) {
+    const capture = sample.raw.capture
+    const reference = sample.referencePixel
+    for (const [label, filePath, hash, length] of [
+      ['capture', capture.screenshotPath, capture.screenshotSha256, capture.screenshotByteLength],
+      [
+        'reference',
+        reference.referencePath,
+        reference.referenceSha256,
+        reference.referenceByteLength
+      ]
+    ]) {
+      const file = await assertBoundedArtifactFile(
+        filePath,
+        artifactRoot,
+        `S10 loop ${sample.index} ${label}`
+      )
+      invariant(
+        file.sha256 === hash && file.byteLength === length,
+        `S10 loop ${sample.index} ${label} bytes differ from the canonical receipt`
+      )
+    }
+  }
+}
+
+function validateCompleteS10Journey(journey, assets, companion) {
+  invariant(
+    journey?.green === true &&
+      journey.phasesComplete === true &&
+      Array.isArray(journey.blockers) &&
+      journey.blockers.length === 0,
+    'S10 complete journey has unresolved phases or blockers'
+  )
+  validateLoopProof(journey.loop.proof)
+  validateLoopAwareAvVerdict(
+    journey.loop.avEndurance,
+    journey.loop.samples,
+    journey.loop.sourcePtsCensus,
+    journey.loop.bounds
+  )
+  validateCanonicalLoopEvidence(journey.loop, assets.primary)
+  validateSeekReceipts(journey.seeks.receipts, assets.primary.sha256)
+  validateAlternatingOpens(journey.alternatingOpens.receipts, [assets.primary, assets.secondary])
+  validateRouteCycles(journey.routeCycles.receipts)
+  validateCloseReopenCycles(journey.closeReopenCycles.receipts, assets.secondary.sha256)
+  const resourcePlan = journey.resources.owned.plan
+  for (const [index, asset] of [assets.primary, assets.secondary].entries()) {
+    invariant(
+      resourcePlan.assets[index].assetId === asset.sha256 &&
+        resourcePlan.assets[index].byteLength === asset.byteLength,
+      'S10 fixed resource plan departed from materialized asset custody'
+    )
+  }
+  const measured = validateWorkloadResourceVerdict(
+    journey.resources.samples,
+    {
+      processPid: companion?.pid,
+      processPgid: companion?.pgid,
+      executablePath: companionExecutablePath({ companion }),
+      primaryAssetId: assets.primary.sha256,
+      secondaryAssetId: assets.secondary.sha256
+    },
+    resourcePlan
+  )
+  invariant(
+    resourcePlan.samples[0].processBirth.ppid === companion.ppid &&
+      JSON.stringify(measured) === JSON.stringify(journey.resources),
+    'S10 whole-workload verdict or harness parent changed'
+  )
+  validateFinalCooldown(journey.finalCloseCooldown, measured)
+  validateCanonicalPhaseEvidence(journey, assets, companion, measured)
+  return true
 }
 
 async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
@@ -2132,6 +2610,15 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
     'S10 final evidence lacks 21 exact clean reference-pixel receipts'
   )
   const runnerAfter = await measureS10RunnerCustody(plan.repoRoot, adapters)
+  invariant(
+    JSON.stringify(runnerBefore.dependencies) === JSON.stringify(runnerAfter.dependencies),
+    'S10 resource helper changed or departed from HEAD during acceptance'
+  )
+  const green =
+    result.evidence.journey.green === true
+      ? validateCompleteS10Journey(result.evidence.journey, assets, baseEvidence.companion)
+      : false
+  if (green) await verifyCanonicalLoopFiles(result.evidence.journey.loop, plan.artifactRoot)
   const evidence = {
     schemaVersion: S10_SCHEMA_VERSION,
     kind: 'taskwraith-studio-s10-final-evidence',
@@ -2143,7 +2630,8 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
       beforeSha256: runnerBefore.sha256,
       afterSha256: runnerAfter.sha256,
       headBlobBefore: runnerBefore.headBlob,
-      headBlobAfter: runnerAfter.headBlob
+      headBlobAfter: runnerAfter.headBlob,
+      dependencies: runnerAfter.dependencies
     },
     baseHarnessEvidence: { path: baseEvidencePath, sha256: baseEvidenceSha256 },
     watchdog: { path: watchdogPath, sha256: watchdogSha256 },
@@ -2179,7 +2667,7 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
       live: result.evidence.journey.resources,
       cooldown: result.evidence.journey.finalCloseCooldown
     },
-    green: false,
+    green,
     blockers: result.evidence.journey.blockers,
     noGreenIfPhaseMissing: result.evidence.journey.phasesComplete === true
   }
@@ -2365,7 +2853,9 @@ module.exports = {
   defaultPerformCloseReopenCycles,
   validateCloseReopenCycles,
   validateS10ResourceVerdict,
+  validateWorkloadResourceVerdict,
   validateFinalCooldown,
+  validateCompleteS10Journey,
   defaultStopLoopAndReadFinal,
   runLoopAwareSampling,
   validateLoopAwareAvVerdict,
