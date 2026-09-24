@@ -25,7 +25,6 @@
 
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  appendFileSync,
   closeSync,
   existsSync,
   fstatSync,
@@ -247,7 +246,7 @@ export interface HostDeltaStoreOptions {
   initialGeneration?: HostGeneration
   now?: () => string
   log?: (line: string) => void
-  /** Fault seams for the background batch journal only. */
+  /** Fault seams shared by ordinary, reset, and background batch journal writes. */
   batchWrite?: (descriptor: number, bytes: Uint8Array, offset: number, length: number) => number
   batchFsync?: (descriptor: number) => void
   batchTruncate?: (descriptor: number, length: number) => void
@@ -356,6 +355,20 @@ export class HostDeltaStore {
     const journal = this.readJournal()
     for (const event of journal.events) {
       this.journalRecordCount += 1
+      if (checkpoint) {
+        // A checkpoint may be durable while removal of the old journal failed.
+        // Covered entries cannot resurrect trimmed records or replay old fences.
+        const generation =
+          event.op === 'append' ? event.record.envelope.generation : event.generation
+        if (generation < checkpoint.generation) continue
+        if (
+          generation === checkpoint.generation &&
+          (event.op === 'generation-reset' ||
+            (event.op === 'append' && event.record.envelope.cursor <= checkpoint.cursor))
+        ) {
+          continue
+        }
+      }
       this.applyJournalEvent(event)
     }
 
@@ -508,13 +521,13 @@ export class HostDeltaStore {
       retainedBytes
     }
 
+    this.appendJournalEvents([{ op: 'append', record }])
     this.indexRecord(record, { recomputeBytes: false })
     this.cursor = nextCursor
     if (this.recordsByCursor.size === 1) {
       this.lowestRetainedCursor = nextCursor
     }
-    this.appendJournalEvent({ op: 'append', record })
-    this.maybeCompact()
+    this.compactAfterAppend()
     const result: Extract<HostDeltaAppendResult, { kind: 'appended' }> = {
       kind: 'appended',
       record: cloneRecord(record),
@@ -628,22 +641,7 @@ export class HostDeltaStore {
       this.cursor = record.envelope.cursor
       if (this.recordsByCursor.size === 1) this.lowestRetainedCursor = record.envelope.cursor
     }
-    try {
-      this.maybeCompact()
-    } catch (error) {
-      // The batch journal fsync is already the commit boundary. Compaction is a
-      // retention optimization and cannot retroactively make these records
-      // uncommitted; leave the journal count due so the next append retries it.
-      try {
-        this.log(
-          `[HostDeltaStore] committed batch compaction deferred: ${
-            error instanceof Error ? error.message : String(error)
-          }`
-        )
-      } catch {
-        // Diagnostics cannot overturn a batch whose journal fsync succeeded.
-      }
-    }
+    this.compactAfterAppend()
     const position = this.getPosition()
     this.notifyAppends(prepared.map(({ result }) => result))
     return {
@@ -799,27 +797,6 @@ export class HostDeltaStore {
     const nextGeneration = this.generation + 1
     const at = input.at ?? this.now()
 
-    // Clear previous generation's retained deltas — they cannot cross the fence.
-    this.recordsByCursor = new Map()
-    this.orderedCursors = []
-    this.retainedBytes = 0
-    this.lowestRetainedCursor = 0
-    this.generation = nextGeneration
-    this.cursor = 0
-
-    this.appendJournalEvent({
-      op: 'generation-reset',
-      previousGeneration,
-      generation: nextGeneration,
-      at,
-      ...(typeof preparedPayload === 'object' &&
-      preparedPayload &&
-      'reason' in (preparedPayload as object) &&
-      typeof (preparedPayload as { reason?: unknown }).reason === 'string'
-        ? { reason: truncateText((preparedPayload as { reason: string }).reason, MAX_REASON) }
-        : {})
-    })
-
     const previousCursor = 0
     const nextCursor = 1
     const envelope = buildEnvelope({
@@ -853,11 +830,31 @@ export class HostDeltaStore {
       retainedBytes
     }
 
+    // Persist both existing journal events at one boundary before exposing the
+    // new generation or clearing any of the previous generation's records.
+    this.appendJournalEvents([
+      {
+        op: 'generation-reset',
+        previousGeneration,
+        generation: nextGeneration,
+        at,
+        ...(typeof preparedPayload === 'object' &&
+        preparedPayload &&
+        'reason' in (preparedPayload as object) &&
+        typeof (preparedPayload as { reason?: unknown }).reason === 'string'
+          ? { reason: truncateText((preparedPayload as { reason: string }).reason, MAX_REASON) }
+          : {})
+      },
+      { op: 'append', record }
+    ])
+    this.recordsByCursor = new Map()
+    this.orderedCursors = []
+    this.retainedBytes = 0
+    this.generation = nextGeneration
     this.indexRecord(record, { recomputeBytes: false })
     this.cursor = nextCursor
     this.lowestRetainedCursor = nextCursor
-    this.appendJournalEvent({ op: 'append', record })
-    this.maybeCompact()
+    this.compactAfterAppend()
     const result: Extract<HostDeltaAppendResult, { kind: 'appended' }> = {
       kind: 'appended',
       record: cloneRecord(record),
@@ -1019,6 +1016,24 @@ export class HostDeltaStore {
     this.lowestRetainedCursor = this.orderedCursors[0] ?? 0
   }
 
+  private compactAfterAppend(): void {
+    try {
+      this.maybeCompact()
+    } catch (error) {
+      // Journal fsync already committed the records. Leave compaction due for
+      // retry; neither retention work nor diagnostics can undo that commit.
+      try {
+        this.log(
+          `[HostDeltaStore] committed append compaction deferred: ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        )
+      } catch {
+        // Diagnostics cannot overturn a durable append.
+      }
+    }
+  }
+
   private maybeCompact(): void {
     if (
       this.journalRecordCount >= this.compactAfterRecords ||
@@ -1098,22 +1113,17 @@ export class HostDeltaStore {
     this.journalRecordCount = 0
   }
 
-  private appendJournalEvent(event: JournalEvent): void {
-    mkdirSync(this.dataDir, { recursive: true })
-    const line = `${JSON.stringify(event)}\n`
-    const descriptor = openSync(this.journalPath, 'a', 0o600)
-    try {
-      appendFileSync(descriptor, line, 'utf8')
-      fsyncSync(descriptor)
-    } finally {
-      closeSync(descriptor)
+  private appendJournalEvents(events: readonly JournalEvent[]): void {
+    const write = this.appendJournalBatch(events)
+    if (!write.ok) {
+      if (!write.rolledBack) this.appendAuthorityBlocked = true
+      throw write.error
     }
-    this.journalRecordCount += 1
   }
 
   private appendJournalBatch(
     events: readonly JournalEvent[]
-  ): { ok: true } | { ok: false; detail: string; rolledBack: boolean } {
+  ): { ok: true } | { ok: false; error: unknown; detail: string; rolledBack: boolean } {
     if (events.length === 0) return { ok: true }
     mkdirSync(this.dataDir, { recursive: true })
     const existed = existsSync(this.journalPath)
@@ -1170,6 +1180,7 @@ export class HostDeltaStore {
       }
       return {
         ok: false,
+        error,
         detail: error instanceof Error ? error.message : String(error),
         rolledBack
       }
@@ -1204,9 +1215,14 @@ export class HostDeltaStore {
   }
 
   private readCheckpoint(): CheckpointDocument | null {
-    if (!existsSync(this.checkpointPath)) return null
+    let raw: string
     try {
-      const raw = readFileSync(this.checkpointPath, 'utf8')
+      raw = readFileSync(this.checkpointPath, 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw err
+    }
+    try {
       const parsed: unknown = JSON.parse(raw)
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
         this.log('[HostDeltaStore] checkpoint malformed (not an object)')
@@ -1250,40 +1266,99 @@ export class HostDeltaStore {
     truncatedTail: boolean
     corruptInterior: boolean
   } {
-    if (!existsSync(this.journalPath)) {
-      return { events: [], truncatedTail: false, corruptInterior: false }
-    }
     let source: string
     try {
       source = readFileSync(this.journalPath, 'utf8')
     } catch (err) {
-      this.log(
-        `[HostDeltaStore] journal read failed: ${err instanceof Error ? err.message : String(err)}`
-      )
-      return { events: [], truncatedTail: false, corruptInterior: true }
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') {
+        return { events: [], truncatedTail: false, corruptInterior: false }
+      }
+      throw err
     }
 
     const events: JournalEvent[] = []
     let truncatedTail = false
     let corruptInterior = false
+    let legacyResetWithoutEnvelope = false
+    let repairLength: number | null = null
+    let offset = 0
+    let pendingReset: {
+      event: Extract<JournalEvent, { op: 'generation-reset' }>
+      offset: number
+    } | null = null
     const lines = source.split('\n')
     const endsWithNewline = source.endsWith('\n')
     const lastContentIndex = endsWithNewline ? lines.length - 2 : lines.length - 1
 
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]
+      const lineOffset = offset
+      offset += Buffer.byteLength(line, 'utf8') + 1
       if (!line) continue
+      if (index === lastContentIndex && !endsWithNewline) {
+        truncatedTail = true
+        repairLength = pendingReset?.offset ?? lineOffset
+        break
+      }
       try {
         const event = parseJournalEvent(line)
-        if (event) events.push(event)
-        else corruptInterior = true
-      } catch {
-        if (index === lastContentIndex && !endsWithNewline) {
-          truncatedTail = true
-          break
+        if (pendingReset) {
+          // Current writes pair the fence with a reset envelope. Older stores
+          // could recover a lone fence and then acknowledge ordinary records
+          // in that generation; a following complete line preserves its fence.
+          if (
+            event?.op === 'append' &&
+            event.record.envelope.kind === 'generation-reset' &&
+            event.record.envelope.generation === pendingReset.event.generation &&
+            event.record.envelope.cursor === 1 &&
+            event.record.envelope.previousCursor === 0
+          ) {
+            events.push(pendingReset.event, event)
+            pendingReset = null
+            continue
+          }
+          events.push(pendingReset.event)
+          legacyResetWithoutEnvelope = true
+          corruptInterior = true
+          pendingReset = null
         }
+        if (event?.op === 'generation-reset') {
+          pendingReset = { event, offset: lineOffset }
+        } else if (event) {
+          events.push(event)
+        } else {
+          corruptInterior = true
+        }
+      } catch {
+        if (pendingReset) {
+          events.push(pendingReset.event)
+          legacyResetWithoutEnvelope = true
+        }
+        pendingReset = null
         corruptInterior = true
         this.log(`[HostDeltaStore] skipped corrupt journal line at index ${index}`)
+      }
+    }
+    if (pendingReset) {
+      truncatedTail = true
+      repairLength = pendingReset.offset
+    }
+    if (legacyResetWithoutEnvelope) {
+      this.noteRecovery(
+        'recovered-corrupt-interior',
+        'preserved legacy generation reset without its reset envelope'
+      )
+    }
+    if (repairLength !== null) {
+      // Leaving a discarded suffix on disk would concatenate it with the next
+      // append and acknowledge a record that cannot be recovered. Reopen keeps
+      // authority blocked if this repair cannot be made durable.
+      const descriptor = openSync(this.journalPath, 'r+')
+      try {
+        this.batchTruncate(descriptor, repairLength)
+        this.batchFsync(descriptor)
+      } finally {
+        closeSync(descriptor)
       }
     }
     return { events, truncatedTail, corruptInterior }
