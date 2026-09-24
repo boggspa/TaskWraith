@@ -271,8 +271,8 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
  * old native product was rebuilt from newer source.
  */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '7ca872083c4fa860086b95bd5fcebb22c55a00df9098929a2910c557674d808c',
-  sourceCount: 3110,
+  sourceDigest: '2c909d54c57fc452ac978e084980327a1c0514bff85585de2a2cf0ebaa5ca722',
+  sourceCount: 3111,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
