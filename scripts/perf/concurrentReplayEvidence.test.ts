@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { runConcurrentReplayLanes, drainBudgetMs } = require('./concurrentReplayLanes.cjs')
+const { pairedRunRecord } = require('./runT2Baseline.cjs')
 const {
   assertPairedRunCompatibility,
   pairRuns,
@@ -203,6 +204,129 @@ describe('qualified replay evidence', () => {
     expect(result.run.evidence.windows[0].lanes[0].failedEvents).toBe(1)
     expect(result.signals['light.applyLatencyMs'].count).toBe(0)
     assertIneligible(result.run, beside.run)
+  })
+
+  it('retains the failed event and Host timeout boundary in serialized paired diagnostics', async () => {
+    const adapter = api()
+    const error = new Error('TaskWraith Host request timed out: command.submit private-payload')
+    adapter.saveChat.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 7))
+      throw error
+    })
+    const population = lane()
+    population.schedule[0].seq = 41
+    const result = await measured({ api: adapter, lanes: [population] })
+    const serialized = JSON.stringify(pairedRunRecord(result))
+    const observed = JSON.parse(serialized).windows[0].lanes[0]
+    expect(observed.failureDetails).toEqual([
+      {
+        eventIndex: 0,
+        eventSeq: 41,
+        eventKind: 'seed_chat',
+        apiMethod: 'saveChat',
+        elapsedMs: 7,
+        reason: 'host_request_timeout',
+        hostMethod: 'command.submit'
+      }
+    ])
+    expect(observed.failureDetailsOmitted).toBe(0)
+    expect(observed.failedEvents).toBe(1)
+    expect(serialized).not.toContain('private-payload')
+    expect(serialized).not.toContain(error.stack)
+    expect(result.evidenceEligible).toBe(false)
+    expect(result.signals['light.applyLatencyMs'].count).toBe(0)
+  })
+
+  it.each([
+    ['TaskWraith Host projection client closed.', 'host_client_closed'],
+    ['Timed out connecting to the TaskWraith Host.', 'host_connection_timeout'],
+    [
+      'T2 replay page evaluation failed: Error: TaskWraith Host projection client closed.\n at save',
+      'host_client_closed'
+    ],
+    ['Unrelated failure quoting TaskWraith Host request timed out: command.submit', 'exception'],
+    [undefined, 'exception'],
+    [null, 'exception']
+  ])('records a bounded failure classification for %s', async (failure, reason) => {
+    const adapter = api()
+    adapter.saveChat.mockRejectedValue(failure)
+    const result = await measured({ api: adapter })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails[0]).toMatchObject({
+      eventIndex: 0,
+      eventSeq: null,
+      eventKind: 'seed_chat',
+      apiMethod: 'saveChat',
+      reason,
+      hostMethod: null
+    })
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it.each([
+    ['T2_REPLAY_SAVE_REJECTED', 'replay_save_rejected'],
+    ['host_unavailable', 'host_unavailable']
+  ])('prioritizes explicit %s over Host-like message text', async (code, reason) => {
+    const adapter = api()
+    const failure = Object.assign(new Error('TaskWraith Host request timed out: command.submit'), {
+      code
+    })
+    adapter.saveChat.mockRejectedValue(failure)
+    const result = await measured({ api: adapter })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails[0]).toMatchObject({
+      reason,
+      hostMethod: null
+    })
+    expect(result.run.evidence.windows[0].lanes[0].failedEvents).toBe(1)
+    expect(result.signals['light.applyLatencyMs'].count).toBe(0)
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it('caps diagnostic examples without dropping failure counts or serializing rejection objects', async () => {
+    const failure = { secret: 'private-payload' }
+    Object.defineProperty(failure, 'message', {
+      get() {
+        throw new Error('getter must not break replay')
+      }
+    })
+    Object.assign(failure, { cause: failure })
+    const adapter = api()
+    adapter.saveChat.mockRejectedValue(failure)
+    const population = lane()
+    population.schedule = Array.from({ length: 24 }, (_, seq) => ({
+      kind: 'seed_chat',
+      appChatId: 'light',
+      seq
+    }))
+    const result = await measured({ api: adapter, lanes: [population] })
+    const observed = result.run.evidence.windows[0].lanes[0]
+    expect(observed.failedEvents).toBe(24)
+    expect(observed.failureDetails).toHaveLength(8)
+    expect(observed.failureDetails.map((failure) => failure.eventSeq)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7
+    ])
+    expect(observed.failureDetailsOmitted).toBe(16)
+    expect(observed.failureDetails.every((failure) => failure.reason === 'exception')).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('private-payload')
+    expect(result.lanes[0].eventFailures).toBe(24)
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it('identifies a missing expected run separately from an adapter exception', async () => {
+    const adapter = api()
+    adapter.getChat.mockResolvedValue({ runs: [] })
+    const population = lane()
+    population.schedule = [{ kind: 'run_still_running', appChatId: 'light', runId: 'expected-run' }]
+    const result = await measured({ api: adapter, lanes: [population] })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails).toEqual([
+      expect.objectContaining({
+        eventKind: 'run_still_running',
+        apiMethod: 'getChat',
+        reason: 'run_missing',
+        hostMethod: null
+      })
+    ])
+    expect(result.run.failed).toBe(true)
+    expect(result.evidenceEligible).toBe(false)
   })
 
   it('distinguishes unsupported events and no-op events from measured latency', async () => {
@@ -520,8 +644,11 @@ describe('deadlines retain unresolved effect ownership', () => {
     expect(result.run.evidence.windows).toHaveLength(1)
     expect(result.evidenceEligible).toBe(false)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails).toEqual([])
+    const frozenEvidence = JSON.stringify(result.run)
     late.reject(new Error('late failure'))
     await vi.advanceTimersByTimeAsync(0)
+    expect(JSON.stringify(result.run)).toBe(frozenEvidence)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
   })
 

@@ -48,6 +48,55 @@ const { toPersistedChatRecord } = require('./materializeUserData.cjs')
 
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
+const MAX_FAILURE_DETAILS_PER_LANE_WINDOW = 8
+
+// Diagnostics retain the observed boundary, never exception messages, stacks,
+// chat content or arbitrary rejection objects. Counts remain exhaustive even
+// when the per-window examples are full; these fields do not qualify evidence.
+function describeReplayFailure(entry) {
+  const event = entry.state.lane.schedule[entry.index]
+  let message = ''
+  let code
+  try {
+    const value = typeof entry.value === 'string' ? entry.value : entry.value?.message
+    if (typeof value === 'string') message = value.slice(0, 4096)
+    code = entry.value?.code
+  } catch {
+    // Rejections can be arbitrary values, including throwing accessors.
+  }
+  let reason = entry.outcome === 'failed' ? 'exception' : 'run_missing'
+  let hostMethod = null
+  if (entry.outcome === 'failed') {
+    const boundaryMessage = message
+      .replace(/^T2 replay page evaluation failed: /, '')
+      .replace(/^Error: /, '')
+    if (code === 'T2_REPLAY_SAVE_REJECTED') {
+      reason = 'replay_save_rejected'
+    } else if (code === 'host_unavailable') {
+      reason = 'host_unavailable'
+    } else if (boundaryMessage.startsWith('TaskWraith Host request timed out: ')) {
+      reason = 'host_request_timeout'
+      hostMethod =
+        boundaryMessage.match(
+          /^TaskWraith Host request timed out: (command\.submit|host\.lease)(?=\s|$)/
+        )?.[1] || null
+    } else if (/^TaskWraith Host projection client closed\.(?:\n|$)/.test(boundaryMessage)) {
+      reason = 'host_client_closed'
+    } else if (/^Timed out connecting to the TaskWraith Host\.(?:\n|$)/.test(boundaryMessage)) {
+      reason = 'host_connection_timeout'
+    }
+  }
+  return {
+    eventIndex: entry.index,
+    eventSeq: Number.isSafeInteger(event.seq) ? event.seq : null,
+    eventKind:
+      typeof event.kind === 'string' && /^[a-z_]{1,64}$/.test(event.kind) ? event.kind : 'unknown',
+    apiMethod: entry.lastApiMethod,
+    elapsedMs: entry.finishedAtMs - entry.startedAtMs,
+    reason,
+    hostMethod
+  }
+}
 
 /**
  * Seeded-tail length in messages from the seeded head. Independent of
@@ -556,6 +605,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
         const entry = state.inFlightBy
         entry.apiCalls += 1
         entry.apiPending += 1
+        entry.lastApiMethod = name
         for (const other of allEntries) {
           if (other.apiPending === 0 || other === entry) continue
           if (entry.state.lane.role === 'light' && other.state.lane.role === 'heavy')
@@ -595,6 +645,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
       consumed: false,
       apiCalls: 0,
       apiPending: 0,
+      lastApiMethod: null,
       overlapped: false,
       unsupportedBefore: state.ctx.unsupported.length,
       timeout: null
@@ -641,6 +692,9 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     state.completedEvents += 1
     if (entry.outcome === 'failed' || entry.value?.runPresent === false) {
       state.failures += 1
+      if (state.failureDetails.length < MAX_FAILURE_DETAILS_PER_LANE_WINDOW) {
+        state.failureDetails.push(describeReplayFailure(entry))
+      }
     } else if (entry.value?.ok !== true || entry.value.delegated === true) {
       state.unsupportedEvents += 1
     } else {
@@ -709,6 +763,8 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     startedEvents: state.nextIndex,
     completedEvents: state.completedEvents,
     failedEvents: state.failures,
+    failureDetails: state.failureDetails,
+    failureDetailsOmitted: state.failures - state.failureDetails.length,
     unsupportedEvents: state.unsupportedEvents,
     annotatedEvents: state.annotatedEvents,
     pendingEvents: [...pending].filter((entry) => entry.state === state).length,
@@ -863,6 +919,7 @@ async function runConcurrentReplayLanes(options) {
         latencies: [],
         applied: 0,
         failures: 0,
+        failureDetails: [],
         completedEvents: 0,
         unsupportedEvents: 0,
         annotatedEvents: 0,
