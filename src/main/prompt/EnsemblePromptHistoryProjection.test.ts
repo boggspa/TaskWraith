@@ -165,4 +165,83 @@ describe('synchronous Ensemble history projection', () => {
     expect(first.text).toBe('[User]\n[External Agent · Before · PID 42]\nInitial direction')
     expect(second.text).toBe('[User]\n[External Agent · After · PID 42]\nUpdated direction')
   })
+
+  it('collects a long run without repeatedly reading the accumulated tool-activity prefix', () => {
+    let idReads = 0
+    const activityCount = 512
+    const messages = Array.from({ length: activityCount }, (_, index) =>
+      row(`tool-${index}`, '', {
+        role: 'tool',
+        runId: 'long-run',
+        toolActivities: [
+          {
+            get id() {
+              idReads += 1
+              return `activity-${index}`
+            },
+            toolName: 'read_file',
+            displayName: 'Read file',
+            category: 'read',
+            status: index === activityCount - 1 ? 'error' : 'success',
+            resultSummary:
+              index === activityCount - 1
+                ? 'read_file: permission denied'
+                : 'Read file successfully'
+          }
+        ]
+      })
+    )
+    messages.push(
+      row('claim', 'I cannot read this file because permission was denied.', {
+        role: 'assistant',
+        runId: 'long-run',
+        metadata: { ensembleProvider: 'antigravity' }
+      })
+    )
+
+    const result = projectTaggedTranscript(messages, 6)
+    expect(result.suppliedMessageIds).toEqual(['claim'])
+    expect(result.text).not.toContain(ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE)
+    // A deterministic work bound: no wall-clock threshold or benchmark load.
+    expect(idReads).toBeLessThanOrEqual(activityCount * 2)
+  })
+
+  it('uses the last duplicate tool result within its own run without borrowing another run’s denial', () => {
+    const tool = (runId: string, id: string, denied: boolean): ChatMessage =>
+      row(id, '', {
+        role: 'tool',
+        runId,
+        toolActivities: [
+          {
+            id: 'shared-tool-id',
+            toolName: 'read_file',
+            displayName: 'Read file',
+            category: 'read',
+            status: denied ? 'error' : 'success',
+            resultSummary: denied ? 'read_file: permission denied' : 'Read file successfully'
+          }
+        ]
+      })
+    const claim = (runId: string): ChatMessage =>
+      row(`claim-${runId}`, 'I cannot read this file because permission was denied.', {
+        role: 'assistant',
+        runId,
+        metadata: { ensembleProvider: 'antigravity' }
+      })
+    const result = projectTaggedTranscript(
+      [
+        tool('allowed', 'old-denial', true),
+        tool('denied', 'old-success', false),
+        tool('allowed', 'new-success', false),
+        tool('denied', 'new-denial', true),
+        claim('allowed'),
+        claim('denied')
+      ],
+      6
+    )
+    const rendered = result.suppliedRows.map(({ start, end }) => result.text.slice(start, end))
+    expect(result.suppliedMessageIds).toEqual(['claim-allowed', 'claim-denied'])
+    expect(rendered[0]).toContain(ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE)
+    expect(rendered[1]).not.toContain(ANTIGRAVITY_UNSUPPORTED_PERMISSION_CLAIM_NOTE)
+  })
 })

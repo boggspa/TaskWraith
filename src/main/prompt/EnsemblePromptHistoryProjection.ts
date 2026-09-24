@@ -173,6 +173,24 @@ export interface TaggedTranscriptProjection {
   }>
 }
 
+function collectRunToolActivities(messages: readonly ChatMessage[]): Map<string, ToolActivity[]> {
+  const activitiesByRunId = new Map<string, Map<string, ToolActivity>>()
+  for (const message of messages) {
+    if (!message.runId || !message.toolActivities?.length) continue
+    let byId = activitiesByRunId.get(message.runId)
+    if (!byId) {
+      byId = new Map()
+      activitiesByRunId.set(message.runId, byId)
+    }
+    // Keep the last value at the ID's original position. Rebuilding this map
+    // from the accumulated prefix for every row makes long runs quadratic.
+    for (const activity of message.toolActivities) byId.set(activity.id, activity)
+  }
+  const result = new Map<string, ToolActivity[]>()
+  for (const [runId, byId] of activitiesByRunId) result.set(runId, [...byId.values()])
+  return result
+}
+
 /**
  * Project borrowed message rows synchronously for full, resumed and omission
  * views. Reads include nested metadata and tool evidence; no revision or cache
@@ -217,14 +235,7 @@ export function projectTaggedTranscript(
   // prose. Keep a run-indexed view before filtering those rows so a later
   // provider-authored permission claim can be checked against the actual tool
   // outcomes from the same run rather than accepted as unaudited prose.
-  const toolActivitiesByRunId = new Map<string, ToolActivity[]>()
-  for (const message of messages) {
-    if (!message.runId || !message.toolActivities?.length) continue
-    const prior = toolActivitiesByRunId.get(message.runId) || []
-    const byId = new Map(prior.map((activity) => [activity.id, activity]))
-    for (const activity of message.toolActivities) byId.set(activity.id, activity)
-    toolActivitiesByRunId.set(message.runId, [...byId.values()])
-  }
+  const toolActivitiesByRunId = collectRunToolActivities(messages)
   const filtered = messages.filter(
     (message) =>
       message.role !== 'tool' &&
