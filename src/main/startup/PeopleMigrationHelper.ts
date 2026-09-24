@@ -48,6 +48,8 @@ export async function runPeopleMigrationIsolated(options: {
           [
             ...(app.isPackaged ? [] : [app.getAppPath()]),
             ...instanceLaunchBootstrapArgs,
+            // This Electron main performs native crypto in the parent's profile.
+            ...(app.commandLine.hasSwitch('use-mock-keychain') ? ['--use-mock-keychain'] : []),
             PEOPLE_MIGRATION_HELPER_ARG
           ],
           { stdio: ['ignore', 'ignore', 'ignore', 'ipc'], serialization: 'advanced' }
