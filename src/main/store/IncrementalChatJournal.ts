@@ -9,6 +9,14 @@ import {
   type ChatRecordMutationOperation
 } from './ChatRecordMutation'
 import type { ChatRecord } from './types'
+import {
+  checkpointFileReference,
+  checkpointReferenceIsCurrent,
+  removePreparedCheckpointFiles,
+  type CheckpointPreparationJob,
+  type CheckpointPreparationPort,
+  type DeferredCheckpointResult
+} from './CheckpointPreparationProtocol'
 
 export const INCREMENTAL_CHAT_CHECKPOINT_FORMAT = 'taskwraith-chat-checkpoint' as const
 export const INCREMENTAL_CHAT_CHECKPOINT_VERSION = 1 as const
@@ -96,6 +104,8 @@ export interface IncrementalChatAppendOptions {
 }
 
 export interface IncrementalChatJournalOptions {
+  /** Opt-in idle compaction only. Strict/bounded/shutdown checkpoints keep their synchronous contract. */
+  checkpointPreparation?: CheckpointPreparationPort
   beforeSourceMutation?: (chatId: string) => void
   /** Main's maintenance timers may touch only journals already opened by actual work. */
   maintenanceScope?: 'opened' | 'all'
@@ -147,6 +157,10 @@ export interface IncrementalChatJournal {
     resolve: ((chatId: string, headRevision: number) => ChatRecord | null) | null
   ): void
   checkpointIdle(nowMs?: number): number
+  checkpointDeferred?(chatId: string): Promise<DeferredCheckpointResult>
+  checkpointIdleDeferred?(nowMs?: number): Promise<number>
+  /** Erasure routes that directly remove journal files must retire private preparations first. */
+  cancelCheckpointPreparations?(chatId?: string): void
   checkpointAll(reason?: IncrementalChatCheckpointReason): number
   /** Synchronously fsync every journal file with an unsettled deferred flush. */
   drainDeferredDurability(): number
@@ -208,7 +222,10 @@ function recordRevision(record: ChatRecord): number {
   return nonNegativeInteger(record.persistenceRevision) ? record.persistenceRevision : 0
 }
 
-function validMutationBatch(value: unknown, chatId: string): value is ChatRecordMutationBatch {
+export function validMutationBatch(
+  value: unknown,
+  chatId: string
+): value is ChatRecordMutationBatch {
   if (!value || typeof value !== 'object') return false
   const batch = value as Partial<ChatRecordMutationBatch>
   return (
@@ -229,7 +246,10 @@ function validMutationBatch(value: unknown, chatId: string): value is ChatRecord
   )
 }
 
-function validCheckpoint(value: unknown, chatId: string): value is IncrementalChatCheckpoint {
+export function validCheckpoint(
+  value: unknown,
+  chatId: string
+): value is IncrementalChatCheckpoint {
   if (!value || typeof value !== 'object') return false
   const checkpoint = value as Partial<IncrementalChatCheckpoint>
   return (
@@ -280,6 +300,13 @@ export function createIncrementalChatJournal(
     DEFAULT_MAX_JOURNAL_READ_BYTES
   )
   const states = new Map<string, RuntimeState>()
+  const preparations = new Map<string, CheckpointPreparationJob>()
+  const invalidatePreparation = (chatId: string): void => {
+    const job = preparations.get(chatId)
+    // Fence before cancellation can synchronously deliver any callback.
+    preparations.delete(chatId)
+    job?.cancel()
+  }
   const scheduleFsync =
     options.scheduleFsync ?? ((fd, done) => fs.fsync(fd, (error) => done(error)))
   let writeSequence = 0
@@ -308,7 +335,10 @@ export function createIncrementalChatJournal(
   const fsyncEscalatedChatIds = new Set<string>()
   const deferredFailureByChat = new Map<string, NodeJS.ErrnoException>()
   let pendingDeferredCount = 0
-  if (canWrite()) fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+  if (canWrite()) {
+    fs.mkdirSync(baseDir, { recursive: true, mode: 0o700 })
+    removePreparedCheckpointFiles(baseDir, undefined, true)
+  }
 
   const assertChatId = (chatId: string): void => {
     if (!CHAT_ID_PATTERN.test(chatId)) throw new Error(`Unsafe chat id: ${chatId}`)
@@ -568,6 +598,7 @@ export function createIncrementalChatJournal(
 
   const recoverTornTail = (chatId: string, parsed: ParsedJournal): void => {
     if (!parsed.torn) return
+    invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     if (parsed.validContent) atomicWrite(journalPath(chatId), parsed.validContent)
     else {
@@ -639,6 +670,7 @@ export function createIncrementalChatJournal(
   }
 
   const initialize = (chatId: string, record: ChatRecord): void => {
+    invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -809,6 +841,7 @@ export function createIncrementalChatJournal(
     reason: IncrementalChatCheckpointReason,
     headRecord?: ChatRecord | null
   ): boolean => {
+    invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -849,6 +882,7 @@ export function createIncrementalChatJournal(
   }
 
   const replaceAuthoritativeCheckpoint = (chatId: string, record: ChatRecord): void => {
+    invalidatePreparation(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -891,6 +925,7 @@ export function createIncrementalChatJournal(
     batch: ChatRecordMutationBatch,
     appendOptions?: IncrementalChatAppendOptions
   ): void => {
+    invalidatePreparation(batch.chatId)
     options.beforeSourceMutation?.(batch.chatId)
     assertWritable()
     assertChatId(batch.chatId)
@@ -958,6 +993,145 @@ export function createIncrementalChatJournal(
     return ids
   }
 
+  const cancelCheckpointPreparations = (chatId?: string): void => {
+    assertWritable()
+    if (chatId !== undefined) assertChatId(chatId)
+    const retired = [...preparations].filter(([id]) => chatId === undefined || id === chatId)
+    for (const [id] of retired) preparations.delete(id)
+    let failure: unknown
+    for (const [, job] of retired) {
+      try {
+        job.cancel()
+      } catch (error) {
+        failure ??= error
+      }
+    }
+    // Includes private leftovers from a crashed owner, even with the flag OFF.
+    try {
+      removePreparedCheckpointFiles(baseDir, chatId)
+    } catch (error) {
+      failure ??= error
+    }
+    if (failure) throw failure
+  }
+
+  const checkpointDeferred = async (chatId: string): Promise<DeferredCheckpointResult> => {
+    assertWritable()
+    assertChatId(chatId)
+    // Maintenance must never cold-load a full record on main just to enqueue.
+    const state = states.get(chatId)
+    if (!state || state.tombstoned || state.journalEntries === 0 || state.headRevision === null)
+      return 'unchanged'
+    if (!options.checkpointPreparation || preparations.has(chatId)) return 'unavailable'
+    options.beforeSourceMutation?.(chatId)
+    if (fs.existsSync(tombstonePath(chatId))) return 'superseded'
+    const revision = state.headRevision
+    const entries = state.journalEntries
+    const source = {
+      chatId,
+      revision,
+      savedAt: new Date(now()).toISOString(),
+      checkpoint: checkpointFileReference(checkpointPath(chatId)),
+      journal: checkpointFileReference(journalPath(chatId))
+    }
+    const job = options.checkpointPreparation.start(source)
+    if (!job) return 'unavailable'
+    preparations.set(chatId, job)
+    try {
+      const prepared = await job.result
+      if (preparations.get(chatId) !== job) return 'superseded'
+      // The guard may refuse a recovery hold. It runs BEFORE the final checks;
+      // no await or arbitrary callback separates those checks from retirement.
+      options.beforeSourceMutation?.(chatId)
+      if (
+        !canWrite() ||
+        preparations.get(chatId) !== job ||
+        states.get(chatId) !== state ||
+        state.tombstoned ||
+        fs.existsSync(tombstonePath(chatId)) ||
+        state.headRevision !== revision ||
+        state.journalEntries !== entries ||
+        !checkpointReferenceIsCurrent(source.checkpoint) ||
+        !checkpointReferenceIsCurrent(source.journal)
+      )
+        return 'superseded'
+      if (
+        prepared.chatId !== chatId ||
+        prepared.revision !== revision ||
+        !/^[a-f0-9]{64}$/.test(prepared.sha256) ||
+        prepared.identity.dev !== job.output.identity.dev ||
+        prepared.identity.ino !== job.output.identity.ino ||
+        prepared.identity.size <= 0 ||
+        prepared.identity.size > 128 * 1024 * 1024 ||
+        !checkpointReferenceIsCurrent({ path: job.output.path, identity: prepared.identity })
+      )
+        throw new Error('Prepared checkpoint ownership mismatch')
+
+      // Ready means fsynced and CLOSED in the child. Establish the new durable
+      // checkpoint before unlinking the old tail. A crash between the two is
+      // handled by the existing duplicate-revision replay rule.
+      fs.renameSync(job.output.path, checkpointPath(chatId))
+      fsyncDirectory()
+      checkpointsWritten += 1
+      checkpointBytesWritten += prepared.identity.size
+      fs.unlinkSync(journalPath(chatId))
+      fsyncDirectory()
+      acknowledgeJournalBarrier(chatId)
+      state.journalEntries = 0
+      state.journalBytes = 0
+      state.dirtySinceMs = null
+      state.lastAppendAtMs = null
+      return 'checkpointed'
+    } catch (error) {
+      if (preparations.get(chatId) !== job) return 'superseded'
+      throw error
+    } finally {
+      if (preparations.get(chatId) === job) preparations.delete(chatId)
+      job.release()
+    }
+  }
+
+  let deferredIdleCursor: MapIterator<[string, RuntimeState]> | undefined
+  const checkpointIdleDeferred = async (nowMs = now()): Promise<number> => {
+    assertWritable()
+    let count = 0
+    // References only, and admission refuses saturation immediately. No
+    // pending records or snapshots accumulate behind an occupied worker.
+    const jobs: Promise<void>[] = []
+    // Round-robin metadata scan bounds each maintenance pass as well as the
+    // process pool. An occupied heavy chat cannot retain an unbounded list of
+    // rejected promises, or always take the first admission on the next pass.
+    for (let scanned = 0; scanned < 8; scanned += 1) {
+      deferredIdleCursor ??= states.entries()
+      const next = deferredIdleCursor.next()
+      if (next.done) {
+        deferredIdleCursor = undefined
+        break
+      }
+      const [chatId, state] = next.value
+      if (
+        state.tombstoned ||
+        state.journalEntries === 0 ||
+        state.lastAppendAtMs === null ||
+        state.dirtySinceMs === null ||
+        (nowMs - state.lastAppendAtMs < idleCheckpointMs &&
+          nowMs - state.dirtySinceMs < maxUncheckpointedMs)
+      )
+        continue
+      jobs.push(
+        checkpointDeferred(chatId)
+          .then((result) => {
+            if (result === 'checkpointed') count += 1
+          })
+          .catch((error: unknown) => {
+            console.error(`[incremental-chat] deferred checkpoint skipped ${chatId}`, error)
+          })
+      )
+    }
+    await Promise.all(jobs)
+    return count
+  }
+
   const checkpointIdle = (nowMs = now()): number => {
     assertWritable()
     let count = 0
@@ -993,6 +1167,14 @@ export function createIncrementalChatJournal(
 
   const checkpointAll = (reason: IncrementalChatCheckpointReason = 'shutdown'): number => {
     assertWritable()
+    let preparationCleanupFailure: unknown
+    try {
+      cancelCheckpointPreparations()
+    } catch (error) {
+      // Preparations were fenced before cleanup. An optional temp unlink
+      // failure must not skip the pre-existing D1 drain or healthy checkpoints.
+      preparationCleanupFailure = error
+    }
     // A shutdown/manual sweep must not leave D1 appends riding the kernel:
     // settle the deferred flushes first, then supersede them with checkpoints.
     drainDeferredDurability()
@@ -1006,10 +1188,12 @@ export function createIncrementalChatJournal(
         console.error(`[incremental-chat] shutdown checkpoint skipped ${chatId}`, error)
       }
     }
+    if (preparationCleanupFailure) throw preparationCleanupFailure
     return count
   }
 
   const deleteChat = (chatId: string): void => {
+    cancelCheckpointPreparations(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -1033,6 +1217,7 @@ export function createIncrementalChatJournal(
   }
 
   const purge = (chatId: string): void => {
+    cancelCheckpointPreparations(chatId)
     options.beforeSourceMutation?.(chatId)
     assertWritable()
     assertChatId(chatId)
@@ -1049,6 +1234,7 @@ export function createIncrementalChatJournal(
 
   const clear = (): void => {
     assertWritable()
+    cancelCheckpointPreparations()
     let entries: fs.Dirent[] = []
     try {
       entries = fs.readdirSync(baseDir, { withFileTypes: true })
@@ -1095,6 +1281,9 @@ export function createIncrementalChatJournal(
       headRecordResolver = resolve
     },
     checkpointIdle,
+    checkpointDeferred,
+    checkpointIdleDeferred,
+    cancelCheckpointPreparations,
     checkpointAll,
     drainDeferredDurability,
     awaitDeferredDurability,

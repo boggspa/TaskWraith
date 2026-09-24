@@ -166,6 +166,26 @@ async function importStoreWithHostOwnedGate(
 }
 
 describe('HostChatErasureWiring', () => {
+  it.each(['chat', 'global'] as const)(
+    'retires prepared checkpoint transcript bytes during Host-owned %s erasure with the worker flag off',
+    async (scope) => {
+      const { AppStore, profilePath } = await importStoreWithHostOwnedGate([
+        { id: 'chat-prepared', revision: 2 }
+      ])
+      const directory = join(profilePath, 'chat-journal-v2')
+      mkdirSync(directory, { recursive: true })
+      const temp = join(
+        directory,
+        `.chat-prepared.checkpoint-prepared-${process.pid}-12345678-abcd.tmp`
+      )
+      writeFileSync(temp, 'private transcript awaiting adoption', { flag: 'wx', mode: 0o600 })
+      if (scope === 'chat') await AppStore.deleteChatViaHost('chat-prepared')
+      else await AppStore.clearChatsViaHost()
+      expect(existsSync(temp)).toBe(false)
+      expect(AppStore.getPendingHistoryDeletion()).toBeNull()
+    }
+  )
+
   it('(a) routes deleteChat through thread.record.delete when the gate is Host-owned', async () => {
     const { AppStore, chatsDir, deleted, persisted } = await importStoreWithHostOwnedGate([
       { id: 'chat-del', revision: 2 }
