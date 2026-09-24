@@ -49,6 +49,7 @@ const {
   assertExactChildOwnsDebugPorts,
   runIsolatedBuild
 } = require('./electronChildSession.cjs')
+const { resolveRolloutFlags, pinRolloutFlagsOnSpawnPlan } = require('./rolloutFlags.cjs')
 const {
   attachRendererCdpSession,
   attachMainInspectorSession,
@@ -1459,7 +1460,9 @@ function parseArgs(argv) {
     else if (arg.startsWith('--cell=')) out.cell = arg.slice('--cell='.length)
     else if (arg.startsWith('--role=')) out.role = arg.slice('--role='.length)
     else if (arg.startsWith('--build-id=')) out.buildId = arg.slice('--build-id='.length)
-    else {
+    else if (arg.startsWith('--flag=')) {
+      out.flags = [...(Array.isArray(out.flags) ? out.flags : []), arg.slice('--flag='.length)]
+    } else {
       throw new Error(`Unknown argument: ${arg}`)
     }
   }
@@ -1636,6 +1639,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   }
   const willLaunch = Boolean(args.launch && args.acceptIsolatedLaunch)
 
+  // Every programme rollout flag is pinned for the measured child: ON only
+  // when declared with --flag, its OFF token otherwise (whatever the runner
+  // inherited), and stated in the environment record either way.
+  const rolloutFlags = resolveRolloutFlags({
+    declared: args.flags,
+    inheritedEnv: options.env || process.env
+  })
+
   const seed = args.seed == null ? 42 : Number(args.seed)
   if (!Number.isFinite(seed)) throw new Error('--seed must be a number')
 
@@ -1730,7 +1741,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
   // as-is). Only set for a real launch — dry runs must not arm anything.
   const hostSnapshotPath = path.join(artifactDir, HOST_PERF_SNAPSHOT_FILE_NAME)
 
-  const spawnPlan = buildElectronSpawnPlan({
+  const unpinnedSpawnPlan = buildElectronSpawnPlan({
     instanceId: userDataResolved.sanitizedInstanceId,
     repoRoot,
     remoteDebuggingPort: args.port == null ? undefined : Number(args.port),
@@ -1742,6 +1753,8 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     platform: options.platform || process.platform,
     extraEnv: willLaunch ? { TASKWRAITH_PERF_HOST_SNAPSHOT_PATH: hostSnapshotPath } : undefined
   })
+  // The measured child and its external Host run exactly the pinned state.
+  const spawnPlan = pinRolloutFlagsOnSpawnPlan(unpinnedSpawnPlan, rolloutFlags)
 
   const generatedFixture = generatePerfFixture({
     workload,
@@ -1904,6 +1917,7 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     startedAt,
     endedAt: null,
     authoritativeBaseline,
+    rolloutFlags: rolloutFlags.record,
     repoProvenance: {
       gitSha: provenance.gitSha,
       dirty: provenance.dirty,
@@ -3091,10 +3105,14 @@ async function runT2BaselineCli(argv = process.argv.slice(2), options = {}) {
     report.pairs = pairs
     const cell = parseCellName(crossThreadCell)
     const cells = [{ ...cell, name: crossThreadCell, ...cellReachability(cell) }]
+    // taskwraithFlags describes the child's actual environment: the plan env
+    // layered over the inherited one, as spawnExactElectronChild merges it,
+    // so a pinned rollout flag is reported with the value the child received.
     const interferenceEnvironment =
       options.interferenceEnvironment ||
       environmentRecord({
         repoRoot,
+        env: { ...(options.env || process.env), ...spawnPlan.env },
         collectRepoProvenance: () => provenance
       })
     try {

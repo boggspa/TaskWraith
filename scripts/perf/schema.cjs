@@ -10,6 +10,7 @@ const { PERF_GATE_THRESHOLDS, MIN_PROFILE_BYTES } = require('./perfGateThreshold
 // The crossThread block shape lives with the span collector that writes it;
 // schema.cjs owns only the verdict (block errors fold into `errors` below).
 const { validateCrossThreadBlock } = require('./collectors/hostSpans.cjs')
+const { validateRolloutFlagRecord } = require('./rolloutFlags.cjs')
 
 const WORKLOADS = Object.freeze([
   '30seat',
@@ -167,6 +168,7 @@ function validatePerfEnvironment(env) {
   if (typeof env.authoritativeBaseline !== 'boolean') {
     errors.push('authoritativeBaseline must be boolean')
   }
+  errors.push(...validateRolloutFlagRecord(env.rolloutFlags))
   if (!isPlainObject(env.repoProvenance)) {
     errors.push('repoProvenance required')
   } else {
