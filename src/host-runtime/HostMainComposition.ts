@@ -177,6 +177,8 @@ export interface HostMainCompositionInput {
    * see AppStoreHostAuthority.abortQueuedStart.
    */
   readonly queuedStartAbortBind?: (handler: (commandId: string) => void) => void
+  /** Quiesce producer and ACK work before draining publications and flushing. */
+  readonly queuedStartBeforeShutdown?: () => Promise<void>
   readonly snapshotDonor: AppStoreHostAuthoritySnapshotDonor
   readonly authorityEvaluator: AppStoreHostAuthorityEvaluator
   readonly healthProvider: AppStoreHostAuthorityHealthProvider
@@ -373,7 +375,8 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
     ['queuedStartStartingBind', input.queuedStartStartingBind],
     ['queuedStartStartedBind', input.queuedStartStartedBind],
     ['queuedStartDispatchSettledBind', input.queuedStartDispatchSettledBind],
-    ['queuedStartAbortBind', input.queuedStartAbortBind]
+    ['queuedStartAbortBind', input.queuedStartAbortBind],
+    ['queuedStartBeforeShutdown', input.queuedStartBeforeShutdown]
   ] as const
   for (const [label, bind] of queuedStartBinds) {
     if (bind !== undefined) requireFunction(bind, label)
@@ -518,14 +521,29 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
   // pinned by a named test rather than left as a silent side effect.
   let projectionReconciler: HostProjectionReconciler | null = null
   let drainQueuedStartPublication: () => Promise<void> = async () => undefined
+  let producerDrainPromise: Promise<void> | null = null
+  const drainQueuedStartProducer = (): Promise<void> => {
+    if (!producerDrainPromise) {
+      producerDrainPromise = Promise.resolve()
+        .then(() => input.queuedStartBeforeShutdown?.())
+        .catch((error: unknown) => {
+          producerDrainPromise = null
+          throw error
+        })
+    }
+    return producerDrainPromise
+  }
   let shutdownPromise: Promise<void> | null = null
   let shutdownComplete = false
   const flushDurableState = (): Promise<void> => {
     if (shutdownComplete) return Promise.resolve()
     if (shutdownPromise) return shutdownPromise
     const attempt = async (): Promise<void> => {
-      // Drain start publications FIRST: one may still be holding the shared
-      // queue, and a snapshot-only drain after the flush could miss it.
+      // Both protocol shutdown and supervisor teardown enter here. Producer
+      // tails must settle before the publication drain and final flush.
+      if (input.queuedStartBeforeShutdown) await drainQueuedStartProducer()
+      // One publication may still be holding the shared queue, and a
+      // snapshot-only drain after the flush could miss it.
       await drainQueuedStartPublication()
       await projectionReconciler?.stop()
       // Quiesce the shared queue itself. No-op when none was built.
@@ -578,6 +596,7 @@ export function createHostMainComposition(input: HostMainCompositionInput): Host
         ? { threadCatalogueProvider: input.threadCatalogueProvider }
         : {}),
       ...(input.historySinceProvider ? { historySinceProvider: input.historySinceProvider } : {}),
+      ...(input.queuedStartBeforeShutdown ? { onBeforeShutdown: drainQueuedStartProducer } : {}),
       onShutdown: flushDurableState,
       deferredAsk: {
         envelopeStorePut: (put) => runtime.envelopeStore.put(put),

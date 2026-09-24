@@ -1264,6 +1264,47 @@ describe('AppStoreHostAuthority', () => {
     expect(reopened.getPosition()).toEqual({ generation: 1, cursor: 1 })
   })
 
+  it('shares a producer drain and retries its failure before any protocol shutdown flush', async () => {
+    let rejectDrain!: (error: Error) => void
+    const pendingDrain = new Promise<void>((_resolve, reject) => {
+      rejectDrain = reject
+    })
+    const onBeforeShutdown = vi
+      .fn<() => Promise<void>>()
+      .mockImplementationOnce(() => pendingDrain)
+      .mockResolvedValue(undefined)
+    const authority = open({ ports: { onBeforeShutdown } })
+    const flush = vi.spyOn(runtime, 'flush')
+    const ctx = contextFor(ACTOR_A, CLIENT_A)
+    const first = authority.shutdown(ctx)
+    const second = authority.shutdown(ctx)
+    expect(onBeforeShutdown).toHaveBeenCalledOnce()
+    expect(flush).not.toHaveBeenCalled()
+    expect(shutdownCalls).toBe(0)
+    expect(await authority.health(ctx)).toEqual({ ok: false, error: 'shutting_down' })
+
+    rejectDrain(new Error('producer still writing'))
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      { ok: false, error: 'host_unavailable' },
+      { ok: false, error: 'host_unavailable' }
+    ])
+    expect(flush).not.toHaveBeenCalled()
+    expect(shutdownCalls).toBe(0)
+
+    await expect(authority.shutdown(ctx)).resolves.toEqual({
+      ok: true,
+      value: { stopped: true, alreadyStopped: false }
+    })
+    expect(onBeforeShutdown).toHaveBeenCalledTimes(2)
+    expect(flush).toHaveBeenCalledOnce()
+    expect(shutdownCalls).toBe(1)
+    await expect(authority.shutdown(ctx)).resolves.toEqual({
+      ok: true,
+      value: { stopped: true, alreadyStopped: true }
+    })
+    expect(onBeforeShutdown).toHaveBeenCalledTimes(2)
+  })
+
   it('health returns injected live projection only while active', async () => {
     const authority = open()
     const ctx = contextFor(ACTOR_A, CLIENT_A)

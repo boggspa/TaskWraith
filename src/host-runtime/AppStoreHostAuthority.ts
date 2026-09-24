@@ -307,6 +307,8 @@ export interface AppStoreHostAuthorityPorts {
   readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
   readonly threadCatalogueMaintenanceProvider?: AppStoreHostAuthorityThreadCatalogueMaintenanceProvider
   readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
+  /** Quiesce external queued-start producers before any shutdown flush. */
+  readonly onBeforeShutdown?: AppStoreHostAuthorityShutdownCallback
   readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   /** Optional only for pre-cutover compatibility; present enables S2–S5. */
   readonly deferredAsk?: HostDeferredAskPorts
@@ -468,6 +470,7 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly threadCatalogueProvider?: AppStoreHostAuthorityThreadCatalogueProvider
   private readonly threadCatalogueMaintenanceProvider?: AppStoreHostAuthorityThreadCatalogueMaintenanceProvider
   private readonly historySinceProvider?: AppStoreHostAuthorityHistorySinceProvider
+  private readonly onBeforeShutdown?: AppStoreHostAuthorityShutdownCallback
   private readonly onShutdown: AppStoreHostAuthorityShutdownCallback
   private readonly deferredAsk?: HostDeferredAskPorts
   private readonly domainPublisher: HostDomainDeltaPublisher
@@ -476,6 +479,8 @@ export class AppStoreHostAuthority implements HostAuthority {
   private readonly mode: AppStoreHostAuthorityMode
   private readonly standaloneLease?: HostStandaloneAuthorityLeasePort
   private stopped = false
+  private shutdownComplete = false
+  private shutdownAttempt: Promise<HostAuthorityResult<HostAuthorityShutdownResult>> | null = null
 
   constructor(options: AppStoreHostAuthorityOptions) {
     if (!options || (options.mode !== 'in-process-migration' && options.mode !== 'standalone')) {
@@ -521,6 +526,7 @@ export class AppStoreHostAuthority implements HostAuthority {
         typeof ports.threadHistoryProvider !== 'function') ||
       (ports.historySinceProvider !== undefined &&
         typeof ports.historySinceProvider !== 'function') ||
+      (ports.onBeforeShutdown !== undefined && typeof ports.onBeforeShutdown !== 'function') ||
       typeof ports.onShutdown !== 'function' ||
       (ports.deferredAsk !== undefined && !isValidDeferredAskPorts(ports.deferredAsk)) ||
       (options.mode === 'standalone' && ports.deferredAsk !== undefined)
@@ -567,6 +573,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     this.threadCatalogueProvider = ports.threadCatalogueProvider
     this.threadCatalogueMaintenanceProvider = ports.threadCatalogueMaintenanceProvider
     this.historySinceProvider = ports.historySinceProvider
+    this.onBeforeShutdown = ports.onBeforeShutdown
     this.onShutdown = ports.onShutdown
     this.deferredAsk = ports.deferredAsk
     this.now = options.now ?? (() => new Date().toISOString())
@@ -1599,12 +1606,31 @@ export class AppStoreHostAuthority implements HostAuthority {
     if (!contextActorMatchesClient(context)) {
       return { ok: false, error: 'invalid_lookup' }
     }
-    if (this.stopped) {
+    // Preserve legacy already-stopped behaviour when no producer hook is installed;
+    // with a hook, a failed drain or flush remains retryable until shutdown completes.
+    if (this.stopped && (!this.onBeforeShutdown || this.shutdownComplete)) {
       return { ok: true, value: { stopped: true, alreadyStopped: true } }
     }
+    if (this.shutdownAttempt) return this.shutdownAttempt
     const lease = this.assertStandaloneLease()
     if (!lease.ok) return lease
     this.stopped = true
+    this.shutdownAttempt = this.finishShutdown()
+    try {
+      return await this.shutdownAttempt
+    } finally {
+      this.shutdownAttempt = null
+    }
+  }
+
+  private async finishShutdown(): Promise<HostAuthorityResult<HostAuthorityShutdownResult>> {
+    try {
+      if (this.onBeforeShutdown) await this.onBeforeShutdown()
+    } catch {
+      // Admission stays closed, but an incomplete producer drain can be retried.
+      // Nothing may flush while a producer could still append start evidence.
+      return { ok: false, error: 'host_unavailable' }
+    }
     try {
       await this.queuedStartPublication?.drain()
     } catch {
@@ -1620,6 +1646,7 @@ export class AppStoreHostAuthority implements HostAuthority {
     } catch {
       // Stopped flag already set — do not auto-restart; surface still succeeded.
     }
+    this.shutdownComplete = true
     return { ok: true, value: { stopped: true, alreadyStopped: false } }
   }
 }
