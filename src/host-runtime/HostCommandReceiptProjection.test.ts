@@ -218,7 +218,8 @@ describe('HostCommandReceiptProjection', () => {
         updatedAt: '2026-08-03T16:00:00.000Z'
       }
     })
-    writeFileSync(journalPath, `${readFileSync(journalPath, 'utf8')}${legacy}\n`)
+    // A legitimate legacy prefix precedes the upgraded writer's sequenced suffix.
+    writeFileSync(journalPath, `${legacy}\n${readFileSync(journalPath, 'utf8')}`)
 
     const reopened = openStore()
     const legacyRecord = reopened.list().find((r) => r.commandId === 'cmd-legacy')
