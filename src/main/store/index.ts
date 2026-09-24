@@ -8918,6 +8918,8 @@ export class AppStore {
    * the record, and saveChatThroughHost either materialized it (small records)
    * or armed the coalescing trailing timer (large terminal/approval saves), so
    * forcing another would only add a whole-record clone on main per round.
+   * A save whose journal or detail write failed instead needs the full Host
+   * acknowledgement: enqueueing that sole durable copy is not a barrier.
    * Still rejects fail-closed on an unacknowledged journal flush and still
    * waits out a catalogue recovery hold.
    */
@@ -8926,6 +8928,11 @@ export class AppStore {
       return threadCatalogueWriteGate
         .wait(chatId)
         .then(() => this.awaitChatRecordDispatchDurable(chatId))
+    if (hostChatCompatibilityPersistence?.hasDurabilityFallback(chatId)) {
+      // Do not use the compatibility recovery policy that can resolve after
+      // exhausting revision-conflict retries: this save has no journal copy.
+      return barrierChatRecordPersist(chatId)
+    }
     return incrementalChatPersistence.awaitDeferredDurability(chatId)
   }
 

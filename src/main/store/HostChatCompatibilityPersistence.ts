@@ -241,7 +241,7 @@ export class HostChatCompatibilityPersistence {
     ) {
       // The same revision is already pending: that entry publishes this
       // save's state, so it inherits the fallback intent.
-      if (state.pending && durabilityFallback) state.pending.durabilityFallback = true
+      if (latest && durabilityFallback) latest.durabilityFallback = true
       this.observeStage(input, 'duplicate')
       return 'duplicate'
     }
@@ -358,6 +358,7 @@ export class HostChatCompatibilityPersistence {
       // captured this identity before the injected drain entered Host recovery.
       state.submitted.input = input
       state.submitted.sequence = latestSequence
+      state.submitted.durabilityFallback ||= state.pending?.durabilityFallback === true
       state.pending = null
       state.materializeAfterSubmitted = false
       this.clearIntervalTimer(state)
@@ -398,6 +399,13 @@ export class HostChatCompatibilityPersistence {
     validateChatId(chatId)
     const state = this.states.get(chatId)
     return Boolean(state?.pending || state?.submitted)
+  }
+
+  /** A save without a durable journal copy still needs its Host acknowledgement. */
+  hasDurabilityFallback(chatId: string): boolean {
+    validateChatId(chatId)
+    const state = this.states.get(chatId)
+    return Boolean(state?.pending?.durabilityFallback || state?.submitted?.durabilityFallback)
   }
 
   hasSubmitted(chatId: string): boolean {

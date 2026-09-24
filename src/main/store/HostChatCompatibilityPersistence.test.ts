@@ -969,6 +969,45 @@ describe('minimum interval between chained checkpoints', () => {
     expect(pendingIntent(f.persistence, 'chat-1')).toBe(false)
   })
 
+  it('requires a Host barrier for a fallback until its exact record is acknowledged', () => {
+    const f = harness({ drain: () => new Promise<void>(() => {}) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(false)
+    f.persistence.stage(input('chat-1', 5, 3), { durabilityFallback: true })
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(true)
+    expect(f.persistence.materialize('chat-1')).toBe(true)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(true)
+    expect(f.persistence.acknowledgeRevision('chat-1', 4)).toBe(false)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(true)
+    expect(f.persistence.acknowledgeRevision('chat-1', 5)).toBe(true)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(false)
+  })
+
+  it('retains fallback intent when the duplicate revision is already submitted', () => {
+    const f = harness({ drain: () => new Promise<void>(() => {}) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(false)
+    expect(f.persistence.stage(input('chat-1', 4, 3), { durabilityFallback: true })).toBe(
+      'duplicate'
+    )
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(true)
+    f.persistence.acknowledgeRevision('chat-1', 4)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(false)
+  })
+
+  it('carries a pending fallback into the submitted record that absorbs it during rebase', () => {
+    const f = harness({ drain: () => new Promise<void>(() => {}) })
+    f.persistence.stage(input('chat-1', 4, 3))
+    f.persistence.materialize('chat-1')
+    f.persistence.stage(input('chat-1', 7, 4), { durabilityFallback: true })
+    expect(f.persistence.rebase(input('chat-1', 8, 4))).toBe(true)
+    expect(f.persistence.hasSubmitted('chat-1')).toBe(true)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(true)
+    f.persistence.acknowledgeRevision('chat-1', 8)
+    expect(f.persistence.hasDurabilityFallback('chat-1')).toBe(false)
+  })
+
   it('a pending-branch rebase carries the fallback intent to the recovered record', async () => {
     const drain = vi
       .fn()
