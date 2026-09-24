@@ -378,12 +378,6 @@ export class HostDeltaStore {
     if (journal.corruptInterior) {
       this.noteRecovery('recovered-corrupt-interior', 'skipped corrupt interior journal record(s)')
     }
-    if (!checkpoint && existsSync(this.checkpointPath)) {
-      this.noteRecovery(
-        'degraded-checkpoint',
-        'checkpoint unreadable; rebuilt from journal when present'
-      )
-    }
     this.appendAuthorityBlocked = preserveBlockedAuthority
   }
 
@@ -1086,15 +1080,31 @@ export class HostDeltaStore {
 
     mkdirSync(this.dataDir, { recursive: true })
     const tmpPath = `${this.checkpointPath}.${process.pid}.${randomUUID()}.tmp`
-    writeFileSync(tmpPath, `${JSON.stringify(doc)}\n`, { encoding: 'utf8', mode: 0o600 })
-    const fd = openSync(tmpPath, 'r+')
+    let descriptor: number | null = null
     try {
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
+      writeFileSync(tmpPath, `${JSON.stringify(doc)}\n`, { encoding: 'utf8', mode: 0o600 })
+      descriptor = openSync(tmpPath, 'r+')
+      fsyncSync(descriptor)
+      const descriptorToClose = descriptor
+      descriptor = null
+      closeSync(descriptorToClose)
+      renameSync(tmpPath, this.checkpointPath)
+      if (process.platform !== 'win32') this.syncDataDirectory()
+    } catch (error) {
+      if (descriptor !== null) {
+        try {
+          closeSync(descriptor)
+        } catch {
+          // Preserve the original checkpoint failure if descriptor cleanup fails.
+        }
+      }
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        // Cleanup is best-effort, including when rename already consumed the temp.
+      }
+      throw error
     }
-    renameSync(tmpPath, this.checkpointPath)
-    if (process.platform !== 'win32') this.syncDataDirectory()
 
     try {
       if (existsSync(this.journalPath)) {
@@ -1199,9 +1209,15 @@ export class HostDeltaStore {
     const descriptor = openSync(this.dataDir, 'r')
     try {
       fsyncSync(descriptor)
-    } finally {
-      closeSync(descriptor)
+    } catch (error) {
+      try {
+        closeSync(descriptor)
+      } catch {
+        // Preserve the directory-sync failure when descriptor cleanup also fails.
+      }
+      throw error
     }
+    closeSync(descriptor)
   }
 
   private noteRecovery(state: HostDeltaRecoveryState, warning: string): void {
@@ -1222,42 +1238,72 @@ export class HostDeltaStore {
       if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
       throw err
     }
+    // After compaction, the journal may contain only records after this cursor.
+    // An unusable checkpoint cannot be treated as an empty initial store.
+    let parsed: unknown
     try {
-      const parsed: unknown = JSON.parse(raw)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        this.log('[HostDeltaStore] checkpoint malformed (not an object)')
-        return null
-      }
-      const doc = parsed as Partial<CheckpointDocument>
-      if (doc.schemaVersion !== HOST_DELTA_STORE_SCHEMA_VERSION) {
-        this.log('[HostDeltaStore] checkpoint schema mismatch')
-        return null
-      }
-      if (
-        !isNonNegativeInt(doc.generation) ||
-        !isNonNegativeInt(doc.cursor) ||
-        !isNonNegativeInt(doc.lowestRetainedCursor) ||
-        !Array.isArray(doc.records)
-      ) {
-        this.log('[HostDeltaStore] checkpoint fields invalid')
-        return null
-      }
-      const records = doc.records
-        .map(normalizeStoredRecord)
-        .filter((r): r is HostDeltaStoredRecord => r !== null)
-      return {
-        schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
-        updatedAt: typeof doc.updatedAt === 'string' ? doc.updatedAt : this.now(),
-        generation: doc.generation,
-        cursor: doc.cursor,
-        lowestRetainedCursor: doc.lowestRetainedCursor,
-        records
-      }
-    } catch (err) {
-      this.log(
-        `[HostDeltaStore] checkpoint load failed: ${err instanceof Error ? err.message : String(err)}`
+      parsed = JSON.parse(raw)
+    } catch {
+      // Native JSON parse errors can include a preview of private checkpoint bytes.
+      throw new Error('Host delta checkpoint malformed JSON')
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('Host delta checkpoint malformed (not an object)')
+    }
+    const doc = parsed as Partial<CheckpointDocument>
+    if (doc.schemaVersion !== HOST_DELTA_STORE_SCHEMA_VERSION) {
+      throw new Error('Host delta checkpoint schema mismatch')
+    }
+    if (
+      !isNonNegativeInt(doc.generation) ||
+      doc.generation < 1 ||
+      !isNonNegativeInt(doc.cursor) ||
+      !isNonNegativeInt(doc.lowestRetainedCursor) ||
+      doc.lowestRetainedCursor > doc.cursor ||
+      !Array.isArray(doc.records)
+    ) {
+      throw new Error('Host delta checkpoint fields invalid')
+    }
+    // The trusted header owns the acknowledged head. Retained rows are a
+    // projection cache and may belong to an earlier protocol/projection version.
+    // Keep only an unambiguous continuous suffix that reaches that exact head.
+    const candidates = doc.records
+      .map(normalizeStoredRecord)
+      .filter(
+        (record): record is HostDeltaStoredRecord =>
+          record !== null &&
+          record.envelope.generation === doc.generation &&
+          record.envelope.cursor <= doc.cursor!
       )
-      return null
+      .sort((left, right) => left.envelope.cursor - right.envelope.cursor)
+    const records: HostDeltaStoredRecord[] = []
+    let nextCursor = doc.cursor
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const record = candidates[index]!
+      if (record.envelope.cursor !== nextCursor) break
+      if (index > 0 && candidates[index - 1]!.envelope.cursor === nextCursor) break
+      records.push(record)
+      nextCursor -= 1
+    }
+    records.reverse()
+    const lowestRetainedCursor = records[0]?.envelope.cursor ?? 0
+    if (
+      records.length !== doc.records.length ||
+      lowestRetainedCursor !== doc.lowestRetainedCursor ||
+      (doc.cursor > 0 && records.length === 0)
+    ) {
+      this.noteRecovery(
+        'degraded-checkpoint',
+        'checkpoint retention degraded; acknowledged head preserved, missing deltas require resnapshot'
+      )
+    }
+    return {
+      schemaVersion: HOST_DELTA_STORE_SCHEMA_VERSION,
+      updatedAt: typeof doc.updatedAt === 'string' ? doc.updatedAt : this.now(),
+      generation: doc.generation,
+      cursor: doc.cursor,
+      lowestRetainedCursor,
+      records
     }
   }
 

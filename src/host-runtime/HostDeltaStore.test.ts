@@ -1,11 +1,15 @@
 import {
+  closeSync,
   existsSync,
   fstatSync,
   fsyncSync,
   ftruncateSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
+  readdirSync,
   readFileSync,
+  renameSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -23,16 +27,21 @@ import {
   HOST_DELTA_CHECKPOINT_FILENAME,
   HOST_DELTA_FORBIDDEN_PAYLOAD_CODE,
   HOST_DELTA_JOURNAL_FILENAME,
-  prepareHostDeltaPayload
+  prepareHostDeltaPayload,
+  type HostDeltaStoredRecord
 } from './HostDeltaStore'
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
     ...actual,
+    closeSync: vi.fn(actual.closeSync),
     fsyncSync: vi.fn(actual.fsyncSync),
+    openSync: vi.fn(actual.openSync),
     readFileSync: vi.fn(actual.readFileSync),
-    unlinkSync: vi.fn(actual.unlinkSync)
+    renameSync: vi.fn(actual.renameSync),
+    unlinkSync: vi.fn(actual.unlinkSync),
+    writeFileSync: vi.fn(actual.writeFileSync)
   }
 })
 
@@ -46,9 +55,13 @@ describe('HostDeltaStore', () => {
   })
 
   afterEach(() => {
+    vi.mocked(closeSync).mockReset()
     vi.mocked(fsyncSync).mockReset()
+    vi.mocked(openSync).mockReset()
     vi.mocked(readFileSync).mockReset()
+    vi.mocked(renameSync).mockReset()
     vi.mocked(unlinkSync).mockReset()
+    vi.mocked(writeFileSync).mockReset()
     rmSync(dataDir, { recursive: true, force: true })
   })
 
@@ -459,6 +472,244 @@ describe('HostDeltaStore', () => {
     }
   )
 
+  it.each([
+    'malformed JSON',
+    'non-object root',
+    'unsupported schema',
+    'invalid generation',
+    'invalid cursor',
+    'invalid records field'
+  ] as const)('fails closed on a present checkpoint with %s', (fault) => {
+    const store = openStore()
+    for (const entityId of ['one', 'two', 'three']) {
+      store.append({ kind: 'upsert', family: 'thread', entityId })
+    }
+    store.compact()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'four' })
+    const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+    const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    const validCheckpoint = readFileSync(checkpoint)
+    const validJournal = readFileSync(journal)
+    const doc = JSON.parse(validCheckpoint.toString('utf8')) as {
+      schemaVersion: number
+      generation: number
+      cursor: number
+      lowestRetainedCursor: number
+      records: HostDeltaStoredRecord[]
+    }
+    const invalid = {
+      'malformed JSON': '{',
+      'non-object root': 'null',
+      'unsupported schema': JSON.stringify({ ...doc, schemaVersion: 999 }),
+      'invalid generation': JSON.stringify({ ...doc, generation: 0 }),
+      'invalid cursor': JSON.stringify({ ...doc, cursor: -1 }),
+      'invalid records field': JSON.stringify({ ...doc, records: null })
+    }[fault]
+    writeFileSync(checkpoint, invalid)
+
+    expect(() => openStore()).toThrow()
+    expect(() => store.reopen()).toThrow()
+    expect(() => store.append({ kind: 'remove', family: 'thread' })).toThrow('authority is blocked')
+    expect(() => store.appendBatch([])).toThrow('authority is blocked')
+    expect(() => store.resetGeneration()).toThrow('authority is blocked')
+    expect(() => store.compact()).toThrow('authority is blocked')
+    expect(readFileSync(checkpoint, 'utf8')).toBe(invalid)
+    expect(readFileSync(journal)).toEqual(validJournal)
+
+    writeFileSync(checkpoint, validCheckpoint)
+    store.reopen()
+    expect(() => store.append({ kind: 'remove', family: 'thread' })).toThrow('authority is blocked')
+    const recovered = openStore()
+    expect(recovered.getPosition()).toEqual({ generation: 1, cursor: 4 })
+    expect(recovered.getByCursor(1)?.envelope.entityId).toBe('one')
+    expect(recovered.getByCursor(4)?.envelope.entityId).toBe('four')
+    expect(recovered.append({ kind: 'remove', family: 'thread' })).toMatchObject({
+      kind: 'appended',
+      position: { generation: 1, cursor: 5 }
+    })
+    expect(openStore().getPosition()).toEqual(recovered.getPosition())
+  })
+
+  it.each([
+    { fault: 'old projection version', retained: [] },
+    { fault: 'old protocol version', retained: [] },
+    { fault: 'mixed projection versions', retained: [3] },
+    { fault: 'malformed record', retained: [2, 3] },
+    { fault: 'wrong generation', retained: [] },
+    { fault: 'missing head record', retained: [] },
+    { fault: 'duplicate cursor', retained: [3] },
+    { fault: 'incorrect retained boundary', retained: [1, 2, 3] },
+    { fault: 'gap in retained chain', retained: [3] },
+    { fault: 'invalid previous cursor', retained: [] },
+    { fault: 'empty retention', retained: [] }
+  ])('preserves the checkpoint head and a usable suffix after $fault', ({ fault, retained }) => {
+    const store = openStore()
+    for (const entityId of ['one', 'two', 'three']) {
+      store.append({ kind: 'upsert', family: 'thread', entityId })
+    }
+    store.compact()
+    const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+    const doc = JSON.parse(readFileSync(checkpoint, 'utf8')) as {
+      generation: number
+      cursor: number
+      lowestRetainedCursor: number
+      records: HostDeltaStoredRecord[]
+    }
+    const changed: Record<string, unknown> = {
+      'old projection version': {
+        ...doc,
+        records: doc.records.map((record) => ({
+          ...record,
+          envelope: { ...record.envelope, projectionVersion: 0 }
+        }))
+      },
+      'old protocol version': {
+        ...doc,
+        records: doc.records.map((record) => ({
+          ...record,
+          envelope: { ...record.envelope, protocolVersion: 0 }
+        }))
+      },
+      'mixed projection versions': {
+        ...doc,
+        records: doc.records.map((record) =>
+          record.envelope.cursor === 3
+            ? record
+            : {
+                ...record,
+                envelope: { ...record.envelope, projectionVersion: 0 }
+              }
+        )
+      },
+      'malformed record': { ...doc, records: [null, ...doc.records.slice(1)] },
+      'wrong generation': {
+        ...doc,
+        records: doc.records.map((record) => ({
+          ...record,
+          envelope: { ...record.envelope, generation: 2 }
+        }))
+      },
+      'missing head record': { ...doc, records: doc.records.slice(0, -1) },
+      'duplicate cursor': { ...doc, records: [...doc.records, doc.records[1]] },
+      'incorrect retained boundary': { ...doc, lowestRetainedCursor: 2 },
+      'gap in retained chain': { ...doc, records: [doc.records[0], doc.records[2]] },
+      'invalid previous cursor': {
+        ...doc,
+        records: doc.records.map((record) =>
+          record.envelope.cursor !== 3
+            ? record
+            : {
+                ...record,
+                envelope: { ...record.envelope, previousCursor: 0 }
+              }
+        )
+      },
+      'empty retention': { ...doc, lowestRetainedCursor: 0, records: [] }
+    }
+    writeFileSync(checkpoint, JSON.stringify(changed[fault]))
+
+    const recovered = openStore()
+    expect(recovered.getPosition()).toEqual({ generation: 1, cursor: 3 })
+    expect(recovered.getRecoveryState()).toMatchObject({
+      recoveryState: 'degraded-checkpoint',
+      size: retained.length,
+      lowestRetainedCursor: retained[0] ?? 0
+    })
+    for (const cursor of [1, 2, 3]) {
+      expect(recovered.getByCursor(cursor) !== null).toBe(retained.includes(cursor))
+    }
+    if (retained.length < 3) {
+      expect(recovered.since({ generation: 1, cursor: 0 })).toMatchObject({
+        kind: 'full_resnapshot_required',
+        reason: 'retention_gap'
+      })
+    }
+    const suffix = recovered.since({ generation: 1, cursor: retained.length ? retained[0] - 1 : 3 })
+    expect(suffix.kind).toBe('deltas')
+    if (suffix.kind === 'deltas')
+      expect(suffix.deltas.map((record) => record.cursor)).toEqual(retained)
+
+    recovered.compact()
+    const roundtrip = openStore()
+    expect(roundtrip.getPosition()).toEqual({ generation: 1, cursor: 3 })
+    expect(roundtrip.size).toBe(retained.length)
+    if (retained.length < 3) {
+      expect(roundtrip.since({ generation: 1, cursor: 0 })).toMatchObject({
+        kind: 'full_resnapshot_required',
+        reason: 'retention_gap'
+      })
+    }
+    expect(roundtrip.append({ kind: 'remove', family: 'thread' })).toMatchObject({
+      kind: 'appended',
+      position: { generation: 1, cursor: 4 },
+      record: { envelope: { previousCursor: 3 } }
+    })
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 4 })
+  })
+
+  it('replays the journal after an incompatible checkpoint without reissuing its head cursor', () => {
+    const store = openStore()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'old-projection' })
+    store.compact()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'current-projection' })
+    const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+    const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    const journalBytes = readFileSync(journal)
+    const doc = JSON.parse(readFileSync(checkpoint, 'utf8')) as { records: HostDeltaStoredRecord[] }
+    writeFileSync(
+      checkpoint,
+      JSON.stringify({
+        ...doc,
+        records: doc.records.map((record) => ({
+          ...record,
+          envelope: { ...record.envelope, projectionVersion: 0 }
+        }))
+      })
+    )
+
+    const recovered = openStore()
+    expect(recovered.getPosition()).toEqual({ generation: 1, cursor: 2 })
+    expect(recovered.getByCursor(1)).toBeNull()
+    expect(recovered.getByCursor(2)?.envelope.entityId).toBe('current-projection')
+    expect(readFileSync(journal)).toEqual(journalBytes)
+    expect(recovered.since({ generation: 1, cursor: 0 })).toMatchObject({
+      kind: 'full_resnapshot_required',
+      reason: 'retention_gap'
+    })
+    expect(recovered.append({ kind: 'remove', family: 'thread' })).toMatchObject({
+      kind: 'appended',
+      position: { generation: 1, cursor: 3 }
+    })
+    expect(openStore().getPosition()).toEqual(recovered.getPosition())
+  })
+
+  it('reports malformed checkpoint JSON without exposing its contents in errors or diagnostics', () => {
+    const store = openStore()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'durable' })
+    store.compact()
+    const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+    const checkpointBytes = readFileSync(checkpoint)
+    const diagnosticLines: string[] = []
+    const marker = 'checkpoint-private-fixture-text'
+    writeFileSync(checkpoint, `${marker}: invalid JSON`)
+    let thrown: unknown
+    try {
+      openStore({ log: (line) => diagnosticLines.push(line) })
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toBe('Host delta checkpoint malformed JSON')
+    expect((thrown as Error).cause).toBeUndefined()
+    expect(String((thrown as Error).stack)).not.toContain(marker)
+    expect(diagnosticLines.join('\n')).not.toContain(marker)
+    expect(() => store.reopen()).toThrow('Host delta checkpoint malformed JSON')
+    expect(() => store.append({ kind: 'remove', family: 'thread' })).toThrow('authority is blocked')
+    expect(readFileSync(checkpoint, 'utf8')).toBe(`${marker}: invalid JSON`)
+    writeFileSync(checkpoint, checkpointBytes)
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 1 })
+  })
+
   it.skipIf(process.platform === 'win32')(
     'keeps a newly created journal invisible until its directory is synced',
     () => {
@@ -557,6 +808,184 @@ describe('HostDeltaStore', () => {
       expect(openStore().getPosition()).toEqual(store.getPosition())
     }
   )
+
+  it.each(['write', 'open', 'fsync', 'close', 'rename'] as const)(
+    'cleans a failed checkpoint %s without losing durable state or replacing its error',
+    (stage) => {
+      const store = openStore()
+      store.append({ kind: 'upsert', family: 'thread', entityId: 'checkpoint' })
+      store.compact()
+      store.append({ kind: 'upsert', family: 'thread', entityId: 'journal' })
+      const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+      const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+      const beforeCheckpoint = readFileSync(checkpoint)
+      const beforeJournal = readFileSync(journal)
+      const failure = new Error(`checkpoint ${stage} failed`)
+      const realWrite = vi.mocked(writeFileSync).getMockImplementation()!
+      const realClose = vi.mocked(closeSync).getMockImplementation()!
+      const closesBefore = vi.mocked(closeSync).mock.calls.length
+      const fail = () => {
+        throw failure
+      }
+      if (stage === 'write') {
+        vi.mocked(writeFileSync).mockImplementationOnce((path) => {
+          realWrite(path, '{"partial":', { mode: 0o600 })
+          throw failure
+        })
+      } else if (stage === 'open') {
+        vi.mocked(openSync).mockImplementationOnce(fail)
+      } else if (stage === 'fsync') {
+        vi.mocked(fsyncSync).mockImplementationOnce(fail)
+      } else if (stage === 'close') {
+        vi.mocked(closeSync).mockImplementationOnce((descriptor) => {
+          realClose(descriptor)
+          throw failure
+        })
+      } else {
+        vi.mocked(renameSync).mockImplementationOnce(fail)
+      }
+
+      let thrown: unknown
+      try {
+        store.compact()
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBe(failure)
+      if (stage === 'close') expect(vi.mocked(closeSync).mock.calls.length - closesBefore).toBe(1)
+      expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      expect(readFileSync(checkpoint)).toEqual(beforeCheckpoint)
+      expect(readFileSync(journal)).toEqual(beforeJournal)
+      expect(store.getPosition()).toEqual({ generation: 1, cursor: 2 })
+      const recovered = openStore()
+      expect(recovered.getByCursor(1)?.envelope.entityId).toBe('checkpoint')
+      expect(recovered.getByCursor(2)?.envelope.entityId).toBe('journal')
+      expect(recovered.append({ kind: 'remove', family: 'thread' })).toMatchObject({
+        kind: 'appended',
+        position: { generation: 1, cursor: 3 }
+      })
+      expect(openStore().getPosition()).toEqual(recovered.getPosition())
+    }
+  )
+
+  it('preserves the checkpoint fsync error when descriptor and temporary-file cleanup also fail', () => {
+    const store = openStore()
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'durable' })
+    const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+    const beforeJournal = readFileSync(journal)
+    const failure = new Error('original checkpoint fsync failure')
+    const realClose = vi.mocked(closeSync).getMockImplementation()!
+    vi.mocked(fsyncSync).mockImplementationOnce(() => {
+      throw failure
+    })
+    vi.mocked(closeSync).mockImplementationOnce((descriptor) => {
+      realClose(descriptor)
+      throw new Error('cleanup close failed')
+    })
+    vi.mocked(unlinkSync).mockImplementationOnce(() => {
+      throw new Error('cleanup unlink failed')
+    })
+
+    let thrown: unknown
+    try {
+      store.compact()
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBe(failure)
+    expect(readFileSync(journal)).toEqual(beforeJournal)
+    expect(store.getPosition()).toEqual({ generation: 1, cursor: 1 })
+    expect(openStore().getByCursor(1)?.envelope.entityId).toBe('durable')
+  })
+
+  it.skipIf(process.platform === 'win32')(
+    'preserves a checkpoint directory-sync failure when closing the directory also fails',
+    () => {
+      const store = openStore()
+      store.append({ kind: 'upsert', family: 'thread', entityId: 'checkpoint' })
+      store.compact()
+      store.append({ kind: 'upsert', family: 'thread', entityId: 'journal' })
+      const journal = join(dataDir, HOST_DELTA_JOURNAL_FILENAME)
+      const beforeJournal = readFileSync(journal)
+      const realFsync = vi.mocked(fsyncSync).getMockImplementation()!
+      const realClose = vi.mocked(closeSync).getMockImplementation()!
+      const failure = new Error('checkpoint directory fsync failed')
+      vi.mocked(fsyncSync).mockImplementation((descriptor) => {
+        if (fstatSync(descriptor).isDirectory()) throw failure
+        realFsync(descriptor)
+      })
+      vi.mocked(closeSync).mockImplementation((descriptor) => {
+        const directory = fstatSync(descriptor).isDirectory()
+        realClose(descriptor)
+        if (directory) throw new Error('directory close failed')
+      })
+
+      let thrown: unknown
+      try {
+        store.compact()
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBe(failure)
+      expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      expect(readFileSync(journal)).toEqual(beforeJournal)
+      expect(store.getPosition()).toEqual({ generation: 1, cursor: 2 })
+      vi.mocked(fsyncSync).mockReset()
+      vi.mocked(closeSync).mockReset()
+      const recovered = openStore()
+      expect(recovered.getPosition()).toEqual(store.getPosition())
+      expect(recovered.getByCursor(1)?.envelope.entityId).toBe('checkpoint')
+      expect(recovered.getByCursor(2)?.envelope.entityId).toBe('journal')
+      expect(recovered.append({ kind: 'remove', family: 'thread' })).toMatchObject({
+        kind: 'appended',
+        position: { generation: 1, cursor: 3 }
+      })
+      expect(openStore().getPosition()).toEqual(recovered.getPosition())
+    }
+  )
+
+  it('accepts an empty checkpoint and starts the first durable cursor after reopen', () => {
+    const store = openStore()
+    store.compact()
+    const recovered = openStore()
+    expect(recovered.getPosition()).toEqual({ generation: 1, cursor: 0 })
+    expect(recovered.append({ kind: 'upsert', family: 'thread', entityId: 'first' })).toMatchObject(
+      {
+        kind: 'appended',
+        position: { generation: 1, cursor: 1 }
+      }
+    )
+    expect(openStore().getPosition()).toEqual(recovered.getPosition())
+  })
+
+  it('does not accumulate temporary checkpoints across repeated automatic compaction failures', () => {
+    const store = openStore({ compactAfterRecords: 1 })
+    store.append({ kind: 'upsert', family: 'thread', entityId: 'seed' })
+    const checkpoint = join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME)
+    const beforeCheckpoint = readFileSync(checkpoint)
+    const seen: number[] = []
+    store.subscribe((event) => seen.push(event.position.cursor))
+    vi.mocked(renameSync).mockImplementation(() => {
+      throw new Error('rename refused')
+    })
+
+    for (let cursor = 2; cursor <= 4; cursor += 1) {
+      expect(
+        store.append({ kind: 'upsert', family: 'thread', entityId: `record-${cursor}` })
+      ).toMatchObject({
+        kind: 'appended',
+        position: { generation: 1, cursor }
+      })
+      expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+      expect(readFileSync(checkpoint)).toEqual(beforeCheckpoint)
+      expect(openStore().getPosition()).toEqual({ generation: 1, cursor })
+    }
+    expect(seen).toEqual([2, 3, 4])
+    vi.mocked(renameSync).mockReset()
+    store.compact()
+    expect(openStore().getPosition()).toEqual({ generation: 1, cursor: 4 })
+    expect(readdirSync(dataDir).filter((name) => name.endsWith('.tmp'))).toEqual([])
+  })
 
   it('keeps checkpoint retention and generation authoritative when journal removal fails', () => {
     const store = openStore({ maxRecords: 2, compactAfterRecords: 1000 })
