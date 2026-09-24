@@ -36,6 +36,7 @@ const CLOSE_REOPEN_COUNT = 10
 const LOOP_SETUP_KEYS = ['i', 'o', 'l', 'p']
 const MAX_VIDEO_BYTES = mediaLimits.transcriptMediaMaxVideoBytes
 const MAX_EVIDENCE_BYTES = 32 * 1024 * 1024
+const S10_RUNNER_RELATIVE_PATH = 'scripts/studio-s10-live-runner.cjs'
 const EXPECTED_CLOSE_HELPER = 'scripts/studio-endurance-window-control.swift'
 const COOLDOWN_MEMORY_RETURN_BUDGET_BYTES = 24 * 1_048_576
 const COOLDOWN_CPU_PERCENT_BUDGET = 1
@@ -135,6 +136,31 @@ async function measureHeadBoundSources(repoRoot, relativePaths, adapters = {}) {
     }
   }
   return measured
+}
+
+async function measureS10RunnerCustody(repoRoot, adapters = {}) {
+  const runExact = adapters.runExact || acceptanceSession.runExact
+  const runGit = (args, maxBuffer = 4_096) =>
+    runExact('git', args, { cwd: repoRoot, timeout: 30_000, maxBuffer })
+  const gitHead = String((await runGit(['rev-parse', 'HEAD'])).stdout).trim()
+  invariant(/^[a-f0-9]{40,64}$/.test(gitHead), 'S10 runner git HEAD receipt is invalid')
+  const tracked = String((await runGit(['ls-files', '--', S10_RUNNER_RELATIVE_PATH])).stdout).trim()
+  invariant(tracked === S10_RUNNER_RELATIVE_PATH, 'S10 runner must be tracked at the live boundary')
+  const status = String(
+    (await runGit(['status', '--porcelain=v1', '--', S10_RUNNER_RELATIVE_PATH])).stdout
+  ).trim()
+  invariant(status === '', 'S10 runner is dirty at the live boundary')
+  const headSpec = `${gitHead}:${S10_RUNNER_RELATIVE_PATH}`
+  const headBlob = String((await runGit(['rev-parse', headSpec])).stdout).trim()
+  invariant(/^[a-f0-9]{40,64}$/.test(headBlob), 'S10 runner HEAD blob is invalid')
+  const headSource = (await runGit(['show', headSpec], MAX_EVIDENCE_BYTES)).stdout
+  const sha256 = await sha256File(path.join(repoRoot, S10_RUNNER_RELATIVE_PATH))
+  invariant(sha256 === sha256Text(headSource), 'S10 runner bytes differ from HEAD')
+  invariant(
+    gitHead === String((await runGit(['rev-parse', 'HEAD'])).stdout).trim(),
+    'S10 runner git HEAD changed while measuring source custody'
+  )
+  return { gitHead, headBlob, sha256 }
 }
 
 function originallyAbsolute(value, label) {
@@ -1988,10 +2014,26 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
   const baseEvidence = await readBoundedJson(baseEvidencePath, 'S10 base harness evidence')
   const watchdogReceipt = await readBoundedJson(watchdogPath, 'S10 watchdog receipt')
   invariant(
-    baseEvidence.ok === true &&
+    baseEvidence.schemaVersion === 1 &&
+      baseEvidence.kind === 'taskwraith-studio-in-product-acceptance' &&
+      baseEvidence.ok === true &&
       isRecord(baseEvidence.electron) &&
       isRecord(baseEvidence.watchdogTerminal),
     'S10 base harness evidence is not a successful joined receipt'
+  )
+  invariant(
+    typeof plan.instanceId === 'string' &&
+      plan.instanceId.length > 0 &&
+      [baseEvidence, result?.evidence, watchdogReceipt].every(
+        (receipt) => receipt?.instanceId === plan.instanceId
+      ),
+    'S10 disk harness, promoted evidence, and watchdog instance mismatch'
+  )
+  invariant(
+    isRecord(baseEvidence.journey) &&
+      isRecord(result?.evidence?.journey) &&
+      JSON.stringify(baseEvidence.journey) === JSON.stringify(result.evidence.journey),
+    'S10 disk harness journey is missing or does not exactly match the promoted journey'
   )
   invariant(
     watchdogReceipt.schemaVersion === 2 &&
@@ -2000,18 +2042,43 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
   )
   harness.assertCleanWatchdogTerminal(watchdogReceipt)
   harness.assertCleanWatchdogTerminal(baseEvidence.watchdogTerminal)
+  const electron = baseEvidence.electron
+  const usesLaunchServices = electron.launchMode === 'launch-services'
+  const expectedWatchdogPid = usesLaunchServices ? electron.launcherPid : electron.pid
+  const expectedWatchdogPgid = usesLaunchServices ? electron.launcherPgid : electron.pgid
+  for (const receipt of [watchdogReceipt, baseEvidence.watchdogTerminal]) {
+    invariant(
+      expectedWatchdogPid === receipt.childPid && expectedWatchdogPgid === receipt.childPgid,
+      'S10 base harness/watchdog child identity mismatch'
+    )
+    invariant(
+      Array.isArray(receipt.detachedProcessGroups) && receipt.detachedGroupExitVerified === true,
+      'S10 detached LaunchServices group reap is not proven'
+    )
+    if (usesLaunchServices) {
+      invariant(
+        [electron.pid, electron.pgid, expectedWatchdogPid, expectedWatchdogPgid].every(
+          (pid) => Number.isSafeInteger(pid) && pid > 0
+        ) &&
+          receipt.detachedProcessGroups.filter(
+            (group) =>
+              isRecord(group) &&
+              group.pgid === electron.pgid &&
+              Array.isArray(group.memberPids) &&
+              group.memberPids.includes(electron.pid)
+          ).length === 1,
+        'S10 watchdog does not bind the exact reaped detached Electron group'
+      )
+    }
+  }
+  const runnerBefore = assets.runnerCustodyBefore
   invariant(
-    baseEvidence.electron.pid === watchdogReceipt.childPid &&
-      baseEvidence.electron.pgid === watchdogReceipt.childPgid,
-    'S10 base harness/watchdog child identity mismatch'
+    isRecord(runnerBefore) &&
+      /^[a-f0-9]{64}$/.test(runnerBefore.sha256 || '') &&
+      /^[a-f0-9]{40,64}$/.test(runnerBefore.headBlob || '') &&
+      /^[a-f0-9]{40,64}$/.test(runnerBefore.gitHead || ''),
+    'S10 runner custody before launch is missing or invalid'
   )
-  invariant(
-    Array.isArray(watchdogReceipt.detachedProcessGroups) &&
-      watchdogReceipt.detachedGroupExitVerified === true,
-    'S10 detached LaunchServices group reap is not proven'
-  )
-  const runnerPath = path.join(plan.repoRoot, 'scripts', 'studio-s10-live-runner.cjs')
-  const runnerSha256 = await sha256File(runnerPath)
   const journalPath = path.join(plan.studioStateDirectory, 'studio-project.journal.jsonl')
   const journalSha256 = await sha256File(journalPath)
   const zeroCopyAfter = await measureHeadBoundSources(plan.repoRoot, ZERO_COPY_PATHS, adapters)
@@ -2048,23 +2115,19 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
       ),
     'S10 final evidence lacks 21 exact clean reference-pixel receipts'
   )
+  const runnerAfter = await measureS10RunnerCustody(plan.repoRoot, adapters)
   const evidence = {
     schemaVersion: S10_SCHEMA_VERSION,
     kind: 'taskwraith-studio-s10-final-evidence',
-    gitHead: String(
-      (
-        await acceptanceSession.runExact('git', ['rev-parse', 'HEAD'], {
-          cwd: plan.repoRoot,
-          timeout: 30_000,
-          maxBuffer: 4_096
-        })
-      ).stdout
-    ).trim(),
+    instanceId: plan.instanceId,
+    gitHead: runnerAfter.gitHead,
     gitHeadBefore: assets.gitHeadBefore || null,
     runner: {
-      workspaceRelativePath: 'scripts/studio-s10-live-runner.cjs',
-      beforeSha256: assets.runnerBeforeSha256 || runnerSha256,
-      afterSha256: runnerSha256
+      workspaceRelativePath: S10_RUNNER_RELATIVE_PATH,
+      beforeSha256: runnerBefore.sha256,
+      afterSha256: runnerAfter.sha256,
+      headBlobBefore: runnerBefore.headBlob,
+      headBlobAfter: runnerAfter.headBlob
     },
     baseHarnessEvidence: { path: baseEvidencePath, sha256: baseEvidenceSha256 },
     watchdog: { path: watchdogPath, sha256: watchdogSha256 },
@@ -2105,8 +2168,9 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
     noGreenIfPhaseMissing: result.evidence.journey.phasesComplete === true
   }
   invariant(
-    evidence.runner.beforeSha256 === evidence.runner.afterSha256,
-    'S10 runner source changed during acceptance'
+    evidence.runner.beforeSha256 === evidence.runner.afterSha256 &&
+      evidence.runner.headBlobBefore === evidence.runner.headBlobAfter,
+    'S10 runner source changed or departed from HEAD during acceptance'
   )
   invariant(
     evidence.assets.primary.beforeSourceSha256 === evidence.assets.primary.afterSourceSha256 &&
@@ -2115,7 +2179,7 @@ async function writeFinalS10Evidence(plan, result, assets, adapters = {}) {
   )
   invariant(/^[a-f0-9]{40,64}$/.test(evidence.gitHead), 'S10 git HEAD receipt is invalid')
   invariant(
-    evidence.gitHeadBefore === null || evidence.gitHeadBefore === evidence.gitHead,
+    evidence.gitHeadBefore === runnerBefore.gitHead && evidence.gitHeadBefore === evidence.gitHead,
     'S10 git HEAD changed during acceptance'
   )
   const encoded = `${JSON.stringify(evidence, null, 2)}\n`
@@ -2148,6 +2212,7 @@ async function runS10Acceptance(options = {}, adapters = {}) {
   } catch (error) {
     if (error?.code !== 'ENOENT') throw error
   }
+  const runnerCustodyBefore = await measureS10RunnerCustody(args.repoRoot, adapters)
   const primarySourceSha256 = await sha256File(args.primaryMediaPath)
   const secondarySourceSha256 = await sha256File(args.secondaryMediaPath)
   invariant(
@@ -2163,18 +2228,8 @@ async function runS10Acceptance(options = {}, adapters = {}) {
     'S10 launch blocked before native driver: loop-end-ticks exceeds the probed primary duration/timebase bound'
   )
   const runStudioAcceptance = adapters.runStudioAcceptance || harness.runStudioAcceptance
-  const runnerBeforeSha256 = await sha256File(
-    path.join(args.repoRoot, 'scripts', 'studio-s10-live-runner.cjs')
-  )
-  const gitHeadBefore = String(
-    (
-      await acceptanceSession.runExact('git', ['rev-parse', 'HEAD'], {
-        cwd: args.repoRoot,
-        timeout: 30_000,
-        maxBuffer: 4_096
-      })
-    ).stdout
-  ).trim()
+  const runnerBeforeSha256 = runnerCustodyBefore.sha256
+  const gitHeadBefore = runnerCustodyBefore.gitHead
   const zeroCopyBefore = await measureHeadBoundSources(args.repoRoot, ZERO_COPY_PATHS, adapters)
   const prePlan = harness.buildStudioAcceptancePlan({
     repoRoot: args.repoRoot,
@@ -2240,6 +2295,7 @@ async function runS10Acceptance(options = {}, adapters = {}) {
       primarySourceSha256,
       secondarySourceSha256,
       runnerBeforeSha256,
+      runnerCustodyBefore,
       gitHeadBefore,
       zeroCopyBefore
     },

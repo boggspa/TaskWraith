@@ -1,7 +1,8 @@
 import * as fsPromises from 'node:fs/promises'
+import { createHash } from 'node:crypto'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 /* eslint-disable @typescript-eslint/no-require-imports */
 const runner = require('./studio-s10-live-runner.cjs') as {
@@ -79,6 +80,10 @@ const runner = require('./studio-s10-live-runner.cjs') as {
     result: Record<string, unknown>,
     assets: Record<string, unknown>
   ) => Promise<Record<string, unknown>>
+  runS10Acceptance: (
+    options: Record<string, unknown>,
+    adapters: Record<string, unknown>
+  ) => Promise<Record<string, unknown>>
 }
 
 const roots: string[] = []
@@ -90,6 +95,7 @@ async function tempRoot() {
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   while (roots.length > 0)
     await fsPromises.rm(roots.pop() as string, { recursive: true, force: true })
 })
@@ -160,6 +166,341 @@ function goodResources() {
     droppedFrames: 0
   }))
 }
+
+async function finalEvidenceFixture(launchMode = 'direct') {
+  const root = await tempRoot()
+  const instanceId = 's10Fixture01'
+  const runnerRelativePath = 'scripts/studio-s10-live-runner.cjs'
+  const source = 'committed S10 runner\n'
+  const sha256 = (value: string) => createHash('sha256').update(value).digest('hex')
+  const git = { head: 'a'.repeat(40), tracked: true, status: '', source }
+  const zeroCopyBefore: Record<string, { sha256: string; headBlob: string }> = {}
+  for (const relativePath of [
+    runnerRelativePath,
+    'swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioVideoTextureBridge.swift',
+    'swift/TaskWraithBridge/Sources/TaskWraithStudioCore/StudioVideoFrameSource.swift',
+    'src/renderer/src/App.tsx'
+  ]) {
+    await fsPromises.mkdir(path.dirname(path.join(root, relativePath)), { recursive: true })
+    await fsPromises.writeFile(path.join(root, relativePath), source)
+    zeroCopyBefore[relativePath] = { sha256: sha256(source), headBlob: 'b'.repeat(40) }
+  }
+  const runExact = vi.spyOn(require('./studio-acceptance-session.cjs'), 'runExact')
+  runExact.mockImplementation(async (_command, args) => {
+    if (args[0] === 'ls-files') return { stdout: git.tracked ? `${runnerRelativePath}\n` : '' }
+    if (args[0] === 'status') return { stdout: git.status }
+    if (args[0] === 'rev-parse')
+      return { stdout: `${args[1] === 'HEAD' ? git.head : 'b'.repeat(40)}\n` }
+    if (args[0] === 'show') return { stdout: git.source }
+    if (args[0] === 'diff') return { stdout: '' }
+    throw new Error(`unexpected fixture Git command: ${args.join(' ')}`)
+  })
+  const artifactRoot = path.join(root, 'artifacts')
+  const stateDirectory = path.join(artifactRoot, 'state')
+  await fsPromises.mkdir(stateDirectory, { recursive: true })
+  await fsPromises.writeFile(path.join(stateDirectory, 'studio-project.journal.jsonl'), '{}\n')
+  const primary = { sourcePath: path.join(root, 'primary.mp4') }
+  const secondary = { sourcePath: path.join(root, 'secondary.mp4') }
+  await fsPromises.writeFile(primary.sourcePath, 'primary bytes')
+  await fsPromises.writeFile(secondary.sourcePath, 'secondary bytes')
+  const watchdog = {
+    schemaVersion: 2,
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    instanceId,
+    status: 'reaped',
+    reason: 'owner_requested',
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    childPid: 10,
+    childPgid: 10,
+    detachedProcessGroups:
+      launchMode === 'launch-services' ? [{ pgid: 20, memberPids: [20, 21] }] : []
+  }
+  const journey = {
+    phasesComplete: true,
+    loop: { avEndurance: goodAvEvidence(), samples: goodLoopSamples() },
+    resources: goodResources(),
+    finalCloseCooldown: {},
+    blockers: []
+  }
+  const baseEvidence = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-in-product-acceptance',
+    instanceId,
+    ok: true,
+    journey: structuredClone(journey),
+    electron: {
+      pid: launchMode === 'launch-services' ? 20 : 10,
+      pgid: launchMode === 'launch-services' ? 20 : 10,
+      launchMode,
+      launcherPid: launchMode === 'launch-services' ? 10 : null,
+      launcherPgid: launchMode === 'launch-services' ? 10 : null
+    },
+    watchdogTerminal: {
+      type: 'terminal',
+      status: watchdog.status,
+      reason: watchdog.reason,
+      childPid: watchdog.childPid,
+      childPgid: watchdog.childPgid,
+      groupExitVerified: watchdog.groupExitVerified,
+      detachedGroupExitVerified: watchdog.detachedGroupExitVerified,
+      detachedProcessGroups: structuredClone(watchdog.detachedProcessGroups)
+    }
+  }
+  const plan = {
+    instanceId,
+    repoRoot: root,
+    artifactRoot,
+    evidencePath: path.join(artifactRoot, 'harness.json'),
+    receiptPath: path.join(artifactRoot, 'watchdog.json'),
+    studioStateDirectory: stateDirectory
+  }
+  const writeReceipts = async () => {
+    await fsPromises.writeFile(plan.evidencePath, JSON.stringify(baseEvidence))
+    await fsPromises.writeFile(plan.receiptPath, JSON.stringify(watchdog))
+  }
+  await writeReceipts()
+  const assets = {
+    primary,
+    secondary,
+    primarySourceSha256: sha256('primary bytes'),
+    secondarySourceSha256: sha256('secondary bytes'),
+    gitHeadBefore: git.head,
+    runnerBeforeSha256: sha256(source),
+    runnerCustodyBefore: {
+      gitHead: git.head,
+      sha256: sha256(source),
+      headBlob: 'b'.repeat(40)
+    },
+    zeroCopyBefore
+  }
+  const result = {
+    evidence: {
+      ok: true,
+      instanceId,
+      journey
+    }
+  }
+  return {
+    root,
+    runnerRelativePath,
+    source,
+    git,
+    plan,
+    result,
+    assets,
+    watchdog,
+    baseEvidence,
+    writeReceipts
+  }
+}
+
+describe('S10 final custody joins', () => {
+  it.each(['direct', 'launch-services'])(
+    'seals evidence for the exact %s launch owner',
+    async (mode) => {
+      const fixture = await finalEvidenceFixture(mode)
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).resolves.toMatchObject({
+        evidence: {
+          instanceId: fixture.plan.instanceId,
+          gitHead: fixture.git.head,
+          gitHeadBefore: fixture.git.head,
+          green: false,
+          runner: {
+            beforeSha256: fixture.assets.runnerBeforeSha256,
+            afterSha256: fixture.assets.runnerBeforeSha256
+          }
+        }
+      })
+    }
+  )
+
+  it.each(['missing', 'incomplete phases', 'different pixel proof', 'different resource receipt'])(
+    'rejects a disk journey with %s despite complete promoted phases',
+    async (damage) => {
+      const fixture = await finalEvidenceFixture()
+      if (damage === 'missing') Reflect.deleteProperty(fixture.baseEvidence, 'journey')
+      else if (damage === 'incomplete phases') fixture.baseEvidence.journey.phasesComplete = false
+      else if (damage === 'different pixel proof')
+        fixture.baseEvidence.journey.loop.avEndurance.samples[0].referencePixel.pixelComparison.clean = false
+      else fixture.baseEvidence.journey.resources[0].rssBytes += 1
+      await fixture.writeReceipts()
+      await expect(
+        runner
+          .writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+          .then(() => undefined)
+      ).rejects.toThrow(/disk.*journey/)
+    }
+  )
+
+  it.each(['missing', 'different'])(
+    'rejects a %s promoted journey despite complete disk phases',
+    async (damage) => {
+      const fixture = await finalEvidenceFixture()
+      if (damage === 'missing') Reflect.deleteProperty(fixture.result.evidence, 'journey')
+      else fixture.result.evidence.journey.resources[0].rssBytes += 1
+      await expect(
+        runner
+          .writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+          .then(() => undefined)
+      ).rejects.toThrow(/disk.*journey/)
+    }
+  )
+
+  it.each([
+    ['disk', 'missing'],
+    ['disk', 'mismatched'],
+    ['promoted', 'missing'],
+    ['promoted', 'mismatched'],
+    ['watchdog', 'missing'],
+    ['watchdog', 'mismatched'],
+    ['plan', 'missing'],
+    ['plan', 'mismatched']
+  ] as const)('rejects a %s receipt with %s instance identity', async (location, damage) => {
+    const fixture = await finalEvidenceFixture()
+    const target = {
+      disk: fixture.baseEvidence,
+      promoted: fixture.result.evidence,
+      watchdog: fixture.watchdog,
+      plan: fixture.plan
+    }[location]
+    if (damage === 'missing') Reflect.deleteProperty(target, 'instanceId')
+    else target.instanceId = 'anotherInstance'
+    await fixture.writeReceipts()
+    await expect(
+      runner
+        .writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+        .then(() => undefined)
+    ).rejects.toThrow(/instance/)
+  })
+
+  it.each(['pid', 'pgid'] as const)(
+    'rejects a direct watchdog child %s mismatch',
+    async (field) => {
+      const fixture = await finalEvidenceFixture()
+      fixture.baseEvidence.electron[field] = 999
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/child identity mismatch/)
+    }
+  )
+
+  it.each(['launcherPid', 'launcherPgid'] as const)(
+    'rejects a LaunchServices %s mismatch',
+    async (field) => {
+      const fixture = await finalEvidenceFixture('launch-services')
+      fixture.baseEvidence.electron[field] = 999
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/child identity mismatch/)
+    }
+  )
+
+  it.each(['missing', 'wrong pgid', 'wrong pid', 'duplicate', 'unreaped'])(
+    'rejects %s detached Electron custody',
+    async (damage) => {
+      const fixture = await finalEvidenceFixture('launch-services')
+      const groups = fixture.watchdog.detachedProcessGroups
+      if (damage === 'missing') groups.length = 0
+      else if (damage === 'wrong pgid') groups[0].pgid = 999
+      else if (damage === 'wrong pid') groups[0].memberPids = [999]
+      else if (damage === 'duplicate') groups.push(structuredClone(groups[0]))
+      else fixture.watchdog.detachedGroupExitVerified = false
+      fixture.baseEvidence.watchdogTerminal.detachedProcessGroups = structuredClone(groups)
+      fixture.baseEvidence.watchdogTerminal.detachedGroupExitVerified =
+        fixture.watchdog.detachedGroupExitVerified
+      await fixture.writeReceipts()
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/detached Electron|clean owner-requested teardown/)
+    }
+  )
+
+  it.each(['dirty', 'untracked', 'pre-modified'])(
+    'rejects a %s runner before calling the launch harness',
+    async (damage) => {
+      const fixture = await finalEvidenceFixture()
+      if (damage === 'dirty') fixture.git.status = ` M ${fixture.runnerRelativePath}\n`
+      else if (damage === 'untracked') fixture.git.tracked = false
+      else
+        await fsPromises.writeFile(
+          path.join(fixture.root, fixture.runnerRelativePath),
+          'modified\n'
+        )
+      const launch = vi.fn(async () => {
+        throw new Error('launch harness must not be reached')
+      })
+      await expect(
+        runner.runS10Acceptance(
+          {
+            launch: true,
+            acceptLaunch: true,
+            ownerConfirmsOrphansCleared: true,
+            acceptBoundedForegroundLoopSetup: true,
+            repoRoot: fixture.root,
+            artifactRoot: path.join(fixture.root, 'live-artifacts'),
+            instanceId: 's10Custody01',
+            packagedExecutablePath: path.join(fixture.root, 'Studio.app/Contents/MacOS/Studio'),
+            primaryMediaPath: fixture.assets.primary.sourcePath,
+            secondaryMediaPath: fixture.assets.secondary.sourcePath,
+            primaryMimeType: 'video/mp4',
+            secondaryMimeType: 'video/mp4',
+            loopStartTicks: 0,
+            loopEndTicks: 300,
+            loopTimebaseTicks: 1
+          },
+          {
+            probeMediaDuration: async () => ({ seconds: 630 }),
+            materializeOwnedMedia: async () => fixture.assets.secondary,
+            runStudioAcceptance: launch
+          }
+        )
+      ).rejects.toThrow(/S10 runner.*(?:tracked|dirty|HEAD)/)
+      expect(launch).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['dirty', 'untracked', 'pre-modified'])(
+    'refuses final evidence for a %s runner even when its before/after hashes agree',
+    async (damage) => {
+      const fixture = await finalEvidenceFixture()
+      if (damage === 'dirty') fixture.git.status = `M  ${fixture.runnerRelativePath}\n`
+      else if (damage === 'untracked') fixture.git.tracked = false
+      else {
+        const modified = 'pre-modified runner\n'
+        await fsPromises.writeFile(path.join(fixture.root, fixture.runnerRelativePath), modified)
+        fixture.assets.runnerBeforeSha256 = createHash('sha256').update(modified).digest('hex')
+        fixture.assets.runnerCustodyBefore.sha256 = fixture.assets.runnerBeforeSha256
+      }
+      await expect(
+        runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+      ).rejects.toThrow(/S10 runner.*(?:tracked|dirty|HEAD)/)
+    }
+  )
+
+  it('refuses a changed HEAD even when the committed runner bytes are identical', async () => {
+    const fixture = await finalEvidenceFixture()
+    fixture.git.head = 'c'.repeat(40)
+    await expect(
+      runner.writeFinalS10Evidence(fixture.plan, fixture.result, fixture.assets)
+    ).rejects.toThrow(/git HEAD changed/)
+  })
+
+  it('requires a prelaunch source custody receipt rather than defaulting its hash after the run', async () => {
+    const fixture = await finalEvidenceFixture()
+    await expect(
+      runner.writeFinalS10Evidence(fixture.plan, fixture.result, {
+        ...fixture.assets,
+        runnerCustodyBefore: undefined,
+        runnerBeforeSha256: undefined
+      })
+    ).rejects.toThrow(/runner.*(?:before launch|custody)/)
+  })
+})
 
 describe('S10 plan and launch gates', () => {
   it('is plan-only by default and exposes every exact workload count', () => {
