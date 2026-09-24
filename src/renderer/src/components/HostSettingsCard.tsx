@@ -28,7 +28,7 @@
  * available yet", and only a failed inspect reads as unavailable.
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import type {
   HostLeaseReasonKind,
@@ -504,17 +504,18 @@ export function HostSettingsCard({
   const [confirm, setConfirm] = useState<string | null>(null)
   // Async reads use the latest event immediately; displayed facts still come
   // only from React state, including the declarative first paint above.
-  const [reads] = useState(() => ({
+  const readsRef = useRef({
     snapshot: initialSnapshot,
     generation: 0,
     actionPending: false,
     mounted: true
-  }))
+  })
   // Bumped by a lifecycle event, a finished action or Refresh; each bump asks
   // main for a fresh inspect and retires the answer to the previous one.
   const [inspectRequest, setInspectRequest] = useState(0)
 
   const acceptSnapshot = (next: HostLifecycleSnapshot): boolean => {
+    const reads = readsRef.current
     const current = reads.snapshot
     if (newerSnapshot(current, next) !== next) return false
     reads.snapshot = next
@@ -537,6 +538,7 @@ export function HostSettingsCard({
 
   useEffect(() => {
     let alive = true
+    const reads = readsRef.current
     reads.mounted = true
     const unsubscribe = client.subscribe((next) => {
       if (!alive) return
@@ -568,6 +570,7 @@ export function HostSettingsCard({
 
   useEffect(() => {
     let alive = true
+    const reads = readsRef.current
     const generation = ++reads.generation
     void client.inspect().then(
       (next) => {
@@ -587,6 +590,7 @@ export function HostSettingsCard({
   }, [client, inspectRequest])
 
   const requestAction = (action: HostLifecycleAction, confirmed: boolean): void => {
+    const reads = readsRef.current
     if (pending !== null || reads.actionPending) return
     reads.actionPending = true
     setActionError(undefined)

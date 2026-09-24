@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import ts from 'typescript'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -7,23 +8,70 @@ import { describe, expect, it } from 'vitest'
  * from the local-control socket into the transcript. `src/main/index.ts` is
  * the only place the bridge action meets the chat seed, the run payload, the
  * queued-prompt request and the ensemble steer lanes, and nothing imports it
- * under test — so the wiring is pinned by shape. Each `it` names one seam;
- * deleting that seam reds exactly that test.
+ * under test — so the wiring is pinned by shape. Each assertion names its
+ * seam; wrapped-call mutation tests remove only that seam's origin spread.
  */
 const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
+const parsedMain = ts.createSourceFile('index.ts', main, ts.ScriptTarget.Latest, true)
 
 const ORIGIN_FROM_ACTION = '...(action.origin ? { origin: action.origin } : {})'
+const WRAPPED_CALLS = {
+  queue: {
+    anchor: 'const queued = await queueRemoteComposerPrompt(',
+    callee: 'queueRemoteComposerPrompt'
+  },
+  ensemble: {
+    anchor: 'const result = dispatchObservedHostBridgeRound(',
+    callee: 'dispatchObservedHostBridgeRound'
+  }
+} as const
 
-function once(anchor: string): number {
-  const first = main.indexOf(anchor)
+function once(anchor: string, source = main): number {
+  const first = source.indexOf(anchor)
   expect(first, `anchor missing: ${anchor}`).toBeGreaterThan(-1)
-  expect(main.indexOf(anchor, first + 1), `anchor not unique: ${anchor}`).toBe(-1)
+  expect(source.indexOf(anchor, first + 1), `anchor not unique: ${anchor}`).toBe(-1)
   return first
 }
 
 function windowAfter(anchor: string, span: number): string {
   const at = once(anchor)
   return main.slice(at, at + span)
+}
+
+function expectWrappedCallOrigin(source: ts.SourceFile, seam: keyof typeof WRAPPED_CALLS): ts.Node {
+  const { anchor, callee } = WRAPPED_CALLS[seam]
+  const start = once(anchor, source.text) + anchor.indexOf(callee)
+  let call: ts.CallExpression | undefined
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && node.getStart(source) === start) {
+      call = node
+      return
+    }
+    ts.forEachChild(node, visit)
+  }
+  visit(source)
+  if (!call) throw new Error(`${seam}: wrapped call missing`)
+
+  if (seam === 'ensemble') {
+    const callback = call.arguments[1]
+    if (!callback || !ts.isArrowFunction(callback) || !ts.isCallExpression(callback.body)) {
+      throw new Error('ensemble: round dispatch callback missing')
+    }
+    call = callback.body
+    expect(call.expression.getText(source)).toBe('ensembleOrchestratorRef?.startRound')
+  }
+
+  const request = call.arguments[0]
+  if (!request || !ts.isObjectLiteralExpression(request)) {
+    throw new Error(`${seam}: request object missing`)
+  }
+  // Inspect only direct request properties: a sibling argument, another call
+  // or a nested object must not satisfy this forwarding contract.
+  const origin = request.properties.find(
+    (property) => ts.isSpreadAssignment(property) && property.getText(source) === ORIGIN_FROM_ACTION
+  )
+  if (!origin) throw new Error(`${seam}: request must forward action.origin`)
+  return origin
 }
 
 describe('local-control origin wiring in src/main/index.ts', () => {
@@ -54,8 +102,7 @@ describe('local-control origin wiring in src/main/index.ts', () => {
     const remoteComposer = enqueue.indexOf('remoteComposer: {')
     expect(remoteComposer, 'queueJob.request.remoteComposer missing').toBeGreaterThan(-1)
     expect(enqueue.slice(remoteComposer)).toContain(ORIGIN_FROM_ACTION)
-    const queueCall = windowAfter('const queued = await queueRemoteComposerPrompt({', 1400)
-    expect(queueCall).toContain(ORIGIN_FROM_ACTION)
+    expectWrappedCallOrigin(parsedMain, 'queue')
   })
 
   it('attributes the solo turn prompt, so a single-provider chat is told too', () => {
@@ -78,9 +125,22 @@ describe('local-control origin wiring in src/main/index.ts', () => {
       900
     )
     expect(absorb).toContain(ORIGIN_FROM_ACTION)
-    const start = windowAfter('const result = ensembleOrchestratorRef?.startRound({', 1300)
-    expect(start).toContain(ORIGIN_FROM_ACTION)
+    expectWrappedCallOrigin(parsedMain, 'ensemble')
   })
+
+  it.each(['queue', 'ensemble'] as const)(
+    'rejects removal of origin from the exact %s request even when other forwards remain',
+    (seam) => {
+      const origin = expectWrappedCallOrigin(parsedMain, seam)
+      const end = origin.end + (main[origin.end] === ',' ? 1 : 0)
+      const withoutOrigin = main.slice(0, origin.getStart(parsedMain)) + main.slice(end)
+      expect(withoutOrigin).toContain(ORIGIN_FROM_ACTION)
+      const parsed = ts.createSourceFile('index.ts', withoutOrigin, ts.ScriptTarget.Latest, true)
+      expect(() => expectWrappedCallOrigin(parsed, seam)).toThrow(
+        `${seam}: request must forward action.origin`
+      )
+    }
+  )
 
   it('the appendMidRunSteering dep forwards origin into the live-round steer row', () => {
     const dep = windowAfter(

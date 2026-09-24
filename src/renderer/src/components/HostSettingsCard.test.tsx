@@ -828,10 +828,7 @@ describe('HostSettingsCard · source pin', () => {
     )
     const body = probe.fn('HostSettingsCard')
 
-    // Refs never attach under SSR and a ref read in render is invisible to
-    // every static-markup test, so the container holds no ref at all.
-    expect(probe.callsTo(body, 'useRef')).toEqual([])
-
+    // Async request bookkeeping may use a ref. Rendered facts must still use
     // `const [x, setX] = useState<...>(seed)` for each seed, and the view reads x.
     const stateFromSeed = (seed: string): string => {
       const call = probe.callsTo(body, 'useState').find((each) => probe.argText(each, 0) === seed)
