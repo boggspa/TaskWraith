@@ -271,14 +271,14 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
  * old native product was rebuilt from newer source.
  */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '2debc73cbb715e8b1c6d5d65458eb4fb6f4fcffcc537248bceaf8cffb73c39cb',
-  sourceCount: 2284,
+  sourceDigest: '7ca872083c4fa860086b95bd5fcebb22c55a00df9098929a2910c557674d808c',
+  sourceCount: 3110,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
   companionSha256: '0e078cf777cd2040f87cd7d1541dfb96748626dd51b7582e089155cb91968309',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
-  bridgeDaemonSha256: '60cf0ce0678e39814182bfa50e2386e0dc3e0ad86eefc05dd90d741f49205a91'
+  bridgeDaemonSha256: 'e5438948ce0d5de076e494e31b5998ba8be91e48058fbaded6781e0a195238ce'
 })
 
 function isRecord(value) {

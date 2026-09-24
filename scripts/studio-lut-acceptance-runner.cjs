@@ -12,10 +12,10 @@ const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
 const expectedCompanionSha256 = '0e078cf777cd2040f87cd7d1541dfb96748626dd51b7582e089155cb91968309'
-const expectedSourceDigest = '061f9a3acbeb300cfb86ba8671268f91a4388663690452fb349b85a4f5d3bf56'
+const expectedSourceDigest = '42e70f83272f64f0a0f2a3bd1a0a5a7977fc2979bdae6302373e2355e38c7da8'
 const expectedSourceCount = 71
-const expectedOutDigest = 'a887c8e3aa5d5d164db474fe70dc1acbb125acc639cc7c6b3067e0a6dbf958d0'
-const expectedOutCount = 38
+const expectedOutDigest = '5bd7b4685c038235befa168052909573f30511ede3615f5b89ed17bb61c325d0'
+const expectedOutCount = 550
 const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
 const VALID_CUBE_CONTENT =
@@ -23,11 +23,11 @@ const VALID_CUBE_CONTENT =
 const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    '07a138d8b091b1d262dab8423936f9048b81972f87e542080649db31f8573707',
+    '9959f5c2ef1fc8490a3b76801969f5867dae005e0fda58af57d1dc4c5c1ec08e',
   'scripts/studio-acceptance-ui-driver.swift':
     '31e049ce81bd5dc1d0e1366c33c5b3f6f85bc10ccfcfd751f8925678bc67aa29',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c68429a807ca03465e076e8dd609283ef21937fac1e86aa23177e0972bbd3a8e',
+    '0409f5584499bafeaa8c99bf9bef8c4e84d5834b5885d4bb228d10715f2a4dcc',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
@@ -51,9 +51,9 @@ const expectedSupportHashes = Object.freeze({
   'scripts/studio-av-endurance-live-runner.cjs':
     '015e519ae5f58f4c15c70ea485fc0e0925e4ed6695bdb3934076b5225762d7d1',
   'scripts/perf/cdpWebSocketSession.cjs':
-    '8a1842735b17424e71e0edf29908a3be99d8b453814d5c14644a3bc5134b5f01',
+    '3bd5394220bf612bb79dfaf4438b5df8e9a0c72572be4d10abe5cb482a3afbe7',
   'scripts/perf/electronChildSession.cjs':
-    '9d62485e7df55c812d09c61117162fdaa8ce58a26dfad53acc07da773f312d9f'
+    '20f18797a4266f1b09298bb7ab20fef433fd41211b58fa12d8d46412e25103cd'
 })
 const ocrScriptPath = path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')
 const focusScriptPath = path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')
