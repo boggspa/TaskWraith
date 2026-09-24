@@ -522,6 +522,7 @@ async function runProviderTurnReplay(options) {
               raced.error && raced.error.code === 'T2_REPLAY_SAVE_REJECTED'
                 ? 'save_rejected'
                 : 'save_failed'
+            stop(partRecord.reason)
           } else if (raced.type === 'timer_failed') {
             partRecord.outcome = 'failed'
             partRecord.reason = 'part_timer_failed'
@@ -660,7 +661,7 @@ async function runDryRun() {
     async saveChat(chat) {
       const next = (revisions.get(chat.appChatId) || 0) + 1
       revisions.set(chat.appChatId, next)
-      return { persistenceRevision: next, updatedAt: 1 }
+      return { accepted: true, appChatId: chat.appChatId, persistenceRevision: next, updatedAt: 1 }
     }
   }
   return runProviderTurnReplay({

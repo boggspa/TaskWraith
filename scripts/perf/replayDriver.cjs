@@ -3,7 +3,7 @@
 /**
  * Deterministic renderer save-replay driver for T2.
  *
- * Uses window.api.getChat / window.api.saveChat via an injected page evaluator
+ * Uses window.api.getChat / window.api.saveChatWithOutcome via an injected page evaluator
  * (CDP Runtime.evaluate in attach mode). Never spawns providers.
  *
  * Applies ordered message prefixes / tail updates in bounded batches so HEAD
@@ -94,10 +94,18 @@ function applyReplayEventWithTimeout(ctx, event, meta, options) {
 }
 
 /**
+ * @typedef {object} SaveAcknowledgement
+ * @property {boolean} accepted
+ * @property {string|null} appChatId
+ * @property {number|null} persistenceRevision
+ * @property {number|null} updatedAt
+ */
+
+/**
  * @typedef {object} PageApiAdapter
  * @property {(chatId: string) => Promise<object|null>} getChat
- * @property {(chat: object) => Promise<object|unknown>} saveChat
- * @property {(base: object, patch: object) => Promise<object|unknown>} [savePrefix]
+ * @property {(chat: object) => Promise<SaveAcknowledgement>} saveChat
+ * @property {(base: object, patch: object) => Promise<SaveAcknowledgement>} [savePrefix]
  */
 
 /** Page-global holding seeded fixture records for bounded prefix commands. */
@@ -106,11 +114,15 @@ const PAGE_FIXTURE_GLOBAL = '__TASKWRAITH_PERF_REPLAY_FIXTURE__'
 /**
  * Compact ack projection, shared by every save shape. Returning the full
  * canonical record would ship the whole multi-MB chat BACK over CDP per save;
- * the driver needs only the revision to stamp its next save.
+ * the driver needs explicit acceptance, identity, and the next revision.
+ * Malformed fields must not smuggle record content into the compact reply.
  */
 const ACK_PROJECTION =
-  '(saved) => saved && typeof saved === "object" ' +
-  '? { persistenceRevision: saved.persistenceRevision, updatedAt: saved.updatedAt } : saved'
+  '(outcome) => { const saved = outcome && outcome.chat; return { ' +
+  'accepted: outcome?.accepted === true, ' +
+  'appChatId: saved?.appChatId === chat.appChatId ? chat.appChatId : null, ' +
+  'persistenceRevision: Number.isSafeInteger(saved?.persistenceRevision) ? saved.persistenceRevision : null, ' +
+  'updatedAt: Number.isFinite(saved?.updatedAt) ? saved.updatedAt : null }; }'
 
 /**
  * Build a page API adapter from a CDP-like evaluator.
@@ -172,14 +184,14 @@ function createCdpPageApiAdapter(page) {
         `if (!base) throw new Error("perf replay fixture not seeded: " + ${JSON.stringify(chatId)}); ` +
         `const chat = Object.assign({}, base, { messages: base.messages.slice(0, ${Number(patch.messageCount)}), ` +
         `updatedAt: ${Number(patch.updatedAt)}, persistenceRevision: ${Number(patch.persistenceRevision)} }); ` +
-        `return Promise.resolve(window.api.saveChat(chat)).then(${ACK_PROJECTION}); })()`
+        `return Promise.resolve(window.api.saveChatWithOutcome(chat)).then(${ACK_PROJECTION}); })()`
       return await page.evaluate(expr)
     },
 
     async saveChat(chat) {
       // Fallback for records that are not a prefix of a seeded fixture chat.
       // Pass chat via JSON to avoid expression injection; still bounded by CDP.
-      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChat(chat)).then(${ACK_PROJECTION}); })()`
+      const expr = `(function(){ const chat = ${JSON.stringify(chat)}; return Promise.resolve(window.api.saveChatWithOutcome(chat)).then(${ACK_PROJECTION}); })()`
       return await page.evaluate(expr)
     }
   }
@@ -258,14 +270,11 @@ function buildMessagePrefixBatches(fullChat, batchSize = DEFAULT_BATCH_SIZE) {
  *
  * ChatService.saveChatInternal is a compare-and-swap: a save whose
  * persistenceRevision differs from the canonical record is dropped by
- * returning the current record, with no error. Main assigns canonical =
- * previous + 1 on acceptance. So the driver must (a) stamp each save with the
- * canonical revision it last observed, and (b) treat a non-advancing ack as
- * the rejection it is. Synthesizing revisions client-side is how seed-42
- * attempt 3 completed 300+ events while the store's coalescer scheduled once.
- *
- * Acks without a numeric persistenceRevision (test fakes, degraded adapters)
- * skip the advance assertion — the CDP page adapter always returns one.
+ * returning the current record, with no error. That record may have a much
+ * higher revision than the rejected snapshot. Only an explicit accepted
+ * outcome for this chat can advance the replay's counts and canonical base.
+ * Accepted queued saves can be rebased by the preload, so the returned
+ * revision must advance but need not equal the sent revision plus one.
  *
  * @param {object} ctx
  * @param {object} event
@@ -274,7 +283,21 @@ function buildMessagePrefixBatches(fullChat, batchSize = DEFAULT_BATCH_SIZE) {
 async function performTrackedSave(ctx, event, record, prefix) {
   const chatId = event.appChatId
   const known = ctx.canonicalRevisions.get(chatId)
-  const sentRevision = known != null ? known : record.persistenceRevision || 1
+  const sentRevision = known ?? record.persistenceRevision ?? 1
+  const rejected = () => {
+    const error = new Error('T2 replay save was not acknowledged as accepted')
+    error.code = 'T2_REPLAY_SAVE_REJECTED'
+    return error
+  }
+  if (
+    typeof chatId !== 'string' ||
+    chatId.length === 0 ||
+    record.appChatId !== chatId ||
+    !Number.isSafeInteger(sentRevision) ||
+    sentRevision < 0
+  ) {
+    throw rejected()
+  }
   record.persistenceRevision = sentRevision
   // Bounded path when the adapter supports it: the record is already resident
   // in the page, so the per-event payload does not scale with the transcript.
@@ -287,20 +310,19 @@ async function performTrackedSave(ctx, event, record, prefix) {
           persistenceRevision: sentRevision
         })
       : await ctx.api.saveChat(record)
-  const ackRevision =
-    ack && typeof ack.persistenceRevision === 'number' ? ack.persistenceRevision : null
-  if (ackRevision != null) {
-    if (ackRevision <= sentRevision) {
-      const error = new Error(
-        `T2 replay save did not advance the canonical revision at seq=${String(event.seq)} ` +
-          `(${String(event.kind)}): sent ${sentRevision}, store returned ${ackRevision} — ` +
-          `the store rejected the save`
-      )
-      error.code = 'T2_REPLAY_SAVE_REJECTED'
-      throw error
-    }
-    ctx.canonicalRevisions.set(chatId, ackRevision)
+  const ackRevision = ack && ack.persistenceRevision
+  if (
+    !ack ||
+    typeof ack !== 'object' ||
+    Array.isArray(ack) ||
+    ack.accepted !== true ||
+    ack.appChatId !== chatId ||
+    !Number.isSafeInteger(ackRevision) ||
+    ackRevision <= sentRevision
+  ) {
+    throw rejected()
   }
+  ctx.canonicalRevisions.set(chatId, ackRevision)
   ctx.savedCounts.set(chatId, (ctx.savedCounts.get(chatId) || 0) + 1)
 }
 

@@ -65,10 +65,13 @@ function lane(role = 'light', chatId = role) {
 function api() {
   return {
     getChat: vi.fn(async () => null),
-    saveChat: vi.fn(async (record: { persistenceRevision?: number }) => ({
-      persistenceRevision: (record.persistenceRevision || 0) + 1
-    }))
+    saveChat: vi.fn(async (record: { appChatId: string; persistenceRevision?: number }) =>
+      acknowledged((record.persistenceRevision || 0) + 1, record.appChatId)
+    )
   }
+}
+function acknowledged(persistenceRevision: number, appChatId = 'light') {
+  return { accepted: true, appChatId, persistenceRevision }
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -290,10 +293,10 @@ describe('qualified replay evidence', () => {
     })
     Object.assign(failure, { cause: failure })
     const adapter = api()
-    adapter.saveChat.mockRejectedValue(failure)
+    adapter.getChat.mockRejectedValue(failure)
     const population = lane()
     population.schedule = Array.from({ length: 24 }, (_, seq) => ({
-      kind: 'seed_chat',
+      kind: 'run_still_running',
       appChatId: 'light',
       seq
     }))
@@ -541,7 +544,7 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('does not start a second repetition or reuse a chat until late effects settle', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter })
     await vi.advanceTimersByTimeAsync(120_000)
@@ -559,7 +562,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // Ownership is per chat: unrelated work on the same attached instance is fine.
     const unrelated = await measured({ api: adapter, lanes: [lane('light', 'unrelated')] })
     expect(unrelated.ok).toBe(true)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.advanceTimersByTimeAsync(0)
     expect(JSON.stringify(result.run)).toBe(snapshot)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
@@ -572,14 +575,14 @@ describe('deadlines retain unresolved effect ownership', () => {
     // late event instead of stranded pending, and repetitions 2 and 3 still run.
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter, windowMs: 10, cleanupTimeoutMs: 50 })
     await vi.advanceTimersByTimeAsync(10)
     // Past the deadline but inside the drain bound: settling ON the deadline
     // would be an on-time completion, not the late effect this pins.
     await vi.advanceTimersByTimeAsync(5)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.runAllTimersAsync()
     const result = await pending
     expect(result.run.evidence.windows).toHaveLength(3)
@@ -597,7 +600,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // inside its own per-event budget is slow, not stuck.
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({
       api: adapter,
@@ -609,7 +612,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // Far past the cleanup bound the old drain used, and far inside the event
     // budget the save was actually promised.
     await vi.advanceTimersByTimeAsync(900)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.runAllTimersAsync()
     const result = await pending
     expect(result.run.evidence.windows).toHaveLength(3)
@@ -634,7 +637,7 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('keeps raw effects owned after a per-event timeout and observes late rejection safely', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter, eventTimeoutMs: 5 })
     await vi.advanceTimersByTimeAsync(5)
@@ -655,7 +658,7 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('only releases unresolved ownership on an explicit positive drain acknowledgement', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const cancelPending = vi.fn(async () => {
       late.reject(new Error('owned adapter cancelled and drained'))
@@ -680,7 +683,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     async (status) => {
       vi.useFakeTimers()
       const adapter = api()
-      const late = deferred<{ persistenceRevision: number }>()
+      const late = deferred<ReturnType<typeof acknowledged>>()
       adapter.saveChat.mockImplementationOnce(() => late.promise)
       const cancelPending = vi.fn(() => {
         if (status === 'failed') throw new Error('cannot cancel')
@@ -694,7 +697,7 @@ describe('deadlines retain unresolved effect ownership', () => {
       expect(result.cleanup.status).toBe(status)
       expect(result.run.evidence.windows).toHaveLength(1)
       await expect(start({ api: adapter })).rejects.toThrow('still owned')
-      late.resolve({ persistenceRevision: 1 })
+      late.resolve(acknowledged(1))
       await vi.advanceTimersByTimeAsync(0)
     }
   )
@@ -705,7 +708,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     const adapter = api()
     adapter.saveChat.mockImplementation(async (record) => {
       calls += 1
-      return { persistenceRevision: (record.persistenceRevision || 0) + 1 }
+      return acknowledged((record.persistenceRevision || 0) + 1, record.appChatId)
     })
     const result = await start({
       api: adapter,
@@ -801,7 +804,7 @@ describe('measurement-clock deadline wakeups', () => {
     vi.useFakeTimers()
     const origin = Date.now()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     let arms = 0
     const pending = start({
@@ -825,7 +828,7 @@ describe('measurement-clock deadline wakeups', () => {
     expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
     expect(adapter.saveChat).toHaveBeenCalledTimes(1)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
   })
@@ -836,7 +839,7 @@ describe('measurement-clock deadline wakeups', () => {
       vi.useFakeTimers()
       const origin = Date.now()
       const adapter = api()
-      const late = deferred<{ persistenceRevision: number }>()
+      const late = deferred<ReturnType<typeof acknowledged>>()
       adapter.saveChat.mockImplementationOnce(() => late.promise)
       const pending = start({
         api: adapter,
@@ -860,7 +863,7 @@ describe('measurement-clock deadline wakeups', () => {
       )
       expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
       await expect(start({ api: adapter })).rejects.toThrow('still owned')
-      late.resolve({ persistenceRevision: 2 })
+      late.resolve(acknowledged(2))
       await vi.advanceTimersByTimeAsync(0)
     }
   )
@@ -915,7 +918,7 @@ describe('measurement-clock deadline wakeups', () => {
     ).rejects.toThrow('event timer arm failed')
     expect(adapter.saveChat).not.toHaveBeenCalled()
     const reads = oldClock.mock.calls.length
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const newer = start({ api: adapter, windowMs: 5 })
     await vi.advanceTimersByTimeAsync(0)
@@ -931,7 +934,7 @@ describe('measurement-clock deadline wakeups', () => {
     retiredCallbacks[0]()
     expect(oldClock).toHaveBeenCalledTimes(reads)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
     expect(oldClock).toHaveBeenCalledTimes(reads)
@@ -941,7 +944,7 @@ describe('measurement-clock deadline wakeups', () => {
     vi.useFakeTimers()
     const origin = Date.now()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({
       api: adapter,
@@ -958,7 +961,7 @@ describe('measurement-clock deadline wakeups', () => {
     expect(result.evidenceEligible).toBe(false)
     expect(result.run.evidence.windows).toHaveLength(1)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
   })
 })

@@ -45,6 +45,12 @@ const {
   validateRunEvidence
 } = require('./interferenceMatrix.cjs')
 const { toPersistedChatRecord } = require('./materializeUserData.cjs')
+const {
+  createReplayRevisionState,
+  bindReplayRevisionState,
+  assertReplaySaveContinuity,
+  invalidateReplayRevisionState
+} = require('./replayRevisionState.cjs')
 
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
@@ -297,7 +303,7 @@ function percentileSummary(values) {
  * per lane, so two chats' revision/counter state never bleed into each
  * other while they share the injected page adapter.
  */
-function makeLaneContext(api, lane) {
+function makeLaneContext(api, lane, revisionState) {
   const chatsById = new Map()
   for (const chat of lane.chats || []) chatsById.set(chat.appChatId, chat)
   return {
@@ -305,7 +311,7 @@ function makeLaneContext(api, lane) {
     chatsById,
     unsupported: [],
     savedCounts: new Map(),
-    canonicalRevisions: new Map()
+    canonicalRevisions: revisionState.canonicalRevisions
   }
 }
 
@@ -603,9 +609,12 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
           throw new Error('replay effect is outside its owned chat/window')
         }
         const entry = state.inFlightBy
+        entry.lastApiMethod = name
+        if (name === 'saveChat' || name === 'savePrefix') {
+          assertReplaySaveContinuity(state.aggregate.revisionState)
+        }
         entry.apiCalls += 1
         entry.apiPending += 1
-        entry.lastApiMethod = name
         for (const other of allEntries) {
           if (other.apiPending === 0 || other === entry) continue
           if (entry.state.lane.role === 'light' && other.state.lane.role === 'heavy')
@@ -627,7 +636,9 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     }
     return adapter
   }
-  for (const state of laneStates) state.ctx = makeLaneContext(guardApi(state), state.lane)
+  for (const state of laneStates) {
+    state.ctx = makeLaneContext(guardApi(state), state.lane, state.aggregate.revisionState)
+  }
 
   const launch = (state) => {
     const at = readTime()
@@ -665,6 +676,12 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     const settle = (outcome, value) => {
       entry.outcome = outcome
       entry.value = value
+      if (
+        outcome === 'failed' &&
+        (entry.lastApiMethod === 'saveChat' || entry.lastApiMethod === 'savePrefix')
+      ) {
+        invalidateReplayRevisionState(state.aggregate.revisionState)
+      }
       entry.finishedAtMs = collecting ? readTime() : null
       entry.settled = true
       clearTimer(timers, entry.timeout)
@@ -685,6 +702,10 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     pending.delete(entry)
     const state = entry.state
     state.inFlightBy = null
+    if (entry.outcome === 'failed' && state.aggregate.revisionState.invalid) {
+      // No dependent save can skip a failed seed or borrow an uncertain base.
+      stop('save_failed')
+    }
     if (entry.finishedAtMs === null || entry.finishedAtMs > deadlineAtMs) {
       state.lateEvents += 1
       return
@@ -898,15 +919,17 @@ async function runConcurrentReplayLanes(options) {
       replayPlan: planned
     }
   })
-  const ownership = reserveChats(options.api, lanes)
+  const revisionSession = options.replayRevisionState ?? createReplayRevisionState(options.api)
   const aggregates = lanes.map((lane) => ({
     lane,
+    revisionState: bindReplayRevisionState(revisionSession, options.api, lane),
     latencies: [],
     applied: 0,
     failures: 0,
     unsupported: [],
     censored: false
   }))
+  const ownership = reserveChats(options.api, lanes)
   const windows = []
   let cleanup = { status: 'not_needed' }
   try {
@@ -943,6 +966,10 @@ async function runConcurrentReplayLanes(options) {
       const { pending, ...observed } = window
       windows.push(observed)
       if (pending.length) {
+        for (const entry of pending) {
+          const aggregate = aggregates.find((candidate) => candidate.lane.chatId === entry.chatId)
+          invalidateReplayRevisionState(aggregate.revisionState)
+        }
         cleanup = await boundedCleanup(
           options.cancelPending,
           pending,
@@ -959,9 +986,10 @@ async function runConcurrentReplayLanes(options) {
       // eligible evidence. A censored window continues; anything we could not
       // finish or drain still aborts the remaining repetitions.
       if (
-        window.outcome !== 'complete' &&
-        window.outcome !== 'diagnostic' &&
-        window.outcome !== 'censored'
+        states.some((state) => state.aggregate.revisionState.invalid) ||
+        (window.outcome !== 'complete' &&
+          window.outcome !== 'diagnostic' &&
+          window.outcome !== 'censored')
       )
         break
     }

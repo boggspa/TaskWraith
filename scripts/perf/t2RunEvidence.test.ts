@@ -265,10 +265,10 @@ describe('T2 windowed-replay wiring (Wall 2 window orchestration)', () => {
         const entry = canonical.get(chat.appChatId)
         if (!entry) return null
         if ((chat.persistenceRevision || 1) !== entry.revision) {
-          return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+          return { accepted: false, appChatId: chat.appChatId, persistenceRevision: entry.revision }
         }
         entry.revision += 1
-        return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+        return { accepted: true, appChatId: chat.appChatId, persistenceRevision: entry.revision }
       }
     }
   }
@@ -384,7 +384,7 @@ describe('T2 paired-run wiring (Wall 2 G-X pairing)', () => {
       async saveChat(record: { appChatId?: string; persistenceRevision?: number }) {
         const nextRev = (record.persistenceRevision || 0) + 1
         store.set(record.appChatId, { ...record, persistenceRevision: nextRev })
-        return { persistenceRevision: nextRev }
+        return { accepted: true, appChatId: record.appChatId, persistenceRevision: nextRev }
       }
     }
   }

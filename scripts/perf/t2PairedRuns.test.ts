@@ -69,7 +69,9 @@ function fixture() {
 function api() {
   return {
     getChat: vi.fn(async () => null),
-    saveChat: vi.fn(async (record: { persistenceRevision?: number }) => ({
+    saveChat: vi.fn(async (record: { appChatId: string; persistenceRevision?: number }) => ({
+      accepted: true,
+      appChatId: record.appChatId,
       persistenceRevision: (record.persistenceRevision || 0) + 1
     }))
   }
