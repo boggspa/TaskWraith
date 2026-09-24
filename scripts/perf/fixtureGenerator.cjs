@@ -22,8 +22,10 @@ const crypto = require('crypto')
  * v3: runs use the current ChatRun identity/status core; large-history
  * fixtures carry the user-calibrated accumulated-run axis; per-chat rosters
  * are honest; structural fingerprints cover runs, rosters and active rounds.
+ * v4: D1 approximation events carry the exclusive prefix count after the
+ * preceding row; they must not remove that row or disappear at a tail boundary.
  */
-const FIXTURE_GENERATOR_VERSION = 3
+const FIXTURE_GENERATOR_VERSION = 4
 
 const RUN_CALIBRATION_SOURCE = 'programme_a1_49_user_axis'
 
@@ -642,7 +644,8 @@ function buildReplaySchedule(fixture) {
           kind: 'durability_soft_flush',
           appChatId: chat.appChatId,
           durabilityClass: 'D1',
-          messageIndex: i
+          // Despite the legacy field name, replay consumes an exclusive count.
+          messageIndex: i + 1
         })
       }
     }

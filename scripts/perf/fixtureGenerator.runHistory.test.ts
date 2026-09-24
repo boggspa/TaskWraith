@@ -301,7 +301,7 @@ describe('large-history run calibration', () => {
     const changedRound = copy(fixture)
     changedRound.chats[1].ensemble.activeRound.prompt = 'changed round prompt'
     expect(fixtureFingerprint(changedRound)).not.toBe(baseline)
-    expect(FIXTURE_GENERATOR_VERSION).toBe(3)
+    expect(FIXTURE_GENERATOR_VERSION).toBe(4)
   })
 
   it('round-trips a scaled large history through materialization and the real Host store', () => {
