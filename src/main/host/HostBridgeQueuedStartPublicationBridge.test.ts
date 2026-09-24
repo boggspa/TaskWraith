@@ -6,13 +6,16 @@ import {
   type HostQueuedStartStartedView
 } from '../../host-runtime/HostQueuedStartPublication'
 import type { HostCommandExecutionResult } from '../../host-runtime/HostCommandExecutionResult'
-import type {
-  HostBridgeQueuedStartFailure,
-  HostBridgeQueuedStartView
+import {
+  createHostBridgeQueuedStartAdapter,
+  type HostBridgeQueuedStartFailure,
+  type HostBridgeQueuedStartView
 } from './HostBridgeQueuedStartAdapter'
 import {
   createHostBridgeQueuedStartPublicationBridge,
-  type HostBridgeQueuedStartAuthorityPort
+  type HostBridgeQueuedStartAuthorityPort,
+  type HostBridgeQueuedStartPublicationBridge,
+  type HostBridgeQueuedStartPublicationResult
 } from './HostBridgeQueuedStartPublicationBridge'
 
 // Letters are load-bearing: an all-digit uuid makes `.toUpperCase()` a no-op,
@@ -104,6 +107,32 @@ function spyAuthority(): {
     dispatchSettled,
     abort
   }
+}
+
+function publicationFailure(): HostBridgeQueuedStartFailure {
+  return { hostCommandActionId: ACTION_ID, threadId: THREAD_ID, reason: 'publication_failed' }
+}
+
+function connectedAdapter(bridge: HostBridgeQueuedStartPublicationBridge) {
+  const failures: HostBridgeQueuedStartPublicationResult[] = []
+  const adapter = createHostBridgeQueuedStartAdapter({
+    runProjectionOperation: async (operation) => operation(),
+    onPrepared: (prepared) => {
+      bridge.onPrepared(prepared)
+    },
+    onSettled: (terminal) => {
+      bridge.onSettled(terminal)
+    },
+    onFailure: (failure) => {
+      failures.push(bridge.onFailure(failure))
+    }
+  })
+  adapter.register({
+    hostCommandActionId: ACTION_ID,
+    threadId: THREAD_ID,
+    authority: AUTHORITY_IDENTITY
+  })
+  return { adapter, failures }
 }
 
 describe('createHostBridgeQueuedStartPublicationBridge', () => {
@@ -314,7 +343,7 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     { status: 'failed' as const, errorCode: 'provider_rejected' },
     { status: 'cancelled' as const, errorCode: undefined }
   ])('terminalizes a $status settlement exactly once', ({ status, errorCode }) => {
-    const { port, starting, dispatchSettled } = spyAuthority()
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
 
     expect(bridge.onSettled(settled(status, errorCode))).toEqual({
@@ -335,6 +364,11 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
       reason: 'already_forwarded'
     })
     expect(dispatchSettled).toHaveBeenCalledTimes(1)
+    expect(bridge.onFailure(publicationFailure())).toEqual({
+      kind: 'refused',
+      reason: 'already_forwarded'
+    })
+    expect(abort).not.toHaveBeenCalled()
   })
 
   it('ignores a started settlement because prepared already published success', () => {
@@ -351,8 +385,8 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(dispatchSettled).toHaveBeenCalledTimes(1)
   })
 
-  it('maps an adapter publication failure onto one terminalizing settlement', () => {
-    const { port, dispatchSettled } = spyAuthority()
+  it('maps an adapter publication failure onto one indeterminate abort', () => {
+    const { port, dispatchSettled, abort } = spyAuthority()
     const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
     const failure: HostBridgeQueuedStartFailure = {
       hostCommandActionId: ACTION_ID,
@@ -363,15 +397,192 @@ describe('createHostBridgeQueuedStartPublicationBridge', () => {
     expect(bridge.onFailure(failure)).toEqual({
       kind: 'terminalized',
       commandId: COMMAND_ID,
-      status: 'failed'
+      status: 'indeterminate'
     })
-    expect(dispatchSettled).toHaveBeenCalledWith(COMMAND_ID, {
-      status: 'failed',
-      errorCode: 'publication_failed'
-    })
+    expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    expect(dispatchSettled).not.toHaveBeenCalled()
 
     expect(bridge.onFailure(failure)).toEqual({ kind: 'refused', reason: 'already_forwarded' })
-    expect(dispatchSettled).toHaveBeenCalledTimes(1)
+    expect(abort).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { mode: 'solo', phase: 'starting' },
+    { mode: 'solo', phase: 'settlement' },
+    { mode: 'ensemble', phase: 'starting' },
+    { mode: 'ensemble', phase: 'settlement' }
+  ])(
+    'aborts once when a real adapter $mode prepared callback throws during $phase',
+    async ({ mode, phase }) => {
+      const { port, starting, dispatchSettled, abort } = spyAuthority()
+      const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+      const { adapter, failures } = connectedAdapter(bridge)
+      const callback = phase === 'starting' ? starting : dispatchSettled
+      callback.mockImplementation(() => {
+        throw new Error('publication failed after possible mutation')
+      })
+      const prepared = (mode === 'solo' ? preparedSolo() : preparedEnsemble()).prepared!
+      const event = {
+        kind: 'prepared' as const,
+        hostCommandActionId: ACTION_ID,
+        threadId: THREAD_ID,
+        durablePromptAndStartPersisted: true as const,
+        ...prepared
+      }
+      expect(await adapter.prepared(event)).toEqual({
+        kind: 'failed',
+        reason: 'publication_failed'
+      })
+      expect(failures).toEqual([
+        { kind: 'terminalized', commandId: COMMAND_ID, status: 'indeterminate' }
+      ])
+      expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+      if (phase === 'starting') expect(dispatchSettled).not.toHaveBeenCalled()
+      else {
+        expect(dispatchSettled).toHaveBeenCalledOnce()
+        expect(dispatchSettled).toHaveBeenCalledWith(
+          COMMAND_ID,
+          { status: 'succeeded' },
+          mode === 'solo' ? { runEntityId: RUN_ID } : { roundEntityId: 'round-1' }
+        )
+      }
+      expect(bridge.forwardedCount()).toBe(1)
+      expect(await adapter.prepared(event)).toEqual({ kind: 'refused', reason: 'terminal' })
+      expect(bridge.onFailure(publicationFailure())).toEqual({
+        kind: 'refused',
+        reason: 'already_forwarded'
+      })
+      expect(bridge.onSettled(settled('started'))).toEqual({
+        kind: 'refused',
+        reason: 'already_forwarded'
+      })
+      expect(abort).toHaveBeenCalledOnce()
+      expect(starting).toHaveBeenCalledOnce()
+    }
+  )
+
+  it.each(['failed', 'cancelled'] as const)(
+    'abandons a throwing real adapter %s settlement without retrying it',
+    async (status) => {
+      const { port, dispatchSettled, abort } = spyAuthority()
+      const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+      const { adapter, failures } = connectedAdapter(bridge)
+      dispatchSettled.mockImplementation(() => {
+        throw new Error('terminal publication failed')
+      })
+      expect(
+        await adapter.settled({
+          kind: 'settled',
+          hostCommandActionId: ACTION_ID,
+          threadId: THREAD_ID,
+          status
+        })
+      ).toEqual({ kind: 'failed', reason: 'publication_failed' })
+      expect(failures).toEqual([
+        { kind: 'terminalized', commandId: COMMAND_ID, status: 'indeterminate' }
+      ])
+      expect(dispatchSettled).toHaveBeenCalledExactlyOnceWith(COMMAND_ID, { status })
+      expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+      expect(bridge.onFailure(publicationFailure())).toEqual({
+        kind: 'refused',
+        reason: 'already_forwarded'
+      })
+      expect(abort).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('does not erase the abort exception or replay an unconfirmed prepared publication', () => {
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+    dispatchSettled.mockImplementation(() => {
+      throw new Error('after mutation')
+    })
+    expect(() => bridge.onPrepared(preparedSolo())).toThrow('after mutation')
+    expect(bridge.onPrepared(preparedSolo())).toEqual({
+      kind: 'refused',
+      reason: 'already_forwarded'
+    })
+    expect(bridge.onFailure(publicationFailure())).toEqual({
+      kind: 'terminalized',
+      commandId: COMMAND_ID,
+      status: 'indeterminate'
+    })
+    expect(starting).toHaveBeenCalledOnce()
+    expect(dispatchSettled).toHaveBeenCalledOnce()
+    expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+  })
+
+  it.each(['starting', 'settlement'] as const)(
+    'contains reentrant failure during %s without confirming a start',
+    (phase) => {
+      const { port, starting, dispatchSettled, abort } = spyAuthority()
+      const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+      const callback = phase === 'starting' ? starting : dispatchSettled
+      callback.mockImplementation(() => {
+        expect(bridge.onPrepared(preparedSolo())).toEqual({
+          kind: 'refused',
+          reason: 'already_forwarded'
+        })
+        bridge.onFailure(publicationFailure())
+      })
+      expect(bridge.onPrepared(preparedSolo())).toEqual({
+        kind: 'terminalized',
+        commandId: COMMAND_ID,
+        status: 'indeterminate'
+      })
+      expect(bridge.onSettled(settled('started'))).toEqual({
+        kind: 'refused',
+        reason: 'already_forwarded'
+      })
+      expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+      expect(starting).toHaveBeenCalledOnce()
+      expect(dispatchSettled).toHaveBeenCalledTimes(phase === 'starting' ? 0 : 1)
+    }
+  )
+
+  it('does not abandon a normally completed prepared publication on a duplicate failure', () => {
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+    expect(bridge.onPrepared(preparedSolo()).kind).toBe('started')
+    expect(bridge.onFailure(publicationFailure())).toEqual({
+      kind: 'refused',
+      reason: 'already_forwarded'
+    })
+    expect(abort).not.toHaveBeenCalled()
+    expect(starting).toHaveBeenCalledOnce()
+    expect(dispatchSettled).toHaveBeenCalledOnce()
+  })
+
+  it('does not retry an abort which mutates then throws on the real adapter failure path', async () => {
+    const { port, starting, dispatchSettled, abort } = spyAuthority()
+    const bridge = createHostBridgeQueuedStartPublicationBridge({ authority: port })
+    const { adapter } = connectedAdapter(bridge)
+    let promoted = false
+    starting.mockImplementation(() => {
+      throw new Error('start publication failed')
+    })
+    abort.mockImplementation(() => {
+      promoted = true
+      throw new Error('after indeterminate mutation')
+    })
+    const prepared = preparedSolo().prepared!
+    expect(
+      await adapter.prepared({
+        kind: 'prepared',
+        hostCommandActionId: ACTION_ID,
+        threadId: THREAD_ID,
+        durablePromptAndStartPersisted: true,
+        ...prepared
+      })
+    ).toEqual({ kind: 'failed', reason: 'publication_failed' })
+    expect(promoted).toBe(true)
+    expect(abort).toHaveBeenCalledExactlyOnceWith(COMMAND_ID)
+    expect(dispatchSettled).not.toHaveBeenCalled()
+    expect(bridge.onFailure(publicationFailure())).toEqual({
+      kind: 'refused',
+      reason: 'already_forwarded'
+    })
+    expect(abort).toHaveBeenCalledOnce()
   })
 
   it.each([

@@ -2,10 +2,8 @@
  * In-main Bridge -> Authority queued-start glue (Independent Threads M2,
  * producer step 2).
  *
- * UNWIRED BY CONSTRUCTION. Nothing builds this yet: no composition root, no
- * `src/main/index.ts` call, no flag. It takes injected FUNCTION ports only and
- * never reaches for a composition bind, so landing it cannot change any live
- * route. Step 3 (the IntegrationOwner-granted wiring) is separate work.
+ * Takes injected Authority ports; route selection belongs to the composition
+ * root. This glue never dispatches or retries provider work.
  *
  * WHY IT EXISTS. The standalone Host route runs the provider under
  * `runId === commandId`, so its start publication can look the run row up by
@@ -28,7 +26,9 @@
  *                 thread + round. Exactly one entity is ever bound.
  * - `settled` started -> no call; `prepared` already drove success.
  * - `settled` failed/cancelled -> one terminalizing settlement.
- * - adapter failure -> one terminalizing settlement, `publication_failed`.
+ * - adapter publication failure -> abandon proof as indeterminate. A callback
+ *                 may throw after provider effects or partial publication;
+ *                 that is never evidence of failed execution.
  *
  * ABSORB RACE — a started settlement with no prepared. When the send resolves
  * with no live round, registers, and a round starts before dispatch, the
@@ -134,7 +134,7 @@ export interface HostBridgeQueuedStartPublicationBridge {
   onPrepared(view: HostBridgeQueuedStartView): HostBridgeQueuedStartPublicationResult
   /** Adapter `settled` view. failed/cancelled terminalize exactly once. */
   onSettled(view: HostBridgeQueuedStartView): HostBridgeQueuedStartPublicationResult
-  /** Adapter publication failure. Terminalizes with `publication_failed`. */
+  /** Adapter publication failure. Abandons proof as indeterminate exactly once. */
   onFailure(failure: HostBridgeQueuedStartFailure): HostBridgeQueuedStartPublicationResult
   /** Command ids whose terminal decision has been forwarded. Diagnostics only. */
   forwardedCount(): number
@@ -168,6 +168,10 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
   // fences again on its own pending map; this keeps the glue from issuing a
   // second settlement that the coordinator would only silently discard.
   const forwarded = new Set<string>()
+  // Retained until an Authority callback returns normally. The forwarded
+  // fence prevents replay, but must not suppress onFailure's abort when that
+  // very publication threw. A successful publication clears this exception.
+  const unconfirmedPublication = new Set<string>()
   // Command ids whose `prepared` this glue actually drove to a persist-proven
   // success. Distinct from `forwarded`, which also holds terminalized ids: the
   // difference is what separates "success already published" from "a started
@@ -200,6 +204,8 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
       const commandId = commandIdOf(view.hostCommandActionId)
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }
       if (forwarded.has(commandId)) return { kind: 'refused', reason: 'already_forwarded' }
+      forwarded.add(commandId)
+      unconfirmedPublication.add(commandId)
 
       // `starting` carries NO executionClaimCursor: the in-main route holds no
       // durable pre-spawn claim, so recovery must classify it `unknown`.
@@ -212,6 +218,9 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
         terminalOutcome: null
       }
       authority.handleQueuedStartStarting(startingView)
+      if (!unconfirmedPublication.has(commandId)) {
+        return { kind: 'terminalized', commandId, status: 'indeterminate' }
+      }
 
       // A `prepared` view exists only for an event whose
       // `durablePromptAndStartPersisted` was the literal `true`, so the
@@ -223,14 +232,16 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
       // no runId, so there is no participant run to bind and a proof resting
       // on one would be vacuous exactly when it is needed. Never both — the
       // coordinator refuses that pair as incoherent.
-      forwarded.add(commandId)
-      publishedStart.add(commandId)
       if (start.kind === 'solo') {
         authority.handleQueuedStartDispatchSettled(
           commandId,
           { status: 'succeeded' },
           { runEntityId: boundEntityId }
         )
+        if (!unconfirmedPublication.delete(commandId)) {
+          return { kind: 'terminalized', commandId, status: 'indeterminate' }
+        }
+        publishedStart.add(commandId)
         return { kind: 'started', commandId, runEntityId: boundEntityId }
       }
       authority.handleQueuedStartDispatchSettled(
@@ -238,6 +249,10 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
         { status: 'succeeded' },
         { roundEntityId: boundEntityId }
       )
+      if (!unconfirmedPublication.delete(commandId)) {
+        return { kind: 'terminalized', commandId, status: 'indeterminate' }
+      }
+      publishedStart.add(commandId)
       return { kind: 'started', commandId, roundEntityId: boundEntityId }
     },
 
@@ -269,23 +284,30 @@ export function createHostBridgeQueuedStartPublicationBridge(options: {
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }
       if (forwarded.has(commandId)) return { kind: 'refused', reason: 'already_forwarded' }
       forwarded.add(commandId)
+      unconfirmedPublication.add(commandId)
       authority.handleQueuedStartDispatchSettled(commandId, {
         status: settled.status,
         ...(settled.errorCode !== undefined ? { errorCode: settled.errorCode } : {})
       })
+      if (!unconfirmedPublication.delete(commandId)) {
+        return { kind: 'terminalized', commandId, status: 'indeterminate' }
+      }
       return { kind: 'terminalized', commandId, status: settled.status }
     },
 
     onFailure(failure) {
       const commandId = commandIdOf(failure.hostCommandActionId)
       if (!commandId) return { kind: 'refused', reason: 'invalid_action_id' }
-      if (forwarded.has(commandId)) return { kind: 'refused', reason: 'already_forwarded' }
+      if (forwarded.has(commandId) && !unconfirmedPublication.has(commandId)) {
+        return { kind: 'refused', reason: 'already_forwarded' }
+      }
+      // Fence before calling the void abort port: it may mutate then throw.
+      // Such a throw must neither retry effects nor emit a false failed result;
+      // any remaining pending receipt belongs to shutdown/restart recovery.
       forwarded.add(commandId)
-      authority.handleQueuedStartDispatchSettled(commandId, {
-        status: 'failed',
-        errorCode: failure.reason
-      })
-      return { kind: 'terminalized', commandId, status: 'failed' }
+      unconfirmedPublication.delete(commandId)
+      authority.abortQueuedStart(commandId)
+      return { kind: 'terminalized', commandId, status: 'indeterminate' }
     },
 
     forwardedCount() {
