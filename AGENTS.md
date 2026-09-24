@@ -21,6 +21,7 @@ product and tooling manual on every thread.
 | Trigger | Required doctrine |
 | --- | --- |
 | Any repository mutation; creating, editing, moving, deleting, or formatting files; markers, claims, worktrees, adoption, staging, commits, hooks, release, tag, or publish actions | [Repository workflow doctrine](docs/agent-doctrine/REPOSITORY_WORKFLOW.md) |
+| Creating, renewing, interpreting, reconciling or removing work markers | [Suite work-claim lifecycle](docs/agent-doctrine/WORK_CLAIM_LIFECYCLE.md) |
 | Security findings; providers; tools; grants; permissions; scheduling; transports; capability availability, retirement, gating, or narrowing | [Capability governance doctrine](docs/agent-doctrine/CAPABILITY_GOVERNANCE.md) |
 | Sub-thread delegation or recall; async child results; join/wait behavior; Ensemble participation; fan-out or background lanes; yield, mentions, or mid-round questions | [Delegation and Ensemble doctrine](docs/agent-doctrine/DELEGATION_AND_ENSEMBLE.md) |
 | Runtime/session behavior; approvals; prompt caching; forks; effective worktrees; MCP/tool behavior or catalogue; provider status; editor/GUI/creative tools; host state an agent cannot see | [Runtime and tool doctrine](docs/agent-doctrine/RUNTIME_AND_TOOLS.md) |
