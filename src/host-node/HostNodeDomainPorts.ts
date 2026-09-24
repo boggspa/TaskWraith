@@ -529,14 +529,17 @@ export class HostNodeDomainPorts {
     readonly cancelledRuns: number
   }> | null = null
 
+  /**
+   * The chat a command's thread belongs to, for span attribution only. The
+   * profile store keys every thread record by its app chat id and refuses a
+   * record whose id differs (`HostProfileDomainStore.getThread`), so the
+   * thread id is the chat id. Reading the record to learn that parses the
+   * whole chat file (up to MAX_CHAT_BYTES) on the Host loop, inside the very
+   * control response or round start the span times.
+   */
   private chatIdForCommandThread(threadId: string): string | undefined {
     if (this.options.workSpanRecorder === undefined) return undefined
-    try {
-      return this.options.store.getThread(threadId)?.appChatId
-    } catch {
-      // Instrumentation must never alter a control command result.
-      return undefined
-    }
+    return isCanonicalId(threadId) ? threadId : undefined
   }
 
   private controlResponseStartedAt(): number | undefined {

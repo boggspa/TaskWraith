@@ -3323,6 +3323,66 @@ describe('HostNodeDomainPorts', () => {
       releaseRun()
     })
 
+    it('attributes its spans without reading a thread record', async () => {
+      // Reading a profile thread parses its whole chat file on the Host loop,
+      // inside the span being timed. The same commands must cost the same
+      // record reads with a recorder as without one.
+      const readsFor = async (withRecorder: boolean) => {
+        const { domainOptions, store, workspace, releaseRun } = open({ killReleases: false })
+        const registered = store.registerWorkspace({ path: workspace })
+        const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+        store.configureThread({
+          threadId: thread.appChatId,
+          providerId: 'muse',
+          modelId: 'muse-spark-1.2',
+          postureId: 'default',
+          postureConsent: true
+        })
+        let clock = 1000
+        const recorder = createControlledRecorder(() => (clock += 5))
+        const domain = new HostNodeDomainPorts({
+          ...domainOptions,
+          ...(withRecorder ? { workSpanRecorder: recorder } : {})
+        })
+        const reads: number[] = []
+        let before = store.threadRecordDiskReads
+        await domain.executeCommand(
+          context,
+          command(
+            'composer.send',
+            'attribution-start',
+            { threadId: thread.appChatId },
+            { text: 'start run to cancel' }
+          ),
+          { id: 'target' }
+        )
+        reads.push(store.threadRecordDiskReads - before)
+        before = store.threadRecordDiskReads
+        await domain.executeCommand(
+          context,
+          command(
+            'run.cancel',
+            'attribution-cancel',
+            { threadId: thread.appChatId },
+            { expectedWorkId: 'attribution-start' }
+          ),
+          { id: 'target' }
+        )
+        reads.push(store.threadRecordDiskReads - before)
+        releaseRun()
+        const kinds = recorder
+          .snapshot()
+          .spans.filter((span) => span.chatId === thread.appChatId)
+          .map((span) => span.kind)
+        return { reads, kinds }
+      }
+      const withRecorder = await readsFor(true)
+      const without = await readsFor(false)
+      expect(withRecorder.kinds).toEqual(['round_start', 'control_response'])
+      expect(without.kinds).toEqual([])
+      expect(withRecorder.reads).toEqual(without.reads)
+    })
+
     it('emits a control_response span for approval.decide', async () => {
       const { domainOptions, store, workspace } = open()
       const registered = store.registerWorkspace({ path: workspace })
@@ -3682,17 +3742,15 @@ describe('HostNodeDomainPorts', () => {
       getThread.mockRestore()
     })
 
-    it('contains a throwing thread lookup and clock so spans stay silent', async () => {
+    it('attributes from the thread id without the store, and a throwing clock stays silent', async () => {
       const { domainOptions } = open()
       const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 64 })
-      const throwingStore = {
-        getThread: () => {
-          throw new Error('spiked store read')
-        }
-      }
+      const getThread = vi.fn(() => {
+        throw new Error('spiked store read')
+      })
       const domain = new HostNodeDomainPorts({
         ...domainOptions,
-        store: throwingStore as unknown as HostProfileDomainStore,
+        store: { getThread } as unknown as HostProfileDomainStore,
         now: () => {
           throw new Error('spiked clock')
         },
@@ -3702,50 +3760,54 @@ describe('HostNodeDomainPorts', () => {
         chatIdForCommandThread(threadId: string): string | undefined
         controlResponseStartedAt(): number | undefined
       }
-      expect(helpers.chatIdForCommandThread('any-thread')).toBeUndefined()
+      expect(helpers.chatIdForCommandThread('any-thread')).toBe('any-thread')
+      for (const threadId of ['', ' padded ', 'bell\u0007', 'x'.repeat(513)]) {
+        expect(helpers.chatIdForCommandThread(threadId)).toBeUndefined()
+      }
+      expect(getThread).not.toHaveBeenCalled()
       expect(helpers.controlResponseStartedAt()).toBeUndefined()
       expect(recorder.snapshot().spans).toHaveLength(0)
     })
 
-    it('contains a throwing instrumentation lookup so seat.toggle still succeeds without a span', async () => {
-      const { domainOptions, store, workspace } = open()
-      const registered = store.registerWorkspace({ path: workspace })
-      const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
-      store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
-      store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
-      const record = store.getThread(thread.appChatId)!
-      const participants = (record.ensemble as { participants: Array<{ id: string }> }).participants
-
-      let clock = 5000
-      const recorder = createControlledRecorder(() => (clock += 2))
-      const domainWithRecorder = new HostNodeDomainPorts({
-        ...domainOptions,
-        workSpanRecorder: recorder
-      })
-      // The authority read is call 1; the instrumentation lookup is call 2
-      // (spiked here); the toggle logic follows. Order-coupled by necessity:
-      // inter-read state change is the only production route to this throw.
-      const original = store.getThread.bind(store)
-      let calls = 0
-      const getThread = vi.spyOn(store, 'getThread').mockImplementation((threadId) => {
-        calls += 1
-        if (calls === 2) throw new Error('spiked instrumentation lookup')
-        return original(threadId)
-      })
-      await expect(
-        domainWithRecorder.executeCommand(
-          context,
-          command(
-            'ensemble.seat.toggle',
-            'cmd-seat-spiked-lookup',
-            { threadId: thread.appChatId },
-            { participantId: participants[0]!.id, enabled: false }
-          ),
-          { id: 'target' }
-        )
-      ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
-      expect(recorder.snapshot().spans).toHaveLength(0)
-      getThread.mockRestore()
+    it('times seat.toggle with no thread read of its own', async () => {
+      const readsFor = async (withRecorder: boolean) => {
+        const { domainOptions, store, workspace } = open()
+        const registered = store.registerWorkspace({ path: workspace })
+        const thread = store.createThread({ scope: 'workspace', workspaceId: registered.id })
+        store.configureThread({ threadId: thread.appChatId, providerId: 'muse' })
+        store.setThreadKind({ threadId: thread.appChatId, targetKind: 'ensemble' })
+        const record = store.getThread(thread.appChatId)!
+        const participants = (record.ensemble as { participants: Array<{ id: string }> })
+          .participants
+        let clock = 5000
+        const recorder = createControlledRecorder(() => (clock += 2))
+        const domain = new HostNodeDomainPorts({
+          ...domainOptions,
+          ...(withRecorder ? { workSpanRecorder: recorder } : {})
+        })
+        const before = store.threadRecordDiskReads
+        await expect(
+          domain.executeCommand(
+            context,
+            command(
+              'ensemble.seat.toggle',
+              'cmd-seat-attribution',
+              { threadId: thread.appChatId },
+              { participantId: participants[0]!.id, enabled: false }
+            ),
+            { id: 'target' }
+          )
+        ).resolves.toEqual({ status: 'succeeded', resultSummary: 'ensemble_seat_disabled' })
+        return {
+          reads: store.threadRecordDiskReads - before,
+          chats: recorder.snapshot().spans.map((span) => span.chatId),
+          threadId: thread.appChatId
+        }
+      }
+      const withRecorder = await readsFor(true)
+      const without = await readsFor(false)
+      expect(withRecorder.chats).toEqual([withRecorder.threadId])
+      expect(withRecorder.reads).toBe(without.reads)
     })
   })
 
