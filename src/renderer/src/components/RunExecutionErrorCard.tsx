@@ -31,7 +31,7 @@ import { launchProviderLogin, providerLoginCapability } from '../lib/runFailureR
 import { getProviderLabel } from '../lib/providerLabels'
 import { formatProviderRunFailureTimestamp } from '../lib/providerRunFailureSnippet'
 import type { EnsembleParticipantRetryResult } from '../lib/ensembleRetryPrompt'
-import type { HostLifecycleControlView } from './HostStatusRow'
+import { HOST_LEASE_LIFETIME_NOTE, type HostLifecycleControlView } from './HostStatusRow'
 import { PillButton } from './PillButton'
 import {
   describeProviderRunFailureMessage,
@@ -143,7 +143,7 @@ export function RunExecutionErrorCardView({
               className="host-lifecycle-toggle run-error-card-restart"
               disabled={hostControl.disabled}
               onClick={onHostAction}
-              aria-label={`${hostControl.actionLabel}. Host runs only while TaskWraith is open.`}
+              aria-label={`${hostControl.actionLabel}. ${HOST_LEASE_LIFETIME_NOTE}`}
             >
               {hostControl.actionLabel}
             </button>

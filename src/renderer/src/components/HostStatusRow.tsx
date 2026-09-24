@@ -150,13 +150,62 @@ export interface HostLifecycleControlView {
   readonly detail?: string
 }
 
+/** The Host is its own process: apps and the terminal client attach to it. */
+export const INDEPENDENT_HOST_NOTE = 'Independent Host'
+
+/**
+ * How long the Host lives now that clients hold leases on it, short enough for
+ * an aria-label. The 45 s is the Host's last-lease grace
+ * (`HOST_LAST_LEASE_GRACE_MS`); a test ties the sentence to that constant.
+ */
+export const HOST_LEASE_LIFETIME_NOTE =
+  'The Host runs while TaskWraith or a TUI holds it, and stops about 45 s after the last one leaves, once live work drains.'
+
+/** Compact Host duration (uptime, connection age, grace left): 42s, 12m, 3h 12m, 2d 4h. */
+export function formatHostDuration(ms: number): string {
+  const totalSeconds = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0
+  if (totalSeconds < 60) return `${totalSeconds}s`
+  const totalMinutes = Math.floor(totalSeconds / 60)
+  if (totalMinutes < 60) return `${totalMinutes}m`
+  const totalHours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  if (totalHours < 24) return minutes > 0 ? `${totalHours}h ${minutes}m` : `${totalHours}h`
+  const days = Math.floor(totalHours / 24)
+  const hours = totalHours % 24
+  return hours > 0 ? `${days}d ${hours}h` : `${days}d`
+}
+
+/**
+ * "Independent Host · pid 4242 · up 3h 12m" while the Host runs and its
+ * process has been observed; "Independent Host" otherwise.
+ *
+ * The compact surfaces receive only the lifecycle snapshot, whose `host`
+ * block carries the listener start the Host stamped itself (ISO-8601 UTC), so
+ * the uptime here is that instant's distance from `nowMs` on the same
+ * machine's clock. The Settings Host card shows the Host's own `uptimeMs`
+ * from `host.status` instead.
+ */
+export function describeHostProcessNote(
+  lifecycle: HostLifecycleSnapshot | null,
+  nowMs: number = Date.now()
+): string {
+  const host = lifecycle?.phase === 'running' ? lifecycle.host : undefined
+  if (!host) return INDEPENDENT_HOST_NOTE
+  const startedAtMs = Date.parse(host.startedAt)
+  const uptime = Number.isFinite(startedAtMs)
+    ? ` · up ${formatHostDuration(nowMs - startedAtMs)}`
+    : ''
+  return `${INDEPENDENT_HOST_NOTE} · pid ${host.pid}${uptime}`
+}
+
 /** Pure copy/action mapping for the visible in-app lifecycle control. */
 export function describeHostLifecycleControl(
   lifecycle: HostLifecycleSnapshot | null,
   pending = false,
-  unavailableReason?: string
+  unavailableReason?: string,
+  nowMs: number = Date.now()
 ): HostLifecycleControlView {
-  const note = 'Runs only while TaskWraith is open'
+  const note = describeHostProcessNote(lifecycle, nowMs)
   if (!lifecycle) {
     return {
       note,
@@ -434,7 +483,7 @@ export function HostStatusRow({
             className="host-lifecycle-toggle"
             disabled={lifecycleControl.disabled}
             onClick={runLifecycleAction}
-            aria-label={`${lifecycleControl.actionLabel}. Host runs only while TaskWraith is open.`}
+            aria-label={`${lifecycleControl.actionLabel}. ${lifecycleControl.note}.`}
           >
             {lifecycleControl.actionLabel}
           </button>

@@ -28,13 +28,18 @@ vi.mock('../lib/featureFlags', () => ({
 import { ApprovalsFooterPopover, DevicesFooterPopover } from './Sidebar'
 import { HostProjectionProvider } from './HostProjectionProvider'
 import {
+  HOST_LEASE_LIFETIME_NOTE,
   HostStatusRow,
   applyHostLifecycleToProjectionState,
   describeHostConnection,
   describeHostLifecycleControl,
+  describeHostProcessNote,
   describeHostProviders,
-  describeHostAwaitingApprovals
+  describeHostAwaitingApprovals,
+  formatHostDuration
 } from './HostStatusRow'
+import { HostMissionControl } from './HostMissionControl'
+import { HOST_LAST_LEASE_GRACE_MS } from '../../../host-runtime/HostLeaseRegistry'
 import {
   HOST_PROJECTION_VERSION,
   HOST_PROTOCOL_VERSION,
@@ -196,10 +201,79 @@ describe('HostStatusRow · visible in-app lifecycle', () => {
     })
   })
 
-  it('states the no-daemon boundary in the rendered surface', () => {
+  it('states the independent-Host boundary in the rendered surface', () => {
     const markup = renderRow()
-    expect(markup).toContain('Runs only while TaskWraith is open')
-    expect(markup).toContain('Checking control')
+    expect(markup).toContain(
+      '<span class="host-lifecycle-copy"><span>Independent Host</span><span class="host-lifecycle-state" role="status" aria-live="polite">Checking control…</span></span>'
+    )
+    // The Host outlives the window now; the old no-daemon promise must not survive.
+    expect(markup).not.toContain('only while TaskWraith is open')
+  })
+})
+
+describe('Independent Host note · pid and uptime', () => {
+  // 3 h 12 m after the listener start the Host stamped in its discovery record.
+  const NOW = Date.parse('2026-09-23T15:12:00.000Z')
+  const observed = (partial: Partial<HostLifecycleSnapshot> = {}): HostLifecycleSnapshot =>
+    lifecycle({
+      host: { pid: 4242, hostId: 'host-install-1', startedAt: '2026-09-23T12:00:00.000Z' },
+      ...partial
+    })
+
+  it('names the running Host process by pid and uptime', () => {
+    expect(describeHostProcessNote(observed(), NOW)).toBe('Independent Host · pid 4242 · up 3h 12m')
+    expect(describeHostLifecycleControl(observed(), false, undefined, NOW).note).toBe(
+      'Independent Host · pid 4242 · up 3h 12m'
+    )
+  })
+
+  it('says only what it knows before the process is observed or while it is not running', () => {
+    expect(describeHostProcessNote(lifecycle(), NOW)).toBe('Independent Host')
+    expect(describeHostProcessNote(null, NOW)).toBe('Independent Host')
+    for (const phase of ['starting', 'stopping', 'stopped', 'failed'] as const) {
+      expect(describeHostProcessNote(observed({ phase }), NOW)).toBe('Independent Host')
+    }
+  })
+
+  it('states the lease lifetime with the Host’s own last-lease grace', () => {
+    expect(HOST_LEASE_LIFETIME_NOTE).toBe(
+      'The Host runs while TaskWraith or a TUI holds it, and stops about 45 s after the last one leaves, once live work drains.'
+    )
+    // "about 45 s" is the Host's grace constant, so the copy cannot drift from it.
+    expect(HOST_LEASE_LIFETIME_NOTE).toContain(`about ${HOST_LAST_LEASE_GRACE_MS / 1000} s after`)
+  })
+
+  it('formats Host durations compactly and never negative', () => {
+    expect(
+      [0, 42_000, 12 * 60_000, 3 * 3_600_000, 11_520_000, 52 * 3_600_000, 48 * 3_600_000].map(
+        formatHostDuration
+      )
+    ).toEqual(['0s', '42s', '12m', '3h', '3h 12m', '2d 4h', '2d'])
+    expect(formatHostDuration(-5_000)).toBe('0s')
+    expect(formatHostDuration(Number.NaN)).toBe('0s')
+  })
+
+  it('carries the note into the Mission Control pane and the control label', () => {
+    const control = describeHostLifecycleControl(observed(), false, undefined, NOW)
+    const markup = renderToStaticMarkup(
+      <HostMissionControl
+        state={state({ status: 'idle' })}
+        presentation="pane"
+        lifecycleControl={control}
+        onLifecycleAction={vi.fn()}
+      />
+    )
+    expect(markup).toContain(
+      '<small>Independent Host · pid 4242 · up 3h 12m · Not checked projection</small>'
+    )
+    expect(markup).toContain('aria-label="Stop Host. Independent Host · pid 4242 · up 3h 12m."')
+    expect(markup).not.toContain('only while TaskWraith is open')
+    // Without a control the pane still states the boundary, with no pid to name.
+    expect(
+      renderToStaticMarkup(
+        <HostMissionControl state={state({ status: 'idle' })} presentation="pane" />
+      )
+    ).toContain('<small>Independent Host · Not checked projection</small>')
   })
 })
 

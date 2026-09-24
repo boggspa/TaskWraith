@@ -16,7 +16,11 @@ import type {
   HostProjectedRouting,
   HostProjectedRun
 } from '../lib/host/hostSnapshotProjection'
-import type { HostLifecycleControlView, HostProvidersView } from './HostStatusRow'
+import {
+  INDEPENDENT_HOST_NOTE,
+  type HostLifecycleControlView,
+  type HostProvidersView
+} from './HostStatusRow'
 import { ParticipantRoleIcon, participantRoleIconTitle } from './icons/ParticipantRoleIcon'
 import { ParticipantStatusIcon } from './icons/ParticipantStatusIcon'
 import { SeatStateChips, seatAccentVar } from './SeatChangeRow'
@@ -363,8 +367,7 @@ export function HostMissionControl({
                 <strong>TaskWraith Host</strong>
                 <span>{lifecycleControl?.stateLabel ?? model.phase}</span>
                 <small>
-                  {lifecycleControl?.note ?? 'Runs only while TaskWraith is open'} · {model.phase}{' '}
-                  projection
+                  {lifecycleControl?.note ?? INDEPENDENT_HOST_NOTE} · {model.phase} projection
                 </small>
               </span>
               {lifecycleControl?.actionLabel && onLifecycleAction ? (
@@ -373,7 +376,7 @@ export function HostMissionControl({
                   className="host-lifecycle-toggle"
                   disabled={lifecycleControl.disabled}
                   onClick={onLifecycleAction}
-                  aria-label={`${lifecycleControl.actionLabel}. Host runs only while TaskWraith is open.`}
+                  aria-label={`${lifecycleControl.actionLabel}. ${lifecycleControl.note}.`}
                 >
                   {lifecycleControl.actionLabel}
                 </button>
