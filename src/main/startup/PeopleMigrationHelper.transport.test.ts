@@ -20,6 +20,7 @@ vi.mock('electron', async () => {
   return {
     app: Object.assign(new EventEmitter(), {
       isPackaged: true,
+      commandLine: { hasSwitch: () => false },
       getPath: () => fixture.profile,
       getName: () => 'Migration IPC Test',
       getAppPath: () => ''

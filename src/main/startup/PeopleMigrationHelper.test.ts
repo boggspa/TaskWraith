@@ -6,12 +6,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const environment = vi.hoisted(() => ({
   profile: '',
+  packaged: true,
+  mockKeychain: false,
   spawn: vi.fn(),
   quit: undefined as (() => void) | undefined
 }))
 vi.mock('electron', () => ({
   app: {
-    isPackaged: true,
+    get isPackaged() {
+      return environment.packaged
+    },
+    commandLine: {
+      hasSwitch: (name: string) => name === 'use-mock-keychain' && environment.mockKeychain
+    },
+    getAppPath: () => '/test/taskwraith-electron-entry',
     getPath: () => environment.profile,
     getName: () => 'Helper Test',
     once: (_event: string, callback: () => void) => {
@@ -37,6 +45,8 @@ class Child extends EventEmitter {
 let child: Child
 beforeEach(() => {
   environment.profile = fs.mkdtempSync(join(tmpdir(), 'taskwraith-migration-owner-'))
+  environment.packaged = true
+  environment.mockKeychain = false
   child = new Child()
   environment.spawn.mockReset().mockReturnValue(child)
 })
@@ -58,6 +68,42 @@ async function initialize() {
 }
 
 describe('isolated People migration ownership', () => {
+  it.each([
+    { packaged: true, mockKeychain: true },
+    { packaged: false, mockKeychain: true },
+    { packaged: true, mockKeychain: false },
+    { packaged: false, mockKeychain: false }
+  ])(
+    'preserves the parent Keychain mode in the child launch (packaged=$packaged, mock=$mockKeychain)',
+    async ({ packaged, mockKeychain }) => {
+      environment.packaged = packaged
+      environment.mockKeychain = mockKeychain
+      const { work, request } = await initialize()
+      try {
+        expect(environment.spawn.mock.calls[0][0]).toBe(process.execPath)
+        expect(environment.spawn.mock.calls[0][1]).toEqual([
+          ...(packaged ? [] : ['/test/taskwraith-electron-entry']),
+          '--taskwraith-instance=test',
+          ...(mockKeychain ? ['--use-mock-keychain'] : []),
+          '--taskwraith-people-migration-helper'
+        ])
+      } finally {
+        child.emit('message', {
+          type: 'complete',
+          nonce: request.nonce,
+          result: {
+            schemaVersion: 1,
+            migration: { phase: 'committed', planId: 'initial' },
+            terminalPlanId: 'terminal',
+            finalization: { phase: 'committed', retainedWorkspaceBootstrapShareIds: [] }
+          }
+        })
+        child.emit('exit', 0)
+        await work
+      }
+    }
+  )
+
   it('publishes only after proven exit and carries the exact terminal retention scope', async () => {
     const { work, request } = await initialize()
     expect(child.send.mock.calls[1][0]).toEqual({ type: 'run', nonce: request.nonce })
