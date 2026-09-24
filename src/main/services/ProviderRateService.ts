@@ -1461,6 +1461,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         modelId: 'mistral/mistral-medium-3.5',
         inputUsdPerMillion: 1.5,
         outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.15,
         sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION
       },
@@ -1920,15 +1921,17 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         modelId: 'mistral-medium-3.5',
         inputUsdPerMillion: 1.5,
         outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.15,
         sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Vibe CLI default model. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing. First row = fallback rate for unknown mistral ids.'
+          "Vibe CLI default model. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing. First row = fallback rate for unknown mistral ids. Cached-input 0.15 is the cached_input_price in the Vibe CLI's own bundled catalogue (vibe/core/config/vibe_schema.py, since 2.24.1) and matches docs.mistral.ai/inference/pricing; the marketing page quotes no cache rate."
       },
       {
         modelId: 'mistral-vibe-cli-latest',
         inputUsdPerMillion: 1.5,
         outputUsdPerMillion: 7.5,
+        cachedInputUsdPerMillion: 0.15,
         sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
@@ -1938,10 +1941,11 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         modelId: 'devstral-small',
         inputUsdPerMillion: 0.1,
         outputUsdPerMillion: 0.3,
+        cachedInputUsdPerMillion: 0.01,
         sourceUrl: 'https://mistral.ai/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+          "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3, cached_input_price=0.01 in 2.24.1-2.24.5; 2.25.0 dropped the model), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
       },
       {
         modelId: 'mistral-large-2512',

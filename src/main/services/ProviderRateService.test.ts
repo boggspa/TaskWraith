@@ -345,6 +345,65 @@ describe('BAKED_IN_RATES', () => {
     expect(grok45?.longContextThresholdTokens).toBeUndefined()
   })
 
+  it('prices Mistral cache reads at the published cached-input rate, not the input rate', () => {
+    // Every cost consumer bills cached prompt tokens at
+    // `cachedInputUsdPerMillion ?? inputUsdPerMillion`, so a row without a
+    // cache rate bills each cache read at the full input price — and Vibe
+    // sessions are mostly cache reads. The seat figures are the ones Vibe's
+    // own bundled catalogue bills its sessions at.
+    const seatRows = BAKED_IN_RATES.mistral.models
+    for (const modelId of ['mistral-medium-3.5', 'mistral-vibe-cli-latest']) {
+      expect(
+        seatRows.find((model) => model.modelId === modelId),
+        modelId
+      ).toMatchObject({
+        inputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 7.5
+      })
+    }
+    expect(seatRows.find((model) => model.modelId === 'devstral-small')).toMatchObject({
+      inputUsdPerMillion: 0.1,
+      cachedInputUsdPerMillion: 0.01,
+      outputUsdPerMillion: 0.3
+    })
+    // Pi's BYOK Medium 3.5 row agrees with its floating `-latest` alias.
+    const piRows = BAKED_IN_RATES.pi.models
+    for (const modelId of ['mistral/mistral-medium-3.5', 'mistral/mistral-medium-latest']) {
+      expect(
+        piRows.find((model) => model.modelId === modelId),
+        modelId
+      ).toMatchObject({
+        inputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 7.5
+      })
+    }
+  })
+
+  it('gives every priced Mistral-served row a cache-read rate', () => {
+    // Mistral publishes a cached-input price for every model it serves
+    // (docs.mistral.ai/inference/pricing), so a row without one is an
+    // omission that silently bills cache reads at the input rate.
+    const priced = [
+      ...BAKED_IN_RATES.mistral.models,
+      ...BAKED_IN_RATES.pi.models.filter((model) => model.modelId.startsWith('mistral/'))
+    ].filter((model) => model.inputUsdPerMillion > 0)
+    expect(priced.map((model) => model.modelId)).toEqual(
+      expect.arrayContaining([
+        'mistral-medium-3.5',
+        'mistral-vibe-cli-latest',
+        'devstral-small',
+        'mistral/mistral-medium-3.5'
+      ])
+    )
+    expect(
+      priced
+        .filter((model) => model.cachedInputUsdPerMillion === undefined)
+        .map((model) => model.modelId)
+    ).toEqual([])
+  })
+
   it('tracks current published API-equivalent rates for visible model defaults', () => {
     // GPT-5.6 trio — official model pages (developers.openai.com), 2026-07-10.
     expect(
