@@ -15,6 +15,7 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 
 const harness = require('./studio-acceptance-harness.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
 const session = require('./studio-acceptance-session.cjs')
 const lifecycle = require('./studio-bounded-lifecycle-runner.cjs')
 const diagnostics = require('./studio-bounded-diagnostics-runner.cjs')
@@ -916,7 +917,7 @@ function validateRawHarnessEvidence(receipt) {
   return receipt
 }
 
-function validateRawWatchdogEvidence(receipt, instanceId) {
+function validateRawWatchdogEvidence(receipt, instanceId, electron) {
   invariant(isRecord(receipt), 'raw watchdog receipt is absent')
   invariant(
     receipt.verifiedFromDisk === true &&
@@ -958,6 +959,37 @@ function validateRawWatchdogEvidence(receipt, instanceId) {
       terminal.receiptPath === receipt.path,
     'watchdog IPC terminal does not join its raw receipt'
   )
+  invariant(
+    hasVerifiedLaunchServicesExit(value) && hasVerifiedLaunchServicesExit(terminal),
+    'raw watchdog LaunchServices adoption or exact group reap is invalid'
+  )
+  invariant(
+    value.launchServicesExecutable === terminal.launchServicesExecutable &&
+      JSON.stringify(value.launchServicesAdoption) ===
+        JSON.stringify(terminal.launchServicesAdoption),
+    'raw watchdog LaunchServices adoption does not exactly match the terminal acknowledgment'
+  )
+  const launchServices = electron?.launchMode === 'launch-services'
+  invariant(
+    value.childPid === (launchServices ? electron.launcherPid : electron?.pid) &&
+      value.childPgid === (launchServices ? electron.launcherPgid : electron?.pgid),
+    'raw watchdog child identity does not join the exact harness launch owner'
+  )
+  if (launchServices) {
+    invariant(
+      JSON.stringify(value.detachedProcessGroups) ===
+        JSON.stringify(terminal.detachedProcessGroups),
+      'raw watchdog detached process groups do not match terminal evidence'
+    )
+    for (const proof of [value, terminal]) {
+      invariant(
+        isRecord(proof.launchServicesAdoption) &&
+          proof.launchServicesAdoption.pid === electron.pid &&
+          proof.launchServicesAdoption.pgid === electron.pgid,
+        'raw watchdog LaunchServices adoption does not bind the exact reaped Electron identity'
+      )
+    }
+  }
   return receipt
 }
 
@@ -1164,7 +1196,17 @@ function validateOutcome7Evidence(evidence) {
       JSON.stringify(rawJourney?.inspector) === JSON.stringify(evidence.supervisorBundle),
     'Outcome 7 projection differs from the sealed raw harness journey'
   )
-  validateRawWatchdogEvidence(evidence.watchdog, evidence.instanceId)
+  invariant(
+    isRecord(evidence.harness.value.watchdogTerminal) &&
+      JSON.stringify(evidence.harness.value.watchdogTerminal) ===
+        JSON.stringify(evidence.watchdog?.terminal),
+    'raw harness watchdog terminal does not join the promoted watchdog adoption proof'
+  )
+  validateRawWatchdogEvidence(
+    evidence.watchdog,
+    evidence.instanceId,
+    evidence.harness.value.electron
+  )
   return { ok: true, insert }
 }
 
@@ -1848,9 +1890,15 @@ function rawTerminalReceipts(artifactRoot, returnedEvidence) {
     terminal: harnessReceipt.value.watchdogTerminal
   }
   invariant(
-    JSON.stringify(harnessReceipt.value.watchdogTerminal) ===
-      JSON.stringify(returnedEvidence.watchdogTerminal),
+    isRecord(harnessReceipt.value.watchdogTerminal) &&
+      JSON.stringify(harnessReceipt.value.watchdogTerminal) ===
+        JSON.stringify(returnedEvidence.watchdogTerminal),
     'returned watchdog terminal differs from the sealed harness evidence'
+  )
+  invariant(
+    isRecord(harnessReceipt.value.electron) &&
+      JSON.stringify(harnessReceipt.value.electron) === JSON.stringify(returnedEvidence.electron),
+    'disk harness Electron identity differs from the returned identity'
   )
   return { harness, watchdog }
 }

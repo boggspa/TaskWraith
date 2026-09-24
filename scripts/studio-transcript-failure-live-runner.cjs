@@ -20,6 +20,7 @@ const path = require('node:path')
 
 const mediaLimits = require('../src/shared/mediaLimits.json')
 const { resolveMediaTool } = require('./studio-lut-acceptance-runner.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
 const {
   buildStudioAcceptancePlan,
   assertCleanWatchdogTerminal,
@@ -955,6 +956,27 @@ function assertVerifiedWatchdogReceipt(receipt, terminal, electron) {
     if (exactElectronGroups.length !== 1) {
       throw new Error('watchdog receipt does not bind the exact detached Electron group')
     }
+    for (const value of [receipt, terminal]) {
+      if (
+        !value.launchServicesAdoption ||
+        !hasVerifiedLaunchServicesExit(value) ||
+        value.launchServicesAdoption.pid !== electron.pid ||
+        value.launchServicesAdoption.pgid !== electron.pgid
+      ) {
+        throw new Error(
+          'watchdog LaunchServices adoption does not bind the exact reaped Electron identity'
+        )
+      }
+    }
+  }
+  if (
+    receipt.launchServicesExecutable !== terminal.launchServicesExecutable ||
+    JSON.stringify(receipt.launchServicesAdoption) !==
+      JSON.stringify(terminal.launchServicesAdoption)
+  ) {
+    throw new Error(
+      'watchdog LaunchServices adoption does not exactly match the terminal acknowledgment'
+    )
   }
   return receipt
 }
@@ -974,6 +996,20 @@ async function sealTranscriptFailureEvidence(options) {
     plan.evidencePath,
     'harness acceptance evidence'
   )
+  for (const [key, label] of [
+    ['electron', 'Electron identity'],
+    ['watchdogTerminal', 'watchdog terminal']
+  ]) {
+    const persisted = harnessEvidence.parsed?.[key]
+    if (
+      !persisted ||
+      typeof persisted !== 'object' ||
+      Array.isArray(persisted) ||
+      JSON.stringify(persisted) !== JSON.stringify(result?.evidence?.[key])
+    ) {
+      throw new Error(`disk harness ${label} does not exactly equal the promoted evidence`)
+    }
+  }
   const watchdog = await readBoundedJsonReceipt(plan.receiptPath, 'watchdog receipt')
   const fixtureManifest = await readBoundedJsonReceipt(fixture.manifestPath, 'fixture manifest')
   validateNoAudioManifest(fixtureManifest.parsed, {
@@ -1009,7 +1045,11 @@ async function sealTranscriptFailureEvidence(options) {
     throw new Error('harness result omitted the in-journey negative transcript proof')
   }
   const receipt = watchdog.parsed
-  assertVerifiedWatchdogReceipt(receipt, result.evidence.watchdogTerminal, result.evidence.electron)
+  assertVerifiedWatchdogReceipt(
+    receipt,
+    harnessEvidence.parsed.watchdogTerminal,
+    harnessEvidence.parsed.electron
+  )
   const assetId = fixtureAssetId(fixture)
   const assetPath = materializedFixtureAssetPath(plan, fixture)
   const postReapProof = await provePostReapJournal({

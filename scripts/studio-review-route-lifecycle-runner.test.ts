@@ -295,6 +295,192 @@ function goodEvidence() {
   }
 }
 
+async function finalReceiptFixture(launchMode = 'launch-services') {
+  const root = await temporaryRoot()
+  const plan = {
+    artifactRoot: root,
+    instanceId: 'o34adopt01',
+    repoRoot: path.resolve(__dirname, '..')
+  }
+  const launchServicesProof =
+    launchMode === 'launch-services'
+      ? {
+          launchServicesExecutable: '/exact/Studio.app/Contents/MacOS/Studio',
+          launchServicesAdoption: {
+            requestId: 'review-adoption',
+            pid: 20,
+            pgid: 20,
+            executable: '/exact/Studio.app/Contents/MacOS/Studio',
+            startedAt: 'Thu Sep 24 02:00:00 2026',
+            acknowledged: true,
+            groupExitVerified: true
+          }
+        }
+      : {}
+  const terminal = {
+    type: 'terminal',
+    status: 'reaped',
+    reason: 'owner_requested',
+    childPid: 10,
+    childPgid: 10,
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    detachedProcessGroups:
+      launchMode === 'launch-services'
+        ? [{ pgid: 20, evidencePids: [20], memberPids: [20, 21] }]
+        : [],
+    ...launchServicesProof
+  }
+  const watchdog = {
+    schemaVersion: 2,
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    instanceId: plan.instanceId,
+    ...structuredClone(terminal),
+    lostOwnershipGroups: [],
+    mixedOwnershipGroups: [],
+    protectedInstalledGroups: []
+  }
+  const result = {
+    plan: {
+      evidencePath: path.join(root, 'studio-acceptance-evidence.json'),
+      receiptPath: path.join(root, 'watchdog-receipt.json')
+    },
+    evidence: {
+      schemaVersion: 1,
+      kind: 'taskwraith-studio-in-product-acceptance',
+      instanceId: plan.instanceId,
+      ok: true,
+      journey: goodEvidence(),
+      electron: {
+        launchMode,
+        pid: launchMode === 'launch-services' ? 20 : 10,
+        pgid: launchMode === 'launch-services' ? 20 : 10,
+        launcherPid: launchMode === 'launch-services' ? 10 : null,
+        launcherPgid: launchMode === 'launch-services' ? 10 : null
+      },
+      watchdogTerminal: terminal
+    }
+  }
+  const fixture = async (variant: string) => {
+    const outputPath = path.join(root, `${variant}.mp4`)
+    const manifestPath = path.join(root, `${variant}.json`)
+    const bytes = Buffer.from(`${variant} fixture`)
+    const outputSha256 = crypto.createHash('sha256').update(bytes).digest('hex')
+    await fsPromises.writeFile(outputPath, bytes)
+    await fsPromises.writeFile(
+      manifestPath,
+      JSON.stringify({ outputSha256, outputByteLength: bytes.length })
+    )
+    return { outputPath, manifestPath, outputSha256 }
+  }
+  const fixtures = {
+    assets: { primary: await fixture('primary'), secondary: await fixture('secondary') }
+  }
+  return {
+    watchdog,
+    terminal,
+    electron: result.evidence.electron,
+    async seal(mutateDisk?: (disk: Record<string, any>) => void) {
+      const disk = structuredClone(result.evidence)
+      mutateDisk?.(disk)
+      await fsPromises.writeFile(result.plan.evidencePath, JSON.stringify(disk))
+      await fsPromises.writeFile(result.plan.receiptPath, JSON.stringify(watchdog))
+      return runner.writeRunnerEvidence(plan, result, fixtures, {})
+    }
+  }
+}
+
+describe('Outcome 3/4 adoption receipt joins', () => {
+  it.each([
+    'missing terminal',
+    'stripped adoption',
+    'stripped executable',
+    'requestId',
+    'startedAt',
+    'executable',
+    'missing electron',
+    'electron pid',
+    'electron metadata'
+  ])(
+    'rejects disk-harness-only %s while returned and watchdog proofs remain complete',
+    async (damage) => {
+      const fixture = await finalReceiptFixture()
+      await expect(
+        fixture.seal((disk) => {
+          if (damage === 'missing terminal') delete disk.watchdogTerminal
+          else if (damage === 'stripped adoption')
+            delete disk.watchdogTerminal.launchServicesAdoption
+          else if (damage === 'stripped executable')
+            delete disk.watchdogTerminal.launchServicesExecutable
+          else if (damage === 'missing electron') delete disk.electron
+          else if (damage === 'electron pid') disk.electron.pid += 1
+          else if (damage === 'electron metadata') disk.electron.remoteDebuggingPort = 9555
+          else disk.watchdogTerminal.launchServicesAdoption[damage] = 'contradictory-disk-proof'
+        })
+      ).rejects.toThrow(/disk harness (Electron|watchdog)/)
+    }
+  )
+
+  it('rejects a disk-harness-only direct terminal contradiction', async () => {
+    const fixture = await finalReceiptFixture('direct')
+    await expect(
+      fixture.seal((disk) => {
+        disk.watchdogTerminal.childPid += 1
+      })
+    ).rejects.toThrow(/disk harness watchdog/)
+  })
+
+  it.each(['direct', 'launch-services'])(
+    'seals the complete %s receipt projection',
+    async (mode) => {
+      const fixture = await finalReceiptFixture(mode)
+      const sealed = await fixture.seal()
+      const promoted = sealed.evidence.harness.watchdogTerminal
+      for (const key of ['launchServicesExecutable', 'launchServicesAdoption']) {
+        if (mode === 'direct') expect(promoted).not.toHaveProperty(key)
+        else expect(promoted[key]).toEqual(fixture.watchdog[key])
+      }
+      const disk = JSON.parse(await fsPromises.readFile(sealed.path, 'utf8'))
+      expect(disk.harness.watchdogTerminal).toEqual(promoted)
+    }
+  )
+
+  it.each(['both', 'disk', 'terminal'])(
+    'rejects stripped LaunchServices adoption from %s receipts',
+    async (side) => {
+      const fixture = await finalReceiptFixture()
+      for (const receipt of [
+        ...(side !== 'terminal' ? [fixture.watchdog] : []),
+        ...(side !== 'disk' ? [fixture.terminal] : [])
+      ]) {
+        delete receipt.launchServicesExecutable
+        delete receipt.launchServicesAdoption
+      }
+      await expect(fixture.seal()).rejects.toThrow(/adoption/)
+    }
+  )
+
+  it.each(['requestId', 'startedAt', 'executable', 'pid', 'pgid'] as const)(
+    'rejects a mismatched adoption %s despite otherwise reaped receipts',
+    async (field) => {
+      const fixture = await finalReceiptFixture()
+      const adoption = fixture.terminal.launchServicesAdoption!
+      if (field === 'requestId') adoption.requestId = 'another-request'
+      else if (field === 'startedAt') adoption.startedAt = 'Thu Sep 24 02:00:01 2026'
+      else if (field === 'executable')
+        adoption.executable = fixture.terminal.launchServicesExecutable = '/other/Studio'
+      else if (field === 'pid') fixture.electron.pid = 21
+      else {
+        for (const receipt of [fixture.watchdog, fixture.terminal]) {
+          receipt.launchServicesAdoption!.pgid = 30
+          receipt.detachedProcessGroups.push({ pgid: 30, evidencePids: [20], memberPids: [20] })
+        }
+      }
+      await expect(fixture.seal()).rejects.toThrow(/adoption/)
+    }
+  )
+})
+
 describe('Outcome 3/4 review-route plan and fixture contract', () => {
   it('is plan-only by default and does not require a live adapter', async () => {
     const result = await runner.runReviewRouteAcceptance({

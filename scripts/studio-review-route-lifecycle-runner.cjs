@@ -19,6 +19,7 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 
 const harness = require('./studio-acceptance-harness.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
 const acceptanceSession = require('./studio-acceptance-session.cjs')
 const diagnostics = require('./studio-bounded-diagnostics-runner.cjs')
 const pixels = require('./studio-pixel-evidence-verifier.cjs')
@@ -2488,8 +2489,19 @@ async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapter
     JSON.stringify(harnessReceipt.parsed.journey) === JSON.stringify(result.evidence.journey),
     'disk harness journey does not exactly equal the promoted journey'
   )
+  invariant(
+    isRecord(harnessReceipt.parsed.electron) &&
+      JSON.stringify(harnessReceipt.parsed.electron) === JSON.stringify(result.evidence.electron),
+    'disk harness Electron identity does not exactly equal the promoted identity'
+  )
+  invariant(
+    isRecord(harnessReceipt.parsed.watchdogTerminal) &&
+      JSON.stringify(harnessReceipt.parsed.watchdogTerminal) ===
+        JSON.stringify(result.evidence.watchdogTerminal),
+    'disk harness watchdog terminal does not exactly equal the promoted adoption proof'
+  )
   const watchdog = watchdogReceipt.parsed
-  const terminal = result.evidence.watchdogTerminal
+  const terminal = harnessReceipt.parsed.watchdogTerminal
   harness.assertCleanWatchdogTerminal(watchdog)
   harness.assertCleanWatchdogTerminal(terminal)
   invariant(
@@ -2510,7 +2522,7 @@ async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapter
       ),
     'disk watchdog reason/instance/groups/ownership do not reconcile exactly'
   )
-  const electron = result.evidence.electron
+  const electron = harnessReceipt.parsed.electron
   const expectedWatchdogPid =
     electron.launchMode === 'launch-services' ? electron.launcherPid : electron.pid
   const expectedWatchdogPgid =
@@ -2529,7 +2541,22 @@ async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapter
       ).length === 1,
       'watchdog does not bind the exact detached Electron group'
     )
+    for (const receipt of [watchdog, terminal]) {
+      invariant(
+        isRecord(receipt.launchServicesAdoption) &&
+          hasVerifiedLaunchServicesExit(receipt) &&
+          receipt.launchServicesAdoption.pid === electron.pid &&
+          receipt.launchServicesAdoption.pgid === electron.pgid,
+        'watchdog LaunchServices adoption does not bind the exact reaped Electron identity'
+      )
+    }
   }
+  invariant(
+    watchdog.launchServicesExecutable === terminal.launchServicesExecutable &&
+      JSON.stringify(watchdog.launchServicesAdoption) ===
+        JSON.stringify(terminal.launchServicesAdoption),
+    'watchdog LaunchServices adoption does not exactly match the terminal acknowledgment'
+  )
   const promotedWatchdogTerminal = {
     schemaVersion: watchdog.schemaVersion,
     kind: watchdog.kind,
@@ -2542,6 +2569,12 @@ async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapter
     groupExitVerified: terminal.groupExitVerified,
     detachedGroupExitVerified: terminal.detachedGroupExitVerified,
     detachedProcessGroups: terminal.detachedProcessGroups,
+    ...(Object.hasOwn(terminal, 'launchServicesAdoption')
+      ? {
+          launchServicesExecutable: terminal.launchServicesExecutable,
+          launchServicesAdoption: terminal.launchServicesAdoption
+        }
+      : {}),
     lostOwnershipGroups: watchdog.lostOwnershipGroups,
     mixedOwnershipGroups: watchdog.mixedOwnershipGroups,
     protectedInstalledGroups: watchdog.protectedInstalledGroups
@@ -2560,6 +2593,12 @@ async function writeRunnerEvidence(plan, result, fixtures, selfCustody, _adapter
         groupExitVerified: watchdog.groupExitVerified,
         detachedGroupExitVerified: watchdog.detachedGroupExitVerified,
         detachedProcessGroups: watchdog.detachedProcessGroups,
+        ...(Object.hasOwn(watchdog, 'launchServicesAdoption')
+          ? {
+              launchServicesExecutable: watchdog.launchServicesExecutable,
+              launchServicesAdoption: watchdog.launchServicesAdoption
+            }
+          : {}),
         lostOwnershipGroups: watchdog.lostOwnershipGroups,
         mixedOwnershipGroups: watchdog.mixedOwnershipGroups,
         protectedInstalledGroups: watchdog.protectedInstalledGroups

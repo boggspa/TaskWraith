@@ -100,6 +100,237 @@ function unavailable(assetId: string, overrides: Record<string, unknown> = {}) {
   }
 }
 
+function launchServicesReceiptFixture() {
+  const terminal = {
+    type: 'terminal',
+    status: 'reaped',
+    reason: 'owner_requested',
+    childPid: 1357,
+    childPgid: 1357,
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    detachedProcessGroups: [{ pgid: 2468, evidencePids: [2468], memberPids: [2468, 2470] }],
+    launchServicesExecutable: '/exact/Studio.app/Contents/MacOS/Studio',
+    launchServicesAdoption: {
+      requestId: 'transcript-adoption',
+      pid: 2468,
+      pgid: 2468,
+      executable: '/exact/Studio.app/Contents/MacOS/Studio',
+      startedAt: 'Thu Sep 24 02:00:00 2026',
+      acknowledged: true,
+      groupExitVerified: true
+    }
+  }
+  const receipt = {
+    schemaVersion: 2,
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    ...structuredClone(terminal)
+  }
+  const electron = {
+    pid: 2468,
+    pgid: 2468,
+    launchMode: 'launch-services',
+    launcherPid: 1357,
+    launcherPgid: 1357
+  }
+  return { receipt, terminal, electron }
+}
+
+async function finalReceiptFixture(launchMode = 'launch-services') {
+  const root = await temporaryRoot('studio-transcript-disk-join-')
+  const fixture = await runner.generateNoAudioFixture(
+    { artifactRoot: root, durationSeconds: 2 },
+    {
+      resolveMediaTool: (name: string) => `/virtual/${name}`,
+      realpathTool: async (filePath: string) => filePath,
+      readToolReceipt: async (filePath: string) => ({
+        path: filePath,
+        sha256: 'c'.repeat(64),
+        byteLength: 10
+      }),
+      execFile: async (command: string, args: string[]) => {
+        if (args[0] === '-version') return { stdout: `${command} version test` }
+        if (command === '/virtual/ffmpeg') {
+          await fsPromises.writeFile(args.at(-1) as string, 'deterministic-video')
+        }
+        return {
+          stdout:
+            command === '/virtual/ffprobe'
+              ? '{"programs":[],"stream_groups":[],"streams":[{"codec_type":"video","width":640,"height":360,"r_frame_rate":"30/1","nb_read_frames":"60","duration":"2.000000"}],"format":{"duration":"2.000000"}}'
+              : ''
+        }
+      }
+    }
+  )
+  const launchServices = launchServicesReceiptFixture()
+  const terminal =
+    launchMode === 'launch-services'
+      ? launchServices.terminal
+      : {
+          type: 'terminal',
+          status: 'reaped',
+          reason: 'owner_requested',
+          childPid: 1234,
+          childPgid: 1234,
+          groupExitVerified: true,
+          detachedGroupExitVerified: true,
+          detachedProcessGroups: []
+        }
+  const electron =
+    launchMode === 'launch-services'
+      ? launchServices.electron
+      : { launchMode: 'direct', pid: 1234, pgid: 1234, launcherPid: null, launcherPgid: null }
+  const evidence = {
+    ok: true,
+    instanceId: 'transcript-disk',
+    journey: { statusHistory: { events: [] }, journal: {} },
+    electron,
+    watchdogTerminal: terminal
+  }
+  const plan = {
+    artifactRoot: root,
+    evidencePath: path.join(root, 'harness.json'),
+    receiptPath: path.join(root, 'watchdog.json'),
+    studioStateDirectory: path.join(root, 'state'),
+    profile: { userDataPath: path.join(root, 'home') },
+    repoRoot: path.resolve(__dirname, '..')
+  }
+  const assetId = Buffer.from(fixture.outputSha256 as string, 'hex').toString('base64url')
+  const assetPath = path.join(
+    plan.profile.userDataPath,
+    'transcript-media',
+    assetId.slice(0, 2),
+    `${assetId}.mp4`
+  )
+  return {
+    terminal,
+    async seal(mutateDisk?: (disk: Record<string, any>) => void) {
+      const disk = {
+        schemaVersion: 1,
+        kind: 'taskwraith-studio-in-product-acceptance',
+        ...structuredClone(evidence)
+      }
+      mutateDisk?.(disk)
+      await fsPromises.writeFile(plan.evidencePath, JSON.stringify(disk))
+      await fsPromises.writeFile(
+        plan.receiptPath,
+        JSON.stringify({
+          schemaVersion: 2,
+          kind: 'taskwraith-studio-acceptance-watchdog',
+          ...terminal
+        })
+      )
+      return runner.sealTranscriptFailureEvidence({
+        plan,
+        fixture,
+        result: { evidence },
+        sleep: async () => {},
+        readJournalOperations: async () => [
+          {
+            revision: 1,
+            op: { type: 'open_media', asset: { assetId, path: assetPath, mediaKind: 'video' } }
+          }
+        ]
+      })
+    }
+  }
+}
+
+describe('Transcript failure adoption receipt joins', () => {
+  it.each(['direct', 'launch-services'])(
+    'seals the complete %s disk harness joins',
+    async (mode) => {
+      const fixture = await finalReceiptFixture(mode)
+      const sealed = await fixture.seal()
+      expect(fs.existsSync(sealed.path as string)).toBe(true)
+      if (mode === 'direct') expect(fixture.terminal).not.toHaveProperty('launchServicesAdoption')
+    }
+  )
+
+  it.each([
+    'missing terminal',
+    'stripped adoption',
+    'stripped executable',
+    'requestId',
+    'startedAt',
+    'executable',
+    'missing electron',
+    'electron pid',
+    'electron metadata'
+  ])(
+    'rejects disk-harness-only %s while returned and watchdog proofs remain complete',
+    async (damage) => {
+      const fixture = await finalReceiptFixture()
+      await expect(
+        fixture.seal((disk) => {
+          if (damage === 'missing terminal') delete disk.watchdogTerminal
+          else if (damage === 'stripped adoption')
+            delete disk.watchdogTerminal.launchServicesAdoption
+          else if (damage === 'stripped executable')
+            delete disk.watchdogTerminal.launchServicesExecutable
+          else if (damage === 'missing electron') delete disk.electron
+          else if (damage === 'electron pid') disk.electron.pid += 1
+          else if (damage === 'electron metadata') disk.electron.remoteDebuggingPort = 9555
+          else disk.watchdogTerminal.launchServicesAdoption[damage] = 'contradictory-disk-proof'
+        })
+      ).rejects.toThrow(/disk harness (Electron|watchdog)/)
+    }
+  )
+
+  it('rejects a disk-harness-only direct terminal contradiction', async () => {
+    const fixture = await finalReceiptFixture('direct')
+    await expect(
+      fixture.seal((disk) => {
+        disk.watchdogTerminal.childPid += 1
+      })
+    ).rejects.toThrow(/disk harness watchdog/)
+  })
+
+  it('accepts an acknowledged exact Electron adoption and reap', () => {
+    const { receipt, terminal, electron } = launchServicesReceiptFixture()
+    expect(runner.assertVerifiedWatchdogReceipt(receipt, terminal, electron)).toBe(receipt)
+  })
+
+  it.each(['both', 'disk', 'terminal'])(
+    'rejects stripped LaunchServices proof from %s receipts',
+    (side) => {
+      const { receipt, terminal, electron } = launchServicesReceiptFixture()
+      for (const value of [
+        ...(side !== 'terminal' ? [receipt] : []),
+        ...(side !== 'disk' ? [terminal] : [])
+      ]) {
+        delete (value as Record<string, unknown>).launchServicesExecutable
+        delete (value as Record<string, unknown>).launchServicesAdoption
+      }
+      expect(() => runner.assertVerifiedWatchdogReceipt(receipt, terminal, electron)).toThrow(
+        /adoption/
+      )
+    }
+  )
+
+  it.each(['requestId', 'startedAt', 'executable', 'pid', 'pgid'] as const)(
+    'rejects a mismatched adoption %s despite otherwise reaped receipts',
+    (field) => {
+      const { receipt, terminal, electron } = launchServicesReceiptFixture()
+      const adoption = terminal.launchServicesAdoption
+      if (field === 'requestId') adoption.requestId = 'another-request'
+      else if (field === 'startedAt') adoption.startedAt = 'Thu Sep 24 02:00:01 2026'
+      else if (field === 'executable')
+        adoption.executable = terminal.launchServicesExecutable = '/other/Studio'
+      else if (field === 'pid') electron.pid = 2470
+      else {
+        for (const value of [receipt, terminal]) {
+          value.launchServicesAdoption.pgid = 3000
+          value.detachedProcessGroups.push({ pgid: 3000, evidencePids: [2468], memberPids: [2468] })
+        }
+      }
+      expect(() => runner.assertVerifiedWatchdogReceipt(receipt, terminal, electron)).toThrow(
+        /adoption/
+      )
+    }
+  )
+})
+
 describe('negative transcript status is exact and fail-closed', () => {
   it('accepts only a typed unavailable status for the exact asset', () => {
     const status = runner.assertUnavailableTranscriptStatus(unavailable('asset-a'), 'asset-a')
@@ -638,10 +869,11 @@ describe('bounded deterministic no-audio fixture apparatus', () => {
         { pid: 1234, pgid: 1234 }
       )
     ).toThrow(/terminal child pid\/pgid/)
+    const acknowledgedTerminal = launchServicesReceiptFixture().terminal
     const detachedProcessGroups = [
       {
         pgid: 2468,
-        evidencePids: [2470],
+        evidencePids: [2468, 2470],
         memberPids: [2468, 2470],
         requiredForceKill: true
       }
@@ -654,12 +886,16 @@ describe('bounded deterministic no-audio fixture apparatus', () => {
           ...terminal,
           childPid: 1357,
           childPgid: 1357,
+          launchServicesExecutable: acknowledgedTerminal.launchServicesExecutable,
+          launchServicesAdoption: acknowledgedTerminal.launchServicesAdoption,
           detachedProcessGroups
         },
         {
           ...terminal,
           childPid: 1357,
           childPgid: 1357,
+          launchServicesExecutable: acknowledgedTerminal.launchServicesExecutable,
+          launchServicesAdoption: acknowledgedTerminal.launchServicesAdoption,
           detachedProcessGroups
         },
         {

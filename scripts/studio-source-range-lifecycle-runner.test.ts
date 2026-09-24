@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import fs from 'node:fs'
+import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
@@ -157,7 +158,24 @@ function acceptedInsert() {
   }
 }
 
-function goodEvidence() {
+function goodEvidence(launchMode = 'direct') {
+  const launchServicesProof =
+    launchMode === 'launch-services'
+      ? {
+          launchServicesExecutable: '/exact/Studio.app/Contents/MacOS/Studio',
+          launchServicesAdoption: {
+            requestId: 'source-range-adoption',
+            pid: 60,
+            pgid: 60,
+            executable: '/exact/Studio.app/Contents/MacOS/Studio',
+            startedAt: 'Thu Sep 24 02:00:00 2026',
+            acknowledged: true,
+            groupExitVerified: true
+          }
+        }
+      : {}
+  const detachedProcessGroups =
+    launchMode === 'launch-services' ? [{ pgid: 60, evidencePids: [60], memberPids: [60, 61] }] : []
   const before = [
     entry(6, { type: 'open_media' }),
     entry(7, {
@@ -306,7 +324,13 @@ function goodEvidence() {
         custodyFixture: {},
         custodySource: {},
         durable: {},
-        electron: {},
+        electron: {
+          launchMode,
+          pid: launchMode === 'launch-services' ? 60 : 50,
+          pgid: launchMode === 'launch-services' ? 60 : 50,
+          launcherPid: launchMode === 'launch-services' ? 50 : null,
+          launcherPgid: launchMode === 'launch-services' ? 50 : null
+        },
         instanceId: 'o7-exact',
         journey: {},
         kind: 'taskwraith-studio-in-product-acceptance',
@@ -339,6 +363,8 @@ function goodEvidence() {
         groupExitVerified: true,
         detachedGroupExitVerified: true,
         reason: 'owner_requested',
+        ...structuredClone(launchServicesProof),
+        detachedProcessGroups: structuredClone(detachedProcessGroups),
         receiptPath: '/exact/watchdog-receipt.json'
       },
       value: {
@@ -351,6 +377,8 @@ function goodEvidence() {
         childPgid: 50,
         groupExitVerified: true,
         detachedGroupExitVerified: true,
+        ...launchServicesProof,
+        detachedProcessGroups,
         lostOwnershipGroups: [],
         mixedOwnershipGroups: [],
         protectedInstalledGroups: []
@@ -363,8 +391,95 @@ function goodEvidence() {
     restart: structuredClone(evidence.restart),
     inspector: structuredClone(evidence.supervisorBundle)
   }
+  evidence.harness.value.watchdogTerminal = structuredClone(evidence.watchdog.terminal)
   return evidence
 }
+
+describe('Outcome 7 adoption receipt joins', () => {
+  it.each([
+    'missing terminal',
+    'stripped adoption',
+    'stripped executable',
+    'requestId',
+    'startedAt',
+    'executable'
+  ])('rejects disk-harness-only %s with a complete promoted watchdog', (damage) => {
+    const evidence = goodEvidence('launch-services')
+    const disk = evidence.harness.value as Record<string, any>
+    if (damage === 'missing terminal') disk.watchdogTerminal = null
+    else if (damage === 'stripped adoption') delete disk.watchdogTerminal.launchServicesAdoption
+    else if (damage === 'stripped executable') delete disk.watchdogTerminal.launchServicesExecutable
+    else disk.watchdogTerminal.launchServicesAdoption[damage] = 'contradictory-disk-proof'
+    expect(() => runner.validateOutcome7Evidence(evidence)).toThrow(/raw harness watchdog/)
+  })
+
+  it('rejects a disk-harness-only direct terminal contradiction', () => {
+    const evidence = goodEvidence('direct')
+    ;(evidence.harness.value.watchdogTerminal as Record<string, any>).childPid += 1
+    expect(() => runner.validateOutcome7Evidence(evidence)).toThrow(/raw harness watchdog/)
+  })
+
+  it.each(['direct', 'launch-services'])('accepts the complete %s proof', (mode) => {
+    expect(runner.validateOutcome7Evidence(goodEvidence(mode))).toMatchObject({ ok: true })
+  })
+
+  it.each(['both', 'disk', 'terminal'])(
+    'rejects stripped LaunchServices proof from %s receipts',
+    (side) => {
+      const evidence = goodEvidence('launch-services')
+      for (const receipt of [
+        ...(side !== 'terminal' ? [evidence.watchdog.value] : []),
+        ...(side !== 'disk' ? [evidence.watchdog.terminal] : [])
+      ]) {
+        delete receipt.launchServicesExecutable
+        delete receipt.launchServicesAdoption
+      }
+      expect(() => runner.validateOutcome7Evidence(evidence)).toThrow(/adoption/)
+    }
+  )
+
+  it.each(['requestId', 'startedAt', 'executable', 'pid', 'pgid'] as const)(
+    'rejects a mismatched adoption %s despite otherwise reaped receipts',
+    (field) => {
+      const evidence = goodEvidence('launch-services')
+      const terminal = evidence.watchdog.terminal
+      const adoption = terminal.launchServicesAdoption!
+      if (field === 'requestId') adoption.requestId = 'another-request'
+      else if (field === 'startedAt') adoption.startedAt = 'Thu Sep 24 02:00:01 2026'
+      else if (field === 'executable')
+        adoption.executable = terminal.launchServicesExecutable = '/other/Studio'
+      else if (field === 'pid') evidence.harness.value.electron.pid = 61
+      else {
+        for (const receipt of [evidence.watchdog.value, terminal]) {
+          receipt.launchServicesAdoption!.pgid = 70
+          receipt.detachedProcessGroups.push({ pgid: 70, evidencePids: [60], memberPids: [60] })
+        }
+      }
+      expect(() => runner.validateOutcome7Evidence(evidence)).toThrow(/adoption/)
+    }
+  )
+
+  it.each([
+    'acknowledged',
+    'groupExitVerified',
+    'startedAt',
+    'evidencePids',
+    'memberPids',
+    'duplicate'
+  ])('rejects incomplete adoption custody: %s', (damage) => {
+    const evidence = goodEvidence('launch-services')
+    for (const receipt of [evidence.watchdog.value, evidence.watchdog.terminal]) {
+      const adoption = receipt.launchServicesAdoption!
+      if (damage === 'acknowledged') adoption.acknowledged = false
+      else if (damage === 'groupExitVerified') adoption.groupExitVerified = false
+      else if (damage === 'startedAt') adoption.startedAt = ''
+      else if (damage === 'duplicate')
+        receipt.detachedProcessGroups.push(structuredClone(receipt.detachedProcessGroups[0]))
+      else receipt.detachedProcessGroups[0][damage] = []
+    }
+    expect(() => runner.validateOutcome7Evidence(evidence)).toThrow(/adoption/)
+  })
+})
 
 describe('Outcome 7 evidence validator', () => {
   it('accepts only the complete immediate-plus-restart proof', () => {
@@ -703,6 +818,84 @@ describe('Outcome 7 evidence validator', () => {
 })
 
 describe('Outcome 7 plan and launch boundary', () => {
+  it.each([
+    ['direct', false],
+    ['launch-services', false],
+    ['direct', true],
+    ['launch-services', true]
+  ] as const)(
+    'joins disk harness Electron in the fake %s launch (damaged=%s)',
+    async (mode, damaged) => {
+      const evidence = JSON.parse(
+        JSON.stringify(goodEvidence(mode)).replaceAll(
+          assetId,
+          Buffer.from(hash, 'hex').toString('base64url')
+        )
+      ) as ReturnType<typeof goodEvidence>
+      const instanceId = `o7-join-${randomUUID().slice(0, 6)}`
+      const artifactRoot = runner.defaultArtifactRoot(instanceId)
+      const receiptPath = path.join(artifactRoot, 'watchdog-receipt.json')
+      const terminal = { ...evidence.watchdog.terminal, receiptPath }
+      const returned = {
+        ...evidence.harness.value,
+        instanceId,
+        asset: { sha256: evidence.asset.assetId, assetPath: evidence.asset.path },
+        custodyFixture: { sha256: hash },
+        custodyBefore: evidence.sourceBefore,
+        custodyAfter: evidence.sourceAfter,
+        packagedExecutionBefore: evidence.packageBefore,
+        packagedExecutionAfter: evidence.packageAfter,
+        electron: { ...evidence.harness.value.electron, remoteDebuggingPort: 9441 },
+        watchdogTerminal: terminal,
+        watchdogReceiptPath: receiptPath
+      }
+      const disk = structuredClone(returned)
+      if (damaged) disk.electron.remoteDebuggingPort = 9555
+      const previousTestEnv = process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST
+      process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST = '1'
+      try {
+        const result = runner.runLiveAcceptance(
+          {
+            launch: true,
+            acceptLaunch: true,
+            ownerConfirmsOrphansCleared: true,
+            instanceId,
+            artifactRoot,
+            packagedExecutablePath: '/exact/Studio.app/Contents/MacOS/Studio',
+            generateSpeechFixture: true
+          },
+          {
+            testOnly: true,
+            assertSelfCustody: () => evidence.selfCustodyBefore,
+            runStudioAcceptance: async () => {
+              fs.mkdirSync(artifactRoot, { recursive: true })
+              fs.writeFileSync(
+                path.join(artifactRoot, 'studio-acceptance-evidence.json'),
+                JSON.stringify(disk)
+              )
+              fs.writeFileSync(
+                receiptPath,
+                JSON.stringify({ ...evidence.watchdog.value, instanceId })
+              )
+              return { launched: true, evidence: returned }
+            }
+          }
+        )
+        if (damaged) await expect(result).rejects.toThrow(/harness Electron/)
+        else {
+          const sealed = await result
+          expect(sealed.evidence.harness.value.electron).toEqual(returned.electron)
+          expect(sealed.evidence.harness.value.watchdogTerminal).toEqual(terminal)
+          if (mode === 'direct') expect(terminal).not.toHaveProperty('launchServicesAdoption')
+        }
+      } finally {
+        if (previousTestEnv === undefined) delete process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST
+        else process.env.TASKWRAITH_STUDIO_ACCEPTANCE_TEST = previousTestEnv
+        fs.rmSync(artifactRoot, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('is plan-only by default and never calls an injected live adapter', async () => {
     const runStudioAcceptance = vi.fn()
     const result = await runner.runLiveAcceptance(
