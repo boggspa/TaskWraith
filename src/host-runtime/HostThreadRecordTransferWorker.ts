@@ -230,6 +230,7 @@ export type HostThreadRecordTransferChannelFactory = (
  */
 export interface UtilityProcessChildLike {
   postMessage(message: unknown): void
+  on(event: 'spawn', listener: () => void): unknown
   on(event: 'message', listener: (message: unknown) => void): unknown
   on(event: 'exit', listener: (code: number) => void): unknown
   once(event: 'exit', listener: (code: number) => void): unknown
@@ -255,6 +256,11 @@ export function createUtilityProcessTransferChannel(
   })
   let exited = false
   let termination: Promise<void> | null = null
+  // A pre-spawn kill can return false; preserve termination until the child
+  // receives its PID, and keep the caller's barrier pending through exit.
+  child.on('spawn', () => {
+    if (termination && !exited) child.kill()
+  })
   child.once('exit', () => {
     exited = true
   })

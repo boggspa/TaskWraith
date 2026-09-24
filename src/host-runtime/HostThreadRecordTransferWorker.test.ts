@@ -360,13 +360,18 @@ describe('compiled thread-record transfer worker', () => {
 })
 
 /** A scripted stand-in for Electron's utilityProcess: records forks, replays events. */
-function scriptedUtility() {
+function scriptedUtility(spawned = true) {
   const listeners: {
+    spawn: Array<() => void>
     message: Array<(message: unknown) => void>
     exit: Array<(code: number) => void>
-  } = { message: [], exit: [] }
+  } = { spawn: [], message: [], exit: [] }
   const posted: unknown[] = []
-  const state = { kills: 0 }
+  const state = { kills: 0, spawned }
+  const emitSpawn = (): void => {
+    state.spawned = true
+    for (const listener of [...listeners.spawn]) listener()
+  }
   const emitExit = (code: number): void => {
     for (const listener of [...listeners.exit]) listener(code)
   }
@@ -377,7 +382,7 @@ function scriptedUtility() {
     postMessage(message) {
       posted.push(message)
     },
-    on(event: 'message' | 'exit', listener: (value: never) => void) {
+    on(event: 'spawn' | 'message' | 'exit', listener: (value: never) => void) {
       listeners[event].push(listener as never)
       return child
     },
@@ -391,6 +396,7 @@ function scriptedUtility() {
     },
     kill() {
       state.kills += 1
+      if (!state.spawned) return false
       queueMicrotask(() => emitExit(0))
       return true
     }
@@ -403,7 +409,7 @@ function scriptedUtility() {
       return child
     }
   }
-  return { utility, forks, posted, state, emitExit, emitMessage }
+  return { utility, forks, posted, state, emitSpawn, emitExit, emitMessage }
 }
 
 /** A real child process running the compiled entry behind the utility-port shim. */
@@ -433,6 +439,26 @@ function nodeUtility(env?: NodeJS.ProcessEnv): UtilityProcessLike & { children: 
 }
 
 describe('thread-record transfer transport', () => {
+  it('retains termination until a late-spawning utility child is killed and exits', async () => {
+    const scripted = scriptedUtility(false)
+    const channel = createHostThreadRecordTransferChannel('/entry.js', scripted.utility)
+    let terminated = false
+    const pending = channel.terminate().then(() => {
+      terminated = true
+    })
+    expect(scripted.state.kills).toBe(1)
+    await Promise.resolve()
+    expect(terminated).toBe(false)
+
+    scripted.emitSpawn()
+    expect(scripted.state.kills).toBe(2)
+    expect(terminated).toBe(false)
+    await pending
+    expect(terminated).toBe(true)
+    await channel.terminate()
+    expect(scripted.state.kills).toBe(2)
+  })
+
   it('defaults to a worker thread and lets the embedder install a utility-process factory', async () => {
     const channel = createHostThreadRecordTransferChannel(entryPath)
     expect(channel.kind).toBe('worker-thread')

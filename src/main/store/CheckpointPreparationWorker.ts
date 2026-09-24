@@ -32,6 +32,12 @@ function spawnPreparationProcess(entryPath: string): CheckpointPreparationProces
   const utility = electronUtilityProcess()
   if (utility) {
     const child = utility.fork(entryPath, [], { serviceName: 'taskwraith-checkpoint-preparation' })
+    let killRequested = false
+    // Electron cannot kill a utility process before it has a PID. Retain
+    // cancellation/deadline intent and retire it as soon as spawning finishes.
+    child.on('spawn', () => {
+      if (killRequested) child.kill()
+    })
     return {
       post: (request) => child.postMessage(request),
       onMessage: (listener) => {
@@ -42,6 +48,7 @@ function spawnPreparationProcess(entryPath: string): CheckpointPreparationProces
       },
       onError: () => {},
       kill: () => {
+        killRequested = true
         child.kill()
       }
     }

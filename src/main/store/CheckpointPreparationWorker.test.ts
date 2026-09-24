@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
+import { EventEmitter } from 'node:events'
 import * as fs from 'node:fs'
 import { tmpdir } from 'node:os'
 import * as path from 'node:path'
 import { build } from 'esbuild'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { electronUtilityProcess } from '../host/HostThreadRecordTransferTransport'
 import { deriveChatRecordMutation } from './ChatRecordMutation'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import { prepareCheckpoint } from './CheckpointPreparationCore'
@@ -16,6 +18,10 @@ import {
   isCheckpointPreparationWorkerEnabled
 } from './CheckpointPreparationWorker'
 import type { ChatRecord } from './types'
+
+vi.mock('../host/HostThreadRecordTransferTransport', () => ({
+  electronUtilityProcess: vi.fn()
+}))
 
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
@@ -39,7 +45,10 @@ beforeAll(async () => {
   })
 })
 afterAll(() => fs.rmSync(directory, { recursive: true, force: true }))
-afterEach(() => vi.mocked(fs.fsyncSync).mockImplementation(actualFs.fsyncSync))
+afterEach(() => {
+  vi.mocked(fs.fsyncSync).mockImplementation(actualFs.fsyncSync)
+  vi.mocked(electronUtilityProcess).mockReset()
+})
 
 function fixture(id = 'chat-1', preparation?: CheckpointPreparationWorker) {
   const baseDir = fs.mkdtempSync(path.join(directory, 'journal-'))
@@ -229,6 +238,36 @@ describe('checkpoint preparation process', () => {
       replacement.release()
     }
   })
+
+  it.each(['cancelled', 'deadline'] as const)(
+    'retires a utility process that spawns after its job was %s',
+    async (reason) => {
+      const { source } = fixture()
+      let spawned = false
+      const child = Object.assign(new EventEmitter(), {
+        postMessage: vi.fn(),
+        kill: vi.fn(() => spawned)
+      })
+      vi.mocked(electronUtilityProcess).mockReturnValue({ fork: () => child })
+      const worker = new CheckpointPreparationWorker({ entryPath, deadlineMs: 5 })
+      const job = worker.start(source)!
+      const rejected = expect(job.result).rejects.toThrow(reason)
+      if (reason === 'cancelled') job.cancel()
+      await rejected
+      job.release()
+      expect(fs.existsSync(job.output.path)).toBe(false)
+      expect(child.kill).toHaveBeenCalledTimes(1)
+      expect(worker.stats().activeJobs).toBe(1)
+
+      spawned = true
+      child.emit('spawn')
+      expect(child.kill).toHaveBeenCalledTimes(2)
+      expect(worker.stats().activeJobs).toBe(1)
+      child.emit('exit', 0)
+      expect(worker.stats()).toEqual({ activeJobs: 0, reservedBytes: 0 })
+      expect(checkpointFileReference(source.journal.path)).toEqual(source.journal)
+    }
+  )
 
   it('times out a hung child without a synchronous preparation fallback', async () => {
     const { source } = fixture()
