@@ -86,6 +86,7 @@ public struct StudioVideoFrameTextures {
     /// existence IS the contract. Removing these fields is the bug.
     private let lumaWrapper: CVMetalTexture
     private let chromaWrapper: CVMetalTexture
+    private let resourceLease: StudioResourceLease
 
     init(
         luma: MTLTexture,
@@ -103,6 +104,9 @@ public struct StudioVideoFrameTextures {
         self.range = range
         self.lumaWrapper = lumaWrapper
         self.chromaWrapper = chromaWrapper
+        self.resourceLease = StudioResourceLease(
+            ["frameObjects": 1, "planeTextures": 2], surface: luma.iosurface
+        )
     }
 }
 
@@ -112,6 +116,7 @@ public final class StudioVideoTextureBridge {
 
     public let device: MTLDevice
     private let textureCache: CVMetalTextureCache
+    private let resourceLease: StudioResourceLease
 
     /// Bounded diagnostics for outcome 9. Counted here because this is the only
     /// place that can see a binding fail.
@@ -126,6 +131,7 @@ public final class StudioVideoTextureBridge {
             throw StudioVideoBridgeError.textureCacheCreationFailed(status)
         }
         self.textureCache = cache
+        self.resourceLease = StudioResourceLease(["metalTextureCacheObjects": 1])
     }
 
     /// Wraps a bi-planar 4:2:0 pixel buffer's planes as Metal textures without
@@ -160,7 +166,8 @@ public final class StudioVideoTextureBridge {
                 plane: 1,
                 pixelFormat: Self.chromaPixelFormat
             )
-            boundFrameCount += 1
+        boundFrameCount += 1
+        StudioResourceDiagnostics.record("textureBinds")
             return StudioVideoFrameTextures(
                 luma: luma.texture,
                 chroma: chroma.texture,

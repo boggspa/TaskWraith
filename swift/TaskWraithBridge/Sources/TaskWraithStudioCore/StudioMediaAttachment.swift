@@ -93,6 +93,8 @@ public final class StudioMediaSourcePool {
         asset: StudioMediaAsset,
         maxSampleCount: Int = StudioMediaSourceLoader.defaultMaxSampleCount
     ) async throws -> StudioMediaSourceLease {
+        let pendingLoad = StudioResourceLease(["pendingSourceLoads": 1])
+        defer { pendingLoad.finish() }
         let key = Key(assetId: asset.assetId, path: asset.path)
         let id = UUID()
         if var entry = entries[key] {

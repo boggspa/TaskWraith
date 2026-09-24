@@ -77,6 +77,7 @@ public final class StudioVideoFrameRenderer {
     public private(set) var lastPipelineKind: PipelineKind?
 
     private var lutTexture: MTLTexture?
+    private var lutResourceLease: StudioResourceLease?
     private var lutSize = 0
     private let sampler: MTLSamplerState
 
@@ -195,6 +196,7 @@ public final class StudioVideoFrameRenderer {
     public func setLut(_ lut: StudioColorLut?) throws {
         guard let lut else {
             lutTexture = nil
+            lutResourceLease = nil
             lutSize = 0
             return
         }
@@ -223,6 +225,7 @@ public final class StudioVideoFrameRenderer {
             )
         }
         lutTexture = texture
+        lutResourceLease = StudioResourceLease(["lutTextures": 1, "lutBytes": texture.allocatedSize])
         lutSize = lut.size
     }
 
@@ -316,6 +319,7 @@ public final class StudioVideoFrameRenderer {
         if let drawable {
             inFlightLeases.retain(frame, until: StudioMetalCommandBufferLifetime(commandBuffer))
             commandBuffer.present(drawable)
+            StudioResourceDiagnostics.record("presentedFrames")
             commandBuffer.commit()
             return
         }

@@ -71,6 +71,7 @@ public final class StudioTextAtlas {
     public let cellWidth: Double
     public let cellHeight: Double
     private let rows: Int
+    private let resourceLease: StudioResourceLease
 
     public init(device: MTLDevice, fontName: String = "Menlo") throws {
         let reference = StudioOverlayRenderMetrics.referenceSize
@@ -149,6 +150,9 @@ public final class StudioTextAtlas {
         )
 
         self.texture = texture
+        self.resourceLease = StudioResourceLease([
+            "overlayAtlasTextures": 1, "overlayAtlasBytes": texture.allocatedSize,
+        ])
         self.cellWidth = cellWidth
         self.cellHeight = cellHeight
         self.rows = rows

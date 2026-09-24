@@ -272,6 +272,7 @@ public final class StudioOverlayRenderer {
 
         if let drawable {
             commandBuffer.present(drawable)
+            StudioResourceDiagnostics.record("presentedFrames")
             commandBuffer.commit()
             return
         }

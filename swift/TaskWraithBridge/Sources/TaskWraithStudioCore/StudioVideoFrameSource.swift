@@ -90,6 +90,7 @@ public final class StudioVideoFrameSource {
     /// RSS work ever shows pressure here.
     private var reorderCache: [(frameIndex: Int64, textures: StudioVideoFrameTextures)] = []
     private let reorderCacheDepth: Int
+    private let cacheResourceLease: StudioResourceLease
     private var invalidated = false
 
     /// Resource/lifecycle diagnostics for outcome 9.
@@ -140,6 +141,7 @@ public final class StudioVideoFrameSource {
         reorderCacheDepth: Int = defaultReorderCacheDepth
     ) throws {
         self.reorderCacheDepth = max(1, reorderCacheDepth)
+        self.cacheResourceLease = StudioResourceLease(["reorderCacheCapacity": max(1, reorderCacheDepth)])
         guard provider.sampleCount > 0 else {
             throw StudioVideoFrameSourceError.noSamples
         }
@@ -205,6 +207,7 @@ public final class StudioVideoFrameSource {
         let targetFrame = provider.metadata(atDecodeIndex: target).frameIndex
         if let cached = reorderCache.first(where: { $0.frameIndex == targetFrame }) {
             cacheHitCount += 1
+            StudioResourceDiagnostics.record("frameCacheHits")
             return cached.textures
         }
 
@@ -285,6 +288,9 @@ public final class StudioVideoFrameSource {
         if reorderCache.count > reorderCacheDepth {
             reorderCache.removeFirst(reorderCache.count - reorderCacheDepth)
         }
+        cacheResourceLease.update([
+            "reorderCacheEntries": reorderCache.count, "reorderCacheCapacity": reorderCacheDepth,
+        ])
     }
 
     /// Explicit teardown. Idempotent. Order matters: the cached frame is
@@ -292,6 +298,7 @@ public final class StudioVideoFrameSource {
     /// wrapper is still referenced is the misuse that strands surfaces.
     public func invalidate() {
         reorderCache.removeAll()
+        cacheResourceLease.update(["reorderCacheEntries": 0, "reorderCacheCapacity": reorderCacheDepth])
         lastDecodedIndex = nil
         bridge.flushUnusedTextures()
         decoder.invalidate()

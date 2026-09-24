@@ -86,7 +86,11 @@ public final class StudioViewerRenderer {
     /// Bounded diagnostics for outcome 9.
     public private(set) var decodedFrameCount = 0
     public private(set) var testPatternFrameCount = 0
-    public private(set) var failedFrameCount = 0
+    public private(set) var failedFrameCount = 0 {
+        didSet {
+            if failedFrameCount > oldValue { StudioResourceDiagnostics.record("droppedFrames") }
+        }
+    }
 
     /// Frames actually drawn, decoded or synthetic.
     public var presentedFrameCount: Int { decodedFrameCount + testPatternFrameCount }

@@ -135,6 +135,7 @@ public enum StudioMediaSourceLoader {
         var syncFlags: [Bool] = []
         var dependentSampleCount = 0
         while let sampleBuffer = output.copyNextSampleBuffer() {
+            StudioResourceDiagnostics.record("samplePayloadReads")
             guard CMSampleBufferGetDataBuffer(sampleBuffer) != nil else { continue }
             let presentationTime = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
             guard presentationTime.isValid else { continue }
@@ -275,6 +276,7 @@ public enum StudioMediaSourceLoader {
         var syncFlags: [Bool] = []
         var dependentSampleCount = 0
         while let sampleBuffer = output.copyNextSampleBuffer() {
+            StudioResourceDiagnostics.record("samplePayloadReads")
             guard CMSampleBufferGetDataBuffer(sampleBuffer) != nil else { continue }
             let presentationTime = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
             guard presentationTime.isValid else { continue }

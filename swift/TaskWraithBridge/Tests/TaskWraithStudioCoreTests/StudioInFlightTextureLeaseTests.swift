@@ -187,6 +187,56 @@ final class StudioInFlightTextureLeaseTests: XCTestCase {
         }
         XCTAssertEqual(lease.frames, [8, 9, 10])
     }
+
+    @MainActor
+    func testClearOrOwnerDestructionDoesNotRetireAnUnfinishedCommandHold() throws {
+        for destroyOwner in [false, true] {
+            let baseline = try StudioResourceDiagnostics.snapshot()
+            var lease: StudioInFlightTextureLease<LifetimeFrame>? = StudioInFlightTextureLease(maxInFlight: 3)
+            let buffer = RetainingCallbackBuffer()
+            var frame: LifetimeFrame? = LifetimeFrame()
+            weak var observedFrame = frame
+            lease!.retain(frame!, until: buffer)
+            frame = nil
+            if destroyOwner { lease = nil } else { lease!.releaseAll() }
+            XCTAssertNotNil(observedFrame, "clearing/deinit cannot substitute for GPU completion")
+            let outstanding = try StudioResourceDiagnostics.snapshot()
+            XCTAssertEqual(outstanding.video["gpuCommandFrameHolds"], baseline.video["gpuCommandFrameHolds"]! + 1)
+            XCTAssertEqual(outstanding.video["presentationLeases"], baseline.video["presentationLeases"])
+            buffer.complete()
+            XCTAssertNil(observedFrame, "completion must empty the hold even while the callback remains retained")
+            XCTAssertEqual(buffer.handlers.count, 1)
+            buffer.complete()
+            XCTAssertEqual(try StudioResourceDiagnostics.snapshot().video["gpuCommandFrameHolds"], baseline.video["gpuCommandFrameHolds"])
+            withExtendedLifetime(lease) {}
+        }
+    }
+
+    @MainActor
+    func testCompletedCommandHoldAndRollingFloorHaveIndependentLifetimes() throws {
+        let baseline = try StudioResourceDiagnostics.snapshot()
+        let lease = StudioInFlightTextureLease<LifetimeFrame>(maxInFlight: 3)
+        let buffer = RetainingCallbackBuffer()
+        var frame: LifetimeFrame? = LifetimeFrame()
+        weak var observedFrame = frame
+        lease.retain(frame!, until: buffer)
+        frame = nil
+        buffer.complete()
+        XCTAssertNotNil(observedFrame)
+        XCTAssertEqual(try StudioResourceDiagnostics.snapshot().video["gpuCommandFrameHolds"], baseline.video["gpuCommandFrameHolds"])
+        XCTAssertEqual(lease.count, 1)
+        lease.releaseAll()
+        XCTAssertNil(observedFrame)
+    }
+
+    private final class LifetimeFrame {}
+
+    private final class RetainingCallbackBuffer: StudioCommandBufferLifetime {
+        var handlers: [@Sendable () -> Void] = []
+        func addCompletedHandler(_ handler: @escaping @Sendable () -> Void) { handlers.append(handler) }
+        func waitUntilCompleted() { complete() }
+        func complete() { for handler in handlers { handler() } }
+    }
 }
 
 extension StudioInFlightTextureLease {
