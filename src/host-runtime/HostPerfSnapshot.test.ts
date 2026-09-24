@@ -1,5 +1,11 @@
+import { createRequire } from 'module'
 import { describe, expect, it, vi } from 'vitest'
-import { createHostPerfInstrumentation, HOST_WORK_SPAN_MAX_RETAINED } from './HostPerfSnapshot'
+import {
+  createHostPerfInstrumentation,
+  HOST_WORK_SPAN_MAX_RETAINED,
+  HOST_WORK_SPAN_RECENT_LIMIT
+} from './HostPerfSnapshot'
+import { createHostPerfSnapshotFileWriter } from './HostPerfSnapshotFile'
 import type { EventLoopLagMeter, EventLoopLagSnapshot } from '../host-shared/perf/EventLoopLagMeter'
 import { createWorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
 
@@ -70,6 +76,115 @@ describe('createHostPerfInstrumentation', () => {
     expect(workSpans.recorded).toBe(1)
     expect(workSpans.byKind.host_queue_wait.count).toBe(1)
     expect(workSpans).not.toHaveProperty('spans')
+  })
+
+  it('carries the newest spans as a tail the collector accepts, naming only chats', () => {
+    const { meter } = fakeMeter()
+    const instrumentation = createHostPerfInstrumentation({ meter, recentSpanLimit: 2 })
+    const record = (chatId: string, startedAt: number, extra: Record<string, unknown> = {}) =>
+      instrumentation.spans.record({
+        chatId,
+        runId: 'cmd-secret-run',
+        participantId: 'seat-secret',
+        laneId: 'lane-secret',
+        kind: 'host_queue_wait',
+        resource: 'host_chain',
+        startedAt,
+        durationMs: 7,
+        ...extra
+      })
+    record('chat-a', 1_000)
+    record('chat-b', 1_100, { kind: 'durable_commit', bytes: 512, fallback: true })
+    record('chat-a', 1_200, { kind: 'persist_barrier', reason: 'barrier' })
+    const workSpans = instrumentation.snapshot().sections.workSpans as Record<string, unknown>
+    expect(workSpans.recentSpans).toEqual({
+      encoding: 'ring_tail_rows_v1',
+      columns: [
+        'seq',
+        'chat',
+        'kind',
+        'resource',
+        'startedAt',
+        'durationMs',
+        'bytes',
+        'fallback',
+        'reason'
+      ],
+      limit: 2,
+      fromSeq: 2,
+      toSeq: 3,
+      omittedMaxStartedAt: 1_000,
+      chats: ['chat-b', 'chat-a'],
+      rows: [
+        [2, 0, 'durable_commit', 'host_chain', 1_100, 7, 512, true, null],
+        [3, 1, 'persist_barrier', 'host_chain', 1_200, 7, 0, false, 'barrier']
+      ]
+    })
+    expect(JSON.stringify(workSpans.recentSpans)).not.toMatch(/secret/)
+    const collector = createRequire(import.meta.url)(
+      '../../scripts/perf/collectors/hostSpans.cjs'
+    ) as { normalizeWorkSpanSection: (section: unknown, processName: string) => { ok: boolean } }
+    expect(collector.normalizeWorkSpanSection(workSpans, 'host')).toMatchObject({ ok: true })
+  })
+
+  it('refuses a recent-span limit that is not a non-negative integer', () => {
+    for (const recentSpanLimit of [-1, 1.5, Number.NaN]) {
+      expect(() => createHostPerfInstrumentation({ recentSpanLimit })).toThrow(
+        'Host perf recentSpanLimit must be a non-negative integer.'
+      )
+    }
+    const { meter } = fakeMeter()
+    const none = createHostPerfInstrumentation({ meter, recentSpanLimit: 0 })
+    none.spans.record({ chatId: 'c', kind: 'host_queue_wait', startedAt: 5, durationMs: 1 })
+    expect(
+      (none.snapshot().sections.workSpans as { recentSpans: unknown }).recentSpans
+    ).toMatchObject({
+      limit: 0,
+      rows: [],
+      chats: [],
+      fromSeq: null,
+      toSeq: null,
+      omittedMaxStartedAt: 5
+    })
+  })
+
+  it('fits a full default tail and sixteen chats of attribution inside the file cap', () => {
+    const { meter } = fakeMeter()
+    const instrumentation = createHostPerfInstrumentation({ meter })
+    for (let index = 0; index < HOST_WORK_SPAN_MAX_RETAINED; index += 1) {
+      instrumentation.spans.record({
+        chatId: `perf-light_beside_large_live-chat-${String(index % 16).padStart(2, '0')}`,
+        kind: index % 3 === 0 ? 'durable_commit' : 'host_queue_wait',
+        resource: 'host_chain',
+        startedAt: 1_790_000_000_000 + index * 7,
+        durationMs: index % 250
+      })
+    }
+    const workSpans = instrumentation.snapshot().sections.workSpans as {
+      recentSpans: { rows: unknown[] }
+    }
+    // The tail must reach back over one 5 s capture at 200 accepted spans a
+    // second; the byte bound below stops it growing past the file's budget.
+    expect(HOST_WORK_SPAN_RECENT_LIMIT).toBeGreaterThanOrEqual(5 * 200)
+    expect(workSpans.recentSpans.rows).toHaveLength(HOST_WORK_SPAN_RECENT_LIMIT)
+    const tailBytes = Buffer.byteLength(JSON.stringify(workSpans.recentSpans), 'utf8')
+    expect(tailBytes).toBeLessThan(96 * 1024)
+    // HOST_PERF_SNAPSHOT_FILE_MAX_BYTES: the whole file publishes untruncated.
+    const files = new Map<string, string>()
+    const writer = createHostPerfSnapshotFileWriter({
+      instrumentation,
+      path: '/perf/host.json',
+      intervalMs: 5_000,
+      maxBytes: 256 * 1024,
+      identity: { process: 'host', instanceId: 'host-1', generation: 1, pid: 4242 },
+      now: () => new Date('2026-09-24T12:00:00.000Z'),
+      fs: {
+        writeFileSync: (path, data) => files.set(path, data),
+        renameSync: (from, to) => files.set(to, files.get(from)!)
+      }
+    })
+    expect(writer.writeOnce()).toBe(true)
+    expect(JSON.parse(files.get('/perf/host.json')!)).not.toHaveProperty('truncated')
   })
 
   it('degrades a throwing section to an error marker without failing the snapshot', () => {

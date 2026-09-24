@@ -21,7 +21,14 @@ import {
   type EventLoopLagMeter,
   type EventLoopLagSnapshot
 } from '../host-shared/perf/EventLoopLagMeter'
-import { createWorkSpanRecorder, type WorkSpanRecorder } from '../host-shared/perf/WorkSpanRecorder'
+import {
+  createWorkSpanRecorder,
+  type WorkSpanKind,
+  type WorkSpanReason,
+  type WorkSpanRecentRead,
+  type WorkSpanRecorder,
+  type WorkSpanResource
+} from '../host-shared/perf/WorkSpanRecorder'
 
 export interface HostPerfSnapshot {
   capturedAt: string
@@ -36,7 +43,8 @@ export interface HostPerfInstrumentation {
   /**
    * The Host-process recorder behind the `workSpans` section. The
    * composition root hands `spans.begin`/`spans.record` to the S2/S3/S5
-   * seams; the section stays bounded because it reads aggregates only.
+   * seams; the section stays bounded because it reads aggregates plus a
+   * tail of at most `recentSpanLimit` spans.
    */
   spans: WorkSpanRecorder
 }
@@ -48,6 +56,98 @@ export interface HostPerfInstrumentationOptions {
   spans?: WorkSpanRecorder
   sections?: Record<string, () => unknown>
   now?: () => Date
+  /** Rows in the `recentSpans` tail; defaults to HOST_WORK_SPAN_RECENT_LIMIT. */
+  recentSpanLimit?: number
+}
+
+/**
+ * Rows in the `workSpans.recentSpans` tail (M1 S3b). The runner reads every
+ * 5 s capture and unions the tails by acceptance sequence, so a tail only
+ * has to reach back to the previous capture the runner accepted: 1,024 rows
+ * is 5 s at about 200 accepted spans a second. A tail that falls short is
+ * detected by sequence and censors the windows it could touch; it is never
+ * estimated around. Measured with a full ring: a full tail is 74 KB of JSON
+ * over 16 chats and 122 KB over 1,024 distinct UUID chat ids (the file's cap
+ * is 256 KiB). A capture, serialized and written with its rename, takes
+ * 2.70 ms at p50 against 2.32 ms without the tail; the file grows from
+ * 8.4 KB to 81.7 KB. Most of a capture's cost is `section()`, not the tail.
+ */
+export const HOST_WORK_SPAN_RECENT_LIMIT = 1024
+
+/** Row encoding of the tail; hostSpans.cjs validates exactly this. */
+export const HOST_RECENT_SPANS_ENCODING = 'ring_tail_rows_v1'
+export const HOST_RECENT_SPAN_COLUMNS = [
+  'seq',
+  'chat',
+  'kind',
+  'resource',
+  'startedAt',
+  'durationMs',
+  'bytes',
+  'fallback',
+  'reason'
+] as const
+
+export type HostRecentSpanRow = [
+  seq: number,
+  chat: number,
+  kind: WorkSpanKind,
+  resource: WorkSpanResource,
+  startedAt: number,
+  durationMs: number,
+  bytes: number,
+  fallback: boolean,
+  reason: WorkSpanReason | null
+]
+
+/**
+ * The newest accepted spans as the snapshot file carries them: rows in
+ * acceptance order, each naming its chat by index into `chats`. Only the
+ * chat id travels; run, participant and lane ids stay in the process.
+ */
+export interface HostRecentSpans {
+  encoding: typeof HOST_RECENT_SPANS_ENCODING
+  columns: string[]
+  limit: number
+  fromSeq: number | null
+  toSeq: number | null
+  /** Latest start among accepted spans the tail leaves out; null when none. */
+  omittedMaxStartedAt: number | null
+  chats: string[]
+  rows: HostRecentSpanRow[]
+}
+
+export function encodeHostRecentSpans(read: WorkSpanRecentRead, limit: number): HostRecentSpans {
+  const chats: string[] = []
+  const chatIndex = new Map<string, number>()
+  const rows = read.spans.map((span): HostRecentSpanRow => {
+    let chat = chatIndex.get(span.chatId)
+    if (chat === undefined) {
+      chat = chats.push(span.chatId) - 1
+      chatIndex.set(span.chatId, chat)
+    }
+    return [
+      span.seq,
+      chat,
+      span.kind,
+      span.resource,
+      span.startedAt,
+      span.durationMs,
+      span.bytes,
+      span.fallback,
+      span.reason ?? null
+    ]
+  })
+  return {
+    encoding: HOST_RECENT_SPANS_ENCODING,
+    columns: [...HOST_RECENT_SPAN_COLUMNS],
+    limit,
+    fromSeq: read.fromSeq,
+    toSeq: read.toSeq,
+    omittedMaxStartedAt: read.omittedMaxStartedAt,
+    chats,
+    rows
+  }
 }
 
 /**
@@ -85,9 +185,20 @@ export function createHostPerfInstrumentation(
     options.spans ??
     createWorkSpanRecorder({ process: 'host', maxRetained: HOST_WORK_SPAN_MAX_RETAINED })
   const now = options.now ?? (() => new Date())
+  const recentSpanLimit = options.recentSpanLimit ?? HOST_WORK_SPAN_RECENT_LIMIT
+  if (!Number.isSafeInteger(recentSpanLimit) || recentSpanLimit < 0) {
+    throw new TypeError('Host perf recentSpanLimit must be a non-negative integer.')
+  }
   // The recorder's own section wins over a caller-supplied workSpans entry:
-  // this instrumentation exists to make the Host recorder pollable.
-  const sections = { ...options.sections, workSpans: spans.section }
+  // this instrumentation exists to make the Host recorder pollable. Both
+  // reads run in one synchronous turn, so the tail ends at `recorded`.
+  const sections = {
+    ...options.sections,
+    workSpans: () => ({
+      ...spans.section(),
+      recentSpans: encodeHostRecentSpans(spans.readRecent(recentSpanLimit), recentSpanLimit)
+    })
+  }
 
   const snapshot = (snapshotOptions?: { resetLagWindow?: boolean }): HostPerfSnapshot => {
     const collected: Record<string, unknown> = {}

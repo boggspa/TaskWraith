@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import type { EventLoopLagMeter } from '../host-shared/perf/EventLoopLagMeter'
 import { createHostPerfInstrumentation } from './HostPerfSnapshot'
 import {
   createHostPerfSnapshotFileWriter,
@@ -279,7 +280,8 @@ describe('createHostPerfSnapshotFileWriter', () => {
     expect(payload.truncated).toBe(true)
     expect(payload.snapshot.sections.bulky).toBeUndefined()
     expect(payload.snapshot.sections.workSpans.byChat['chat-a']).toBeDefined()
-    expect(payload.truncation).toEqual({ extraSections: true, byChat: false })
+    expect(payload.snapshot.sections.workSpans.recentSpans.rows).toHaveLength(1)
+    expect(payload.truncation).toEqual({ extraSections: true, recentSpans: false, byChat: false })
     // Aggregates and exact counters are the last thing standing.
     expect(payload.snapshot.sections.workSpans.byKind.host_queue_wait.count).toBe(1)
     expect(payload.snapshot.sections.workSpans.exact).toBeDefined()
@@ -287,6 +289,179 @@ describe('createHostPerfSnapshotFileWriter', () => {
       Buffer.byteLength(fs.files.get('/perf/host-snapshot.json')!, 'utf8')
     ).toBeLessThanOrEqual(2600)
     expect(created.stats()).toMatchObject({ writes: 1, truncatedWrites: 1, writeFailures: 0 })
+  })
+
+  it('drops the recent-span tail next, and per-chat attribution only after it', () => {
+    const meter: EventLoopLagMeter = {
+      start: () => {},
+      stop: () => {},
+      snapshot: () => ({
+        observedForMs: 1_000,
+        p50Ms: 1,
+        p95Ms: 2,
+        p99Ms: 3,
+        maxMs: 4,
+        meanMs: 1,
+        sampling: true
+      })
+    }
+    const instrumentation = createHostPerfInstrumentation({
+      meter,
+      recentSpanLimit: 256,
+      sections: { bulky: () => 'x'.repeat(1_000) }
+    })
+    for (let index = 0; index < 256; index += 1) {
+      instrumentation.spans.record({
+        chatId: `chat-${index % 4}`,
+        kind: 'host_queue_wait',
+        resource: 'host_chain',
+        startedAt: 1_790_000_000_000 + index,
+        durationMs: index
+      })
+    }
+    const publish = (maxBytes: number) => {
+      const fs = fakeFs()
+      const created = createHostPerfSnapshotFileWriter({
+        instrumentation,
+        path: '/perf/host-snapshot.json',
+        intervalMs: 1000,
+        maxBytes,
+        identity: IDENTITY,
+        now: () => FIXED_AT,
+        fs
+      })
+      const written = created.writeOnce()
+      const json = fs.files.get('/perf/host-snapshot.json')
+      return { written, json, payload: json === undefined ? undefined : JSON.parse(json) }
+    }
+    // Byte length does not depend on key order, so each stage's size can be
+    // computed from the whole payload by removing what that stage removes.
+    const whole = publish(1024 * 1024).payload
+    const stageBytes = (recentSpans: boolean, byChat: boolean) => {
+      const { recentSpans: tail, byChat: chats, ...rest } = whole.snapshot.sections.workSpans
+      return Buffer.byteLength(
+        JSON.stringify({
+          ...whole,
+          truncated: true,
+          truncation: { extraSections: true, recentSpans, byChat },
+          snapshot: {
+            ...whole.snapshot,
+            sections: {
+              workSpans: {
+                ...rest,
+                ...(recentSpans ? {} : { recentSpans: tail }),
+                ...(byChat ? {} : { byChat: chats })
+              }
+            }
+          }
+        }),
+        'utf8'
+      )
+    }
+    const [keepsTail, dropsTail, dropsBoth] = [
+      stageBytes(false, false),
+      stageBytes(true, false),
+      stageBytes(true, true)
+    ]
+    expect(keepsTail).toBeGreaterThan(dropsTail)
+    expect(dropsTail).toBeGreaterThan(dropsBoth)
+
+    const tailDropped = publish(dropsTail)
+    expect(Buffer.byteLength(tailDropped.json!, 'utf8')).toBe(dropsTail)
+    expect(tailDropped.payload.truncation).toEqual({
+      extraSections: true,
+      recentSpans: true,
+      byChat: false
+    })
+    expect(tailDropped.payload.snapshot.sections.workSpans).not.toHaveProperty('recentSpans')
+    expect(Object.keys(tailDropped.payload.snapshot.sections.workSpans.byChat)).toHaveLength(4)
+    // What a stage keeps stays where it was.
+    expect(Object.keys(tailDropped.payload.snapshot.sections.workSpans)).toEqual(
+      Object.keys(whole.snapshot.sections.workSpans).filter((key) => key !== 'recentSpans')
+    )
+
+    const bothDropped = publish(dropsBoth)
+    expect(Buffer.byteLength(bothDropped.json!, 'utf8')).toBe(dropsBoth)
+    expect(bothDropped.payload.truncation).toEqual({
+      extraSections: true,
+      recentSpans: true,
+      byChat: true
+    })
+    expect(bothDropped.payload.snapshot.sections.workSpans).not.toHaveProperty('byChat')
+    expect(bothDropped.payload.snapshot.sections.workSpans.byKind.host_queue_wait.count).toBe(256)
+
+    expect(publish(dropsBoth - 1)).toMatchObject({ written: false, json: undefined })
+  })
+
+  it('degrades a payload with no tail byte for byte as before the tail existed', () => {
+    const real = createHostPerfInstrumentation({
+      now: () => FIXED_AT,
+      meter: {
+        start: () => {},
+        stop: () => {},
+        snapshot: () => ({
+          observedForMs: 1_000,
+          p50Ms: 1,
+          p95Ms: 2,
+          p99Ms: 3,
+          maxMs: 4,
+          meanMs: 1,
+          sampling: true
+        })
+      },
+      sections: { bulky: () => 'x'.repeat(4000) }
+    })
+    real.spans.record({
+      chatId: 'chat-a',
+      kind: 'host_queue_wait',
+      resource: 'host_chain',
+      startedAt: 1,
+      durationMs: 10
+    })
+    // A Host that predates the tail: the same snapshot with no recentSpans.
+    const instrumentation = {
+      ...real,
+      snapshot: (options?: { resetLagWindow?: boolean }) => {
+        const snapshot = real.snapshot(options)
+        const { recentSpans: _tail, ...workSpans } = snapshot.sections.workSpans as Record<
+          string,
+          unknown
+        >
+        return { ...snapshot, sections: { ...snapshot.sections, workSpans } }
+      }
+    }
+    const publish = (maxBytes: number) => {
+      const fs = fakeFs()
+      const created = createHostPerfSnapshotFileWriter({
+        instrumentation,
+        path: '/perf/host-snapshot.json',
+        intervalMs: 1000,
+        maxBytes,
+        identity: IDENTITY,
+        now: () => FIXED_AT,
+        fs
+      })
+      created.writeOnce()
+      return fs.files.get('/perf/host-snapshot.json')
+    }
+    const whole = JSON.parse(publish(1024 * 1024)!)
+    const workSpans = whole.snapshot.sections.workSpans
+    expect(workSpans).not.toHaveProperty('recentSpans')
+    const { byChat: _chats, ...withoutChats } = workSpans
+    // The pre-tail writer: extra sections dropped, the section untouched, and
+    // only then byChat removed from it in place.
+    const legacy = (section: unknown, byChat: boolean) =>
+      JSON.stringify({
+        ...whole,
+        truncated: true,
+        truncation: { extraSections: true, byChat },
+        snapshot: { ...whole.snapshot, sections: { workSpans: section } }
+      })
+    const stageOne = legacy(workSpans, false)
+    const stageTwo = legacy(withoutChats, true)
+    expect(publish(Buffer.byteLength(stageOne, 'utf8'))).toBe(stageOne)
+    expect(publish(Buffer.byteLength(stageTwo, 'utf8'))).toBe(stageTwo)
+    expect(publish(Buffer.byteLength(stageTwo, 'utf8') - 1)).toBeUndefined()
   })
 
   it('fails closed when even the degraded payload is over budget, keeping the last good file', () => {

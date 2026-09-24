@@ -250,7 +250,10 @@ export interface WorkSpanSnapshot extends WorkSpanAggregates {
  * needs to know whether the window is whole. Nothing is aggregated or reset.
  */
 export interface WorkSpanWindowRead {
-  /** Copies of retained spans with `sinceMs <= startedAt < untilMs`, oldest first. */
+  /**
+   * Copies of retained spans with `sinceMs <= startedAt < untilMs`, in
+   * acceptance order (a span is accepted when it completes).
+   */
   spans: WorkSpan[]
   /**
    * The latest start among spans the ring has evicted since the last reset,
@@ -263,6 +266,32 @@ export interface WorkSpanWindowRead {
   sampledOut: number
   rejected: number
   degraded: number
+}
+
+/** A retained span with its acceptance sequence: 1 is the first accepted since the last reset. */
+export interface WorkSpanWithSeq extends WorkSpan {
+  seq: number
+}
+
+/**
+ * The newest retained spans, for a transport that has to prove what it
+ * delivered (M1 S3b: the Host snapshot file's recent-span tail). The ring is
+ * a contiguous run of acceptances, so each span's sequence follows from its
+ * position and costs nothing to keep.
+ */
+export interface WorkSpanRecentRead {
+  /** Copies of the newest `min(limit, retained)` spans, in acceptance order. */
+  spans: WorkSpanWithSeq[]
+  /** Sequences of the first and last span returned; null when none is. */
+  fromSeq: number | null
+  toSeq: number | null
+  /**
+   * The latest start among accepted spans this read leaves out, whether
+   * evicted or older than the returned tail; null when it leaves none out.
+   * A span lost between two reads started no later than this.
+   */
+  omittedMaxStartedAt: number | null
+  recorded: number
 }
 
 export interface WorkSpanRecorderOptions {
@@ -297,6 +326,12 @@ export interface WorkSpanRecorder {
    * aggregating or resetting anything. A malformed window reads no spans.
    */
   readWindow(window: { sinceMs: number; untilMs: number }): WorkSpanWindowRead
+  /**
+   * The newest `limit` retained spans with their acceptance sequences, and
+   * the latest start among the accepted spans left out. A limit that is not
+   * a non-negative integer reads none. Nothing is aggregated or reset.
+   */
+  readRecent(limit: number): WorkSpanRecentRead
   /**
    * Aggregates without the raw spans, shaped for
    * `createMainPerfInstrumentation({ sections })`: register the property
@@ -773,5 +808,29 @@ export function createWorkSpanRecorder(options: WorkSpanRecorderOptions): WorkSp
     return { spans, evictedMaxStartedAt, recorded, dropped, sampledOut, rejected, degraded }
   }
 
-  return { begin, record, snapshot, section, readWindow }
+  const readRecent = (limit: number): WorkSpanRecentRead => {
+    const ordered = orderedRing()
+    const count = Number.isSafeInteger(limit) && limit > 0 ? Math.min(limit, ordered.length) : 0
+    const cut = ordered.length - count
+    // The ring holds the newest `ordered.length` acceptances, oldest first.
+    const firstRetainedSeq = recorded - ordered.length + 1
+    let omittedMaxStartedAt = evictedMaxStartedAt
+    for (let index = 0; index < cut; index += 1) {
+      const startedAt = ordered[index].startedAt
+      if (omittedMaxStartedAt === null || startedAt > omittedMaxStartedAt) {
+        omittedMaxStartedAt = startedAt
+      }
+    }
+    return {
+      spans: ordered
+        .slice(cut)
+        .map((span, index) => ({ ...span, seq: firstRetainedSeq + cut + index })),
+      fromSeq: count > 0 ? firstRetainedSeq + cut : null,
+      toSeq: count > 0 ? recorded : null,
+      omittedMaxStartedAt,
+      recorded
+    }
+  }
+
+  return { begin, record, snapshot, section, readWindow, readRecent }
 }

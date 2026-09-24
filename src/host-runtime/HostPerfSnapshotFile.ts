@@ -20,11 +20,12 @@
  *   `writeFailures` and leaves the last good file in place.
  * - Bounded. A payload over `maxBytes` is degraded before it is written:
  *   first the caller-supplied extra sections are dropped, then the
- *   per-chat attribution (`byChat`) inside the workSpans section — the
- *   retained-span-derived data, the only unbounded-ish cargo — and the
- *   payload is marked `truncated: true`. If it is still over budget the
- *   write fails closed (counted, file untouched) rather than ship an
- *   over-cap artifact.
+ *   recent-span tail (`workSpans.recentSpans`, the largest cargo, whose
+ *   absence the window fold reads as a gap it can prove), then the per-chat
+ *   attribution (`byChat`) inside the workSpans section, and the payload is
+ *   marked `truncated: true` with what each stage removed. If it is still
+ *   over budget the write fails closed (counted, file untouched) rather
+ *   than ship an over-cap artifact.
  * - Windowed at the file-write cadence. Each capture asks the shared lag
  *   meter to reset, and the transported lag block carries both its actual
  *   `observedForMs` and the writer's `configuredIntervalMs`. The first
@@ -121,9 +122,22 @@ interface HostPerfSnapshotFilePayload {
   sequence: number
   capturedAt: string
   truncated?: true
-  truncation?: { extraSections: boolean; byChat: boolean }
+  truncation?: { extraSections: boolean; recentSpans?: boolean; byChat: boolean }
   snapshot: unknown
 }
+
+/**
+ * Degrade stages, in order; each drops everything the earlier ones did. A
+ * payload with no recent-span tail skips the tail's stage and its marker, so
+ * it degrades byte for byte as it did before the tail existed.
+ */
+type DegradeStage = { readonly recentSpans?: boolean; readonly byChat: boolean }
+const DEGRADE_STAGES_WITH_TAIL: readonly DegradeStage[] = [
+  { recentSpans: false, byChat: false },
+  { recentSpans: true, byChat: false },
+  { recentSpans: true, byChat: true }
+]
+const DEGRADE_STAGES_WITHOUT_TAIL: readonly DegradeStage[] = [{ byChat: false }, { byChat: true }]
 
 const HOST_PERF_LAG_WINDOW_BASIS = 'since_last_reset' as const
 
@@ -161,6 +175,12 @@ const requireOptionalBootEpoch = (value: unknown, label: string): string | undef
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
+
+const carriesRecentSpans = (snapshot: unknown): boolean =>
+  isPlainObject(snapshot) &&
+  isPlainObject(snapshot.sections) &&
+  isPlainObject(snapshot.sections.workSpans) &&
+  snapshot.sections.workSpans.recentSpans !== undefined
 
 const defaultFs: HostPerfSnapshotFileFs = { writeFileSync, renameSync }
 
@@ -226,23 +246,26 @@ export function createHostPerfSnapshotFileWriter(
   const byteLength = (json: string): number => Buffer.byteLength(json, 'utf8')
 
   /**
-   * Stage one removes only extra sections. Stage two removes attribution
-   * only if the first measured candidate still exceeds the output budget.
+   * Stage one removes only extra sections; each later stage runs only if
+   * the candidate before it still exceeds the output budget (DEGRADE_STAGES).
    * Capture/stringification still run synchronously on the Host timer;
    * maxBytes bounds output, not capture cost, heap use, or loop occupancy.
    */
   const degrade = (
     payload: HostPerfSnapshotFilePayload,
-    dropByChat: boolean
+    stage: DegradeStage
   ): HostPerfSnapshotFilePayload => {
     const snapshot = payload.snapshot
     let degradedSnapshot: unknown = snapshot
     if (isPlainObject(snapshot) && isPlainObject(snapshot.sections)) {
       const workSpans = snapshot.sections.workSpans
       let degradedWorkSpans = workSpans
-      if (dropByChat && isPlainObject(workSpans)) {
-        const { byChat: _dropped, ...rest } = workSpans
-        degradedWorkSpans = rest
+      if (isPlainObject(workSpans) && (stage.recentSpans === true || stage.byChat)) {
+        // Delete from a copy so the remaining keys keep their order.
+        const kept = { ...workSpans }
+        if (stage.recentSpans === true) delete kept.recentSpans
+        if (stage.byChat) delete kept.byChat
+        degradedWorkSpans = kept
       }
       degradedSnapshot = {
         ...snapshot,
@@ -252,7 +275,7 @@ export function createHostPerfSnapshotFileWriter(
     return {
       ...payload,
       truncated: true,
-      truncation: { extraSections: true, byChat: dropByChat },
+      truncation: { extraSections: true, ...stage },
       snapshot: degradedSnapshot
     }
   }
@@ -289,15 +312,18 @@ export function createHostPerfSnapshotFileWriter(
       let json = serialize(payload)
       if (json === null) throw new Error('Host perf snapshot is not serializable.')
       let truncated = false
-      if (byteLength(json) > maxBytes) {
-        json = serialize(degrade(payload, false))
+      const stages = carriesRecentSpans(payload.snapshot)
+        ? DEGRADE_STAGES_WITH_TAIL
+        : DEGRADE_STAGES_WITHOUT_TAIL
+      for (const stage of stages) {
+        if (byteLength(json) <= maxBytes) break
+        json = serialize(degrade(payload, stage))
         if (json === null) throw new Error('Host perf snapshot is not serializable.')
-        if (byteLength(json) > maxBytes) json = serialize(degrade(payload, true))
-        if (json === null || byteLength(json) > maxBytes) {
-          // Keep the last good artifact; never publish an oversized candidate.
-          throw new Error('Host perf snapshot exceeds its output cap.')
-        }
         truncated = true
+      }
+      if (byteLength(json) > maxBytes) {
+        // Keep the last good artifact; never publish an oversized candidate.
+        throw new Error('Host perf snapshot exceeds its output cap.')
       }
       fs.writeFileSync(tmpPath, json)
       fs.renameSync(tmpPath, path)

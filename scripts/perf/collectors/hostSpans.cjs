@@ -132,6 +132,63 @@ const SPAN_COUNTER_OPTIONAL_FIELDS = Object.freeze(['degraded', 'attributionOver
 /** Schema version of the `metrics.crossThread` block this collector writes. */
 const CROSS_THREAD_SCHEMA_VERSION = 1
 
+/**
+ * Wait reasons per kind, in lockstep with WORK_SPAN_REASONS in
+ * src/host-shared/perf/WorkSpanRecorder.ts. Aggregates never carry a reason;
+ * rows of the recent-span tail do, so the tail validates them here.
+ */
+const WORK_SPAN_REASONS = Object.freeze({
+  provider_config_wait: Object.freeze([
+    'cold_start',
+    'cohort_drain',
+    'runtime_or_credential_domain',
+    'registration_change'
+  ]),
+  admission_wait: Object.freeze([
+    'occupancy',
+    'foreground_reserved',
+    'lane_reserved',
+    'queued',
+    'cancelled',
+    'admitted',
+    'rejected',
+    'shutdown'
+  ]),
+  persist_barrier: Object.freeze(['barrier', 'receipt_poll'])
+})
+
+/**
+ * The Host snapshot's recent-span tail (M1 S3b, src/host-runtime/HostPerfSnapshot.ts):
+ * the newest accepted spans with their acceptance sequence, one row each, so
+ * per-window percentiles can be cut from raw spans and a transport gap can be
+ * proven. The encoding pins the column order; a reader refuses one it does
+ * not know rather than guess.
+ */
+const RECENT_SPANS_ENCODING = 'ring_tail_rows_v1'
+const RECENT_SPANS_FIELDS = Object.freeze(
+  [
+    'encoding',
+    'columns',
+    'limit',
+    'fromSeq',
+    'toSeq',
+    'omittedMaxStartedAt',
+    'chats',
+    'rows'
+  ].sort()
+)
+const RECENT_SPAN_COLUMNS = Object.freeze([
+  'seq',
+  'chat',
+  'kind',
+  'resource',
+  'startedAt',
+  'durationMs',
+  'bytes',
+  'fallback',
+  'reason'
+])
+
 const PROCESS_SET = new Set(WORK_SPAN_PROCESSES)
 const KIND_SET = new Set(WORK_SPAN_KINDS)
 const RESOURCE_SET = new Set(WORK_SPAN_RESOURCES)
@@ -426,6 +483,124 @@ function sameJson(left, right) {
   return left === right
 }
 
+/** Why one tail row is malformed, or null when it is a valid row. */
+function recentSpanRowProblem(row, chatCount) {
+  if (!Array.isArray(row) || row.length !== RECENT_SPAN_COLUMNS.length) {
+    return `must be a row of ${RECENT_SPAN_COLUMNS.length} columns`
+  }
+  const [seq, chat, kind, resource, startedAt, durationMs, bytes, fallback, reason] = row
+  if (!Number.isSafeInteger(seq) || seq <= 0) return 'seq must be a positive integer'
+  if (!Number.isSafeInteger(chat) || chat < 0 || chat >= chatCount) {
+    return 'chat must index recentSpans.chats'
+  }
+  if (!KIND_SET.has(kind)) return 'kind is not a known span kind'
+  if (!RESOURCE_SET.has(resource)) return 'resource is not a known span resource'
+  for (const [label, value] of [
+    ['startedAt', startedAt],
+    ['durationMs', durationMs],
+    ['bytes', bytes]
+  ]) {
+    if (!isFiniteNumber(value) || value < 0) return `${label} must be finite and non-negative`
+  }
+  if (typeof fallback !== 'boolean') return 'fallback must be a boolean'
+  if (reason !== null && !(WORK_SPAN_REASONS[kind] ?? []).includes(reason)) {
+    return 'reason is not a known reason for its kind'
+  }
+  return null
+}
+
+/**
+ * The recent-span tail, when present. It must be exactly what the Host
+ * writes: its eight fields and no others; the newest `min(limit, retained)`
+ * spans (the ring retains `recorded - dropped`, as `dropped` counts only
+ * evictions), as a run of consecutive sequences ending at the newest accepted
+ * span (`recorded`); a chat table holding only the chats its rows use; and an
+ * omitted-start watermark present exactly when accepted spans precede the
+ * tail. Anything else is refused, because the window fold's censoring rests
+ * on each of those facts.
+ */
+function validateRecentSpans(recent, counts, errors) {
+  if (recent === undefined) return
+  if (!isPlainObject(recent)) {
+    errors.push('recentSpans must be an object')
+    return
+  }
+  if (!sameJson(Object.keys(recent).sort(), RECENT_SPANS_FIELDS)) {
+    errors.push(`recentSpans must carry exactly ${RECENT_SPANS_FIELDS.join(',')}`)
+    return
+  }
+  const { recorded, dropped } = isPlainObject(counts) ? counts : {}
+  if (
+    !Number.isSafeInteger(recorded) ||
+    !Number.isSafeInteger(dropped) ||
+    dropped < 0 ||
+    dropped > recorded
+  ) {
+    errors.push('recentSpans needs integer recorded and dropped counts')
+    return
+  }
+  if (recent.encoding !== RECENT_SPANS_ENCODING) {
+    errors.push(`recentSpans.encoding must be ${RECENT_SPANS_ENCODING}`)
+    return
+  }
+  if (!sameJson(recent.columns, RECENT_SPAN_COLUMNS)) {
+    errors.push(`recentSpans.columns must be ${RECENT_SPAN_COLUMNS.join(',')}`)
+    return
+  }
+  if (!Number.isSafeInteger(recent.limit) || recent.limit < 0) {
+    errors.push('recentSpans.limit must be a non-negative integer')
+    return
+  }
+  const chats = recent.chats
+  if (
+    !Array.isArray(chats) ||
+    chats.some((id) => typeof id !== 'string' || id.length === 0) ||
+    new Set(chats).size !== chats.length
+  ) {
+    errors.push('recentSpans.chats must be distinct non-empty chat ids')
+    return
+  }
+  const rows = recent.rows
+  if (!Array.isArray(rows) || rows.length !== Math.min(recent.limit, recorded - dropped)) {
+    errors.push('recentSpans.rows must be the newest min(limit, retained) spans')
+    return
+  }
+  const used = new Set()
+  for (const [index, row] of rows.entries()) {
+    const problem = recentSpanRowProblem(row, chats.length)
+    if (problem) {
+      errors.push(`recentSpans.rows[${index}] ${problem}`)
+      return
+    }
+    if (index > 0 && row[0] !== rows[index - 1][0] + 1) {
+      errors.push(`recentSpans.rows[${index}].seq must follow the previous row`)
+      return
+    }
+    used.add(row[1])
+  }
+  if (used.size !== chats.length) {
+    errors.push('recentSpans.chats must list only chats its rows use')
+  }
+  const fromSeq = rows.length > 0 ? rows[0][0] : null
+  const toSeq = rows.length > 0 ? rows[rows.length - 1][0] : null
+  if (recent.fromSeq !== fromSeq || recent.toSeq !== toSeq) {
+    errors.push('recentSpans.fromSeq and toSeq must name its first and last rows')
+  }
+  if (toSeq !== null && toSeq !== recorded) {
+    errors.push('recentSpans must end at the newest accepted span')
+    return
+  }
+  const omitted = recent.omittedMaxStartedAt
+  if (omitted !== null && (!isFiniteNumber(omitted) || omitted < 0)) {
+    errors.push('recentSpans.omittedMaxStartedAt must be null or finite and non-negative')
+    return
+  }
+  const precedesTail = fromSeq === null ? recorded > 0 : fromSeq > 1
+  if ((omitted !== null) !== precedesTail) {
+    errors.push('recentSpans.omittedMaxStartedAt must be set exactly when spans precede the tail')
+  }
+}
+
 function validateHostSnapshotMetadata(meta, section, errors) {
   if (meta === undefined) return // Legacy sections remain diagnostic-compatible.
   const invalid = (reason) => errors.push('hostSnapshot.' + reason)
@@ -538,6 +713,11 @@ function normalizeWorkSpanSection(payload, processName) {
   }
   validateExactCounters(payload.exact, errors)
   validateByChat(payload.byChat, errors)
+  validateRecentSpans(
+    payload.recentSpans,
+    { recorded: payload.recorded, dropped: payload.dropped },
+    errors
+  )
   validateHostSnapshotMetadata(payload.hostSnapshot, payload, errors)
   if (errors.length > 0) return { ok: false, reason: errors.join('; ') }
   return { ok: true, section: payload }
@@ -690,11 +870,22 @@ function applyCrossThreadToMetrics(metrics, cell, sections, options = {}) {
   if (!isPlainObject(metrics.crossThread.cells)) {
     metrics.crossThread.cells = {}
   }
+  // The recent-span tail is window evidence the window fold consumes, about
+  // 75 KB per Host read; the report keeps the aggregates, not the raw tail.
+  const processes = {}
+  for (const [processName, section] of Object.entries(sections)) {
+    if (isPlainObject(section) && section.recentSpans !== undefined) {
+      const { recentSpans: _windowEvidence, ...aggregates } = section
+      processes[processName] = aggregates
+    } else {
+      processes[processName] = section
+    }
+  }
   metrics.crossThread.cells[name] = {
     capturedAt,
     // Deep copy: sections may be live recorder output (byChat/exact are
     // rebuilt per snapshot), and a stored report must not alias it.
-    processes: JSON.parse(JSON.stringify(sections))
+    processes: JSON.parse(JSON.stringify(processes))
   }
   return metrics
 }
@@ -1196,7 +1387,8 @@ function readHostPerfSnapshotFile(options = {}) {
     (!payload.truncated ||
       !isPlainObject(truncation) ||
       typeof truncation.extraSections !== 'boolean' ||
-      typeof truncation.byChat !== 'boolean')
+      typeof truncation.byChat !== 'boolean' ||
+      (truncation.recentSpans !== undefined && typeof truncation.recentSpans !== 'boolean'))
   ) {
     return { unsupported: 'host_perf_snapshot_invalid: truncation' }
   }
@@ -1238,6 +1430,11 @@ function readHostPerfSnapshotFile(options = {}) {
   const section = { ...checked.section, hostSnapshot: meta }
   const validated = normalizeWorkSpanSection(section, 'host')
   if (!validated.ok) return { unsupported: 'host_perf_snapshot_invalid: ' + validated.reason }
+  // The tail is window evidence for the S3b union, validated either way. A
+  // caller that retains reads (the window sampler keeps every accepted one)
+  // would hold about 200 KB a read, so a read carries it only when asked.
+  const { recentSpans: _tail, ...withoutTail } = section
+  const returned = options.keepRecentSpans === true ? section : withoutTail
   return {
     identity: { ...meta.identity },
     sequence: meta.sequence,
@@ -1245,7 +1442,7 @@ function readHostPerfSnapshotFile(options = {}) {
     ...(meta.truncated ? { truncated: true } : {}),
     ...(truncation ? { truncation: { ...truncation } } : {}),
     eventLoopLag: JSON.parse(JSON.stringify(eventLoopLag)),
-    workSpans: JSON.parse(JSON.stringify(section))
+    workSpans: JSON.parse(JSON.stringify(returned))
   }
 }
 
@@ -1328,6 +1525,9 @@ module.exports = {
   WORK_SPAN_PROCESSES,
   WORK_SPAN_KINDS,
   WORK_SPAN_RESOURCES,
+  WORK_SPAN_REASONS,
+  RECENT_SPANS_ENCODING,
+  RECENT_SPAN_COLUMNS,
   SPAN_AGGREGATE_FIELDS,
   SPAN_AGGREGATE_OPTIONAL_FIELDS,
   SPAN_CHAT_AGGREGATE_FIELDS,
@@ -1340,6 +1540,7 @@ module.exports = {
   HOST_WINDOW_LAG_BASIS,
   HOST_WINDOW_DELTA_BASIS,
   normalizeWorkSpanSection,
+  validateRecentSpans,
   validateCrossThreadBlock,
   sampleWorkSpanSections,
   applyCrossThreadToMetrics,

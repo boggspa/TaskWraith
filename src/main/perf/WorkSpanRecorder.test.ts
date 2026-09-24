@@ -798,6 +798,65 @@ describe('WorkSpanRecorder.readWindow', () => {
     ).toEqual([1_100, 1_300, 1_200])
   })
 
+  it('reads the newest spans with contiguous acceptance sequences', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 4 })
+    expect(recorder.readRecent(8)).toEqual({
+      spans: [],
+      fromSeq: null,
+      toSeq: null,
+      omittedMaxStartedAt: null,
+      recorded: 0
+    })
+    for (const startedAt of [100, 200, 300])
+      recorder.record(at(startedAt, { runId: `r${startedAt}` }))
+    const read = recorder.readRecent(2)
+    expect(read).toMatchObject({ fromSeq: 2, toSeq: 3, omittedMaxStartedAt: 100, recorded: 3 })
+    expect(read.spans.map(({ seq, runId }) => [seq, runId])).toEqual([
+      [2, 'r200'],
+      [3, 'r300']
+    ])
+    read.spans[0]!.durationMs = 999
+    expect(recorder.readRecent(2).spans[0]!.durationMs).toBe(5)
+    expect(recorder.readRecent(8)).toMatchObject({
+      fromSeq: 1,
+      toSeq: 3,
+      omittedMaxStartedAt: null
+    })
+
+    const unordered = createWorkSpanRecorder({ process: 'host', maxRetained: 4 })
+    for (const startedAt of [300, 100, 200]) unordered.record(at(startedAt))
+    expect(unordered.readRecent(1).omittedMaxStartedAt).toBe(300)
+  })
+
+  it('names the latest start it leaves out, evicted or older than the tail', () => {
+    const recorder = createWorkSpanRecorder({ process: 'host', maxRetained: 3 })
+    // A long span recorded late starts before its neighbours: the watermark
+    // is a max over everything left out, not the start of the newest one.
+    for (const startedAt of [500, 100, 200, 300, 400]) recorder.record(at(startedAt))
+    const tail = recorder.readRecent(1)
+    expect(tail).toMatchObject({ fromSeq: 5, toSeq: 5, omittedMaxStartedAt: 500, recorded: 5 })
+    expect(tail.spans.map((span) => [span.seq, span.startedAt])).toEqual([[5, 400]])
+    // Only eviction leaves spans out when the tail takes the whole ring.
+    expect(recorder.readRecent(3)).toMatchObject({ fromSeq: 3, omittedMaxStartedAt: 500 })
+    for (const limit of [0, -1, 1.5, Number.NaN]) {
+      expect(recorder.readRecent(limit)).toMatchObject({
+        spans: [],
+        fromSeq: null,
+        toSeq: null,
+        omittedMaxStartedAt: 500,
+        recorded: 5
+      })
+    }
+    recorder.snapshot({ reset: true })
+    recorder.record(at(50))
+    expect(recorder.readRecent(3)).toMatchObject({
+      fromSeq: 1,
+      toSeq: 1,
+      omittedMaxStartedAt: null,
+      recorded: 1
+    })
+  })
+
   it('answers a malformed window with no spans instead of throwing', () => {
     const recorder = createWorkSpanRecorder({ process: 'main', maxRetained: 4 })
     recorder.record(at(100))
@@ -826,10 +885,15 @@ describe('WorkSpanRecorder review pins', () => {
       WORK_SPAN_PROCESSES: readonly string[]
       WORK_SPAN_KINDS: readonly string[]
       WORK_SPAN_RESOURCES: readonly string[]
+      WORK_SPAN_REASONS: Record<string, readonly string[]>
     }
     expect([...collector.WORK_SPAN_KINDS]).toEqual([...WORK_SPAN_KINDS])
     expect([...collector.WORK_SPAN_RESOURCES]).toEqual([...WORK_SPAN_RESOURCES])
     expect([...collector.WORK_SPAN_PROCESSES]).toEqual([...WORK_SPAN_PROCESSES])
+    // The recent-span tail carries a reason per row, validated per kind.
+    expect(JSON.parse(JSON.stringify(collector.WORK_SPAN_REASONS))).toEqual(
+      JSON.parse(JSON.stringify(WORK_SPAN_REASONS))
+    )
   })
 
   it('computes p95 and p99 as different ranks over 100 distinct durations (F3)', () => {

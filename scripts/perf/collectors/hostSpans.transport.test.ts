@@ -263,22 +263,25 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
   })
 
   it.each([
-    ['extras only', 1, 3000, false],
-    ['attribution too', 16, 1800, true]
+    ['extras only', 1, 1, 3000, false, false],
+    ['the recent-span tail too', 1, 200, 3000, true, false],
+    ['attribution too', 16, 1, 1800, true, true]
   ] as const)(
     'preserves coverage through real writer/file/reader/fold when dropping %s',
-    (_label, population, maxBytes, dropsAttribution) => {
+    (_label, chats, spansPerChat, maxBytes, dropsTail, dropsAttribution) => {
       const instrumentation = createHostPerfInstrumentation({
         sections: { bulky: () => 'x'.repeat(10_000) }
       })
-      for (let index = 0; index < population; index++) {
-        instrumentation.spans.record({
-          chatId: 'chat-' + index,
-          kind: 'host_queue_wait',
-          resource: 'host_chain',
-          startedAt: 1,
-          durationMs: index + 1
-        })
+      for (let index = 0; index < chats; index++) {
+        for (let span = 0; span < spansPerChat; span++) {
+          instrumentation.spans.record({
+            chatId: 'chat-' + index,
+            kind: 'host_queue_wait',
+            resource: 'host_chain',
+            startedAt: 1,
+            durationMs: index + 1
+          })
+        }
       }
       const path = join(scratchDir(), 'bounded.json')
       const writer = createHostPerfSnapshotFileWriter({
@@ -292,7 +295,12 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
       expect(writer.writeOnce()).toBe(true)
       const artifact = JSON.parse(fs.readFileSync(path, 'utf8'))
       expect(artifact.snapshot.sections.bulky).toBeUndefined()
-      expect(artifact.truncation).toEqual({ extraSections: true, byChat: dropsAttribution })
+      expect(artifact.truncation).toEqual({
+        extraSections: true,
+        recentSpans: dropsTail,
+        byChat: dropsAttribution
+      })
+      expect(artifact.snapshot.sections.workSpans.recentSpans === undefined).toBe(dropsTail)
       expect(artifact.snapshot.sections.workSpans.byChat === undefined).toBe(dropsAttribution)
       expect(fs.statSync(path).size).toBeLessThanOrEqual(maxBytes)
       const read = readHostPerfSnapshotFile({
@@ -311,7 +319,7 @@ describe('Host perf snapshot file transport (writer → collector reader)', () =
       expect(meta.truncated).toBe(true)
       expect(meta.truncation.byChat).toBe(dropsAttribution)
       expect(meta.attribution.status).toBe(dropsAttribution ? 'censored' : 'available')
-      expect(meta.attribution.sourceCoverage.recorded).toBe(population)
+      expect(meta.attribution.sourceCoverage.recorded).toBe(chats * spansPerChat)
       expect(validateCrossThreadBlock(metrics.crossThread)).toEqual([])
       if (dropsAttribution) {
         expect(meta.attribution.reason).toBe('transport_attribution_truncated')
