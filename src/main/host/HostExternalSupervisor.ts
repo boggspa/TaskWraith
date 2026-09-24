@@ -6,18 +6,23 @@ import { isAbsolute, resolve } from 'node:path'
 import {
   HostProjectionClient,
   HostProjectionIncompatibleProtocolError,
+  HostProjectionTransportError,
   type HostProjectionDiscoveryProcessIdentity
 } from '../../host-client/HostProjectionClient'
 import {
+  HOST_TERMINATION_ACK_MS,
+  HOST_TERMINATION_DRAIN_MS,
   HOST_TERMINATION_SUCCESS_KINDS,
   hostTerminationExpectation,
+  hostTerminationTargetPid,
   isHostServeCommandFor,
   readHostTerminationEvidence,
   terminateHostProcess,
+  type HostTerminationExpectedHost,
   type HostTerminationOutcome
 } from '../../host-client/HostProcessTermination'
-import { HostShutdownClient } from '../../host-client/HostShutdownClient'
-import { resolveHostRegistryRoot } from '../../host-runtime/HostRegistry'
+import { HostShutdownClient, HostShutdownIdentityError } from '../../host-client/HostShutdownClient'
+import { canonicalHostProfilePath, resolveHostRegistryRoot } from '../../host-runtime/HostRegistry'
 import {
   matchProcessBirth,
   observeProcessBirthIdentity,
@@ -126,7 +131,10 @@ export interface HostExternalSupervisorOptions {
   readonly profilePath: string
   readonly probe?: (timeoutMs: number) => Promise<HostBootstrapWelcome | HostExternalProbeResult>
   readonly resolveLaunch: () => Promise<HostExternalLaunchCommand | null>
-  readonly shutdownExisting?: (profilePath: string) => Promise<unknown>
+  readonly shutdownExisting?: (
+    profilePath: string,
+    expected: HostTerminationExpectedHost
+  ) => Promise<unknown>
   /**
    * Verified termination (D9) after `shutdownExisting` failed: identity-checked
    * TERM then KILL. `cause` is the socket failure, so the socket stop is not
@@ -134,7 +142,8 @@ export interface HostExternalSupervisorOptions {
    */
   readonly terminateExisting?: (
     profilePath: string,
-    cause: unknown
+    cause: unknown,
+    expected: HostTerminationExpectedHost
   ) => Promise<Pick<HostTerminationOutcome, 'kind' | 'pid' | 'detail'>>
   readonly observeAuthorityOwner?: (profilePath: string) => Promise<HostExternalAuthorityOwner>
   readonly spawn?: (
@@ -156,6 +165,8 @@ export interface HostExternalSupervisorOptions {
 export interface HostExternalProbeResult {
   readonly welcome: HostBootstrapWelcome
   readonly payloadVersion?: string
+  /** Captured while this probe's authenticated socket names the process. */
+  readonly expected?: HostTerminationExpectedHost
   /** The discovery record's process identity (pid, start, install id, payload). */
   readonly process?: HostProjectionDiscoveryProcessIdentity
   /**
@@ -192,7 +203,44 @@ function hostIdentityOf(result: HostExternalProbeResult): HostLifecycleHostIdent
     pid: process.pid,
     hostId,
     startedAt: process.startedAt,
+    ...(result.expected?.birthIdentity ? { birthIdentity: result.expected.birthIdentity } : {}),
     ...(process.payloadVersion ? { payloadVersion: process.payloadVersion } : {})
+  }
+}
+
+/** Pin recorded process birth without changing the process selected by the probe. */
+async function readHostExternalTerminationExpectation(
+  profilePath: string,
+  process: Pick<HostProjectionDiscoveryProcessIdentity, 'pid' | 'startedAt'>
+): Promise<HostTerminationExpectedHost | undefined> {
+  try {
+    const evidence = readHostTerminationEvidence(profilePath, resolveHostRegistryRoot())
+    const target = hostTerminationTargetPid(evidence)
+    if (
+      target.inconsistent ||
+      target.pid !== process.pid ||
+      evidence.discovery?.pid !== process.pid ||
+      evidence.discovery.startedAt !== process.startedAt
+    ) {
+      return undefined
+    }
+    const birth = await observeProcessBirthIdentity(process.pid)
+    if (
+      birth.state !== 'live' ||
+      matchProcessBirth(birth, hostTerminationExpectation(evidence)) !== 'match' ||
+      (evidence.lease &&
+        matchProcessBirth(
+          birth,
+          hostTerminationExpectation({ discovery: null, registry: null, lease: evidence.lease })
+        ) !== 'match')
+    ) {
+      return undefined
+    }
+    // Capture the observed digest even for a legacy lease that records only
+    // process start. Later socket/signal checks must retain this exact birth.
+    return { pid: process.pid, birthIdentity: birth.birthIdentity, startedAt: process.startedAt }
+  } catch {
+    return undefined
   }
 }
 
@@ -215,12 +263,47 @@ async function defaultProbe(
     const welcome = await client.connect()
     const process = client.discoveryProcessIdentity ?? undefined
     const payloadVersion = process?.payloadVersion
+    // Pin before asking this socket for status: a later status reply must
+    // never let a reused pid supply its birth for the first time.
+    const pinned = process
+      ? await readHostExternalTerminationExpectation(profilePath, process)
+      : undefined
+    let expected: HostTerminationExpectedHost | undefined
+    try {
+      const status = await client.getHostStatus()
+      // Status is read on the authenticated probe socket. Listener start is
+      // kept separately from OS birth, since those clocks name different events.
+      if (
+        status.pid === process?.pid &&
+        status.startedAt === process.startedAt &&
+        status.profilePath === canonicalHostProfilePath(profilePath) &&
+        status.hostId === welcome.hostId &&
+        pinned
+      ) {
+        const current = await readHostExternalTerminationExpectation(profilePath, process)
+        if (current?.birthIdentity === pinned.birthIdentity) expected = pinned
+      }
+    } catch (error) {
+      // Only an explicit authenticated unsupported response permits the
+      // legacy evidence path. Malformed replies and timeouts cannot grant it.
+      if (
+        error instanceof HostProjectionTransportError &&
+        error.code === 'unknown_request_kind' &&
+        process &&
+        pinned &&
+        (!process.hostId || process.hostId === welcome.hostId)
+      ) {
+        const current = await readHostExternalTerminationExpectation(profilePath, process)
+        if (current?.birthIdentity === pinned.birthIdentity) expected = pinned
+      }
+    }
     // Left open: the supervisor decides whether this connection holds the
     // Host across main's boot or closes now.
     return {
       welcome,
       ...(payloadVersion ? { payloadVersion } : {}),
       ...(process ? { process } : {}),
+      ...(expected ? { expected } : {}),
       connection: client
     }
   } catch (error) {
@@ -231,10 +314,12 @@ async function defaultProbe(
 
 async function defaultTerminateExisting(
   profilePath: string,
-  cause: unknown
+  cause: unknown,
+  expected: HostTerminationExpectedHost
 ): Promise<HostTerminationOutcome> {
   return terminateHostProcess({
     profilePath,
+    expected,
     // The socket stop already failed on this very path; go straight to the
     // identity-verified signals instead of asking the same socket again.
     ports: {
@@ -407,20 +492,33 @@ export class HostExternalSupervisor {
      * first, then (D9) identity-verified termination when the socket path
      * fails — a wedged or refusing Host no longer fails the launch outright.
      */
-    const replaceExisting = async (): Promise<void> => {
+    const replaceExisting = async (selected: HostExternalProbeResult): Promise<void> => {
       this.statusValue = 'restarting'
+      const expected = selected.expected
+      if (!expected) {
+        this.statusValue = 'failed'
+        throw new Error('External Host identity could not be verified for replacement.')
+      }
       try {
         await (
           this.options.shutdownExisting ??
-          ((profilePath: string) => new HostShutdownClient({ profilePath }).shutdown())
-        )(this.options.profilePath)
+          ((profilePath: string, target: HostTerminationExpectedHost) =>
+            new HostShutdownClient({
+              profilePath: canonicalHostProfilePath(profilePath),
+              expected: target,
+              timeoutMs: HOST_TERMINATION_ACK_MS,
+              removalTimeoutMs: HOST_TERMINATION_DRAIN_MS
+            }).shutdown())
+        )(this.options.profilePath, expected)
       } catch (shutdownError) {
         assertOpen()
+        if (shutdownError instanceof HostShutdownIdentityError) throw shutdownError
         let outcome: Pick<HostTerminationOutcome, 'kind' | 'pid' | 'detail'>
         try {
           outcome = await (this.options.terminateExisting ?? defaultTerminateExisting)(
             this.options.profilePath,
-            shutdownError
+            shutdownError,
+            expected
           )
         } catch (error) {
           this.statusValue = 'failed'
@@ -464,8 +562,20 @@ export class HostExternalSupervisor {
     if (existing) {
       // Never hold a Host this supervisor is about to replace.
       closeProbe(existing)
+      try {
+        await replaceExisting(existing)
+      } catch (error) {
+        if (!(error instanceof HostShutdownIdentityError)) throw error
+        const replacement = await tryProbe()
+        assertOpen()
+        if (replacement && replacement.payloadVersion === command?.payloadVersion) {
+          return attachExisting(replacement)
+        }
+        closeProbe(replacement)
+        this.statusValue = 'failed'
+        throw error
+      }
       existing = null
-      await replaceExisting()
     }
     if (!command) {
       this.statusValue = 'failed'
@@ -522,7 +632,13 @@ export class HostExternalSupervisor {
             return { kind: 'attached', result: attachExisting(answered) }
           }
           closeProbe(answered)
-          await replaceExisting()
+          try {
+            await replaceExisting(answered)
+          } catch (error) {
+            if (!(error instanceof HostShutdownIdentityError)) throw error
+            // A peer changed the Host after this probe. Re-probe on the next
+            // bounded authority iteration; never apply the old target to it.
+          }
           this.statusValue = 'waiting-for-authority'
         }
       }
