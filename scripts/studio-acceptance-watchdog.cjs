@@ -12,6 +12,7 @@
  */
 
 const fs = require('node:fs')
+const crypto = require('node:crypto')
 const path = require('node:path')
 const { spawn, spawnSync } = require('node:child_process')
 
@@ -27,6 +28,7 @@ const MIN_RUN_TIMEOUT_MS = 30_000
 const MAX_RUN_TIMEOUT_MS = 30 * 60 * 1_000
 const PROCESS_TABLE_MAX_BYTES = 2 * 1024 * 1024
 const PROCESS_TABLE_TIMEOUT_MS = 2_000
+const ADOPTION_TOKEN_ENV = 'TASKWRAITH_STUDIO_WATCHDOG_TOKEN'
 const INSTALLED_TASKWRAITH_EXECUTABLE = '/Applications/TaskWraith.app/Contents/MacOS/TaskWraith'
 const INSTALLED_STUDIO_EXECUTABLE =
   '/Applications/TaskWraith.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
@@ -47,6 +49,8 @@ let artifactHomeAliases = []
 let baselineRows = []
 let artifactScanError = null
 let lastProcessRows = []
+let launchServicesToken = null
+let launchServicesAdoption = null
 let detachedSafetyState = {
   lostOwnershipGroups: [],
   mixedOwnershipGroups: [],
@@ -252,12 +256,214 @@ function commandRunsExactExecutable(command, executable) {
   return command === executable || command.startsWith(`${executable} `)
 }
 
+function readAdoptionIdentity(row) {
+  // HOME in argv can disappear with a helper. Re-prove the watchdog's per-launch
+  // nonce in the current environment, bracketing it with the exact process birth.
+  const sample = (args) => {
+    const result = spawnSync('/bin/ps', args, {
+      encoding: 'utf8',
+      timeout: PROCESS_TABLE_TIMEOUT_MS,
+      maxBuffer: PROCESS_TABLE_MAX_BYTES
+    })
+    if (result.error || result.status !== 0 || typeof result.stdout !== 'string') {
+      throw new Error('LaunchServices current process identity is unavailable')
+    }
+    return result.stdout.trim()
+  }
+  const identityArgs = ['-p', String(row.pid), '-o', 'pid=,pgid=,lstart=']
+  const identity = sample(identityArgs)
+  const match =
+    /^(\d+)\s+(\d+)\s+([A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4})$/.exec(identity)
+  const environment = sample(['eww', '-p', String(row.pid), '-o', 'command='])
+  if (
+    !match ||
+    Number(match[1]) !== row.pid ||
+    Number(match[2]) !== row.pgid ||
+    !launchServicesToken ||
+    !commandRunsExactExecutable(environment, row.command) ||
+    !new RegExp(`(?:^|\\s)${ADOPTION_TOKEN_ENV}=${launchServicesToken}(?:\\s|$)`).test(
+      environment
+    ) ||
+    sample(identityArgs) !== identity
+  ) {
+    throw new Error('LaunchServices current process identity does not belong to this launch')
+  }
+  return { pid: row.pid, pgid: row.pgid, command: row.command, startedAt: match[3] }
+}
+
+function adoptLaunchServicesProcess(message) {
+  if (
+    !spec?.launchServicesExecutable ||
+    !child ||
+    terminal ||
+    reapingReason ||
+    Object.keys(message).some((key) => !['type', 'requestId', 'pid', 'pgid'].includes(key)) ||
+    typeof message.requestId !== 'string' ||
+    !/^[A-Za-z0-9-]{1,80}$/.test(message.requestId) ||
+    !Number.isSafeInteger(message.pid) ||
+    message.pid <= 0 ||
+    !Number.isSafeInteger(message.pgid) ||
+    message.pgid <= 0 ||
+    message.pgid === childPgid ||
+    launchServicesAdoption
+  ) {
+    throw new Error('invalid LaunchServices adoption request')
+  }
+  const rows = sampleProcessRows()
+  if (!rows) throw new Error('LaunchServices adoption process census failed')
+  const members = rows.filter((row) => row.pgid === message.pgid)
+  const targets = members.filter((row) =>
+    commandRunsExactExecutable(row.command, spec.launchServicesExecutable)
+  )
+  if (
+    targets.length !== 1 ||
+    targets[0].pid !== message.pid ||
+    members.some((row) =>
+      baselineRows.some((before) => before.pid === row.pid || before.pgid === row.pgid)
+    ) ||
+    members.some(
+      (row) =>
+        commandRunsExactExecutable(row.command, INSTALLED_TASKWRAITH_EXECUTABLE) ||
+        commandRunsExactExecutable(row.command, INSTALLED_STUDIO_EXECUTABLE)
+    )
+  ) {
+    throw new Error('LaunchServices adoption does not identify one new exact app group')
+  }
+  const identities = members.map(readAdoptionIdentity)
+  const target = identities.find((identity) => identity.pid === message.pid)
+  launchServicesAdoption = {
+    requestId: message.requestId,
+    pid: message.pid,
+    pgid: message.pgid,
+    executable: spec.launchServicesExecutable,
+    startedAt: target.startedAt
+  }
+  detachedProcessGroups.set(message.pgid, {
+    pgid: message.pgid,
+    evidencePids: new Set(identities.map((row) => row.pid)),
+    memberPids: new Set(members.map((row) => row.pid)),
+    requiredForceKill: false,
+    identities
+  })
+  receipt('running')
+  send({
+    type: 'adopted',
+    requestId: message.requestId,
+    pid: message.pid,
+    pgid: message.pgid,
+    executable: spec.launchServicesExecutable,
+    startedAt: target.startedAt
+  })
+}
+
+function reproveLaunchServicesGroup(rows, pgid) {
+  const known = detachedProcessGroups.get(pgid)
+  const members = rows.filter((row) => row.pgid === pgid)
+  try {
+    if (
+      members.some((row) =>
+        baselineRows.some((before) => before.pid === row.pid || before.pgid === pgid)
+      )
+    ) {
+      throw new Error('LaunchServices group overlaps the prelaunch census')
+    }
+    const identities = members.map(readAdoptionIdentity)
+    for (const identity of identities) {
+      const before = known.identities?.find((row) => row.pid === identity.pid)
+      if (
+        before &&
+        (before.startedAt !== identity.startedAt || before.command !== identity.command)
+      ) {
+        throw new Error('adopted process identity changed')
+      }
+    }
+    known.identities ||= []
+    for (const identity of identities) {
+      if (!known.identities.some((row) => row.pid === identity.pid)) known.identities.push(identity)
+      known.memberPids.add(identity.pid)
+    }
+    return identities.map((row) => row.pid)
+  } catch {
+    return []
+  }
+}
+
+function launchServicesExitFields(extra = {}) {
+  if (!spec?.launchServicesExecutable) return {}
+  const adoption = launchServicesAdoption
+  return {
+    launchServicesExecutable: spec.launchServicesExecutable,
+    launchServicesAdoption: adoption
+      ? {
+          requestId: adoption.requestId,
+          pid: adoption.pid,
+          pgid: adoption.pgid,
+          executable: adoption.executable,
+          startedAt: adoption.startedAt,
+          acknowledged: true,
+          groupExitVerified:
+            extra.detachedGroupExitVerified === true && !processGroupHasMembers(adoption.pgid)
+        }
+      : null
+  }
+}
+
+function hasVerifiedLaunchServicesExit(receipt) {
+  if (!isRecord(receipt)) return false
+  if (
+    !Object.hasOwn(receipt, 'launchServicesExecutable') &&
+    receipt.command !== '/usr/bin/open' &&
+    !Object.hasOwn(receipt, 'launchServicesAdoption')
+  )
+    return true
+  const adoption = receipt.launchServicesAdoption
+  const groups = Array.isArray(receipt.detachedProcessGroups)
+    ? receipt.detachedProcessGroups.filter((group) => group?.pgid === adoption?.pgid)
+    : []
+  return (
+    isRecord(adoption) &&
+    Object.keys(adoption).every((key) =>
+      [
+        'requestId',
+        'pid',
+        'pgid',
+        'executable',
+        'startedAt',
+        'acknowledged',
+        'groupExitVerified'
+      ].includes(key)
+    ) &&
+    adoption.executable === receipt.launchServicesExecutable &&
+    typeof adoption.executable === 'string' &&
+    path.isAbsolute(adoption.executable) &&
+    typeof adoption.requestId === 'string' &&
+    /^[A-Za-z0-9-]{1,80}$/.test(adoption.requestId) &&
+    typeof adoption.startedAt === 'string' &&
+    /^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(adoption.startedAt) &&
+    Number.isSafeInteger(adoption.pid) &&
+    adoption.pid > 0 &&
+    Number.isSafeInteger(adoption.pgid) &&
+    adoption.pgid > 0 &&
+    adoption.pgid !== receipt.childPgid &&
+    adoption.pid !== receipt.childPid &&
+    adoption.acknowledged === true &&
+    adoption.groupExitVerified === true &&
+    receipt.detachedGroupExitVerified === true &&
+    groups.length === 1 &&
+    Array.isArray(groups[0].evidencePids) &&
+    groups[0].evidencePids.includes(adoption.pid) &&
+    Array.isArray(groups[0].memberPids) &&
+    groups[0].memberPids.includes(adoption.pid)
+  )
+}
+
 function classifyDetachedArtifactGroups({
   rows,
   artifactHomeAliases: aliases,
   baselineRows: initialRows,
   childPgid: primaryPgid,
-  knownPgids
+  knownPgids,
+  launchServicesGroups = []
 }) {
   const baselineIdentities = new Set(initialRows.map(processRowIdentity))
   const known = new Set(knownPgids)
@@ -306,6 +512,11 @@ function classifyDetachedArtifactGroups({
       protectedInstalledGroups.push({ pgid, memberPids })
     } else if (baselinePids.length > 0) {
       mixedOwnershipGroups.push({ pgid, memberPids, baselinePids })
+    } else if (launchServicesGroups.some((group) => group.pgid === pgid)) {
+      const adoption = launchServicesGroups.find((group) => group.pgid === pgid)
+      if (adoption.evidencePids.length > 0)
+        authorizedGroups.push({ pgid, evidencePids: adoption.evidencePids, members })
+      else lostOwnershipGroups.push({ pgid, memberPids })
     } else if (evidencePids.length > 0) {
       authorizedGroups.push({ pgid, evidencePids, members })
     } else if (known.has(pgid)) {
@@ -371,7 +582,13 @@ function refreshDetachedSafetyState() {
     artifactHomeAliases,
     baselineRows,
     childPgid,
-    knownPgids: [...detachedProcessGroups.keys()]
+    knownPgids: [...detachedProcessGroups.keys()],
+    launchServicesGroups: spec?.launchServicesExecutable
+      ? [...detachedProcessGroups.keys()].map((pgid) => ({
+          pgid,
+          evidencePids: reproveLaunchServicesGroup(rows, pgid)
+        }))
+      : []
   })
   detachedSafetyState = {
     lostOwnershipGroups: classification.lostOwnershipGroups,
@@ -388,7 +605,11 @@ function detachedGroupsHaveMembers() {
     classification.authorizedGroups.length > 0 ||
     classification.lostOwnershipGroups.length > 0 ||
     classification.mixedOwnershipGroups.length > 0 ||
-    classification.protectedInstalledGroups.length > 0
+    classification.protectedInstalledGroups.length > 0 ||
+    Boolean(
+      spec?.launchServicesExecutable &&
+      (!launchServicesAdoption || processGroupHasMembers(launchServicesAdoption.pgid))
+    )
   )
 }
 
@@ -467,9 +688,7 @@ function receipt(status, extra = {}) {
     ...(artifactScanError ? { artifactScanError } : {}),
     instanceId: spec.env.TASKWRAITH_INSTANCE_ID || null,
     command: spec.command,
-    ...(spec.launchServicesExecutable
-      ? { launchServicesExecutable: spec.launchServicesExecutable }
-      : {}),
+    ...launchServicesExitFields(extra),
     startedAt: receipt.startedAt || new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     stdoutTail,
@@ -521,8 +740,12 @@ function signalOwnedGroup(signal) {
  */
 function ownedGroupHasMembers() {
   if (process.platform === 'win32' || !childPgid) return false
+  return processGroupHasMembers(childPgid)
+}
+
+function processGroupHasMembers(pgid) {
   try {
-    process.kill(-childPgid, 0)
+    process.kill(-pgid, 0)
     return true
   } catch (error) {
     return Boolean(error) && error.code !== 'ESRCH'
@@ -565,6 +788,7 @@ function complete(status, extra = {}) {
     groupExitVerified: extra.groupExitVerified === true,
     detachedGroupExitVerified: extra.detachedGroupExitVerified === true,
     detachedProcessGroups: detachedProcessGroupReceipt(),
+    ...launchServicesExitFields(extra),
     reason: extra.reason || null,
     receiptPath: spec && spec.receiptPath
   })
@@ -654,6 +878,18 @@ function launch(candidate) {
   if (!process.connected) {
     throw new Error('owner IPC disconnected before launch')
   }
+  if (spec.launchServicesExecutable) {
+    if (Object.hasOwn(spec.env, ADOPTION_TOKEN_ENV))
+      throw new Error('adoption token is watchdog-owned')
+    launchServicesToken = crypto.randomBytes(32).toString('hex')
+    spec.env[ADOPTION_TOKEN_ENV] = launchServicesToken
+    spec.args.splice(
+      spec.args.indexOf('--args') - 1,
+      0,
+      '--env',
+      `${ADOPTION_TOKEN_ENV}=${launchServicesToken}`
+    )
+  }
 
   if (typeof spec.env.HOME === 'string') {
     const configuredHome = requireAbsolutePath(spec.env.HOME, 'env.HOME')
@@ -721,7 +957,18 @@ function installControllerHandlers() {
     try {
       if (!isRecord(message)) throw new Error('controller message must be an object')
       if (message.type === 'launch') launch(message.spec)
-      else if (message.type === 'stop') beginReap('owner_requested')
+      else if (message.type === 'adopt-launch-services') {
+        try {
+          adoptLaunchServicesProcess(message)
+        } catch (error) {
+          send({
+            type: 'adoption-rejected',
+            requestId: message.requestId,
+            error: String(error.message || error)
+          })
+          beginReap('adoption_rejected')
+        }
+      } else if (message.type === 'stop') beginReap('owner_requested')
       else throw new Error('unknown controller message')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -753,5 +1000,6 @@ if (require.main === module) installControllerHandlers()
 
 module.exports = {
   classifyDetachedArtifactGroups,
+  hasVerifiedLaunchServicesExit,
   validateSpec
 }

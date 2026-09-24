@@ -37,6 +37,8 @@ const {
   listListeningPidsForPort
 } = require('./perf/portGuard.cjs')
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
+const { assertPackagedRuntimeCustody } = require('./studio-packaged-runtime-custody.cjs')
 const {
   parseAvSyncCurrentExport,
   parseAvSyncPeakExport,
@@ -158,15 +160,25 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c68429a807ca03465e076e8dd609283ef21937fac1e86aa23177e0972bbd3a8e',
+    '0409f5584499bafeaa8c99bf9bef8c4e84d5834b5885d4bb228d10715f2a4dcc',
   'scripts/studio-acceptance-detached-coordinator.cjs':
     'ef316fe25a3c8f57e5963cede12e7b8f3d9f7005865f36545aceadf900a93bd2',
   'scripts/studio-generate-speech-fixture.cjs':
     '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
   'scripts/studio-av-endurance-runner.cjs':
     'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
+  'scripts/studio-av-endurance-live-runner.cjs':
+    '015e519ae5f58f4c15c70ea485fc0e0925e4ed6695bdb3934076b5225762d7d1',
+  'scripts/studio-av-endurance-acceptance-runner.cjs':
+    'fc18cffa691f5aaa2518db2d307c6800ccc936905fdb8adaeddfc17bb4ec5be7',
+  'scripts/studio-packaged-runtime-custody.cjs':
+    '710f8253daa9883e6650f0e430699493db62721e631e9d157bae38e43d2c59ca',
   'scripts/perf/electronChildSession.cjs':
-    'da8429efbe551df0119ff28c736000fd427b61b700eaca0eef285f15521b2977',
+    '20f18797a4266f1b09298bb7ab20fef433fd41211b58fa12d8d46412e25103cd',
+  'scripts/perf/isolatedHome.cjs':
+    'd8aad8578e7993fbe9bb06ce4c675eb27afd7c0ce6b60c30cd6ea65429852b6c',
+  'scripts/perf/isolatedLaunch.cjs':
+    'cef0e6beb9bc1a357814992f0dc984c325c4ecdce10c41344d6780c278e8e2e1',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
@@ -1137,6 +1149,12 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
       sha256: await sha256Hex(filePath)
     }
   }
+  const runtime = assertPackagedRuntimeCustody({ repoRoot: root, appRoot })
+  const runtimeCustody = { schemaVersion: runtime.schemaVersion, ok: runtime.ok }
+  for (const kind of ['electron', 'host']) {
+    const { fileCount, byteLength, manifestSha256 } = runtime[kind]
+    runtimeCustody[kind] = { fileCount, byteLength, manifestSha256 }
+  }
   const runExec = adapters.execFile || defaultExecFile
   await runExec('/usr/bin/codesign', ['--verify', '--deep', '--strict', appRoot], {
     timeoutMs: 60_000
@@ -1204,6 +1222,7 @@ async function measurePackagedStudioExecution(repoRoot, executablePath, adapters
     appRoot: path.relative(root, appRoot).split(path.sep).join('/'),
     bundleIdentityDigest: sha256Text(JSON.stringify(files)),
     files,
+    runtimeCustody,
     executablePath: files.executable.path,
     executableSha256: files.executable.sha256,
     companionPath: files.companion.path,
@@ -2016,6 +2035,17 @@ async function validateDetachedCompletion(paths, manifest) {
   }
   if (!isRecord(evidence.watchdogTerminal)) {
     return detachedRed('succeeded', 'detached evidence is missing the terminal watchdog join', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  if (
+    !hasVerifiedLaunchServicesExit(receipt) ||
+    !hasVerifiedLaunchServicesExit(evidence.watchdogTerminal) ||
+    receipt.launchServicesExecutable !== evidence.watchdogTerminal.launchServicesExecutable ||
+    JSON.stringify(receipt.launchServicesAdoption) !==
+      JSON.stringify(evidence.watchdogTerminal.launchServicesAdoption)
+  ) {
+    return detachedRed('succeeded', 'detached evidence/watchdog LaunchServices adoption mismatch', {
       evidenceSha256: actualEvidenceSha256
     })
   }
@@ -2928,6 +2958,23 @@ async function materializeIsolatedProviderGuards(options) {
   return { grokBinaryPath, sha256 }
 }
 
+function isLaunchServicesAdoptionAcknowledgment(message, target, executable) {
+  return (
+    isRecord(message) &&
+    Object.keys(message).every((key) =>
+      ['type', 'requestId', 'pid', 'pgid', 'executable', 'startedAt'].includes(key)
+    ) &&
+    message.type === 'adopted' &&
+    typeof message.requestId === 'string' &&
+    /^[A-Za-z0-9-]{1,80}$/.test(message.requestId) &&
+    message.pid === target.pid &&
+    message.pgid === target.pgid &&
+    message.executable === executable &&
+    typeof message.startedAt === 'string' &&
+    /^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(message.startedAt)
+  )
+}
+
 function launchUnderWatchdog(spec, adapters = {}) {
   const forkProcess =
     adapters.fork ||
@@ -2947,6 +2994,8 @@ function launchUnderWatchdog(spec, adapters = {}) {
   return new Promise((resolve, reject) => {
     let settled = false
     let terminalMessage = null
+    let pendingAdoption = null
+    let adoptionAcknowledgment = null
     const terminalWaiters = []
     const disconnectController = () => {
       if (!controller.connected) return
@@ -2955,6 +3004,14 @@ function launchUnderWatchdog(spec, adapters = {}) {
       } catch {
         // The controller may have exited between the connected check and disconnect.
       }
+    }
+    const rejectAdoption = (error) => {
+      if (!pendingAdoption) return
+      const pending = pendingAdoption
+      pendingAdoption = null
+      clearTimeout(pending.timer)
+      pending.reject(error)
+      disconnectController()
     }
     const rejectBeforeLaunch = (error) => {
       if (settled) return
@@ -2971,12 +3028,37 @@ function launchUnderWatchdog(spec, adapters = {}) {
 
     const settleTerminal = (message) => {
       terminalMessage = message
+      rejectAdoption(new Error('LaunchServices adoption ended before watchdog acknowledgment'))
       while (terminalWaiters.length > 0) terminalWaiters.shift()(message)
     }
 
     controller.on('message', (message) => {
       if (!isRecord(message)) return
       if (message.type === 'terminal') settleTerminal(message)
+      if (
+        pendingAdoption &&
+        ['adopted', 'adoption-rejected'].includes(message.type) &&
+        message.requestId === pendingAdoption.request.requestId
+      ) {
+        if (
+          !isLaunchServicesAdoptionAcknowledgment(
+            message,
+            pendingAdoption.request,
+            spec.launchServicesExecutable
+          )
+        ) {
+          rejectAdoption(
+            new Error('LaunchServices adoption acknowledgment was rejected or mismatched')
+          )
+        } else {
+          const pending = pendingAdoption
+          pendingAdoption = null
+          clearTimeout(pending.timer)
+          adoptionAcknowledgment = { ...message }
+          pending.resolve(adoptionAcknowledgment)
+        }
+        return
+      }
       if (message.type === 'error' && !settled) {
         rejectBeforeLaunch(new Error(String(message.error || 'watchdog launch failed')))
         return
@@ -2992,6 +3074,54 @@ function launchUnderWatchdog(spec, adapters = {}) {
         remoteDebuggingPort: spec.remoteDebuggingPort,
         mainInspectorPort: spec.mainInspectorPort,
         instanceId: spec.env.TASKWRAITH_INSTANCE_ID,
+        adoptLaunchServices(target) {
+          if (
+            !spec.launchServicesExecutable ||
+            !controller.connected ||
+            terminalMessage ||
+            pendingAdoption ||
+            adoptionAcknowledgment ||
+            !isRecord(target) ||
+            !Number.isSafeInteger(target.pid) ||
+            target.pid <= 0 ||
+            !Number.isSafeInteger(target.pgid) ||
+            target.pgid <= 0 ||
+            target.pgid === message.childPgid
+          ) {
+            return Promise.reject(new Error('invalid LaunchServices adoption handoff'))
+          }
+          const request = {
+            type: 'adopt-launch-services',
+            requestId: crypto.randomUUID(),
+            pid: target.pid,
+            pgid: target.pgid
+          }
+          return new Promise((accept, deny) => {
+            const timeoutMs = adapters.adoptionTimeoutMs || 5_000
+            pendingAdoption = {
+              request,
+              resolve: accept,
+              reject: deny,
+              timer: setTimeout(
+                () =>
+                  rejectAdoption(
+                    new Error(
+                      `LaunchServices adoption acknowledgment timed out after ${timeoutMs}ms`
+                    )
+                  ),
+                timeoutMs
+              )
+            }
+            try {
+              controller.send(request, (error) => {
+                if (error)
+                  rejectAdoption(new Error(`LaunchServices adoption IPC failed: ${error.message}`))
+              })
+            } catch (error) {
+              rejectAdoption(new Error(`LaunchServices adoption IPC failed: ${error.message}`))
+            }
+          })
+        },
         waitForTerminal(timeoutMs = 15_000) {
           if (terminalMessage) return Promise.resolve(terminalMessage)
           return new Promise((accept, deny) => {
@@ -3006,9 +3136,22 @@ function launchUnderWatchdog(spec, adapters = {}) {
           })
         },
         async stop(reason = 'owner_requested') {
-          if (terminalMessage) return terminalMessage
-          if (controller.connected) controller.send({ type: 'stop', reason })
-          return this.waitForTerminal()
+          if (!terminalMessage && controller.connected) controller.send({ type: 'stop', reason })
+          const terminal = terminalMessage || (await this.waitForTerminal())
+          if (
+            spec.launchServicesExecutable &&
+            (!adoptionAcknowledgment ||
+              terminal.launchServicesExecutable !== spec.launchServicesExecutable ||
+              !hasVerifiedLaunchServicesExit(terminal) ||
+              ['requestId', 'pid', 'pgid', 'executable', 'startedAt'].some(
+                (key) => terminal.launchServicesAdoption[key] !== adoptionAcknowledgment[key]
+              ))
+          ) {
+            throw new Error(
+              'LaunchServices terminal did not prove the acknowledged adoption group exited'
+            )
+          }
+          return terminal
         },
         disconnectOwnerForTest() {
           controller.disconnect()
@@ -3018,9 +3161,13 @@ function launchUnderWatchdog(spec, adapters = {}) {
     })
 
     controller.once('error', (error) => {
+      rejectAdoption(new Error(`LaunchServices adoption controller failed: ${error.message}`))
       rejectBeforeLaunch(error)
     })
     controller.once('exit', (code, signal) => {
+      rejectAdoption(
+        new Error(`LaunchServices adoption controller exited code=${code} signal=${signal}`)
+      )
       if (!settled) {
         settled = true
         clearTimeout(timer)
@@ -3028,6 +3175,11 @@ function launchUnderWatchdog(spec, adapters = {}) {
           new Error(`Studio acceptance watchdog exited before launch code=${code} signal=${signal}`)
         )
       }
+    })
+    controller.once('disconnect', () => {
+      rejectAdoption(
+        new Error('LaunchServices adoption controller disconnected before acknowledgment')
+      )
     })
 
     try {
@@ -3106,7 +3258,10 @@ async function adoptLaunchServicesElectronSession(session, plan, adapters = {}) 
     ((port) => listListeningPidsForPort(port, adapters.portAdapters || {}))
   const runExec = adapters.execFile || defaultExecFile
   const expectedExecutable = path.resolve(plan.spawnPlan.electronBinary)
-  return waitFor({
+  if (typeof session.adoptLaunchServices !== 'function') {
+    throw new Error('LaunchServices adoption requires an acknowledged watchdog handoff')
+  }
+  const target = await waitFor({
     label: 'LaunchServices TaskWraith exact process adoption',
     timeoutMs: adapters.timeoutMs || 20_000,
     intervalMs: adapters.intervalMs || 100,
@@ -3138,20 +3293,26 @@ async function adoptLaunchServicesElectronSession(session, plan, adapters = {}) 
           'LaunchServices CDP group does not contain exactly one custodied TaskWraith executable'
         )
       }
-      if (!members.some((row) => commandContainsBoundedPath(row.command, plan.home))) {
-        return null
-      }
       return {
-        ...session,
-        launcherPid: session.pid,
-        launcherPgid: session.pgid || null,
         pid: targets[0].pid,
         pgid: targetPgid,
-        ownedPids: members.map((row) => row.pid).sort((left, right) => left - right),
-        launchMode: 'launch-services'
+        ownedPids: members.map((row) => row.pid).sort((left, right) => left - right)
       }
     }
   })
+  // Port discovery proposes an identity. Only the watchdog's independent current
+  // process proof can authorize and acknowledge custody of its detached group.
+  const acknowledgment = await session.adoptLaunchServices({ pid: target.pid, pgid: target.pgid })
+  if (!isLaunchServicesAdoptionAcknowledgment(acknowledgment, target, expectedExecutable)) {
+    throw new Error('LaunchServices adoption acknowledgment does not match the discovered app')
+  }
+  return {
+    ...session,
+    ...target,
+    launcherPid: session.pid,
+    launcherPgid: session.pgid || null,
+    launchMode: 'launch-services'
+  }
 }
 
 async function evaluateByValue(session, expression) {
@@ -3452,6 +3613,9 @@ function validatePriorWatchdogReceipt(entry) {
   if (receipt.childPid !== receipt.childPgid) {
     return { ...entry, malformed: 'receipt does not identify the exact owned process group' }
   }
+  if (!hasVerifiedLaunchServicesExit(receipt)) {
+    return { ...entry, malformed: 'LaunchServices adoption has no verified exact app-group exit' }
+  }
 
   const trusted =
     receipt.schemaVersion === TRUSTED_RECEIPT_SCHEMA_VERSION &&
@@ -3602,7 +3766,8 @@ function assertCleanWatchdogTerminal(terminal) {
     terminal.status !== 'reaped' ||
     terminal.groupExitVerified !== true ||
     terminal.detachedGroupExitVerified !== true ||
-    terminal.reason !== 'owner_requested'
+    terminal.reason !== 'owner_requested' ||
+    !hasVerifiedLaunchServicesExit(terminal)
   ) {
     throw new Error(
       `Studio acceptance watchdog did not confirm clean owner-requested teardown: ${JSON.stringify(

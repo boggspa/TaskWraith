@@ -4,12 +4,14 @@ import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { finished } from 'node:stream/promises'
 import { PNG } from 'pngjs'
 import mediaLimits from '../src/shared/mediaLimits.json'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // The production harness is CommonJS because it is run directly by Node.
 /* eslint-disable @typescript-eslint/no-require-imports */
+const asar = require('@electron/asar')
 const {
   adjudicatePlaybackRoundTrip,
   adjudicateRecognizedTranscript,
@@ -192,6 +194,7 @@ const {
     pid: number
     pgid?: number
     receiptPath: string
+    adoptLaunchServices: (target: { pid: number; pgid: number }) => Promise<Record<string, any>>
     stop: () => Promise<Record<string, unknown>>
   }>
   readDetachedCoordinatorStatus: (
@@ -543,6 +546,28 @@ async function temporaryRoot(label: string): Promise<string> {
   return root
 }
 
+async function packagedRuntimeFixture(repoRoot: string, appRoot: string) {
+  const staging = path.join(repoRoot, 'archive-input')
+  const resources = path.join(appRoot, 'Contents/Resources')
+  for (const relative of ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html']) {
+    for (const base of [repoRoot, staging]) {
+      await fsPromises.mkdir(path.dirname(path.join(base, relative)), { recursive: true })
+      await fsPromises.writeFile(path.join(base, relative), relative)
+    }
+  }
+  for (const base of [path.join(repoRoot, 'out/host'), path.join(resources, 'host')]) {
+    await fsPromises.mkdir(base, { recursive: true })
+    await fsPromises.writeFile(path.join(base, 'cli.js'), 'host runtime')
+  }
+  const pack = async (version: string) => {
+    await fsPromises.writeFile(path.join(staging, 'package.json'), JSON.stringify({ version }))
+    const stream = await asar.createPackage(staging, path.join(resources, 'app.asar'))
+    if (stream) await finished(stream)
+  }
+  await pack('1.0.0')
+  return { pack }
+}
+
 async function waitFor<T>(
   probe: () => T | null | Promise<T | null>,
   label: string,
@@ -687,6 +712,296 @@ async function writeDetachedCompletionFixture(
   await fsPromises.writeFile(paths.manifestPath, `${JSON.stringify(manifest)}\n`, 'utf8')
   return { plan, paths, manifest, evidence, receipt }
 }
+
+describe('LaunchServices watchdog custody (fake controller)', () => {
+  const executable = '/virtual/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+  const identity = {
+    pid: 7200,
+    pgid: 7200,
+    executable,
+    startedAt: 'Thu Sep 24 02:00:00 2026'
+  }
+  const receipt = () => ({
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    schemaVersion: 2,
+    status: 'reaped',
+    reason: 'owner_requested',
+    command: '/usr/bin/open',
+    childPid: 7101,
+    childPgid: 7101,
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    detachedProcessGroups: [{ pgid: 7200, evidencePids: [7200], memberPids: [7200] }],
+    launchServicesExecutable: executable,
+    launchServicesAdoption: {
+      ...identity,
+      requestId: 'adopt-1',
+      acknowledged: true,
+      groupExitVerified: true
+    }
+  })
+  async function fakeSession(packaged = true) {
+    const controller = Object.assign(new EventEmitter(), {
+      pid: 7100,
+      connected: true,
+      send: vi.fn(),
+      disconnect: vi.fn(() => {
+        controller.connected = false
+      })
+    })
+    const pending = launchUnderWatchdog(
+      {
+        env: { TASKWRAITH_INSTANCE_ID: 'studioAdopt01' },
+        ...(packaged ? { launchServicesExecutable: executable } : {})
+      },
+      { fork: () => controller, adoptionTimeoutMs: 20 }
+    )
+    controller.emit('message', {
+      type: 'launched',
+      controllerPid: 7100,
+      childPid: 7101,
+      childPgid: 7101,
+      receiptPath: '/virtual/watchdog.json'
+    })
+    return { controller, session: await pending }
+  }
+
+  it('waits for the exact watchdog acknowledgment and ignores a foreign request acknowledgment', async () => {
+    const { controller, session } = await fakeSession()
+    let adopted = false
+    const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 }).then((ack) => {
+      adopted = true
+      return ack
+    })
+    const request = controller.send.mock.calls.find(
+      ([message]) => message.type === 'adopt-launch-services'
+    )![0]
+    controller.emit('message', { type: 'adopted', requestId: 'foreign', ...identity })
+    await Promise.resolve()
+    expect(adopted).toBe(false)
+    controller.emit('message', { type: 'adopted', requestId: request.requestId, ...identity })
+    await expect(pending).resolves.toMatchObject(identity)
+    const terminal = receipt()
+    terminal.launchServicesAdoption.requestId = request.requestId
+    controller.emit('message', { type: 'terminal', ...terminal })
+    await expect(session.stop()).resolves.toMatchObject(terminal)
+  })
+
+  it.each(['pid', 'pgid', 'executable', 'startedAt', 'extra field'])(
+    'rejects a mismatched watchdog acknowledgment: %s',
+    async (damage) => {
+      const { controller, session } = await fakeSession()
+      const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 })
+      const checked = expect(pending).rejects.toThrow(/adoption.*acknowledgment/i)
+      const request = controller.send.mock.calls.find(
+        ([message]) => message.type === 'adopt-launch-services'
+      )![0]
+      const ack: Record<string, unknown> = {
+        type: 'adopted',
+        requestId: request.requestId,
+        ...identity
+      }
+      if (damage === 'pid' || damage === 'pgid') ack[damage] = 9999
+      if (damage === 'executable') ack.executable = '/Applications/Foreign'
+      if (damage === 'startedAt') ack.startedAt = ''
+      if (damage === 'extra field') ack.trusted = true
+      controller.emit('message', ack)
+      await checked
+      expect(controller.disconnect).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('fails closed and disconnects if no adoption acknowledgment arrives', async () => {
+    const { controller, session } = await fakeSession()
+    await expect(session.adoptLaunchServices({ pid: 7200, pgid: 7200 })).rejects.toThrow(
+      /adoption.*timed out/i
+    )
+    expect(controller.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['adoption-rejected', 'exit'])(
+    'rejects pending adoption when the controller reports %s',
+    async (event) => {
+      const { controller, session } = await fakeSession()
+      const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 })
+      const checked = expect(pending).rejects.toThrow(/adoption/i)
+      const request = controller.send.mock.calls.find(
+        ([message]) => message.type === 'adopt-launch-services'
+      )![0]
+      if (event === 'exit') controller.emit('exit', 1, null)
+      else
+        controller.emit('message', {
+          type: event,
+          requestId: request.requestId,
+          error: 'identity is foreign'
+        })
+      await checked
+    }
+  )
+
+  it('adopts the exact app after its HOME-bearing helper disappeared, only after acknowledgment', async () => {
+    const session = {
+      pid: 7101,
+      pgid: 7101,
+      adoptLaunchServices: vi.fn(async () => ({
+        type: 'adopted',
+        requestId: 'adopt-1',
+        ...identity
+      }))
+    }
+    const plan = {
+      home: '/virtual/home',
+      spawnPlan: { packaged: true, electronBinary: executable, remoteDebuggingPort: 9444 }
+    }
+    await expect(
+      adoptLaunchServicesElectronSession(session, plan, {
+        platform: 'darwin',
+        listPortPids: async () => [7200],
+        execFile: async () => ({
+          stdout: `7200 1 7200 ${executable} --use-mock-keychain`,
+          stderr: ''
+        }),
+        timeoutMs: 30,
+        intervalMs: 1
+      })
+    ).resolves.toMatchObject({
+      pid: 7200,
+      pgid: 7200,
+      launcherPid: 7101,
+      launcherPgid: 7101,
+      launchMode: 'launch-services'
+    })
+    expect(session.adoptLaunchServices).toHaveBeenCalledExactlyOnceWith({ pid: 7200, pgid: 7200 })
+  })
+
+  it('refuses a stripped LaunchServices terminal from its known packaged session', async () => {
+    const { controller, session } = await fakeSession()
+    controller.emit('message', {
+      type: 'terminal',
+      status: 'reaped',
+      reason: 'owner_requested',
+      groupExitVerified: true,
+      detachedGroupExitVerified: true,
+      detachedProcessGroups: []
+    })
+    await expect(session.stop()).rejects.toThrow(/LaunchServices.*adoption/i)
+  })
+
+  it('preserves direct sessions and direct legacy receipt compatibility', async () => {
+    const { controller, session } = await fakeSession(false)
+    const terminal = {
+      kind: 'taskwraith-studio-acceptance-watchdog',
+      schemaVersion: 2,
+      status: 'reaped',
+      reason: 'owner_requested',
+      childPid: 7101,
+      childPgid: 7101,
+      groupExitVerified: true,
+      detachedGroupExitVerified: true,
+      detachedProcessGroups: []
+    }
+    controller.emit('message', { type: 'terminal', ...terminal })
+    await expect(session.stop()).resolves.toMatchObject(terminal)
+    expect(assertCleanWatchdogTerminal(terminal)).toEqual(terminal)
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: terminal }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).resolves.toMatchObject({ trusted: 1 })
+  })
+
+  it.each([
+    'missing adoption',
+    'missing acknowledgment',
+    'incomplete reap',
+    'wrong group',
+    'missing app',
+    'missing executable',
+    'invalid birth',
+    'extra adoption field',
+    'duplicate group',
+    'missing identity evidence',
+    'launcher as app'
+  ])('rejects terminal and prior LaunchServices receipts with %s', async (damage) => {
+    const terminal: Record<string, any> = receipt()
+    if (damage === 'missing adoption') delete terminal.launchServicesAdoption
+    if (damage === 'missing acknowledgment') terminal.launchServicesAdoption.acknowledged = false
+    if (damage === 'incomplete reap') terminal.launchServicesAdoption.groupExitVerified = false
+    if (damage === 'wrong group') terminal.detachedProcessGroups[0].pgid = 9999
+    if (damage === 'missing app') terminal.detachedProcessGroups[0].memberPids = [7201]
+    if (damage === 'missing executable') delete terminal.launchServicesExecutable
+    if (damage === 'invalid birth') terminal.launchServicesAdoption.startedAt = 'unproven'
+    if (damage === 'extra adoption field') terminal.launchServicesAdoption.trusted = true
+    if (damage === 'duplicate group')
+      terminal.detachedProcessGroups.push({ pgid: 7200, evidencePids: [], memberPids: [] })
+    if (damage === 'missing identity evidence') terminal.detachedProcessGroups[0].evidencePids = []
+    if (damage === 'launcher as app') {
+      terminal.childPid = terminal.launchServicesAdoption.pid
+      terminal.childPgid = terminal.launchServicesAdoption.pgid
+    }
+    expect(() => assertCleanWatchdogTerminal(terminal)).toThrow(/did not confirm clean/)
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: terminal }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).rejects.toThrow(/LaunchServices.*adoption/i)
+  })
+
+  it('trusts a fully reaped exact adopted group in a prior receipt', async () => {
+    expect(assertCleanWatchdogTerminal(receipt())).toEqual(receipt())
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: receipt() }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).resolves.toMatchObject({ trusted: 1 })
+  })
+
+  it.each(['missing disk adoption', 'missing evidence adoption', 'mismatched evidence adoption'])(
+    'keeps detached status RED for %s even when the launcher exited',
+    async (damage) => {
+      const root = await temporaryRoot('studio-ls-receipt-join-')
+      const disk: Record<string, any> = receipt()
+      const terminal: Record<string, any> = receipt()
+      if (damage === 'missing disk adoption') delete disk.launchServicesAdoption
+      if (damage === 'missing evidence adoption') delete terminal.launchServicesAdoption
+      if (damage === 'mismatched evidence adoption')
+        terminal.launchServicesAdoption.requestId = 'foreign'
+      const fixture = await writeDetachedCompletionFixture(root, {
+        receipt: disk,
+        evidence: { watchdogTerminal: terminal }
+      })
+      await expect(
+        readDetachedCoordinatorStatus({
+          instanceId: fixture.plan.instanceId,
+          artifactRoot: root,
+          token: DETACHED_TEST_TOKEN
+        })
+      ).resolves.toMatchObject({
+        green: false,
+        verdict: 'RED',
+        reason: expect.stringMatching(/adoption/i)
+      })
+    }
+  )
+})
 
 describe('Studio acceptance harness', () => {
   it('parses bounded resource detail schema and rejects overflow/malformed exports', () => {
@@ -1995,6 +2310,14 @@ describe('Studio acceptance harness', () => {
         controllerPid: 7100,
         pid: 7101,
         pgid: 7101,
+        adoptLaunchServices: vi.fn(async () => ({
+          type: 'adopted',
+          requestId: 'adopt-1',
+          pid: 7200,
+          pgid: 7200,
+          executable,
+          startedAt: 'Thu Sep 24 02:00:00 2026'
+        })),
         stop: vi.fn()
       }
       const processRows = [
@@ -5804,6 +6127,7 @@ describe('Studio acceptance harness', () => {
       await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
       await fsPromises.writeFile(filePath, contents)
     }
+    const runtime = await packagedRuntimeFixture(root, appRoot)
     const execFile = vi.fn(async (command: string, args: string[]) => ({
       stdout:
         command !== '/usr/bin/plutil'
@@ -5830,15 +6154,30 @@ describe('Studio acceptance harness', () => {
       codeSignatureVerified: true
     })
     expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(before.runtimeCustody).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      electron: { fileCount: 3, manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      host: { fileCount: 1, manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    })
     expect(execFile).toHaveBeenCalledWith(
       '/usr/bin/codesign',
       ['--verify', '--deep', '--strict', appRoot],
       { timeoutMs: 60_000 }
     )
 
-    await fsPromises.writeFile(path.join(appRoot, 'Contents/Resources/app.asar'), 'changed')
+    await runtime.pack('1.0.1')
     const after = await measurePackagedStudioExecution(root, executablePath, { execFile })
     expect(after.bundleIdentityDigest).not.toBe(before.bundleIdentityDigest)
+    expect(after.runtimeCustody).toEqual(before.runtimeCustody)
+
+    for (const relative of ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html', 'out/host/cli.js']) {
+      const filePath = path.join(root, relative)
+      const original = await fsPromises.readFile(filePath)
+      await fsPromises.writeFile(filePath, 'new build bytes missing from the package')
+      await expect(measurePackagedStudioExecution(root, executablePath, { execFile })).rejects.toThrow(/runtime custody/)
+      await fsPromises.writeFile(filePath, original)
+    }
   })
 
   it('binds the bridge helper identity to the packaged app for the debut identity', async () => {
@@ -5866,6 +6205,7 @@ describe('Studio acceptance harness', () => {
       await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
       await fsPromises.writeFile(filePath, path.basename(filePath))
     }
+    await packagedRuntimeFixture(root, appRoot)
     const plutil = (app: Record<string, string>, bridge: Record<string, string>) =>
       vi.fn(async (command: string, args: string[]) => {
         if (command !== '/usr/bin/plutil') return { stdout: '', stderr: '' }
