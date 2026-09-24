@@ -511,6 +511,256 @@ final class StudioOverlayModelTests: XCTestCase {
             "the diagnostics row must remain inside the viewport")
     }
 
+    func testActualHostDiagnosticsUseTwoCompleteRowsAt640x375() throws {
+        var subject = state()
+        subject.viewport = StudioOverlayViewport(width: 640, height: 375, scale: 1)
+        subject.sourceLabel = String(repeating: "2349ACDEFHKMNPXT", count: 4)
+        subject.diagnostics = StudioOverlayDiagnostics(
+            presentedFrameCount: 123_456,
+            droppedFrameCount: 123_456,
+            retainedFrameCount: 123_456,
+            hardwareDecodeLabel: "hardware 10-bit",
+            syncLabel: "a/v +123.456ms !",
+            memoryLabel: "rss 1234MB",
+            cacheHitCount: 123_456,
+            boundTextureCount: 123_456,
+            playerCount: 123_456
+        )
+        let model = StudioOverlayLayout.build(subject)
+        XCTAssertLessThanOrEqual(StudioOverlayMetrics.hudHeight, 118)
+
+        let source = try XCTUnwrap(model.texts.first { $0.string == subject.sourceLabel })
+        let performance = try XCTUnwrap(model.texts.first { $0.string.contains("hardware 10-bit") })
+        let resources = try XCTUnwrap(model.texts.first { $0.string.hasPrefix("cache ") })
+        XCTAssertTrue(performance.string.contains("a/v +123.456ms !"))
+        XCTAssertTrue(performance.string.contains("drop 123456"))
+        XCTAssertTrue(performance.string.contains("held 123456"))
+        XCTAssertTrue(performance.string.contains("shown 123456"))
+        XCTAssertTrue(resources.string.contains("cache 123456"))
+        XCTAssertTrue(resources.string.contains("tex 123456"))
+        XCTAssertTrue(resources.string.contains("play 123456"))
+        XCTAssertTrue(resources.string.contains("rss 1234MB"))
+
+        func textFrame(_ text: StudioOverlayText) -> StudioOverlayFrame {
+            StudioOverlayFrame(
+                x: text.x,
+                y: text.y,
+                width: StudioOverlayRenderMetrics.width(of: text.string, pointSize: text.pointSize),
+                height: StudioOverlayRenderMetrics.cellHeight(forPointSize: text.pointSize))
+        }
+        func overlaps(_ left: StudioOverlayFrame, _ right: StudioOverlayFrame) -> Bool {
+            left.x < right.maxX && right.x < left.maxX &&
+                left.y < right.maxY && right.y < left.maxY
+        }
+        let sourceFrame = textFrame(source)
+        let performanceFrame = textFrame(performance)
+        let resourceFrame = textFrame(resources)
+        XCTAssertFalse(overlaps(sourceFrame, performanceFrame))
+        XCTAssertFalse(overlaps(sourceFrame, resourceFrame))
+        XCTAssertFalse(overlaps(performanceFrame, resourceFrame))
+        XCTAssertGreaterThanOrEqual(performanceFrame.x, 0)
+        XCTAssertGreaterThanOrEqual(resourceFrame.x, 0)
+        XCTAssertLessThanOrEqual(sourceFrame.maxX, 640)
+        XCTAssertLessThanOrEqual(performanceFrame.maxX, 640)
+        XCTAssertLessThanOrEqual(resourceFrame.maxX, 640)
+        XCTAssertFalse(overlaps(resourceFrame, model.trackFrame))
+    }
+
+    func testResourceSnapshotIsDeterministicAndUnionsSharedAndPresentationSurfaces() {
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: [0x0A, 0x0B],
+            sharedPoolCapacity: 3,
+            presentationRingSurfaceIDs: [[0x0B, 0x0C], [0x0D, 0x0A]],
+            presentationRingCapacities: [2, 3]
+        )
+        XCTAssertEqual(snapshot.capacity, 8)
+        XCTAssertEqual(snapshot.surfaceIDs, [0x0A, 0x0B, 0x0C, 0x0D])
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "res1 dec=2 cap=8 surf=4 ids=0000000A,0000000B,0000000C,0000000D")
+    }
+
+    func testResourceSnapshotMaximumCanonicalExportStaysBounded() {
+        let ids = Set((0..<StudioResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: ids,
+            sharedPoolCapacity: ids.count,
+            presentationRingSurfaceIDs: [],
+            presentationRingCapacities: []
+        )
+        let export = snapshot.diagnosticsExportText
+        XCTAssertFalse(export.hasSuffix("ids=!"))
+        XCTAssertLessThanOrEqual(
+            export.utf8.count,
+            StudioResourceSnapshot.maximumExportByteCount)
+        XCTAssertTrue(export.contains("ids=00000000"))
+        XCTAssertTrue(export.contains("00001B57"))
+    }
+
+    func testResourceSnapshotOverflowIsShortDeterministicAndNeverTruncated() {
+        let ids = Set((0...StudioResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioResourceSnapshot(
+            decoderCount: 2,
+            sharedPoolSurfaceIDs: ids,
+            sharedPoolCapacity: ids.count,
+            presentationRingSurfaceIDs: [],
+            presentationRingCapacities: []
+        )
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "res1 dec=2 cap=7001 surf=7001 ids=!"
+        )
+        XCTAssertLessThanOrEqual(
+            snapshot.diagnosticsExportText.utf8.count,
+            StudioResourceSnapshot.maximumExportByteCount)
+    }
+
+    func testRouteResourceSnapshotHasCanonicalRouteQualifiedRoundTrip() throws {
+        let snapshot = StudioRouteResourceSnapshot(
+            route: .review,
+            activeSourceCount: 2,
+            retainedFrameCount: 3,
+            capacity: 8,
+            surfaceIDs: [0x0D, 0x0A, 0x0C]
+        )
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "rr1 route=review active=2 retained=3 cap=8 surf=3 "
+                + "ids=0000000A,0000000C,0000000D"
+        )
+        XCTAssertEqual(
+            try StudioRouteResourceSnapshot(
+                diagnosticsExportText: snapshot.diagnosticsExportText),
+            snapshot
+        )
+    }
+
+    func testRouteResourceSnapshotParserRejectsDuplicateUnsortedAndCountMismatch() {
+        for invalid in [
+            "rr1 route=source active=1 retained=1 cap=3 surf=2 ids=0000000A,0000000A",
+            "rr1 route=source active=1 retained=1 cap=3 surf=2 ids=0000000B,0000000A",
+            "rr1 route=source active=1 retained=1 cap=3 surf=1 ids=0000000A,0000000B",
+            "rr1 route=source active=1 retained=1 cap=3 surf=2 ids=0000000A",
+        ] {
+            XCTAssertThrowsError(
+                try StudioRouteResourceSnapshot(diagnosticsExportText: invalid), invalid)
+        }
+    }
+
+    func testRouteResourceSnapshotParserRejectsCapacityAndNoncanonicalFields() {
+        for invalid in [
+            "rr1 route=source active=1 retained=4 cap=3 surf=0 ids=-",
+            "rr1 route=source active=1 retained=0 cap=1 surf=2 ids=0000000A,0000000B",
+            "rr1 route=source active=01 retained=0 cap=3 surf=0 ids=-",
+            "rr1 route=source active=1 retained=0 cap=3 surf=1 ids=0000000a",
+            "rr1  route=source active=1 retained=0 cap=3 surf=0 ids=-",
+        ] {
+            XCTAssertThrowsError(
+                try StudioRouteResourceSnapshot(diagnosticsExportText: invalid), invalid)
+        }
+    }
+
+    func testRouteResourceSnapshotHiddenRouteIsCanonicalZero() throws {
+        let hidden = StudioRouteResourceSnapshot(
+            route: .review,
+            activeSourceCount: 0,
+            retainedFrameCount: 0,
+            capacity: 0,
+            surfaceIDs: []
+        )
+        XCTAssertEqual(
+            hidden.diagnosticsExportText,
+            "rr1 route=review active=0 retained=0 cap=0 surf=0 ids=-"
+        )
+        XCTAssertEqual(
+            try StudioRouteResourceSnapshot(
+                diagnosticsExportText: hidden.diagnosticsExportText),
+            hidden
+        )
+    }
+
+    func testRouteResourceSnapshotOverflowStaysBoundedAndFailsClosedOnParse() {
+        let ids = Set(
+            (0...StudioRouteResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioRouteResourceSnapshot(
+            route: .source,
+            activeSourceCount: 1,
+            retainedFrameCount: 0,
+            capacity: ids.count,
+            surfaceIDs: ids
+        )
+        XCTAssertEqual(
+            snapshot.diagnosticsExportText,
+            "rr1 route=source active=1 retained=0 cap=7001 surf=7001 ids=!"
+        )
+        XCTAssertLessThanOrEqual(
+            snapshot.diagnosticsExportText.utf8.count,
+            StudioRouteResourceSnapshot.maximumExportByteCount
+        )
+        XCTAssertThrowsError(
+            try StudioRouteResourceSnapshot(
+                diagnosticsExportText: snapshot.diagnosticsExportText)
+        ) { error in
+            XCTAssertEqual(error as? StudioRouteResourceSnapshot.ParseError, .overflow)
+        }
+    }
+
+    func testRouteResourceSnapshotMaximumCanonicalExportStillRoundTrips() throws {
+        let ids = Set(
+            (0..<StudioRouteResourceSnapshot.maximumExportSurfaceIDCount).map(UInt32.init))
+        let snapshot = StudioRouteResourceSnapshot(
+            route: .source,
+            activeSourceCount: 1,
+            retainedFrameCount: 3,
+            capacity: ids.count,
+            surfaceIDs: ids
+        )
+        XCTAssertFalse(snapshot.diagnosticsExportText.hasSuffix("ids=!"))
+        XCTAssertLessThanOrEqual(
+            snapshot.diagnosticsExportText.utf8.count,
+            StudioRouteResourceSnapshot.maximumExportByteCount
+        )
+        XCTAssertEqual(
+            try StudioRouteResourceSnapshot(
+                diagnosticsExportText: snapshot.diagnosticsExportText),
+            snapshot
+        )
+    }
+
+    func testResourceDetailIsAccessibilityOnlyAndDoesNotChangeDrawnOutput() {
+        let bare = StudioOverlayLayout.build(state())
+        var withResource = state()
+        withResource.resourceDetail = "res1 dec=1 cap=3 surf=1 ids=0000002A"
+        withResource.routeResourceDetail =
+            "rr1 route=source active=1 retained=0 cap=6 surf=1 ids=0000002A"
+        let model = StudioOverlayLayout.build(withResource)
+        XCTAssertEqual(model.texts, bare.texts)
+        XCTAssertEqual(model.rects, bare.rects)
+        let descriptor = model.accessibilityElements.first { $0.label == "Resource detail" }
+        XCTAssertEqual(descriptor?.role, .staticText)
+        XCTAssertEqual(descriptor?.value, withResource.resourceDetail)
+        let routeDescriptor = model.accessibilityElements.first {
+            $0.label == "Route resource detail"
+        }
+        XCTAssertEqual(routeDescriptor?.role, .staticText)
+        XCTAssertEqual(routeDescriptor?.value, withResource.routeResourceDetail)
+        XCTAssertNotEqual(descriptor?.label, routeDescriptor?.label)
+    }
+
+    func testSourceIdentityUsesAnOcrLegiblePointSize() throws {
+        var subject = state()
+        subject.sourceLabel = "KbSvponumjnJ1GvMD2RPfzpVKrpwbRlGV4w39VKIp0w"
+        let label = try XCTUnwrap(
+            StudioOverlayLayout.build(subject).texts.first {
+                $0.string == subject.sourceLabel
+            }
+        )
+
+        XCTAssertEqual(label.pointSize, 28, "14pt at the real 2x backing scale")
+    }
+
     // MARK: - Why the transport moved
 
     private func mutationRecord(

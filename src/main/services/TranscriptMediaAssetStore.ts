@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'crypto'
 import fs from 'fs'
 import path from 'path'
+import mediaLimits from '../../shared/mediaLimits.json'
 import { isSafeChatId } from '../ChatPath'
 import type { PersistedAttachmentRef } from '../store/types'
 
@@ -22,7 +23,7 @@ export const THREAD_MEDIA_CHUNK_MAX_BYTES = 448 * 1024
 // read() entirely (fs.createReadStream off disk), so these caps bound ingestion +
 // the base64-over-IPC fetch path, never playback.
 export const TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES = 64 * 1024 * 1024
-export const TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES = 512 * 1024 * 1024
+export const TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES = mediaLimits.transcriptMediaMaxVideoBytes
 export const TRANSCRIPT_MEDIA_MAX_PDF_BYTES = 80 * 1024 * 1024
 
 /** Per-kind byte cap, keyed off the MIME top-level type. Image is the legacy

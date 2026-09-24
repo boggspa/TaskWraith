@@ -11,6 +11,7 @@ const {
   EXPECTED,
   compareWindowCaptureToReference,
   expectedValueSequence,
+  sourceHostWindowEdgeInsets,
   verifyStudioPixelEvidence
 } = require('./studio-pixel-evidence-verifier.cjs') as {
   DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS: number
@@ -26,10 +27,17 @@ const {
   compareWindowCaptureToReference: (
     capturePath: string,
     referencePath: string,
-    windowBounds: { width: number; height: number },
-    options?: { hudOverlayHeight?: number }
+    windowBounds: { x?: number; y?: number; width: number; height: number },
+    options?: {
+      hudOverlayHeight?: number
+      sourceHostFrame?: { x: number; y: number; width: number; height: number }
+    }
   ) => Record<string, any>
   expectedValueSequence: () => number[]
+  sourceHostWindowEdgeInsets: (
+    sourceHostFrame: { x: number; y: number; width: number; height: number },
+    windowBounds: { x: number; y: number; width: number; height: number }
+  ) => { left: number; top: number; right: number; bottom: number }
   verifyStudioPixelEvidence: (
     evidence: Record<string, any>,
     driverSource: string,
@@ -265,6 +273,95 @@ function createVisualFixture(corrupt: boolean, backingScale = 1) {
   }
 }
 
+function createProjectedWindowFixture(
+  wrongFrame = false,
+  fractionalEdges = false,
+  opaquePolicy: 'floor-local' | 'round-local' = 'round-local'
+) {
+  const fixture = createVisualFixture(false)
+  const reference = PNG.sync.read(readFileSync(fixture.referencePath))
+  const windowBounds = fractionalEdges
+    ? { x: 100.25, y: 200.25, width: 200, height: 120 }
+    : { x: 100, y: 200, width: 200, height: 120 }
+  const sourceHostFrame = fractionalEdges
+    ? { x: 140.9, y: 230.9, width: 140, height: 70 }
+    : { x: 140, y: 230, width: 140, height: 70 }
+  const intermediate = new PNG({ width: 140, height: 70 })
+  const transforms = [
+    { scale: 0.97, offset: 7 },
+    { scale: 0.84, offset: 11 },
+    { scale: 0.824, offset: 39 }
+  ]
+  for (let y = 0; y < intermediate.height; y += 1) {
+    for (let x = 0; x < intermediate.width; x += 1) {
+      const target = (y * intermediate.width + x) * 4
+      const sourceX = wrongFrame ? (x + intermediate.width / 4) % intermediate.width : x
+      for (let channel = 0; channel < 3; channel += 1) {
+        const referenceValue = syntheticBilinearChannel(
+          reference,
+          ((sourceX + 0.5) * reference.width) / intermediate.width - 0.5,
+          ((y + 0.5) * reference.height) / intermediate.height - 0.5,
+          channel
+        )
+        intermediate.data[target + channel] = Math.max(
+          0,
+          Math.min(
+            255,
+            Math.round(transforms[channel].scale * referenceValue + transforms[channel].offset)
+          )
+        )
+      }
+      intermediate.data[target + 3] = 255
+    }
+  }
+
+  const capture = new PNG({ width: windowBounds.width, height: windowBounds.height })
+  const extent = { x: 10, y: 6, width: 180, height: 108 }
+  for (let y = extent.y; y < extent.y + extent.height; y += 1) {
+    for (let x = extent.x; x < extent.x + extent.width; x += 1) {
+      const pixel = (y * capture.width + x) * 4
+      capture.data[pixel] = 35
+      capture.data[pixel + 1] = 39
+      capture.data[pixel + 2] = 46
+      capture.data[pixel + 3] = 255
+    }
+  }
+  const edge = (value: number, origin: number) =>
+    fractionalEdges
+      ? opaquePolicy === 'floor-local'
+        ? Math.floor((value - origin) * 0.9)
+        : Math.round((value - origin) * 0.9)
+      : Math.round((value - origin) * 0.9)
+  const left = edge(sourceHostFrame.x, windowBounds.x)
+  const top = edge(sourceHostFrame.y, windowBounds.y)
+  const right = edge(sourceHostFrame.x + sourceHostFrame.width, windowBounds.x)
+  const bottom = edge(sourceHostFrame.y + sourceHostFrame.height, windowBounds.y)
+  const projected = {
+    x: extent.x + left,
+    y: extent.y + top,
+    width: right - left,
+    height: bottom - top
+  }
+  for (let y = 0; y < projected.height; y += 1) {
+    for (let x = 0; x < projected.width; x += 1) {
+      const target = ((projected.y + y) * capture.width + projected.x + x) * 4
+      for (let channel = 0; channel < 3; channel += 1) {
+        capture.data[target + channel] = Math.round(
+          syntheticBilinearChannel(
+            intermediate,
+            ((x + 0.5) * intermediate.width) / projected.width - 0.5,
+            ((y + 0.5) * intermediate.height) / projected.height - 0.5,
+            channel
+          )
+        )
+      }
+      capture.data[target + 3] = 255
+    }
+  }
+  writeFileSync(fixture.capturePath, PNG.sync.write(capture))
+  return { ...fixture, sourceHostFrame, windowBounds }
+}
+
 function createDefaultOverlayFixture(mutation: 'timeline-band' | 'above-timeline' | 'wrong-frame') {
   const directory = mkdtempSync(join(tmpdir(), 'studio-overlay-mask-'))
   const referencePath = join(directory, 'reference.png')
@@ -488,6 +585,256 @@ describe('Studio pixel evidence verifier', () => {
         },
         metrics: { materialPixelCount: 4_320 }
       })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('registers a one-window source host from its exact logical frame', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100, y: 200, width: 164, height: 112 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 },
+          captureX: 34,
+          captureY: 58,
+          videoWidth: 96,
+          videoHeight: 54,
+          comparisonHeight: 45
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('keeps an exact ScreenCaptureKit canvas authoritative over rounded-window alpha', () => {
+    const fixture = createVisualFixture(false)
+    try {
+      const capture = PNG.sync.read(readFileSync(fixture.capturePath))
+      const exactCanvas = new PNG({ width: 164, height: 112 })
+      for (let y = 0; y < exactCanvas.height; y += 1) {
+        for (let x = 0; x < exactCanvas.width; x += 1) {
+          const source = ((y + 13) * capture.width + x) * 4
+          const target = (y * exactCanvas.width + x) * 4
+          capture.data.copy(exactCanvas.data, target, source, source + 4)
+          if (x >= 144) exactCanvas.data[target + 3] = 0
+        }
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(exactCanvas))
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100, y: 200, width: 164, height: 112 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134, y: 245, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'exact-window-canvas',
+          captureExtent: { x: 0, y: 0, width: 164, height: 112 }
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('models the host render before a uniformly projected window capture', () => {
+    const fixture = createProjectedWindowFixture()
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          canvasBackingScale: 1,
+          captureMode: 'opaque-window-projection',
+          referenceProjection: 'logical-host-then-window',
+          captureExtent: { x: 10, y: 6, width: 180, height: 108 },
+          videoWidth: 126,
+          videoHeight: 63,
+          comparisonHeight: 55
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('still rejects a wrong frame through that projected-window model', () => {
+    const fixture = createProjectedWindowFixture(true)
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison.clean).toBe(false)
+      expect(comparison.registration.referenceProjection).toBe('logical-host-then-window')
+      expect(comparison.metrics.fractionAbove40).toBeGreaterThan(0.03)
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it('uses raster-extent rounding for fractional opaque WindowServer host edges', () => {
+    const fixture = createProjectedWindowFixture(false, true, 'round-local')
+    const wrong = createProjectedWindowFixture(true, true, 'round-local')
+    const floorFixture = createProjectedWindowFixture(false, true, 'floor-local')
+    const floorWrong = createProjectedWindowFixture(true, true, 'floor-local')
+    try {
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        fixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: fixture.sourceHostFrame }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'opaque-window-projection',
+          hostPixelEdgePolicy: 'round-local',
+          captureX: 47,
+          captureY: 34,
+          hostPixelEdges: { left: 37, top: 28, right: 163, bottom: 91 },
+          opaqueHostPixelCandidateSelection: {
+            selectedPolicy: 'round-local',
+            cleanCandidateCount: 1
+          }
+        }
+      })
+      expect(
+        compareWindowCaptureToReference(
+          wrong.capturePath,
+          wrong.referencePath,
+          wrong.windowBounds,
+          { hudOverlayHeight: 9, sourceHostFrame: wrong.sourceHostFrame }
+        ).clean
+      ).toBe(false)
+      const floorComparison = compareWindowCaptureToReference(
+        floorFixture.capturePath,
+        floorFixture.referencePath,
+        floorFixture.windowBounds,
+        { hudOverlayHeight: 9, sourceHostFrame: floorFixture.sourceHostFrame }
+      )
+      expect(floorComparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureMode: 'opaque-window-projection',
+          hostPixelEdgePolicy: 'floor-local',
+          captureX: 46,
+          captureY: 33,
+          hostPixelEdges: { left: 36, top: 27, right: 162, bottom: 90 },
+          opaqueHostPixelCandidateSelection: {
+            selectedPolicy: 'floor-local',
+            cleanCandidateCount: 1
+          }
+        }
+      })
+      expect(
+        compareWindowCaptureToReference(
+          floorWrong.capturePath,
+          floorWrong.referencePath,
+          floorWrong.windowBounds,
+          { hudOverlayHeight: 9, sourceHostFrame: floorWrong.sourceHostFrame }
+        ).clean
+      ).toBe(false)
+    } finally {
+      fixture.cleanup()
+      wrong.cleanup()
+      floorFixture.cleanup()
+      floorWrong.cleanup()
+    }
+  })
+
+  it('excludes only the one-pixel window border where a Source host touches an edge', () => {
+    expect(
+      sourceHostWindowEdgeInsets(
+        { x: -1920, y: 413, width: 640, height: 375 },
+        { x: -2560, y: 356, width: 1280, height: 832 }
+      )
+    ).toEqual({ left: 0, top: 0, right: 1, bottom: 0 })
+    expect(
+      sourceHostWindowEdgeInsets(
+        { x: 10, y: 20, width: 100, height: 50 },
+        { x: 0, y: 0, width: 200, height: 100 }
+      )
+    ).toEqual({ left: 0, top: 0, right: 0, bottom: 0 })
+  })
+
+  it('rounds finite fractional Retina host edges symmetrically to integer pixels', () => {
+    const fixture = createVisualFixture(false, 2)
+    try {
+      const capture = PNG.sync.read(readFileSync(fixture.capturePath))
+      const shifted = new PNG({ width: capture.width, height: capture.height })
+      for (let y = 0; y < capture.height; y += 1) {
+        for (let x = 0; x < capture.width; x += 1) {
+          const source = (y * capture.width + x) * 4
+          if (capture.data[source + 3] === 0 || x + 1 >= capture.width) continue
+          capture.data.copy(shifted.data, source + 4, source, source + 4)
+        }
+      }
+      writeFileSync(fixture.capturePath, PNG.sync.write(shifted))
+      const comparison = compareWindowCaptureToReference(
+        fixture.capturePath,
+        fixture.referencePath,
+        { x: 100.25, y: 200.25, width: 163.75, height: 85.75 },
+        {
+          hudOverlayHeight: 9,
+          sourceHostFrame: { x: 134.5, y: 232, width: 96, height: 54 }
+        }
+      )
+      expect(comparison).toMatchObject({
+        clean: true,
+        registration: {
+          captureX: 69,
+          captureY: 116,
+          videoWidth: 192,
+          videoHeight: 107,
+          hostPixelRect: { x: 69, y: 64, width: 192, height: 107 },
+          hostPixelEdges: { left: 69, top: 64, right: 261, bottom: 171 },
+          windowEdgeInsets: { left: 0, top: 0, right: 0, bottom: 1 }
+        }
+      })
+    } finally {
+      fixture.cleanup()
+    }
+  })
+
+  it.each([
+    ['out-of-window', { x: 99, y: 245, width: 96, height: 54 }],
+    ['full-window', { x: 100, y: 200, width: 164, height: 112 }],
+    ['malformed', { x: 134, y: 245, width: 0, height: 54 }]
+  ])('rejects a %s source host frame', (_label, sourceHostFrame) => {
+    const fixture = createVisualFixture(false)
+    try {
+      expect(() =>
+        compareWindowCaptureToReference(
+          fixture.capturePath,
+          fixture.referencePath,
+          { x: 100, y: 200, width: 164, height: 112 },
+          { sourceHostFrame }
+        )
+      ).toThrow(/source host frame|immutable window/i)
     } finally {
       fixture.cleanup()
     }

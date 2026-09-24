@@ -6,19 +6,29 @@ const {
   DIAGNOSTICS_MAX_IDENTITY_ENTRIES,
   DIAGNOSTICS_OCR_DIGEST_PATTERN,
   DIAGNOSTICS_PRESENTED_RATE_BOUNDS,
+  DIAGNOSTICS_READINESS_TIMEOUT_MS,
+  DIAGNOSTICS_SESSION_TIMEOUT_MS,
   DIAGNOSTICS_VISIBLE_RSS_CEILING_MEGABYTES,
-  UNPROMOTED_SESSION_DEPENDENCIES,
+  TRACKED_SESSION_DEPENDENCIES,
   assertDiagnostics,
+  boundedTimeoutMs,
   buildReferenceExtractCommand,
   describeFixtureContract,
   isPlayableSample,
   mediaToolCandidates,
   parseFramePtsCensus,
+  parseDiagnosticsCli,
   parseOcrInteger,
+  parseStudioTimecodeText,
   parseVisibleHud,
+  pressPlaybackTransition,
+  waitForPausedMediaReadiness,
+  waitForFreshPlayableSample,
+  withBoundedDiagnosticsSession,
   REQUIRED_RESOURCE_FIELDS,
   REQUIRED_RESOURCE_IDENTITY_ARRAYS,
   REQUIRED_VISIBLE_COUNTERS,
+  readSourceWorkspaceObservation,
   resolveMediaTool,
   runBoundedDiagnostics
 } = require('./studio-bounded-diagnostics-runner.cjs')
@@ -34,6 +44,69 @@ const OPTS = { expectedAssetId: EXPECTED_ASSET }
 /** A real lowercase 64-hex digest, distinct per seed so samples cannot collide. */
 function digestFor(seed: unknown) {
   return require('node:crypto').createHash('sha256').update(String(seed)).digest('hex')
+}
+
+const availableWindowServer = () => ({ windowServerEvidenceAvailable: true })
+
+function diagnosticsWorkspace(frame: Record<string, number>) {
+  const element = (
+    identifier: string,
+    visible: boolean,
+    role: string | null,
+    value: string | null,
+    enabled: boolean | null,
+    elementFrame: Record<string, number> | null
+  ) => ({ identifier, visible, role, value, enabled, frame: elementFrame })
+  return {
+    elements: [
+      element('studio.workspace.root', true, 'AXGroup', null, null, {
+        x: 100,
+        y: 200,
+        width: 960,
+        height: 640
+      }),
+      element('studio.workspace.route.source', true, 'AXCheckBox', 'selected', true, {
+        x: 104,
+        y: 204,
+        width: 40,
+        height: 20
+      }),
+      element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+        x: 148,
+        y: 204,
+        width: 48,
+        height: 20
+      }),
+      element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
+      element('studio.workspace.viewer.timeline', false, null, null, null, null),
+      element(
+        'studio.workspace.review-version.current',
+        true,
+        'AXRadioButton',
+        'unavailable',
+        false,
+        {
+          x: 204,
+          y: 204,
+          width: 60,
+          height: 20
+        }
+      ),
+      element(
+        'studio.workspace.review-version.proposed',
+        true,
+        'AXRadioButton',
+        'unavailable',
+        false,
+        {
+          x: 268,
+          y: 204,
+          width: 80,
+          height: 20
+        }
+      )
+    ]
+  }
 }
 
 /** HH:MM:SS.mmm for a numeric playhead, so text and seconds cannot disagree. */
@@ -292,6 +365,13 @@ describe('HUD parsing reads every counter the outcome claims', () => {
       textures: 8
     })
     expect(parsed.players).toEqual({ count: 1, rssMegabytes: 512.5 })
+  })
+
+  it('derives transport only from one exact PLAY or PAUSE OCR token', () => {
+    const base = { matchAsset: () => ({ matched: true }) }
+    expect(parseVisibleHud({ texts: ['play 2', 'drop 0'] }, 'a', base).state).toBeNull()
+    expect(parseVisibleHud({ texts: ['PLAY', 'PAUSE'] }, 'a', base).state).toBeNull()
+    expect(parseVisibleHud({ texts: ['PLAYBACK', 'drop 0'] }, 'a', base).state).toBeNull()
   })
 
   it('reports a missing timecode as null rather than zero', () => {
@@ -856,26 +936,607 @@ describe('the serialized evidence schema, closed as a schema rather than by exam
   })
 })
 
-describe('the runner is honest about what it cannot yet do', () => {
-  // The session layer (withIsolatedSession, invokeStudioOpen, captureNative,
-  // waitForSourceWindow, ocrScreenshot, resourceSample, focus isolation) is still
-  // untracked. Rather than silently reaching into .local-only, an end-to-end run
-  // must refuse and name what is missing. Shipping a runner that LOOKS runnable is
-  // how an outcome gets promoted on apparatus nobody can reproduce.
-  it('names the unpromoted session dependencies explicitly', () => {
-    expect(UNPROMOTED_SESSION_DEPENDENCIES.length).toBeGreaterThan(0)
-    expect(UNPROMOTED_SESSION_DEPENDENCIES).toContain('withIsolatedSession')
-    expect(UNPROMOTED_SESSION_DEPENDENCIES).toContain('captureNative')
+describe('the runner carries tracked end-to-end apparatus', () => {
+  it('keeps readiness and the enclosing live session explicitly bounded', async () => {
+    expect(DIAGNOSTICS_READINESS_TIMEOUT_MS).toBe(90_000)
+    expect(DIAGNOSTICS_SESSION_TIMEOUT_MS).toBe(300_000)
+    expect(boundedTimeoutMs(undefined, 90_000, 'test timeout')).toBe(90_000)
+    expect(boundedTimeoutMs(12_000, 90_000, 'test timeout')).toBe(12_000)
+    expect(() => boundedTimeoutMs(90_001, 90_000, 'test timeout')).toThrow(
+      /no greater than 90000 ms/
+    )
+
+    let readinessTimeout: number | null = null
+    const readinessSentinel = { ready: true }
+    const readiness = await waitForPausedMediaReadiness(
+      {},
+      {},
+      {},
+      {
+        waitFor: async (_label: string, _probe: () => Promise<unknown>, timeoutMs: number) => {
+          readinessTimeout = timeoutMs
+          return readinessSentinel
+        }
+      }
+    )
+    expect(readiness).toBe(readinessSentinel)
+    expect(readinessTimeout).toBe(DIAGNOSTICS_READINESS_TIMEOUT_MS)
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        {},
+        {},
+        { waitFor: async () => readinessSentinel },
+        { timeoutMs: DIAGNOSTICS_READINESS_TIMEOUT_MS + 1 }
+      )
+    ).rejects.toThrow(/readiness timeout.*no greater than 90000 ms/)
+
+    let sessionTimeout: number | null = null
+    const sessionResult = await withBoundedDiagnosticsSession(
+      { runtime: true },
+      {},
+      async () => 'bounded-session',
+      {
+        withIsolatedSession: async (
+          _runtime: unknown,
+          sessionOptions: Record<string, unknown>,
+          operation: (context: unknown) => Promise<unknown>
+        ) => {
+          sessionTimeout = sessionOptions.timeoutMs as number
+          return operation({})
+        }
+      }
+    )
+    expect(sessionResult).toBe('bounded-session')
+    expect(sessionTimeout).toBe(DIAGNOSTICS_SESSION_TIMEOUT_MS)
+    await expect(
+      withBoundedDiagnosticsSession(
+        {},
+        { timeoutMs: DIAGNOSTICS_SESSION_TIMEOUT_MS + 1 },
+        async () => null,
+        { withIsolatedSession: async () => null }
+      )
+    ).rejects.toThrow(/session timeout.*no greater than 300000 ms/)
   })
 
-  it('refuses an end-to-end run instead of pretending to observe', async () => {
-    await expect(runBoundedDiagnostics()).rejects.toThrow(/not yet promoted/i)
+  it('validates one exact background Playback AXPress receipt', async () => {
+    const receipt = await pressPlaybackTransition(
+      { artifactRoot: '/tmp/diagnostics-playback-test' },
+      { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+      'paused',
+      'playing',
+      {
+        runStudioUiDriver: async () => ({
+          inputDelivery: 'background-observation-only',
+          actions: [
+            {
+              index: 0,
+              type: 'press-playback',
+              accessibilityLabel: 'Playback',
+              accessibilityAction: 'AXPress',
+              playbackValueBefore: 'paused',
+              playbackValueAfter: 'playing'
+            }
+          ]
+        })
+      }
+    )
+    expect(receipt.actions[0]).toMatchObject({ playbackValueAfter: 'playing' })
+    await expect(
+      pressPlaybackTransition(
+        { artifactRoot: '/tmp/diagnostics-playback-test' },
+        { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+        'playing',
+        'paused',
+        {
+          runStudioUiDriver: async () => ({
+            inputDelivery: 'background-observation-only',
+            actions: [
+              {
+                index: 0,
+                type: 'press-playback',
+                accessibilityLabel: 'Playback',
+                accessibilityAction: 'AXPress',
+                playbackValueBefore: 'paused',
+                playbackValueAfter: 'paused',
+                forged: true
+              }
+            ]
+          })
+        }
+      )
+    ).rejects.toThrow(/forged or malformed/)
   })
 
-  it('names every missing dependency in the refusal, so the follow-up is unambiguous', async () => {
-    const error = await runBoundedDiagnostics().catch((e: Error) => e)
-    for (const dependency of UNPROMOTED_SESSION_DEPENDENCIES) {
-      expect(String(error.message)).toContain(dependency)
+  it('enforces the paused-to-playing then playing-to-paused sequence', async () => {
+    const transitions: string[] = []
+    const adapters = {
+      runStudioUiDriver: async (
+        _plan: unknown,
+        _target: unknown,
+        actions: Array<Record<string, any>>
+      ) => {
+        const action = actions[0]
+        transitions.push(`${action.playbackValueBefore}->${action.playbackValueAfter}`)
+        return {
+          inputDelivery: 'background-observation-only',
+          actions: [
+            {
+              index: 0,
+              type: 'press-playback',
+              accessibilityLabel: 'Playback',
+              accessibilityAction: 'AXPress',
+              playbackValueBefore: action.playbackValueBefore,
+              playbackValueAfter: action.playbackValueAfter
+            }
+          ]
+        }
+      }
     }
+    await pressPlaybackTransition({}, {}, 'paused', 'playing', adapters)
+    await pressPlaybackTransition({}, {}, 'playing', 'paused', adapters)
+    expect(transitions).toEqual(['paused->playing', 'playing->paused'])
+  })
+
+  it('reads Source geometry through the tracked background workspace contract', async () => {
+    const bounds = { x: 100, y: 200, width: 960, height: 640 }
+    const frame = { x: 100, y: 240, width: 960, height: 540 }
+    const element = (
+      identifier: string,
+      visible: boolean,
+      role: string | null,
+      value: string | null,
+      enabled: boolean | null,
+      elementFrame: Record<string, number> | null
+    ) => ({ identifier, visible, role, value, enabled, frame: elementFrame })
+    const workspace = {
+      elements: [
+        element('studio.workspace.root', true, 'AXGroup', null, null, bounds),
+        element('studio.workspace.route.source', true, 'AXCheckBox', 'selected', true, {
+          x: 104,
+          y: 204,
+          width: 40,
+          height: 20
+        }),
+        element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+          x: 148,
+          y: 204,
+          width: 48,
+          height: 20
+        }),
+        element('studio.workspace.viewer.source', true, 'AXGroup', null, null, frame),
+        element('studio.workspace.viewer.timeline', false, null, null, null, null),
+        element(
+          'studio.workspace.review-version.current',
+          true,
+          'AXRadioButton',
+          'unavailable',
+          false,
+          { x: 204, y: 204, width: 60, height: 20 }
+        ),
+        element(
+          'studio.workspace.review-version.proposed',
+          true,
+          'AXRadioButton',
+          'unavailable',
+          false,
+          { x: 268, y: 204, width: 80, height: 20 }
+        )
+      ]
+    }
+    let receivedOptions: Record<string, any> | null = null
+    const result = await readSourceWorkspaceObservation(
+      { artifactRoot: '/tmp/diagnostics-workspace-test' },
+      { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+      bounds,
+      {
+        runStudioUiDriver: async (
+          _plan: unknown,
+          _target: unknown,
+          _actions: unknown,
+          options: Record<string, any>
+        ) => {
+          receivedOptions = options
+          return { actions: [{ index: 0, type: 'read-workspace', workspace }] }
+        }
+      }
+    )
+    expect(result.sourceHostFrame).toEqual(frame)
+    expect(receivedOptions).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false
+    })
+    const unselected = structuredClone(workspace)
+    unselected.elements[1].value = 'not selected'
+    await expect(
+      readSourceWorkspaceObservation(
+        { artifactRoot: '/tmp/diagnostics-workspace-test' },
+        { window: { windows: [{ windowId: 1 }], visibleWindowCount: 1 } },
+        bounds,
+        {
+          runStudioUiDriver: async () => ({
+            actions: [{ index: 0, type: 'read-workspace', workspace: unselected }]
+          })
+        }
+      )
+    ).rejects.toThrow(/Source selected and visibly presented/)
+  })
+
+  it('uses each sample’s fresh Source frame after an internal layout shift', async () => {
+    const sampleAsset = 'A'.repeat(43)
+    const frames = [
+      { x: 100, y: 240, width: 960, height: 540 },
+      { x: 120, y: 240, width: 940, height: 528 }
+    ]
+    let readCount = 0
+    let ocrCount = 0
+    const comparedFrames: Array<Record<string, number>> = []
+    const adapters = {
+      assertWindowServerSessionAvailable: availableWindowServer,
+      runStudioUiDriver: async () => ({
+        actions: [
+          {
+            index: 0,
+            type: 'read-workspace',
+            workspace: diagnosticsWorkspace(frames[Math.min(readCount++, frames.length - 1)])
+          }
+        ]
+      }),
+      captureNative: async () => ({ path: '/tmp/diagnostics-capture.png' }),
+      ocrScreenshot: () => ({
+        texts: [
+          `00:00:0${++ocrCount}.000`,
+          'PLAY',
+          'drop 0',
+          'held 0',
+          'shown 10',
+          'cache 1',
+          'tex 2',
+          'play 1',
+          'rss 1 MB'
+        ],
+        stdoutSha256: digestFor('ocr')
+      }),
+      hudContainsAsset: () => ({ matched: true, distance: 0 }),
+      generateReference: () => ({ path: '/tmp/diagnostics-reference.png' }),
+      compareWindowCaptureToReference: (
+        _capture: string,
+        _reference: string,
+        _bounds: Record<string, number>,
+        options: Record<string, any>
+      ) => {
+        comparedFrames.push(options.sourceHostFrame)
+        return { clean: true, metrics: {} }
+      }
+    }
+    await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-layout-shift' },
+      { asset: { sha256: sampleAsset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      adapters
+    )
+    await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-layout-shift' },
+      { asset: { sha256: sampleAsset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      1,
+      1,
+      adapters
+    )
+    expect(comparedFrames).toEqual(frames)
+  })
+
+  it('waits for paused exact media and a positive transport duration before starting', async () => {
+    let captures = 0
+    const asset = 'A'.repeat(43)
+    const readiness = await waitForPausedMediaReadiness(
+      { artifactRoot: '/tmp/diagnostics-readiness' },
+      { asset: { sha256: asset } },
+      { x: 100, y: 200, width: 960, height: 640 },
+      {
+        runStudioUiDriver: async () => ({
+          actions: [
+            {
+              index: 0,
+              type: 'read-workspace',
+              workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+            }
+          ]
+        }),
+        captureNative: async () => {
+          captures += 1
+          return {
+            path: '/tmp/readiness.png',
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: captures === 1 ? '0' : '900' } }
+            }
+          }
+        },
+        ocrScreenshot: () => ({
+          texts: captures === 1 ? ['PAUSE'] : ['00:00:00.000', 'PAUSE'],
+          stdoutSha256: digestFor('readiness')
+        }),
+        hudContainsAsset: () => ({ matched: captures > 1, distance: 0 })
+      },
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(captures).toBe(2)
+    expect(readiness.observed).toMatchObject({ state: 'PAUSE', assetMatch: { distance: 0 } })
+    expect(readiness.capture.transportMutationBracket.after.parsedValue.afterDurationTicks).toBe(
+      '900'
+    )
+  })
+
+  it('retries one-character asset/counter OCR misses without combining observations', async () => {
+    const asset = 'A'.repeat(43)
+    let captures = 0
+    const adapters = {
+      assertWindowServerSessionAvailable: availableWindowServer,
+      runStudioUiDriver: async () => ({
+        actions: [
+          {
+            index: 0,
+            type: 'read-workspace',
+            workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+          }
+        ]
+      }),
+      captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
+        path: `/tmp/${name}.png`,
+        sha256: `capture-${++captures}`
+      }),
+      ocrScreenshot: () => ({
+        texts: [
+          '00:00:01.000',
+          'PLAY',
+          'drop 0',
+          'held 0',
+          captures === 1 ? 'shown x' : 'shown 1',
+          'cache 1',
+          'tex 2',
+          'play 1',
+          'rss 1 MB'
+        ],
+        stdoutSha256: digestFor(`ocr-${captures}`)
+      }),
+      hudContainsAsset: () => ({ matched: captures > 1, distance: captures > 1 ? 0 : 1 }),
+      generateReference: () => ({ path: '/tmp/reference.png' }),
+      compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+    }
+    const result = await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-retry' },
+      { asset: { sha256: asset } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      adapters,
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(result.retry.attemptCount).toBe(2)
+    expect(result.retry.attempts[0].reasons).toEqual(
+      expect.arrayContaining(['asset-identity-mismatch', 'counter-unreadable'])
+    )
+    expect(result.observed.assetMatch.distance).toBe(0)
+    expect(captures).toBe(2)
+    expect(result.retry.attempts[0].capture.path).not.toBe(result.capture.path)
+  })
+
+  it('retries an unreadable PTS with a distinct capture and recovers the raw winner', async () => {
+    let captures = 0
+    const result = await waitForFreshPlayableSample(
+      { artifactRoot: '/tmp/diagnostics-pts-retry' },
+      { asset: { sha256: 'A'.repeat(43) } },
+      { values: [1, 2], count: 2 },
+      { x: 100, y: 200, width: 960, height: 640 },
+      0,
+      null,
+      {
+        assertWindowServerSessionAvailable: availableWindowServer,
+        runStudioUiDriver: async () => ({
+          actions: [
+            {
+              index: 0,
+              type: 'read-workspace',
+              workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+            }
+          ]
+        }),
+        captureNative: async (_plan: unknown, _target: unknown, name: string) => ({
+          path: `/tmp/${name}.png`,
+          sha256: `pts-${++captures}`
+        }),
+        ocrScreenshot: () => ({
+          texts:
+            captures === 1
+              ? ['PLAY', 'drop 0', 'held 0', 'shown 1', 'cache 1', 'tex 2', 'play 1', 'rss 1 MB']
+              : [
+                  '00:00:01.000',
+                  'PLAY',
+                  'drop 0',
+                  'held 0',
+                  'shown 1',
+                  'cache 1',
+                  'tex 2',
+                  'play 1',
+                  'rss 1 MB'
+                ],
+          stdoutSha256: digestFor(`pts-${captures}`)
+        }),
+        hudContainsAsset: () => ({ matched: true, distance: 0 }),
+        generateReference: () => ({ path: '/tmp/reference.png' }),
+        compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+      },
+      { timeoutMs: 500, intervalMs: 0 }
+    )
+    expect(result.retry.attemptCount).toBe(2)
+    expect(result.retry.attempts[0].reasons).toContain('playhead-unreadable-or-out-of-range')
+    expect(result.capture.path).toContain('attempt-01')
+    expect(result.retry.attempts[0].capture.path).not.toBe(result.capture.path)
+  })
+
+  it.each([
+    ['nonretryable state', 'PAUSE', 1, null],
+    ['nonadvancing playhead', 'PLAY', 1, 2]
+  ])('fails fast for %s instead of retrying', async (_label, state, capturesExpected, previous) => {
+    let captures = 0
+    await expect(
+      waitForFreshPlayableSample(
+        { artifactRoot: '/tmp/diagnostics-nonretry' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { values: [1, 2], count: 2 },
+        { x: 100, y: 200, width: 960, height: 640 },
+        0,
+        previous,
+        {
+          assertWindowServerSessionAvailable: availableWindowServer,
+          runStudioUiDriver: async () => ({
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
+          }),
+          captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
+          ocrScreenshot: () => ({
+            texts: [
+              '00:00:02.000',
+              state,
+              'drop 0',
+              'held 0',
+              'shown 1',
+              'cache 1',
+              'tex 2',
+              'play 1',
+              'rss 1 MB'
+            ],
+            stdoutSha256: digestFor('nonretry')
+          }),
+          hudContainsAsset: () => ({ matched: true, distance: 0 }),
+          generateReference: () => ({ path: '/tmp/reference.png' }),
+          compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+        },
+        { timeoutMs: 500, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/non-retryable/)
+    expect(captures).toBe(capturesExpected)
+  })
+
+  it('does not combine partial OCR observations across attempts', async () => {
+    let captures = 0
+    await expect(
+      waitForFreshPlayableSample(
+        { artifactRoot: '/tmp/diagnostics-partial' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { values: [1, 2], count: 2 },
+        { x: 100, y: 200, width: 960, height: 640 },
+        0,
+        null,
+        {
+          assertWindowServerSessionAvailable: availableWindowServer,
+          runStudioUiDriver: async () => ({
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
+          }),
+          captureNative: async () => ({ path: '/tmp/sample.png', sha256: `capture-${++captures}` }),
+          ocrScreenshot: () => ({
+            texts: [
+              '00:00:01.000',
+              'PLAY',
+              'drop 0',
+              'held 0',
+              captures === 1 ? 'shown x' : 'shown 1',
+              'cache 1',
+              'tex 2',
+              'play 1',
+              'rss 1 MB'
+            ],
+            stdoutSha256: digestFor(`partial-${captures}`)
+          }),
+          hudContainsAsset: () => ({ matched: captures === 1, distance: captures === 1 ? 0 : 1 }),
+          generateReference: () => ({ path: '/tmp/reference.png' }),
+          compareWindowCaptureToReference: () => ({ clean: true, metrics: {} })
+        },
+        { timeoutMs: 500, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/readiness timed out/)
+    expect(captures).toBeGreaterThanOrEqual(2)
+  })
+
+  it.each([
+    ['fuzzy asset', { matched: true, distance: 1 }, ['00:00:00.000', 'PAUSE'], '900'],
+    ['wrong state', { matched: true, distance: 0 }, ['00:00:00.000', 'PLAY'], '900'],
+    ['zero duration', { matched: true, distance: 0 }, ['00:00:00.000', 'PAUSE'], '0']
+  ])('rejects %s paused-media readiness', async (_label, match, texts, durationTicks) => {
+    await expect(
+      waitForPausedMediaReadiness(
+        { artifactRoot: '/tmp/diagnostics-readiness' },
+        { asset: { sha256: 'A'.repeat(43) } },
+        { x: 100, y: 200, width: 960, height: 640 },
+        {
+          runStudioUiDriver: async () => ({
+            actions: [
+              {
+                index: 0,
+                type: 'read-workspace',
+                workspace: diagnosticsWorkspace({ x: 100, y: 240, width: 960, height: 540 })
+              }
+            ]
+          }),
+          captureNative: async () => ({
+            path: '/tmp/readiness.png',
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: durationTicks } }
+            }
+          }),
+          ocrScreenshot: () => ({ texts, stdoutSha256: digestFor('readiness-fail') }),
+          hudContainsAsset: () => match
+        },
+        { timeoutMs: 20, intervalMs: 0 }
+      )
+    ).rejects.toThrow(/timed out|not ready/i)
+  })
+
+  it('names and resolves every tracked session dependency', () => {
+    expect(TRACKED_SESSION_DEPENDENCIES.length).toBeGreaterThan(0)
+    expect(TRACKED_SESSION_DEPENDENCIES).toContain('withIsolatedSession')
+    expect(TRACKED_SESSION_DEPENDENCIES).toContain('captureNative')
+    const session = require('./studio-acceptance-session.cjs')
+    for (const dependency of TRACKED_SESSION_DEPENDENCIES) {
+      expect(session[dependency]).toBeTypeOf('function')
+    }
+  })
+
+  it('requires a fresh explicit artifact root before any end-to-end run', async () => {
+    await expect(runBoundedDiagnostics()).rejects.toThrow(/fresh absolute artifact root/i)
+  })
+
+  it('parses only the explicit bounded diagnostics launch argument', () => {
+    expect(parseDiagnosticsCli(['--artifact-root', '/tmp/diagnostics-a'])).toEqual({
+      help: false,
+      artifactRoot: '/tmp/diagnostics-a'
+    })
+    expect(parseDiagnosticsCli(['--help'])).toEqual({ help: true, artifactRoot: null })
+    expect(() => parseDiagnosticsCli([])).toThrow(/artifact-root is required/)
+    expect(() => parseDiagnosticsCli(['--unknown'])).toThrow(/unknown/)
+  })
+
+  it('parses the live frame timecode as well as the legacy decimal form', () => {
+    expect(parseStudioTimecodeText('00:00:10:15')).toBe(10.5)
+    expect(parseStudioTimecodeText('00:00:10.500')).toBe(10.5)
+    expect(parseStudioTimecodeText('00:00:10:30')).toBeNull()
   })
 })

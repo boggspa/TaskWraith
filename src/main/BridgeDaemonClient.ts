@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { createInterface, type Interface as ReadlineInterface } from 'readline'
+import { resolvePackagedBridgeDaemonPath } from './BridgeDaemonBinaryPath'
 
 /**
  * BridgeDaemonClient — Electron-side bridge to the
@@ -106,9 +107,10 @@ export class BridgeDaemonClient {
    *
    * Resolution order:
    *   1. Explicit `options.binaryPath` (tests / smokes override this).
-   *   2. Packaged Electron build: `process.resourcesPath/bridge/
-   *      TaskWraithBridgeDaemon`. `electron-builder.yml`'s mac
-   *      `extraResources` block places the release binary there, and
+   *   2. Packaged Electron build: the executable inside
+   *      `Contents/Helpers/TaskWraith Bridge.app`.
+   *      `electron-builder.yml`'s mac `extraFiles` block places the release
+   *      binary there, and
    *      `scripts/build-bridge-daemon.cjs` builds it just before
    *      electron-builder packs.
    *   3. Dev tree: `swift/TaskWraithBridge/.build/debug/...` (after
@@ -121,15 +123,11 @@ export class BridgeDaemonClient {
   private resolveBinaryPath(): string {
     if (this.options.binaryPath) return this.options.binaryPath
 
-    // Packaged build: check the embedded resource path. process.resourcesPath
-    // is set in any Electron main process; in a packaged .app it points
-    // inside the bundle (e.g. .../TaskWraith.app/Contents/Resources). In
-    // dev (electron-vite), it points at electron's vendored resources
-    // and our daemon won't be there — fall through to the dev path.
-    if (process.resourcesPath) {
-      const bundled = join(process.resourcesPath, 'bridge', 'TaskWraithBridgeDaemon')
-      if (existsSync(bundled)) return bundled
-    }
+    // process.resourcesPath points at Contents/Resources in a packaged app;
+    // the resolver walks to the sibling Contents/Helpers directory. In dev it
+    // points at Electron's vendored resources and falls through to SwiftPM.
+    const bundled = resolvePackagedBridgeDaemonPath(process.resourcesPath)
+    if (bundled) return bundled
 
     // Dev: prefer debug, fall back to release. Path is relative to
     // src/main/ → repo root.

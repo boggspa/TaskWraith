@@ -261,6 +261,189 @@ public struct StudioOverlayDiagnostics: Equatable, Sendable {
     }
 }
 
+/// One bounded, process-local resource snapshot shared by both route views.
+/// Source IDs are unioned before formatting so a lease shared by Source and
+/// Review is never counted twice.
+public struct StudioResourceSnapshot: Equatable, Sendable {
+    public static let maximumExportByteCount = 65_536
+    /// Each canonical ID consumes at most nine bytes (eight hex digits plus a
+    /// comma). 7,000 IDs consume 62,999 bytes, leaving over 2.5KB for the
+    /// version, counts, separators, and worst-case decimal Int values.
+    public static let maximumExportSurfaceIDCount = 7_000
+    public let decoderCount: Int
+    public let capacity: Int
+    public let surfaceIDs: Set<UInt32>
+
+    public init(
+        decoderCount: Int,
+        sharedPoolSurfaceIDs: Set<UInt32>,
+        sharedPoolCapacity: Int,
+        presentationRingSurfaceIDs: [Set<UInt32>],
+        presentationRingCapacities: [Int]
+    ) {
+        let ids = presentationRingSurfaceIDs.reduce(into: sharedPoolSurfaceIDs) {
+            $0.formUnion($1)
+        }
+        let derivedCapacity = sharedPoolCapacity + presentationRingCapacities.reduce(0, +)
+        precondition(decoderCount >= 0 && derivedCapacity >= 0)
+        precondition(ids.count <= derivedCapacity)
+        self.decoderCount = decoderCount
+        self.capacity = derivedCapacity
+        self.surfaceIDs = ids
+    }
+
+    public var diagnosticsExportText: String {
+        let prefix = "res1 dec=\(decoderCount) cap=\(capacity) surf=\(surfaceIDs.count) ids="
+        if surfaceIDs.count > Self.maximumExportSurfaceIDCount {
+            let overflow = prefix + "!"
+            precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+            return overflow
+        }
+        let ids = surfaceIDs.sorted().map { String(format: "%08X", $0) }.joined(separator: ",")
+        let export = prefix + (ids.isEmpty ? "-" : ids)
+        if export.utf8.count <= Self.maximumExportByteCount {
+            return export
+        }
+        let overflow = prefix + "!"
+        precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+        return overflow
+    }
+}
+
+/// One route's renderer-owned resources, exported without consulting the
+/// process-wide decoder pool or the other route's presentation ring.
+///
+/// Canonical grammar:
+/// `rr1 route=<source|review> active=<n> retained=<n> cap=<n> surf=<n> ids=<-|ID[,ID...]>`
+///
+/// IDs are exactly eight uppercase hexadecimal digits in strictly increasing
+/// order. `ids=!` is an explicit bounded-export overflow marker and is rejected
+/// by the parser because it cannot round-trip the omitted identities.
+public struct StudioRouteResourceSnapshot: Equatable, Sendable {
+    public enum ParseError: Error, Equatable {
+        case invalid
+        case overflow
+    }
+
+    public static let maximumExportByteCount = 65_536
+    public static let maximumExportSurfaceIDCount = 7_000
+
+    public let route: StudioViewerRoute
+    public let activeSourceCount: Int
+    public let retainedFrameCount: Int
+    public let capacity: Int
+    public let surfaceIDs: Set<UInt32>
+
+    public init(
+        route: StudioViewerRoute,
+        activeSourceCount: Int,
+        retainedFrameCount: Int,
+        capacity: Int,
+        surfaceIDs: Set<UInt32>
+    ) {
+        precondition(activeSourceCount >= 0)
+        precondition(retainedFrameCount >= 0 && capacity >= 0)
+        // Do not precondition count <= capacity here. This is an observation
+        // seam: a stranded surface is evidence to export and reject downstream,
+        // not a reason to crash the Companion before the evidence is readable.
+        self.route = route
+        self.activeSourceCount = activeSourceCount
+        self.retainedFrameCount = retainedFrameCount
+        self.capacity = capacity
+        self.surfaceIDs = surfaceIDs
+    }
+
+    public var diagnosticsExportText: String {
+        let prefix =
+            "rr1 route=\(route.rawValue) active=\(activeSourceCount) "
+            + "retained=\(retainedFrameCount) cap=\(capacity) "
+            + "surf=\(surfaceIDs.count) ids="
+        if surfaceIDs.count > Self.maximumExportSurfaceIDCount {
+            let overflow = prefix + "!"
+            precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+            return overflow
+        }
+        let ids = surfaceIDs.sorted().map { String(format: "%08X", $0) }.joined(separator: ",")
+        let export = prefix + (ids.isEmpty ? "-" : ids)
+        if export.utf8.count <= Self.maximumExportByteCount { return export }
+        let overflow = prefix + "!"
+        precondition(overflow.utf8.count <= Self.maximumExportByteCount)
+        return overflow
+    }
+
+    public init(diagnosticsExportText text: String) throws {
+        guard !text.isEmpty, text.utf8.count <= Self.maximumExportByteCount else {
+            throw ParseError.invalid
+        }
+        let fields = text.split(separator: " ", omittingEmptySubsequences: false)
+        guard fields.count == 7, fields[0] == "rr1",
+            let routeText = Self.value(fields[1], named: "route"),
+            let route = StudioViewerRoute(rawValue: String(routeText)),
+            let activeText = Self.value(fields[2], named: "active"),
+            let activeSourceCount = Self.canonicalNonnegativeInt(activeText),
+            let retainedText = Self.value(fields[3], named: "retained"),
+            let retainedFrameCount = Self.canonicalNonnegativeInt(retainedText),
+            let capacityText = Self.value(fields[4], named: "cap"),
+            let capacity = Self.canonicalNonnegativeInt(capacityText),
+            let surfaceCountText = Self.value(fields[5], named: "surf"),
+            let surfaceCount = Self.canonicalNonnegativeInt(surfaceCountText),
+            let idsText = Self.value(fields[6], named: "ids")
+        else { throw ParseError.invalid }
+        guard idsText != "!" else { throw ParseError.overflow }
+        guard surfaceCount <= Self.maximumExportSurfaceIDCount,
+            retainedFrameCount <= capacity,
+            surfaceCount <= capacity
+        else { throw ParseError.invalid }
+
+        let parsedIDs: [UInt32]
+        if idsText == "-" {
+            guard surfaceCount == 0 else { throw ParseError.invalid }
+            parsedIDs = []
+        } else {
+            let tokens = idsText.split(separator: ",", omittingEmptySubsequences: false)
+            guard tokens.count == surfaceCount, !tokens.isEmpty else {
+                throw ParseError.invalid
+            }
+            var previous: UInt32?
+            parsedIDs = try tokens.map { token in
+                guard token.utf8.count == 8,
+                    token.utf8.allSatisfy({
+                        (48...57).contains($0) || (65...70).contains($0)
+                    }),
+                    let id = UInt32(token, radix: 16),
+                    previous.map({ $0 < id }) ?? true
+                else { throw ParseError.invalid }
+                previous = id
+                return id
+            }
+        }
+        self.init(
+            route: route,
+            activeSourceCount: activeSourceCount,
+            retainedFrameCount: retainedFrameCount,
+            capacity: capacity,
+            surfaceIDs: Set(parsedIDs)
+        )
+        guard diagnosticsExportText == text else { throw ParseError.invalid }
+    }
+
+    private static func value(_ field: Substring, named name: String) -> Substring? {
+        let prefix = name + "="
+        guard field.hasPrefix(prefix) else { return nil }
+        let value = field.dropFirst(prefix.count)
+        return value.isEmpty ? nil : value
+    }
+
+    private static func canonicalNonnegativeInt(_ text: Substring) -> Int? {
+        guard text.utf8.allSatisfy({ (48...57).contains($0) }),
+            text.count == 1 || text.first != "0",
+            let value = Int(text), value >= 0,
+            String(value) == text
+        else { return nil }
+        return value
+    }
+}
+
 /// Everything the overlay needs, flattened out of the transport so the layout is
 /// a pure function of a value.
 public struct StudioOverlayState: Equatable, Sendable {
@@ -284,6 +467,12 @@ public struct StudioOverlayState: Equatable, Sendable {
     public var entry: StudioTimecodeFieldSnapshot?
     public var message: String?
     public var diagnostics: StudioOverlayDiagnostics?
+    /// Accessibility-only resource snapshot. It is deliberately not part of
+    /// drawn text or geometry.
+    public var resourceDetail: String?
+    /// Route-qualified renderer resources. Kept separate from shared `res1` so
+    /// existing acceptance parsers remain byte-for-byte compatible.
+    public var routeResourceDetail: String?
     /// Open ghost proposals, already resolved into the coordinates of whichever
     /// version is displayed. The layout does not know about rational time or the
     /// wire contract — StudioProposedTimeline has already done that.
@@ -306,7 +495,9 @@ public struct StudioOverlayState: Equatable, Sendable {
         sourceLabel: String = "No media",
         entry: StudioTimecodeFieldSnapshot? = nil,
         message: String? = nil,
-        diagnostics: StudioOverlayDiagnostics? = nil
+        diagnostics: StudioOverlayDiagnostics? = nil,
+        resourceDetail: String? = nil,
+        routeResourceDetail: String? = nil
     ) {
         self.viewport = viewport
         self.positionTicks = positionTicks
@@ -321,6 +512,8 @@ public struct StudioOverlayState: Equatable, Sendable {
         self.entry = entry
         self.message = message
         self.diagnostics = diagnostics
+        self.resourceDetail = resourceDetail
+        self.routeResourceDetail = routeResourceDetail
     }
 }
 
@@ -335,7 +528,7 @@ public struct StudioOverlayState: Equatable, Sendable {
 /// was drawn straight through the scrub bar. `testNoTextRowOverlapsTheScrubTrack`
 /// is what keeps that from coming back.
 public enum StudioOverlayMetrics {
-    public static let hudHeight: Double = 92
+    public static let hudHeight: Double = 108
     public static let horizontalMargin: Double = 18
     public static let trackHeight: Double = 5
     /// Distance from the top of the HUD strip to the top of the track.
@@ -346,15 +539,20 @@ public enum StudioOverlayMetrics {
     public static let trackGrabHeight: Double = 22
     public static let timecodeSize: Double = 22
     public static let labelSize: Double = 12
+    /// The content identity is a 64-character OCR-safe full-hash token. Twelve-point
+    /// atlas text is readable to a person but not reliably distinguishable to
+    /// the system OCR used for exact packaged-media custody.
+    public static let sourceLabelSize: Double = 14
     /// Row origins, measured from the top of the HUD strip.
     public static let readoutRowTop: Double = 24
     /// Nudged down against the taller readout so the two read as one row.
     public static let statusRowTop: Double = 30
-    /// Diagnostics get their own row BELOW the source label so a long asset
-    /// label and a worst-case counters string cannot be drawn on top of each
-    /// other. The HUD strip is taller by exactly that row's height.
+    /// Diagnostics performance row BELOW the source label.
     public static let diagnosticsRowTop: Double = 72
-    public static let infoRowTop: Double = 56
+    /// Diagnostics resource row. Keep this explicit: the second row is part of
+    /// the HUD geometry contract and must not drift into the timeline exclusion.
+    public static let diagnosticsResourceRowTop: Double = 88
+    public static let infoRowTop: Double = 54
 }
 
 public struct StudioOverlayModel: Equatable, Sendable {
@@ -594,6 +792,7 @@ public enum StudioOverlayLayout {
         // into it is the fastest way to seek somewhere you did not mean to.
         let timecodeSize = metric(StudioOverlayMetrics.timecodeSize)
         let labelSize = metric(StudioOverlayMetrics.labelSize)
+        let sourceLabelSize = metric(StudioOverlayMetrics.sourceLabelSize)
         let readoutY = hudTop + metric(StudioOverlayMetrics.readoutRowTop)
         let readout = state.entry?.displayText ?? state.timecodeText
         texts.append(
@@ -702,7 +901,7 @@ public enum StudioOverlayLayout {
                 string: state.message ?? state.sourceLabel,
                 x: margin,
                 y: secondaryY,
-                pointSize: labelSize,
+                pointSize: sourceLabelSize,
                 color: state.message == nil ? .dimText : .errorText
             )
         )
@@ -712,22 +911,37 @@ public enum StudioOverlayLayout {
         // grew past the viewport, so the two strings overwrote each other.
         let diagnosticsY = hudTop + metric(StudioOverlayMetrics.diagnosticsRowTop)
         if let diagnostics = state.diagnostics {
-            let line =
+            let performanceLine =
                 "\(diagnostics.hardwareDecodeLabel)  \(diagnostics.syncLabel)"
                 + "  drop \(diagnostics.droppedFrameCount)"
                 + "  held \(diagnostics.retainedFrameCount)"
                 + "  shown \(diagnostics.presentedFrameCount)"
-                + "  cache \(diagnostics.cacheHitCount)"
+            let resourceLine =
+                "cache \(diagnostics.cacheHitCount)"
                 + "  tex \(diagnostics.boundTextureCount)"
                 + "  play \(diagnostics.playerCount)"
                 + "  \(diagnostics.memoryLabel)"
-            let lineWidth =
-                StudioOverlayRenderMetrics.advance(forPointSize: labelSize) * Double(line.count)
+            let performanceWidth =
+                StudioOverlayRenderMetrics.advance(forPointSize: labelSize)
+                    * Double(performanceLine.count)
+            let resourceWidth =
+                StudioOverlayRenderMetrics.advance(forPointSize: labelSize)
+                    * Double(resourceLine.count)
+            let resourceY = hudTop + metric(StudioOverlayMetrics.diagnosticsResourceRowTop)
             texts.append(
                 StudioOverlayText(
-                    string: line,
-                    x: max(margin, width - margin - lineWidth),
+                    string: performanceLine,
+                    x: max(margin, width - margin - performanceWidth),
                     y: diagnosticsY,
+                    pointSize: labelSize,
+                    color: .dimText
+                )
+            )
+            texts.append(
+                StudioOverlayText(
+                    string: resourceLine,
+                    x: max(margin, width - margin - resourceWidth),
+                    y: resourceY,
                     pointSize: labelSize,
                     color: .dimText
                 )
@@ -797,6 +1011,38 @@ public enum StudioOverlayLayout {
                     role: .staticText,
                     label: "A/V sync current detail",
                     value: syncCurrentDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
+
+        if let resourceDetail = state.resourceDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "Resource detail",
+                    value: resourceDetail,
+                    frame: StudioOverlayFrame(
+                        x: margin,
+                        y: diagnosticsY,
+                        width: trackWidth,
+                        height: labelSize
+                    )
+                )
+            )
+        }
+
+        if let routeResourceDetail = state.routeResourceDetail {
+            accessibility.append(
+                StudioAccessibilityDescriptor(
+                    role: .staticText,
+                    label: "Route resource detail",
+                    value: routeResourceDetail,
                     frame: StudioOverlayFrame(
                         x: margin,
                         y: diagnosticsY,

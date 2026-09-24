@@ -21,6 +21,10 @@ import type { AppSettings, EffectiveRunPermissions, RuntimeProfile } from '../st
 // at module load. We exercise applyRuntimeProfileToPayload with INJECTED deps, so
 // AppStore is never called — mock the module purely to avoid the side-effectful
 // import during the test run. (vitest hoists vi.mock above the imports.)
+vi.mock('electron', () => ({
+  app: { commandLine: { hasSwitch: () => false } }
+}))
+
 vi.mock('../store', () => ({
   AppStore: {
     getSettings: () => ({}),

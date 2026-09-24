@@ -18,6 +18,7 @@ import {
   type StudioCompanionResolution
 } from './StudioCompanionSettings'
 import type { StudioMediaAsset, StudioTranscript } from './StudioProtocol'
+import type { StudioResourceSnapshotOutcome } from '../../shared/studioResourceSnapshot'
 import { StudioRevisionStore } from './StudioRevisionStore'
 
 export const STUDIO_PRODUCTION_STATE_DIR = 'studio-companion'
@@ -171,6 +172,17 @@ export class StudioProductionLifecycle {
 
   status(): StudioSupervisorStatus {
     return this.supervisor.status()
+  }
+
+  getResourceSnapshot(): Promise<StudioResourceSnapshotOutcome> {
+    if (this.disposed) {
+      return Promise.resolve({
+        ok: false,
+        code: 'studio_unavailable',
+        message: 'Studio is disposed.'
+      })
+    }
+    return this.supervisor.getResourceSnapshot()
   }
 
   start(): void {

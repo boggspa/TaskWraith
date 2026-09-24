@@ -136,6 +136,100 @@ final class StudioTimelineSequenceTests: XCTestCase {
             timebase: ms)
         XCTAssertEqual(sequence.referencedAssetIds, ["clip-a", "clip-b"])
     }
+
+    func testStrictMaterializedProjectionHandlesFractionalNewVideoAndAudioTracks() throws {
+        let materialized: [[String: Any]] = [
+            ["trackId": "A1", "kind": "audio", "items": []],
+            [
+                "trackId": "V2", "kind": "video",
+                "items": [[
+                    "itemId": "inserted", "assetId": "clip-b",
+                    "position": ["n": 1, "d": 3],
+                    "duration": ["n": 1, "d": 3],
+                    "sourceIn": ["n": 1, "d": 3],
+                    "sourceOut": ["n": 2, "d": 3],
+                ] as [String: Any]],
+            ],
+        ]
+        let sequence = try StudioTimelineSequenceDecoder.strictSequence(
+            fromTracks: materialized, timebase: ms)
+        XCTAssertEqual(sequence.trackKinds, ["A1": .audio, "V2": .video])
+        XCTAssertEqual(sequence.items.first?.trackId, "V2")
+        XCTAssertEqual(sequence.items.first?.startTicks, 333)
+        XCTAssertEqual(sequence.items.first?.spanTicks, 333)
+        XCTAssertEqual(sequence.items.first?.sourceInTicks, 333)
+    }
+
+    func testSubTickMaterializationMatchesHydrationByConstruction() throws {
+        let materialized: [[String: Any]] = [[
+            "trackId": "V1", "kind": "video",
+            "items": [
+                [
+                    "itemId": "subtick", "assetId": "clip-b",
+                    "position": ["n": 0, "d": 1],
+                    "duration": ["n": 1, "d": 3000],
+                    "sourceIn": ["n": 0, "d": 1],
+                    "sourceOut": ["n": 1, "d": 3000],
+                ],
+                [
+                    "itemId": "existing", "assetId": "clip-a",
+                    "position": ["n": 1499, "d": 3000],
+                    "duration": ["n": 1, "d": 1000],
+                    "sourceIn": ["n": 0, "d": 1],
+                    "sourceOut": ["n": 1, "d": 1000],
+                ],
+            ] as [[String: Any]],
+        ]]
+        let live = try StudioTimelineSequenceDecoder.strictSequence(
+            fromTracks: materialized, timebase: ms)
+        let hydrated = StudioTimelineSequenceDecoder.sequence(
+            fromTracks: materialized, timebase: ms)
+        XCTAssertEqual(live, hydrated)
+        XCTAssertNil(live.items.first { $0.itemId == "subtick" })
+        XCTAssertEqual(live.items.first?.startTicks, 500)
+    }
+
+    func testPureReplacementRequiresTheHydrationTimebase() throws {
+        let current = StudioTimelineSequence(items: [], timebase: ms)
+        let materialized = StudioTimelineSequence(
+            items: [StudioSequenceItem(
+                itemId: "i", assetId: "a", startTicks: 0, endTicks: 1,
+                sourceInTicks: 0)], timebase: ms)
+        XCTAssertEqual(
+            try current.replacingCommittedSequence(with: materialized), materialized)
+        let other = StudioTimelineSequence(
+            items: [],
+            timebase: StudioTimebase(timescale: 30, frameDurationTicks: 1)!)
+        XCTAssertThrowsError(try current.replacingCommittedSequence(with: other))
+    }
+
+    func testStrictMaterializedProjectionRejectsMalformedShape() {
+        XCTAssertThrowsError(try StudioTimelineSequenceDecoder.strictSequence(
+            fromTracks: [["trackId": "V1", "kind": "video", "items": [], "extra": true]],
+            timebase: ms))
+        XCTAssertThrowsError(try StudioTimelineSequenceDecoder.strictSequence(
+            fromTracks: [[
+                "trackId": "V1", "kind": "video",
+                "items": [[
+                    "itemId": "i", "assetId": "a",
+                    "position": ["n": 0, "d": 1],
+                    "duration": ["n": 1, "d": 1, "extra": 1],
+                    "sourceIn": ["n": 0, "d": 1],
+                    "sourceOut": ["n": 1, "d": 1],
+                ]],
+            ]], timebase: ms))
+        XCTAssertThrowsError(try StudioTimelineSequenceDecoder.strictSequence(
+            fromTracks: [[
+                "trackId": "V1", "kind": "video",
+                "items": [[
+                    "itemId": "wrong-duration", "assetId": "a",
+                    "position": ["n": 0, "d": 1],
+                    "duration": ["n": 2, "d": 1],
+                    "sourceIn": ["n": 0, "d": 1],
+                    "sourceOut": ["n": 1, "d": 1],
+                ]],
+            ]], timebase: ms))
+    }
 }
 
 /// The Review route PLAYING the sequence, and the diagnostics that had to grow

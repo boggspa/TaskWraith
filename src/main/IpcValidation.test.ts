@@ -162,6 +162,13 @@ describe('IpcValidation', () => {
     }
   })
 
+  it('keeps the Studio resource snapshot pathless and processless', () => {
+    expect(() => validateIpcArgs('studio:resource-snapshot', [])).not.toThrow()
+    expect(() => validateIpcArgs('studio:resource-snapshot', [{ pid: 1 }])).toThrow(
+      /too many arguments/
+    )
+  })
+
   it('rejects an unknown Studio effect-preview channel before prefix-specific validation', () => {
     expect(() => validateIpcArgs('studio:effect-preview-reset', [])).toThrow(
       /No IPC schema registered/

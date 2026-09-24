@@ -6,40 +6,57 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 const { spawnSync } = require('node:child_process')
 const { PNG } = require('pngjs')
+const speechFixture = require('./studio-generate-speech-fixture.cjs')
 
 const repoRoot = path.resolve(__dirname, '..')
 const acceptanceRoot = path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance')
 const requiredProductAncestor = '372b1bd54387f88e1bb417f0fd247a9f077899f9'
-const expectedCompanionSha256 = '514982a0c4fbf82ee50d53c1e70cadc01286e8a056741cf13763ac515dc412ef'
-const expectedSourceDigest = 'f9a4c822570199baaf376d31442a9a3b2bce7fe03a3146ff3beb3963407fead7'
-const expectedSourceCount = 68
-const expectedOutDigest = '5696b502c52b52e591e75fefc1ad17f29585960614a14ee7bce0dad3050a8ca8'
-const expectedOutCount = 105
-const expectedFixtureSha256 = 'add40cd910994004545620b11e9cc127d4d012a6dd15f0e1087c6ce5434c6535'
-const expectedFixtureAssetId = Buffer.from(expectedFixtureSha256, 'hex').toString('base64url')
+const expectedCompanionSha256 = 'd86c520d7276fed6932d6a1eea9a64613fd02e4130b5a1e6998a8c61014da36a'
+const expectedSourceDigest = '1d322a0fd2f885b83b168a5fcb1eda8fe9716f9bdae78dfbbf7337d028a52bad'
+const expectedSourceCount = 74
+const expectedOutDigest = 'b0ae6ce49024ef1d9090c9f54b5760ded099317adc549ff2bc34a73eac481a8a'
+const expectedOutCount = 554
 const expectedValidCubeSha256 = 'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
 const expectedInvalidCubeSha256 = '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
+const VALID_CUBE_CONTENT =
+  'TITLE "Acceptance Red"\n' + 'LUT_3D_SIZE 2\n' + '1.0 0.0 0.0\n'.repeat(8)
+const INVALID_CUBE_CONTENT = 'TITLE "Acceptance Invalid"\n' + 'LUT_3D_SIZE 2\n' + '0.0 0.0\n'
 const expectedSupportHashes = Object.freeze({
   'scripts/studio-acceptance-harness.cjs':
-    'b354b973413e6ad61208df24909b2c65aacd5bb5b39d8f0210c63d09760c99b1',
+    'fa102ad181d8636bbd60f15e27de35e380e7045a6cee40c558742739ed398f43',
   'scripts/studio-acceptance-ui-driver.swift':
-    'd164f1bf263dd5d0f680f43799a87cb007f89b6cb0f25b8278219c7f8ef71b76',
+    '31e049ce81bd5dc1d0e1366c33c5b3f6f85bc10ccfcfd751f8925678bc67aa29',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
+    '0409f5584499bafeaa8c99bf9bef8c4e84d5834b5885d4bb228d10715f2a4dcc',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-pixel-evidence-verifier.cjs':
-    '779388aa4f4c31674c99bca16b8e9fd56e9743c651bac3f2d9f409f7b6cbe627',
-  '.local-only/taskwraith-studio/acceptance/w1acc10e/studio-hud-ocr.swift':
-    '504e17abc6f6781e936babe5288100178e3c12d5400d91c31816b2f3f0f8b7f2',
-  '.local-only/taskwraith-studio/acceptance/w1acc10e/input-isolation-snapshot.swift':
-    '4af200aaa2add67569ab2ea81aeed768233eee2f742457c7d6d877758f901c53'
+    'ac90199e7ea50c8ab83cc1054d4652b45fad389f8a591f90ec68a1d0f69936aa',
+  'scripts/studio-hud-ocr.swift':
+    'd3f1a7efc1189357252932518ed7d0b7ba799b19a3c68d9a32f134b076111a52',
+  'scripts/studio-input-isolation-snapshot.swift':
+    '9b2afd9ff163e7c10e42ebdb1beb41693a025c24894c13c82b23d5bbef61a55a',
+  'scripts/studio-generate-speech-fixture.cjs':
+    '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
+  'scripts/studio-acceptance-session.cjs':
+    '9aced4b6f6143cb50802f074fadab62fb0ac9d3336e8169b0b5e27708283f79d',
+  'scripts/studio-bounded-diagnostics-runner.cjs':
+    'fc2e9b7f9b5b5134d622b9f27f7547741666c88ce98dc45eb746e24a867e56f5',
+  'scripts/studio-bounded-lifecycle-runner.cjs':
+    'bc1538c91e38c43165d833db983fd36310c8362832bae2bb853f24430b2fb7dd',
+  'scripts/studio-av-endurance-runner.cjs':
+    'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
+  'scripts/studio-av-endurance-acceptance-runner.cjs':
+    'fc18cffa691f5aaa2518db2d307c6800ccc936905fdb8adaeddfc17bb4ec5be7',
+  'scripts/studio-av-endurance-live-runner.cjs':
+    '015e519ae5f58f4c15c70ea485fc0e0925e4ed6695bdb3934076b5225762d7d1',
+  'scripts/perf/cdpWebSocketSession.cjs':
+    '3bd5394220bf612bb79dfaf4438b5df8e9a0c72572be4d10abe5cb482a3afbe7',
+  'scripts/perf/electronChildSession.cjs':
+    '20f18797a4266f1b09298bb7ab20fef433fd41211b58fa12d8d46412e25103cd'
 })
-const fixturePath = path.join(acceptanceRoot, 'w1acc0824', 'fixtures', 'test-clip-10m-speech.mp4')
-const validCubePath = path.join(acceptanceRoot, 'w1acc10e', 'Acceptance-Red.cube')
-const invalidCubePath = path.join(acceptanceRoot, 'w1acc10e', 'Acceptance-Invalid.cube')
-const ocrScriptPath = path.join(acceptanceRoot, 'w1acc10e', 'studio-hud-ocr.swift')
-const focusScriptPath = path.join(acceptanceRoot, 'w1acc10e', 'input-isolation-snapshot.swift')
+const ocrScriptPath = path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')
+const focusScriptPath = path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')
 const companionPath = path.join(
   repoRoot,
   'swift',
@@ -49,7 +66,7 @@ const companionPath = path.join(
   'TaskWraithStudioCompanion'
 )
 const runnerPath = __filename
-// The launch runner plus the five pinned Studio support scripts must be committed;
+// The launch runner plus every pinned support script must be committed;
 // unrelated tracked dirt is recorded separately and cannot alter the pinned artifact.
 const studioCustodyScriptPaths = Object.freeze([
   // Git reports paths with forward slashes on every platform, and the other
@@ -68,10 +85,7 @@ const expectedCustodyPins = Object.freeze({
   sourceDigest: expectedSourceDigest,
   sourceCount: expectedSourceCount,
   outDigest: expectedOutDigest,
-  outCount: expectedOutCount,
-  fixtureSha256: expectedFixtureSha256,
-  validCubeSha256: expectedValidCubeSha256,
-  invalidCubeSha256: expectedInvalidCubeSha256
+  outCount: expectedOutCount
 })
 const harness = require(path.join(repoRoot, 'scripts', 'studio-acceptance-harness.cjs'))
 const { DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS, compareWindowCaptureToReference } = require(
@@ -92,6 +106,7 @@ const PHASE_PORTS = Object.freeze([
   Object.freeze({ remoteDebuggingPort: 9510, mainInspectorPort: 9910 }),
   Object.freeze({ remoteDebuggingPort: 9511, mainInspectorPort: 9911 })
 ])
+const LUT_PHASE_TIMEOUT_MS = 600_000
 const DOM_STATE_EXPRESSION = `(() => {
   const root = document.querySelector('.studio-lut-control');
   if (!root) return null;
@@ -152,6 +167,119 @@ function runExact(command, args, options = {}) {
     stdout: result.stdout,
     stderr: result.stderr
   }
+}
+
+function resolveMediaTool(name) {
+  const candidates = [
+    path.join('/opt', 'homebrew', 'bin', name),
+    path.join('/usr', 'local', 'bin', name),
+    ...String(process.env.PATH || '')
+      .split(path.delimiter)
+      .filter(Boolean)
+      .map((directory) => path.join(directory, name))
+  ]
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      if (fs.statSync(candidate).isFile()) return candidate
+    } catch {
+      // Candidate absent; keep the search bounded to this explicit list.
+    }
+  }
+  throw new Error(`Studio LUT acceptance could not resolve ${name}`)
+}
+
+async function materializePortableInputs(artifactRoot, adapters = {}) {
+  const inputRoot = path.join(artifactRoot, 'inputs')
+  await fsPromises.mkdir(inputRoot, { recursive: false, mode: 0o700 })
+  const speechPath = path.join(inputRoot, 'acceptance-speech.aiff')
+  const fixturePath = path.join(inputRoot, 'acceptance-speech-600s.mp4')
+  const manifestPath = path.join(inputRoot, 'speech-fixture-manifest.json')
+  const validCubePath = path.join(inputRoot, 'Acceptance-Red.cube')
+  const invalidCubePath = path.join(inputRoot, 'Acceptance-Invalid.cube')
+  const fixturePlan = speechFixture.describeFixturePlan()
+  const sayCommand = speechFixture.buildSayCommand({ outputPath: speechPath })
+  const muxPlan = speechFixture.buildMuxCommand({
+    speechPath,
+    outputPath: fixturePath,
+    durationSeconds: fixturePlan.durationSeconds
+  })
+  const resolveTool = adapters.resolveMediaTool || resolveMediaTool
+  const run = adapters.runExact || runExact
+  const muxCommand = [resolveTool('ffmpeg'), ...muxPlan.slice(1)]
+
+  run(sayCommand[0], sayCommand.slice(1), { timeout: 120_000 })
+  run(muxCommand[0], muxCommand.slice(1), {
+    timeout: 20 * 60 * 1_000,
+    maxBuffer: 64 * 1024 * 1024
+  })
+  await fsPromises.writeFile(validCubePath, VALID_CUBE_CONTENT, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx'
+  })
+  await fsPromises.writeFile(invalidCubePath, INVALID_CUBE_CONTENT, {
+    encoding: 'utf8',
+    mode: 0o600,
+    flag: 'wx'
+  })
+
+  for (const filePath of [speechPath, fixturePath, validCubePath, invalidCubePath]) {
+    const stats = await fsPromises.lstat(filePath)
+    invariant(
+      stats.isFile() && !stats.isSymbolicLink() && stats.size > 0,
+      'generated LUT input is not a safe regular file'
+    )
+    await fsPromises.chmod(filePath, 0o600)
+  }
+
+  const manifest = {
+    schemaVersion: 1,
+    kind: 'taskwraith-studio-generated-speech-fixture',
+    durationSeconds: fixturePlan.durationSeconds,
+    frameRate: fixturePlan.frameRate,
+    expectedFrameCount: fixturePlan.expectedFrameCount,
+    size: fixturePlan.size,
+    speechText: fixturePlan.speechText,
+    expectedPhrases: fixturePlan.expectedPhrases,
+    provenanceNote: fixturePlan.provenanceNote,
+    speechPath,
+    outputPath: fixturePath,
+    manifestPath,
+    mimeType: 'video/mp4',
+    speechSha256: sha256File(speechPath),
+    outputSha256: sha256File(fixturePath),
+    speechByteLength: fs.statSync(speechPath).size,
+    outputByteLength: fs.statSync(fixturePath).size,
+    sayCommand,
+    muxCommand,
+    sayExitCode: 0,
+    muxExitCode: 0
+  }
+  const verification = speechFixture.verifyFixtureManifest(manifest)
+  invariant(
+    verification.ok,
+    `generated LUT fixture manifest is invalid: ${verification.failures.join('; ')}`
+  )
+  await writeJson(manifestPath, manifest)
+
+  const inputs = {
+    fixturePath,
+    fixtureSha256: manifest.outputSha256,
+    fixtureAssetId: Buffer.from(manifest.outputSha256, 'hex').toString('base64url'),
+    fixtureManifest: manifest,
+    fixtureManifestPath: manifestPath,
+    fixtureManifestSha256: sha256File(manifestPath),
+    validCubePath,
+    validCubeSha256: sha256File(validCubePath),
+    invalidCubePath,
+    invalidCubeSha256: sha256File(invalidCubePath)
+  }
+  invariant(
+    inputs.validCubeSha256 === expectedValidCubeSha256 &&
+      inputs.invalidCubeSha256 === expectedInvalidCubeSha256,
+    'generated LUT fixture bytes changed'
+  )
+  return inputs
 }
 
 function parseCli(argv) {
@@ -365,11 +493,17 @@ function collectRegularFiles(directory) {
   return files.sort()
 }
 
-function treeDigest(directory) {
-  const entries = collectRegularFiles(directory).map((filePath) => ({
-    path: path.relative(repoRoot, filePath),
-    sha256: sha256File(filePath)
-  }))
+function treeDigest(directory, options = {}) {
+  const entries = collectRegularFiles(directory)
+    .filter((filePath) => path.basename(filePath) !== '.DS_Store')
+    .filter((filePath) => {
+      if (options.excludeTui !== true) return true
+      return !path.relative(directory, filePath).split(path.sep).join('/').startsWith('tui/')
+    })
+    .map((filePath) => ({
+      path: path.relative(repoRoot, filePath),
+      sha256: sha256File(filePath)
+    }))
   return {
     fileCount: entries.length,
     digest: jsonDigest(entries)
@@ -503,6 +637,7 @@ function classifyTrackedDirt(trackedStatus, digestPath = trackedPathSha256) {
 }
 
 function custodyMatches(actual, expected = expectedCustodyPins) {
+  const inputFields = ['fixtureSha256', 'validCubeSha256', 'invalidCubeSha256']
   return (
     actual.productAncestorPresent &&
     actual.studioPathsClean &&
@@ -511,14 +646,14 @@ function custodyMatches(actual, expected = expectedCustodyPins) {
     actual.sourceCount === expected.sourceCount &&
     actual.outDigest === expected.outDigest &&
     actual.outCount === expected.outCount &&
-    actual.fixtureSha256 === expected.fixtureSha256 &&
-    actual.validCubeSha256 === expected.validCubeSha256 &&
-    actual.invalidCubeSha256 === expected.invalidCubeSha256 &&
+    inputFields.every(
+      (field) => expected[field] === undefined || actual[field] === expected[field]
+    ) &&
     actual.supportMatches
   )
 }
 
-function assertCustody() {
+function assertCustody(inputs = null) {
   const head = runExact('git', ['rev-parse', 'HEAD']).stdout.trim()
   const ancestor = spawnSync(
     'git',
@@ -533,7 +668,7 @@ function assertCustody() {
   ]).stdout
   const trackedDirt = classifyTrackedDirt(trackedStatus)
   const sources = treeDigest(path.join(repoRoot, 'swift', 'TaskWraithBridge', 'Sources'))
-  const out = treeDigest(path.join(repoRoot, 'out'))
+  const out = treeDigest(path.join(repoRoot, 'out'), { excludeTui: true })
   const support = Object.fromEntries(
     Object.entries(expectedSupportHashes).map(([relativePath]) => [
       relativePath,
@@ -557,15 +692,29 @@ function assertCustody() {
     sourceCount: sources.fileCount,
     outDigest: out.digest,
     outCount: out.fileCount,
-    fixtureSha256: sha256File(fixturePath),
-    validCubeSha256: sha256File(validCubePath),
-    invalidCubeSha256: sha256File(invalidCubePath),
+    fixturePath: inputs?.fixturePath || null,
+    fixtureSha256: inputs ? sha256File(inputs.fixturePath) : null,
+    validCubePath: inputs?.validCubePath || null,
+    validCubeSha256: inputs ? sha256File(inputs.validCubePath) : null,
+    invalidCubePath: inputs?.invalidCubePath || null,
+    invalidCubeSha256: inputs ? sha256File(inputs.invalidCubePath) : null,
     support,
     supportMatches,
     runnerPath: path.relative(repoRoot, runnerPath),
     runnerSha256: sha256File(runnerPath)
   }
-  invariant(custodyMatches(actual), `LUT acceptance custody mismatch: ${JSON.stringify(actual)}`)
+  const expected = inputs
+    ? {
+        ...expectedCustodyPins,
+        fixtureSha256: inputs.fixtureSha256,
+        validCubeSha256: inputs.validCubeSha256,
+        invalidCubeSha256: inputs.invalidCubeSha256
+      }
+    : expectedCustodyPins
+  invariant(
+    custodyMatches(actual, expected),
+    `LUT acceptance custody mismatch: ${JSON.stringify(actual)}`
+  )
   for (const ports of PHASE_PORTS) {
     assertPortFree(ports.remoteDebuggingPort)
     assertPortFree(ports.mainInspectorPort)
@@ -669,10 +818,13 @@ function evaluatePureRedCapture({
   capturePath,
   referencePath,
   windowBounds,
-  hudOverlayHeight = DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
+  hudOverlayHeight = DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS,
+  sourceHostFrame,
+  compareWindowCaptureToReference: comparatorFn = compareWindowCaptureToReference
 }) {
-  const comparator = compareWindowCaptureToReference(capturePath, referencePath, windowBounds, {
-    hudOverlayHeight
+  const comparator = comparatorFn(capturePath, referencePath, windowBounds, {
+    hudOverlayHeight,
+    sourceHostFrame
   })
   const absolute = absoluteRedMetrics(capturePath, comparator.registration)
   return {
@@ -680,6 +832,36 @@ function evaluatePureRedCapture({
     comparator,
     absolute
   }
+}
+
+function requiredSampleSourceHostFrame(sample, label) {
+  invariant(
+    sample?.workspaceObservation?.sourceHostFrame,
+    `${label} sample is missing its exact Source host frame`
+  )
+  return sample.workspaceObservation.sourceHostFrame
+}
+
+function compareDecodedSample(
+  sample,
+  referencePath,
+  windowBounds,
+  label,
+  comparator = compareWindowCaptureToReference
+) {
+  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
+  return comparator(sample.capture.path, referencePath, windowBounds, { sourceHostFrame })
+}
+
+function evaluatePureRedSample(sample, referencePath, windowBounds, label, options = {}) {
+  const sourceHostFrame = requiredSampleSourceHostFrame(sample, label)
+  return evaluatePureRedCapture({
+    capturePath: sample.capture.path,
+    referencePath,
+    windowBounds,
+    sourceHostFrame,
+    compareWindowCaptureToReference: options.compareWindowCaptureToReference
+  })
 }
 
 function validateInvalidReplacement({
@@ -946,10 +1128,10 @@ async function invokeStudioOpen(renderer, asset) {
 
 async function waitForSourceWindow(companion) {
   return waitFor(
-    'exact visible Studio Source window',
+    'exact visible Studio workspace window',
     async () => {
       const result = await harness.probeNativeWindow(companion.pid)
-      const matches = result.windows.filter((entry) => entry.title === 'TaskWraith Studio — Source')
+      const matches = result.windows.filter((entry) => entry.title === 'TaskWraith Studio')
       return matches.length === 1 ? result : null
     },
     30_000,
@@ -1165,24 +1347,15 @@ async function captureGuarded(plan, target, name) {
   }
 }
 
-function ocrScreenshot(screenshotPath) {
-  const result = runExact('/usr/bin/swift', [ocrScriptPath, screenshotPath], {
-    timeout: 30_000,
-    maxBuffer: 4 * 1024 * 1024
-  })
-  const observations = JSON.parse(result.stdout)
-  invariant(Array.isArray(observations), 'HUD OCR helper did not return an array')
-  const texts = observations.map((entry) => entry.text)
-  const joined = texts.join(' | ')
-  // Prefer the frame-based HUD timecode HH:MM:SS:FF; the decimal form
-  // HH:MM:SS.mmm is a legacy fallback. The naive HH:MM:SS-only pattern
-  // misreads "00:00:19:20" as 00:19:20 (1160 s), so require the fourth
-  // component explicitly when it is present.
+function parseHudObservations(observations) {
+  invariant(Array.isArray(observations), 'HUD OCR observations must be an array')
+  const texts = observations.map((entry) => entry?.text)
+  const joined = texts.filter((text) => typeof text === 'string').join(' | ')
   const frameTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2}):(\d{2})\b/)
   const decimalTimecode = joined.match(/\b(\d{2}):(\d{2}):(\d{2})\.(\d{3})\b/)
   let contentPtsSeconds = null
   if (frameTimecode) {
-    const frameDuration = sourceFramePts().values[1] - sourceFramePts().values[0]
+    const frameDuration = 1 / speechFixture.FIXTURE_FRAME_RATE
     contentPtsSeconds =
       Number(frameTimecode[1]) * 3_600 +
       Number(frameTimecode[2]) * 60 +
@@ -1195,21 +1368,44 @@ function ocrScreenshot(screenshotPath) {
       Number(decimalTimecode[3]) +
       Number(decimalTimecode[4]) / 1_000
   }
-  const state = joined.match(/\b(PLAY|PAUSE)\b/i)
+  const stateTokens = texts
+    .filter((text) => typeof text === 'string')
+    .map((text) => text.trim())
+    .filter((text) => text === 'PLAY' || text === 'PAUSE')
   return {
-    command: result.command,
-    stdoutSha256: sha256Bytes(result.stdout),
-    observations,
     texts,
     parsed: {
       contentPtsSeconds,
-      state: state?.[1]?.toUpperCase() || null
+      state: stateTokens.length === 1 ? stateTokens[0] : null
     }
   }
 }
 
+function ocrScreenshot(screenshotPath) {
+  const result = runExact('/usr/bin/swift', [ocrScriptPath, screenshotPath], {
+    timeout: 30_000,
+    maxBuffer: 4 * 1024 * 1024
+  })
+  const observations = JSON.parse(result.stdout)
+  invariant(Array.isArray(observations), 'HUD OCR helper did not return an array')
+  const parsed = parseHudObservations(observations)
+  return {
+    command: result.command,
+    stdoutSha256: sha256Bytes(result.stdout),
+    observations,
+    texts: parsed.texts,
+    parsed: parsed.parsed
+  }
+}
+
 const HUD_ASSET_ID_LENGTH = 43
-const HUD_ASSET_EDIT_DISTANCE_THRESHOLD = 12
+const HUD_ASSET_TOKEN_LENGTH = 64
+const HUD_ASSET_TOKEN_ALPHABET = '2349ACDEFHKMNPXT'
+// A fuzzy 64-character full-hash token is not an asset identity. Earlier runs
+// accepted up to twelve edits, which let unrelated same-length text qualify as
+// the content-addressed SHA-256 subject. Vision may still emit fuzzy candidates
+// as diagnostics, but only one exact normalized digest binds evidence to media.
+const HUD_ASSET_EDIT_DISTANCE_THRESHOLD = 0
 const HUD_ASSET_MAX_OBSERVATIONS = 128
 const HUD_ASSET_MAX_OBSERVATION_LENGTH = 1_024
 
@@ -1218,6 +1414,23 @@ function normalizeHudAssetCandidate(value) {
     .normalize('NFKC')
     .toLowerCase()
     .replace(/[^a-z0-9_-]/g, '')
+}
+
+function hudAssetIdentityToken(assetId) {
+  invariant(
+    typeof assetId === 'string' &&
+      assetId.length === HUD_ASSET_ID_LENGTH &&
+      /^[A-Za-z0-9_-]+$/.test(assetId),
+    'expected HUD asset identity must be one 43-character Base64URL SHA-256 value'
+  )
+  const bytes = Buffer.from(assetId, 'base64url')
+  invariant(bytes.length === 32, 'expected HUD asset identity did not decode to 32 bytes')
+  let token = ''
+  for (const byte of bytes) {
+    token += HUD_ASSET_TOKEN_ALPHABET[byte >> 4]
+    token += HUD_ASSET_TOKEN_ALPHABET[byte & 0x0f]
+  }
+  return token
 }
 
 function editDistance(left, right) {
@@ -1249,7 +1462,7 @@ function matchHudAssetIdentity(hud, assetId) {
     `HUD asset matching exceeded ${HUD_ASSET_MAX_OBSERVATIONS} observations`
   )
 
-  const expected = normalizeHudAssetCandidate(assetId)
+  const expected = normalizeHudAssetCandidate(hudAssetIdentityToken(assetId))
   let bestFullWindow = null
   let bestShortFragment = null
   const consider = (candidate, observationIndex, fullWindow) => {
@@ -1283,12 +1496,12 @@ function matchHudAssetIdentity(hud, assetId) {
       observed.length <= HUD_ASSET_MAX_OBSERVATION_LENGTH,
       `HUD asset observation ${observationIndex} exceeded ${HUD_ASSET_MAX_OBSERVATION_LENGTH} normalized characters`
     )
-    if (observed.length < HUD_ASSET_ID_LENGTH) {
+    if (observed.length < HUD_ASSET_TOKEN_LENGTH) {
       consider(observed, observationIndex, false)
       continue
     }
-    for (let offset = 0; offset + HUD_ASSET_ID_LENGTH <= observed.length; offset += 1) {
-      consider(observed.slice(offset, offset + HUD_ASSET_ID_LENGTH), observationIndex, true)
+    for (let offset = 0; offset + HUD_ASSET_TOKEN_LENGTH <= observed.length; offset += 1) {
+      consider(observed.slice(offset, offset + HUD_ASSET_TOKEN_LENGTH), observationIndex, true)
     }
   }
 
@@ -1297,11 +1510,11 @@ function matchHudAssetIdentity(hud, assetId) {
       observedCandidate: null,
       observationIndex: null,
       comparedLength: 0,
-      distance: HUD_ASSET_ID_LENGTH
+      distance: HUD_ASSET_TOKEN_LENGTH
     }
   return {
     matched:
-      winning.comparedLength === HUD_ASSET_ID_LENGTH &&
+      winning.comparedLength === HUD_ASSET_TOKEN_LENGTH &&
       winning.distance <= HUD_ASSET_EDIT_DISTANCE_THRESHOLD,
     expected,
     ...winning,
@@ -1309,7 +1522,114 @@ function matchHudAssetIdentity(hud, assetId) {
   }
 }
 
-async function capturePlayable(plan, target, name) {
+async function readSourceWorkspaceObservation(plan, target, runDriver = harness.runStudioUiDriver) {
+  const bounds = windowBounds(target.window)
+  const receipt = await runDriver(plan, target, [{ type: 'read-workspace' }])
+  const actions = Array.isArray(receipt?.actions)
+    ? receipt.actions.filter((action) => action?.type === 'read-workspace')
+    : []
+  invariant(
+    receipt?.inputDelivery === 'background-observation-only' && actions.length === 1,
+    'LUT workspace read did not return one exact background action'
+  )
+  const workspace = harness.validateStudioWorkspaceObservation(actions[0].workspace, bounds)
+  invariant(
+    workspace.sourceRoute?.value === 'selected' &&
+      workspace.sourceHost?.visible === true &&
+      workspace.sourceHost?.frame,
+    'LUT checkpoint requires Source selected and visibly presented'
+  )
+  return { receipt, workspace, sourceHostFrame: workspace.sourceHost.frame }
+}
+
+async function pressPlaybackTransition(
+  plan,
+  target,
+  before,
+  after,
+  runDriver = harness.runStudioUiDriver
+) {
+  invariant(
+    (before === 'paused' && after === 'playing') || (before === 'playing' && after === 'paused'),
+    'LUT Playback transition is not exact'
+  )
+  const receipt = await runDriver(plan, target, [
+    { type: 'press-playback', playbackValueBefore: before, playbackValueAfter: after }
+  ])
+  const action = Array.isArray(receipt?.actions) ? receipt.actions[0] : null
+  const expectedKeys = [
+    'accessibilityAction',
+    'accessibilityLabel',
+    'index',
+    'playbackValueAfter',
+    'playbackValueBefore',
+    'type'
+  ]
+  invariant(
+    receipt?.inputDelivery === 'background-observation-only' &&
+      receipt.actions.length === 1 &&
+      JSON.stringify(Object.keys(action || {}).sort()) === JSON.stringify(expectedKeys) &&
+      action.index === 0 &&
+      action.type === 'press-playback' &&
+      action.accessibilityLabel === 'Playback' &&
+      action.accessibilityAction === 'AXPress' &&
+      action.playbackValueBefore === before &&
+      action.playbackValueAfter === after,
+    'LUT Playback receipt is forged or malformed'
+  )
+  return receipt
+}
+
+async function waitForPausedMediaReadiness(
+  plan,
+  target,
+  prefix,
+  runDriver = harness.runStudioUiDriver,
+  adapters = {}
+) {
+  const attempts = []
+  for (let index = 0; index < 60; index += 1) {
+    const workspaceObservation = await readSourceWorkspaceObservation(plan, target, runDriver)
+    const capture = await (adapters.captureGuarded || captureGuarded)(
+      plan,
+      target,
+      `${prefix}-readiness-${String(index).padStart(2, '0')}`
+    )
+    invariant(
+      capture.transportMutationBracket?.ok === true,
+      'LUT readiness transport-mutation bracket is not complete'
+    )
+    const hud = (adapters.ocrScreenshot || ocrScreenshot)(capture.path)
+    const assetMatch = (adapters.matchHudAssetIdentity || matchHudAssetIdentity)(
+      hud,
+      target.asset.sha256
+    )
+    const durationTicks = capture.transportMutationBracket.after?.parsedValue?.afterDurationTicks
+    const reasons = []
+    if (hud.parsed.state !== 'PAUSE') reasons.push('transport-not-paused')
+    if (!Number.isFinite(hud.parsed.contentPtsSeconds)) reasons.push('playhead-unreadable')
+    if (!assetMatch.matched || assetMatch.distance !== 0) reasons.push('asset-identity-mismatch')
+    if (typeof durationTicks !== 'string' || !/^[1-9]\d*$/.test(durationTicks)) {
+      reasons.push('transport-duration-unreadable-or-zero')
+    }
+    attempts.push({
+      index,
+      reasons,
+      parsed: hud.parsed,
+      assetMatch,
+      durationTicks,
+      capturePath: capture.path,
+      sourceHostFrame: workspaceObservation.sourceHostFrame
+    })
+    if (reasons.length === 0) {
+      return { attempts, workspaceObservation, capture, hud, assetMatch }
+    }
+    await sleep(500)
+  }
+  throw new Error('LUT paused media readiness timed out: ' + JSON.stringify(attempts))
+}
+
+async function capturePlayable(plan, target, name, workspaceObservation) {
   const capture = await captureGuarded(plan, target, name)
   const hud = ocrScreenshot(capture.path)
   const assetMatch = matchHudAssetIdentity(hud, target.asset.sha256)
@@ -1322,7 +1642,7 @@ async function capturePlayable(plan, target, name) {
       assetMatch
     })}`
   )
-  return { capture, hud, assetMatch }
+  return { capture, hud, assetMatch, workspaceObservation }
 }
 
 async function waitForStablePlayable(plan, target, prefix) {
@@ -1330,10 +1650,12 @@ async function waitForStablePlayable(plan, target, prefix) {
   let consecutive = []
   for (let index = 0; index < 8; index += 1) {
     try {
+      const workspaceObservation = await readSourceWorkspaceObservation(plan, target)
       const sample = await capturePlayable(
         plan,
         target,
-        `${prefix}-${String(index).padStart(2, '0')}`
+        `${prefix}-${String(index).padStart(2, '0')}`,
+        workspaceObservation
       )
       attempts.push({ index, sample })
       const prior = consecutive.at(-1)?.hud?.parsed?.contentPtsSeconds
@@ -1362,10 +1684,10 @@ async function waitForStablePlayable(plan, target, prefix) {
 
 let cachedSourcePts = null
 
-function sourceFramePts() {
-  if (cachedSourcePts) return cachedSourcePts
+function sourceFramePts(fixturePath) {
+  if (cachedSourcePts?.fixturePath === fixturePath) return cachedSourcePts
   const result = runExact(
-    '/opt/homebrew/bin/ffprobe',
+    resolveMediaTool('ffprobe'),
     [
       '-v',
       'error',
@@ -1385,8 +1707,14 @@ function sourceFramePts() {
     .filter((value) => value !== '')
     .map((value) => Number(value.replace(/,$/, '')))
     .filter(Number.isFinite)
-  invariant(values.length === 18_000, `fixture PTS census changed: ${String(values.length)}`)
+  const expectedFrameCount =
+    speechFixture.DEFAULT_FIXTURE_DURATION_SECONDS * speechFixture.FIXTURE_FRAME_RATE
+  invariant(
+    values.length === expectedFrameCount,
+    `fixture PTS census changed: ${String(values.length)}`
+  )
   cachedSourcePts = {
+    fixturePath,
     values,
     count: values.length,
     digest: jsonDigest(values),
@@ -1395,8 +1723,8 @@ function sourceFramePts() {
   return cachedSourcePts
 }
 
-function generateDecodedReference(decodedPtsSeconds, destination) {
-  const census = sourceFramePts()
+function generateDecodedReference(decodedPtsSeconds, destination, fixturePath) {
+  const census = sourceFramePts(fixturePath)
   const matches = census.values.filter(
     (candidate) => Math.abs(candidate - decodedPtsSeconds) <= 0.000_501
   )
@@ -1415,7 +1743,7 @@ function generateDecodedReference(decodedPtsSeconds, destination) {
     (exactPtsSeconds + 0.000_001).toFixed(6) +
     ')'
   const result = runExact(
-    '/opt/homebrew/bin/ffmpeg',
+    resolveMediaTool('ffmpeg'),
     [
       '-hide_banner',
       '-loglevel',
@@ -1448,8 +1776,8 @@ function generateDecodedReference(decodedPtsSeconds, destination) {
 }
 
 function windowBounds(windowReceipt) {
-  const match = windowReceipt.windows.find((entry) => entry.title === 'TaskWraith Studio — Source')
-  invariant(match?.bounds, 'exact Source bounds are missing')
+  const match = windowReceipt.windows.find((entry) => entry.title === 'TaskWraith Studio')
+  invariant(match?.bounds, 'exact Studio workspace bounds are missing')
   return match.bounds
 }
 
@@ -1457,7 +1785,7 @@ function effectPreviewJournal(entries) {
   return entries.filter((entry) => entry.op?.type === 'set_effect_preview')
 }
 
-async function prepareFreshRuntime(artifactRoot) {
+async function prepareFreshRuntime(artifactRoot, inputs) {
   const instanceId = path.basename(artifactRoot)
   invariant(
     /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/.test(instanceId),
@@ -1481,13 +1809,13 @@ async function prepareFreshRuntime(artifactRoot) {
   const providerGuard = await harness.materializeIsolatedProviderGuards({ home })
   basePlan.spawnPlan.env.TASKWRAITH_GROK_USAGE_BINARY_OVERRIDE = providerGuard.grokBinaryPath
   const asset = await harness.materializeOwnedMedia({
-    mediaPath: fixturePath,
+    mediaPath: inputs.fixturePath,
     mimeType: 'video/mp4',
     userDataPath: basePlan.profile.userDataPath
   })
   invariant(
-    asset.sha256 === expectedFixtureAssetId &&
-      sha256File(asset.assetPath) === expectedFixtureSha256 &&
+    asset.sha256 === inputs.fixtureAssetId &&
+      sha256File(asset.assetPath) === inputs.fixtureSha256 &&
       path
         .resolve(asset.assetPath)
         .startsWith(path.resolve(basePlan.profile.userDataPath) + path.sep),
@@ -1502,13 +1830,23 @@ async function prepareFreshRuntime(artifactRoot) {
       grokBinaryPath: providerGuard.grokBinaryPath,
       sha256: sha256File(providerGuard.grokBinaryPath)
     },
+    inputs,
     asset
   }
 }
 
-async function withSession(runtime, phaseIndex, operation) {
-  const ports = PHASE_PORTS[phaseIndex]
-  const phase = JOURNEY_PHASES[phaseIndex]
+async function withIsolatedSession(runtime, options, operation) {
+  const phase = String(options.phase || '')
+  const ports = {
+    remoteDebuggingPort: options.remoteDebuggingPort,
+    mainInspectorPort: options.mainInspectorPort
+  }
+  invariant(
+    /^[a-z0-9][a-z0-9-]{0,63}$/.test(phase) &&
+      Number.isSafeInteger(ports.remoteDebuggingPort) &&
+      Number.isSafeInteger(ports.mainInspectorPort),
+    'isolated Studio session requires a bounded phase and exact ports'
+  )
   const plan = harness.buildStudioAcceptancePlan({
     instanceId: runtime.instanceId,
     artifactRoot: runtime.artifactRoot,
@@ -1529,9 +1867,9 @@ async function withSession(runtime, phaseIndex, operation) {
     args: plan.spawnPlan.argv,
     cwd: plan.repoRoot,
     env: plan.spawnPlan.env,
-    timeoutMs: 180_000,
+    timeoutMs: options.timeoutMs || 180_000,
     forceAfterMs: 4_000,
-    receiptPath: path.join(runtime.artifactRoot, `${phase}-watchdog.json`),
+    receiptPath: options.receiptPath || path.join(runtime.artifactRoot, `${phase}-watchdog.json`),
     remoteDebuggingPort: ports.remoteDebuggingPort,
     mainInspectorPort: ports.mainInspectorPort
   }
@@ -1652,6 +1990,24 @@ async function withSession(runtime, phaseIndex, operation) {
   }
 }
 
+async function withSession(runtime, phaseIndex, operation) {
+  return withIsolatedSession(runtime, phaseSessionOptions(phaseIndex), operation)
+}
+
+function phaseSessionOptions(phaseIndex) {
+  const phase = JOURNEY_PHASES[phaseIndex]
+  const ports = PHASE_PORTS[phaseIndex]
+  invariant(
+    typeof phase === 'string' && ports,
+    'LUT journey phase index is outside the fixed two-phase plan'
+  )
+  return {
+    phase,
+    ...ports,
+    timeoutMs: LUT_PHASE_TIMEOUT_MS
+  }
+}
+
 async function phaseOne(runtime, syntheticRedReference) {
   return withSession(runtime, 0, async (context) => {
     const focusBefore = focusSnapshot(context.companion.pid)
@@ -1667,18 +2023,35 @@ async function phaseOne(runtime, syntheticRedReference) {
       companion: context.companion,
       electronPgid: context.session.pgid,
       window: sourceWindow,
-      expectedWindowTitle: 'TaskWraith Studio — Source',
+      expectedWindowTitle: 'TaskWraith Studio',
       asset: runtime.asset
     }
+    const readiness = await waitForPausedMediaReadiness(
+      context.plan,
+      target,
+      'phase1',
+      harness.runStudioUiDriver
+    )
+    const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
+    const playbackStart = await pressPlaybackTransition(context.plan, target, 'paused', 'playing')
+    const playbackStartFocus = focusSnapshot(context.companion.pid)
+    const playbackStartIsolation = assertFocusIsolation(
+      focusBeforePlaybackStart,
+      playbackStartFocus,
+      context.companion.pid,
+      'phase1-playback-start'
+    )
     const neutral = await waitForStablePlayable(context.plan, target, 'phase1-neutral')
     const neutralReference = generateDecodedReference(
       neutral.final.hud.parsed.contentPtsSeconds,
-      path.join(runtime.artifactRoot, 'phase1-neutral-reference.png')
+      path.join(runtime.artifactRoot, 'phase1-neutral-reference.png'),
+      runtime.inputs.fixturePath
     )
-    const neutralPixels = compareWindowCaptureToReference(
-      neutral.final.capture.path,
+    const neutralPixels = compareDecodedSample(
+      neutral.final,
       neutralReference.path,
-      windowBounds(sourceWindow)
+      windowBounds(sourceWindow),
+      'neutral'
     )
     invariant(
       neutralPixels.clean,
@@ -1687,7 +2060,10 @@ async function phaseOne(runtime, syntheticRedReference) {
 
     const journalBeforeLoad = await harness.readStudioJournalOperations(context.plan)
     const beforeLoadRevision = journalBeforeLoad.at(-1)?.revision || 0
-    const validDialog = await setDialogSelection(context.mainInspector, validCubePath)
+    const validDialog = await setDialogSelection(
+      context.mainInspector,
+      runtime.inputs.validCubePath
+    )
     const loadClick = await clickToolbarButton(context.renderer, '.studio-lut-load')
     const activeDom = await waitFor(
       'visible active LUT filename',
@@ -1706,7 +2082,7 @@ async function phaseOne(runtime, syntheticRedReference) {
     invariant(
       activeState?.active === true &&
         activeState?.displayName === 'Acceptance-Red.cube' &&
-        activeState?.effectId === expectedValidCubeSha256,
+        activeState?.effectId === runtime.inputs.validCubeSha256,
       `active LUT state mismatch: ${JSON.stringify(activeState)}`
     )
     const loadOperation = await harness.waitForStudioJournalOperation(
@@ -1718,16 +2094,18 @@ async function phaseOne(runtime, syntheticRedReference) {
       }
     )
     invariant(
-      loadOperation.op.effectPreview?.effectId === expectedValidCubeSha256,
+      loadOperation.op.effectPreview?.effectId === runtime.inputs.validCubeSha256,
       'load operation did not persist the exact LUT'
     )
     await sleep(500)
-    const active = await capturePlayable(context.plan, target, 'phase1-active')
-    const activePixels = evaluatePureRedCapture({
-      capturePath: active.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const activeIdentitySeries = await waitForStablePlayable(context.plan, target, 'phase1-active')
+    const active = activeIdentitySeries.final
+    const activePixels = evaluatePureRedSample(
+      active,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'active'
+    )
     invariant(
       activePixels.clean,
       `active LUT frame was not pure red: ${JSON.stringify({
@@ -1739,7 +2117,10 @@ async function phaseOne(runtime, syntheticRedReference) {
     const effectJournalBeforeInvalid = effectPreviewJournal(
       await harness.readStudioJournalOperations(context.plan)
     )
-    const invalidDialog = await setDialogSelection(context.mainInspector, invalidCubePath)
+    const invalidDialog = await setDialogSelection(
+      context.mainInspector,
+      runtime.inputs.invalidCubePath
+    )
     const invalidClick = await clickToolbarButton(context.renderer, '.studio-lut-load')
     const rejectedDom = await waitFor(
       'visible invalid LUT refusal',
@@ -1766,13 +2147,28 @@ async function phaseOne(runtime, syntheticRedReference) {
       journalAfter: effectJournalAfterInvalid,
       rejectedDom
     })
-    const invalidActive = await capturePlayable(context.plan, target, 'phase1-invalid-retained')
-    const invalidPixels = evaluatePureRedCapture({
-      capturePath: invalidActive.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const invalidActiveIdentitySeries = await waitForStablePlayable(
+      context.plan,
+      target,
+      'phase1-invalid-retained'
+    )
+    const invalidActive = invalidActiveIdentitySeries.final
+    const invalidPixels = evaluatePureRedSample(
+      invalidActive,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'invalid-retained'
+    )
     invariant(invalidPixels.clean, 'invalid replacement changed the red video plane')
+    const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
+    const playbackStop = await pressPlaybackTransition(context.plan, target, 'playing', 'paused')
+    const playbackStopFocus = focusSnapshot(context.companion.pid)
+    const playbackStopIsolation = assertFocusIsolation(
+      focusBeforePlaybackStop,
+      playbackStopFocus,
+      context.companion.pid,
+      'phase1-playback-stop'
+    )
     const focusAfter = focusSnapshot(context.companion.pid)
     const phaseIsolation = assertFocusIsolation(
       focusBefore,
@@ -1793,6 +2189,7 @@ async function phaseOne(runtime, syntheticRedReference) {
       activeDom,
       activeState,
       loadOperation,
+      activeIdentitySeries,
       active,
       activePixels,
       invalidDialog,
@@ -1800,8 +2197,15 @@ async function phaseOne(runtime, syntheticRedReference) {
       rejectedDom,
       stateAfterInvalid,
       invalidRetention,
+      invalidActiveIdentitySeries,
       invalidActive,
       invalidPixels,
+      readiness,
+      playback: {
+        start: playbackStart,
+        stop: playbackStop,
+        focusIsolation: { start: playbackStartIsolation, stop: playbackStopIsolation }
+      },
       phaseIsolation,
       companionIdentity: context.companionIdentity,
       portOwnership: context.portOwnership,
@@ -1836,15 +2240,36 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       companion: context.companion,
       electronPgid: context.session.pgid,
       window: sourceWindow,
-      expectedWindowTitle: 'TaskWraith Studio — Source',
+      expectedWindowTitle: 'TaskWraith Studio',
       asset: runtime.asset
     }
-    const replayActive = await capturePlayable(context.plan, target, 'phase2-replay-active')
-    const replayPixels = evaluatePureRedCapture({
-      capturePath: replayActive.capture.path,
-      referencePath: syntheticRedReference.path,
-      windowBounds: windowBounds(sourceWindow)
-    })
+    const readiness = await waitForPausedMediaReadiness(
+      context.plan,
+      target,
+      'phase2',
+      harness.runStudioUiDriver
+    )
+    const focusBeforePlaybackStart = focusSnapshot(context.companion.pid)
+    const playbackStart = await pressPlaybackTransition(context.plan, target, 'paused', 'playing')
+    const playbackStartFocus = focusSnapshot(context.companion.pid)
+    const playbackStartIsolation = assertFocusIsolation(
+      focusBeforePlaybackStart,
+      playbackStartFocus,
+      context.companion.pid,
+      'phase2-playback-start'
+    )
+    const replayActiveIdentitySeries = await waitForStablePlayable(
+      context.plan,
+      target,
+      'phase2-replay-active'
+    )
+    const replayActive = replayActiveIdentitySeries.final
+    const replayPixels = evaluatePureRedSample(
+      replayActive,
+      syntheticRedReference.path,
+      windowBounds(sourceWindow),
+      'replay-active'
+    )
     invariant(replayPixels.clean, 'restart replay did not preserve the pure-red video plane')
 
     const journalBeforeClear = await harness.readStudioJournalOperations(context.plan)
@@ -1870,16 +2295,27 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
     const cleared = await waitForStablePlayable(context.plan, target, 'phase2-cleared')
     const clearedReference = generateDecodedReference(
       cleared.final.hud.parsed.contentPtsSeconds,
-      path.join(runtime.artifactRoot, 'phase2-cleared-reference.png')
+      path.join(runtime.artifactRoot, 'phase2-cleared-reference.png'),
+      runtime.inputs.fixturePath
     )
-    const clearedPixels = compareWindowCaptureToReference(
-      cleared.final.capture.path,
+    const clearedPixels = compareDecodedSample(
+      cleared.final,
       clearedReference.path,
-      windowBounds(sourceWindow)
+      windowBounds(sourceWindow),
+      'cleared'
     )
     invariant(
       clearedPixels.clean,
       `cleared exact-frame comparison failed: ${JSON.stringify(clearedPixels.metrics)}`
+    )
+    const focusBeforePlaybackStop = focusSnapshot(context.companion.pid)
+    const playbackStop = await pressPlaybackTransition(context.plan, target, 'playing', 'paused')
+    const playbackStopFocus = focusSnapshot(context.companion.pid)
+    const playbackStopIsolation = assertFocusIsolation(
+      focusBeforePlaybackStop,
+      playbackStopFocus,
+      context.companion.pid,
+      'phase2-playback-stop'
     )
     const focusAfter = focusSnapshot(context.companion.pid)
     const phaseIsolation = assertFocusIsolation(
@@ -1895,6 +2331,7 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       replayValidation,
       openResult,
       sourceWindow,
+      replayActiveIdentitySeries,
       replayActive,
       replayPixels,
       clearClick,
@@ -1905,6 +2342,12 @@ async function phaseTwo(runtime, syntheticRedReference, expectedEffectId) {
       cleared,
       clearedReference,
       clearedPixels,
+      readiness,
+      playback: {
+        start: playbackStart,
+        stop: playbackStop,
+        focusIsolation: { start: playbackStartIsolation, stop: playbackStopIsolation }
+      },
       phaseIsolation,
       companionIdentity: context.companionIdentity,
       portOwnership: context.portOwnership,
@@ -1917,6 +2360,7 @@ function buildArtifactManifest(artifactRoot) {
   const files = collectRegularFiles(artifactRoot)
     .filter((filePath) => !filePath.startsWith(path.join(artifactRoot, 'home') + path.sep))
     .filter((filePath) => path.basename(filePath) !== 'hash-manifest.json')
+    .filter((filePath) => path.basename(filePath) !== '.DS_Store')
     .map((filePath) => ({
       path: path.relative(artifactRoot, filePath),
       byteLength: fs.statSync(filePath).size,
@@ -1934,13 +2378,15 @@ async function runAcceptance(artifactRoot) {
   latestTransportMutationBracket = null
   latestCustody = null
   const startedAt = new Date().toISOString()
-  const custody = assertCustody()
+  const staticCustody = assertCustody()
   const launchConsole = assertUnlocked('launch-preflight')
   await fsPromises.mkdir(artifactRoot, {
     recursive: false,
     mode: 0o700
   })
-  const runtime = await prepareFreshRuntime(artifactRoot)
+  const inputs = await materializePortableInputs(artifactRoot)
+  const custody = assertCustody(inputs)
+  const runtime = await prepareFreshRuntime(artifactRoot, inputs)
   const syntheticRedReference = createSyntheticRedReference({
     destination: path.join(artifactRoot, 'synthetic-pure-red-reference.png'),
     width: 960,
@@ -1965,7 +2411,7 @@ async function runAcceptance(artifactRoot) {
     finalEffectEntries.length >= 2 && finalEffectEntries.at(-1).op.effectPreview === null,
     'final durable effect-preview history is incomplete'
   )
-  const custodyAfter = assertCustody()
+  const custodyAfter = assertCustody(inputs)
   invariant(
     custodyAfter.companionSha256 === custody.companionSha256 &&
       custodyAfter.sourceDigest === custody.sourceDigest &&
@@ -1979,6 +2425,7 @@ async function runAcceptance(artifactRoot) {
     startedAt,
     recordedAt: new Date().toISOString(),
     journeyPhases: JOURNEY_PHASES,
+    staticCustody,
     custodyBefore: custody,
     custodyAfter,
     launchConsole,
@@ -1991,12 +2438,15 @@ async function runAcceptance(artifactRoot) {
       asset: runtime.asset
     },
     inputs: {
-      fixturePath,
-      fixtureSha256: expectedFixtureSha256,
-      validCubePath,
-      validCubeSha256: expectedValidCubeSha256,
-      invalidCubePath,
-      invalidCubeSha256: expectedInvalidCubeSha256,
+      fixturePath: inputs.fixturePath,
+      fixtureSha256: inputs.fixtureSha256,
+      fixtureAssetId: inputs.fixtureAssetId,
+      fixtureManifestPath: inputs.fixtureManifestPath,
+      fixtureManifestSha256: inputs.fixtureManifestSha256,
+      validCubePath: inputs.validCubePath,
+      validCubeSha256: inputs.validCubeSha256,
+      invalidCubePath: inputs.invalidCubePath,
+      invalidCubeSha256: inputs.invalidCubeSha256,
       syntheticRedReference
     },
     phaseOne: first,
@@ -2147,23 +2597,52 @@ async function main(argv = process.argv.slice(2)) {
 
 module.exports = {
   JOURNEY_PHASES,
+  LUT_PHASE_TIMEOUT_MS,
   PHASE_PORTS,
+  assertFocusIsolation,
   assertObservationOnlyRequest,
+  assertUnlocked,
+  assertCustody,
   buildArtifactManifest,
   buildObservationRequest,
   captureNative,
   classifyTrackedDirt,
+  consoleSessionState,
   createSyntheticRedReference,
   custodyMatches,
   evaluatePureRedCapture,
+  evaluatePureRedSample,
+  exactCompanionProcess,
+  focusSnapshot,
+  hudAssetIdentityToken,
+  invokeStudioOpen,
+  materializePortableInputs,
   matchHudAssetIdentity,
+  compareDecodedSample,
+  requiredSampleSourceHostFrame,
+  ocrScreenshot,
+  parseHudObservations,
+  phaseSessionOptions,
+  pressPlaybackTransition,
+  readSourceWorkspaceObservation,
+  waitForPausedMediaReadiness,
+  openMediaPane,
   parseCli,
   resolveArtifactRoot,
+  resolveMediaTool,
+  runExact,
   runAcceptance,
+  prepareFreshRuntime,
+  sha256File,
+  treeDigest,
   validateClearedState,
   validateInvalidReplacement,
   validateReplayState,
   validateTransportMutationBracket,
+  waitForSourceWindow,
+  windowBounds,
+  withIsolatedSession,
+  writeJson,
   writeFailureArtifacts,
   validateTerminalReceipt
 }

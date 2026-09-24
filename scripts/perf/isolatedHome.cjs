@@ -77,7 +77,11 @@ function isolatedHomeEnvironment(options = {}) {
   }
   const home = path.resolve(String(raw).trim())
   const platform = options.platform || process.platform
-  const env = { HOME: home }
+  const env = {
+    HOME: home,
+    // The external Host prefers this override to HOME, including inherited values.
+    TASKWRAITH_HOST_REGISTRY_ROOT: path.join(home, '.taskwraith', 'hosts')
+  }
   if (platform === 'win32') {
     env.USERPROFILE = home
     env.APPDATA = path.join(home, 'AppData', 'Roaming')

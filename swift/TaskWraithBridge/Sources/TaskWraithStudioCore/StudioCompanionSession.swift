@@ -132,6 +132,16 @@ public enum StudioEffectPreviewChange: Equatable, Sendable {
 ///   4 studio/getDocument rejected or malformed
 ///   5 stdin EOF before hydration completed
 public final class StudioCompanionSession {
+    public struct AcceptedInsertCommit: Equatable, Sendable {
+        public let appliedOp: StudioInsertRangeOp
+        public let sequence: StudioTimelineSequence
+
+        public init(appliedOp: StudioInsertRangeOp, sequence: StudioTimelineSequence) {
+            self.appliedOp = appliedOp
+            self.sequence = sequence
+        }
+    }
+
     public enum Phase: Equatable {
         case awaitingHelloResponse
         case awaitingDocumentResponse
@@ -162,11 +172,16 @@ public final class StudioCompanionSession {
         /// drawn whichever way it went — an accepted proposal is now part of the
         /// sequence, and a rejected one never will be.
         public let resolvedProposalIds: [String]
+        /// Exact edits atomically materialised by accepted proposal resolutions.
+        /// Separate from resolvedProposalIds so rejection can clear a ghost
+        /// without ever masquerading as a timeline mutation.
+        public let acceptedInserts: [AcceptedInsertCommit]
         /// Transcripts the host published in this chunk.
         public let transcripts: [StudioTranscript]
         /// Set, clear, or rejected effect preview notification. This is not an
         /// optional: absence must not be confused with an intentional clear.
         public let effectPreview: StudioEffectPreviewChange
+        public let resourceQueries: [StudioResourceQueryRequest]
 
         public init(
             outboundLines: [Data],
@@ -175,8 +190,10 @@ public final class StudioCompanionSession {
             openedAssets: [StudioMediaAsset] = [],
             proposals: [StudioEditProposal] = [],
             resolvedProposalIds: [String] = [],
+            acceptedInserts: [AcceptedInsertCommit] = [],
             transcripts: [StudioTranscript] = [],
-            effectPreview: StudioEffectPreviewChange = .unchanged
+            effectPreview: StudioEffectPreviewChange = .unchanged,
+            resourceQueries: [StudioResourceQueryRequest] = []
         ) {
             self.outboundLines = outboundLines
             self.exitCode = exitCode
@@ -184,8 +201,10 @@ public final class StudioCompanionSession {
             self.openedAssets = openedAssets
             self.proposals = proposals
             self.resolvedProposalIds = resolvedProposalIds
+            self.acceptedInserts = acceptedInserts
             self.transcripts = transcripts
             self.effectPreview = effectPreview
+            self.resourceQueries = resourceQueries
         }
     }
 
@@ -292,8 +311,10 @@ public final class StudioCompanionSession {
         var opened: [StudioMediaAsset] = []
         var proposed: [StudioEditProposal] = []
         var resolved: [String] = []
+        var accepted: [AcceptedInsertCommit] = []
         var transcripts: [StudioTranscript] = []
         var effectPreview: StudioEffectPreviewChange = .unchanged
+        var resourceQueries: [StudioResourceQueryRequest] = []
         var exitCode: Int32?
         for event in decoder.push(chunk: chunk) {
             if exitCode != nil { break }
@@ -302,6 +323,20 @@ public final class StudioCompanionSession {
                 protocolErrorCount += 1
                 errors.append("\(code): \(message)")
             case .message(let message):
+                if message.method == "studio/getResourceSnapshot" {
+                    if phase == .hydrated,
+                        let request = StudioResourceQueryRequest.decode(
+                            message, documentRevision: latestRevision ?? documentRevision)
+                    {
+                        resourceQueries.append(request)
+                    } else {
+                        outbound.append(StudioResourceQueryRequest.errorLine(
+                            id: message.id, invalid: phase == .hydrated,
+                            reason: "Resource snapshot request is invalid or Studio is not hydrated."
+                        ))
+                    }
+                    continue
+                }
                 let outcome = handle(message)
                 outbound.append(contentsOf: outcome.lines)
                 if let error = outcome.error {
@@ -319,9 +354,18 @@ public final class StudioCompanionSession {
                         proposed.append(proposal)
                         proposalCount += 1
                     }
-                    if let resolvedId = Self.resolvedProposalId(in: message) {
-                        resolved.append(resolvedId)
+                    switch Self.proposalResolution(in: message) {
+                    case .resolved(let proposalId, let appliedOp):
+                        resolved.append(proposalId)
                         resolvedProposalCount += 1
+                        if let appliedOp { accepted.append(appliedOp) }
+                    case .rejected(let proposalId, let reason):
+                        protocolErrorCount += 1
+                        errors.append(
+                            "resolve_proposal rejected"
+                                + (proposalId.map { " \($0)" } ?? "") + ": \(reason)")
+                    case .notAResolution:
+                        break
                     }
                     switch Self.transcriptOutcome(in: message) {
                     case .decoded(let transcript):
@@ -361,8 +405,10 @@ public final class StudioCompanionSession {
             openedAssets: opened,
             proposals: proposed,
             resolvedProposalIds: resolved,
+            acceptedInserts: accepted,
             transcripts: transcripts,
-            effectPreview: effectPreview
+            effectPreview: effectPreview,
+            resourceQueries: resourceQueries
         )
     }
 
@@ -379,6 +425,9 @@ public final class StudioCompanionSession {
         if message.id == nil, message.method != nil {
             if message.method == "studio/editCommitted" {
                 editCommittedCount += 1
+                if case .rejected = Self.proposalResolution(in: message) {
+                    return ([], nil, nil, nil)
+                }
                 if let revision = message.params?["revision"]?.value as? Int {
                     latestRevision = revision
                 }
@@ -571,15 +620,100 @@ public final class StudioCompanionSession {
         return try? StudioProposalDecoder.proposal(fromProposeEdit: operation)
     }
 
-    /// Extracts the id of a resolved proposal, accepted or rejected.
-    static func resolvedProposalId(in message: StudioMessage) -> String? {
+    enum ProposalResolutionOutcome {
+        case resolved(proposalId: String, accepted: AcceptedInsertCommit?)
+        case rejected(proposalId: String?, reason: String)
+        case notAResolution
+    }
+
+    /// Decodes proposal resolution and accepted materialisation as two facts.
+    /// A malformed accepted op remains an observable resolution, but is never
+    /// allowed to become committed viewer state.
+    static func proposalResolution(in message: StudioMessage) -> ProposalResolutionOutcome {
         guard let operation = message.params?["op"]?.value as? [String: Any],
-            operation["type"] as? String == "resolve_proposal",
-            let proposalId = operation["proposalId"] as? String
-        else {
+            operation["type"] as? String == "resolve_proposal"
+        else { return .notAResolution }
+        guard let revision = message.params?["revision"]?.value as? Int,
+            revision >= 0, revision <= 9_007_199_254_740_991
+        else { return .rejected(proposalId: nil, reason: "invalid revision") }
+        guard let proposalId = operation["proposalId"] as? String, !proposalId.isEmpty else {
+            return .rejected(proposalId: nil, reason: "missing proposalId")
+        }
+        guard let decision = operation["decision"] as? String,
+            decision == "accept" || decision == "reject"
+        else { return .rejected(proposalId: proposalId, reason: "invalid decision") }
+        if decision == "reject" {
+            guard !operation.keys.contains("appliedOp"), !operation.keys.contains("tracks") else {
+                return .rejected(
+                    proposalId: proposalId,
+                    reason: "reject must not carry appliedOp or tracks")
+            }
+            return .resolved(proposalId: proposalId, accepted: nil)
+        }
+        guard let raw = operation["appliedOp"] as? [String: Any] else {
+            return .rejected(proposalId: proposalId, reason: "accept requires appliedOp")
+        }
+        guard let tracks = operation["tracks"] as? [[String: Any]] else {
+            return .rejected(proposalId: proposalId, reason: "accept requires tracks")
+        }
+        do {
+            let appliedOp = try StudioProposalDecoder.insertRange(from: raw)
+            guard Self.materializes(appliedOp, in: tracks) else {
+                return .rejected(
+                    proposalId: proposalId,
+                    reason: "tracks do not contain the accepted operation identity")
+            }
+            let timebase = StudioTimebase(timescale: 1000, frameDurationTicks: 1)!
+            return .resolved(
+                proposalId: proposalId,
+                accepted: AcceptedInsertCommit(
+                    appliedOp: appliedOp,
+                    sequence: try StudioTimelineSequenceDecoder.strictSequence(
+                        fromTracks: tracks, timebase: timebase)))
+        } catch {
+            return .rejected(proposalId: proposalId, reason: String(describing: error))
+        }
+    }
+
+    private static func materializes(
+        _ operation: StudioInsertRangeOp,
+        in tracks: [[String: Any]]
+    ) -> Bool {
+        let targetTrackId = operation.trackId ?? "V1"
+        let matches = tracks.flatMap { track -> [[String: Any]] in
+            guard track["trackId"] as? String == targetTrackId else { return [] }
+            return track["items"] as? [[String: Any]] ?? []
+        }.filter { item in
+            guard item["itemId"] as? String == operation.itemId,
+                item["assetId"] as? String == operation.assetId,
+                let sourceIn = try? StudioProposalDecoder.rational(
+                    from: item["sourceIn"], field: "track.sourceIn"),
+                let sourceOut = try? StudioProposalDecoder.rational(
+                    from: item["sourceOut"], field: "track.sourceOut"),
+                let position = try? StudioProposalDecoder.rational(
+                    from: item["position"], field: "track.position")
+            else { return false }
+            return rationalEquals(sourceIn, operation.sourceIn)
+                && rationalEquals(sourceOut, operation.sourceOut)
+                && rationalEquals(position, operation.at)
+        }
+        return matches.count == 1
+    }
+
+    private static func rationalEquals(
+        _ lhs: StudioRationalTime,
+        _ rhs: StudioRationalTime
+    ) -> Bool {
+        Decimal(lhs.n) * Decimal(rhs.d) == Decimal(rhs.n) * Decimal(lhs.d)
+    }
+
+    static func resolvedProposalId(in message: StudioMessage) -> String? {
+        switch proposalResolution(in: message) {
+        case .resolved(let proposalId, _), .rejected(let proposalId?, _):
+            return proposalId
+        case .rejected(nil, _), .notAResolution:
             return nil
         }
-        return proposalId
     }
 
     static func openedAsset(in message: StudioMessage) -> StudioMediaAsset? {

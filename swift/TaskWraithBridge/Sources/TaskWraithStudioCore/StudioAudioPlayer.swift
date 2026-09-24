@@ -32,12 +32,17 @@ public final class StudioAudioTrack {
     public let format: AVAudioFormat
     public let buffer: AVAudioPCMBuffer
     public let sampleRate: Int
+    private let resourceLease: StudioResourceLease
     public var sampleCount: Int64 { Int64(buffer.frameLength) }
 
     init(format: AVAudioFormat, buffer: AVAudioPCMBuffer) {
         self.format = format
         self.buffer = buffer
         self.sampleRate = Int(format.sampleRate.rounded())
+        self.resourceLease = StudioResourceLease()
+        let planes = format.isInterleaved ? 1 : Int(format.channelCount)
+        let bytes = Int(buffer.frameCapacity) * Int(format.streamDescription.pointee.mBytesPerFrame) * planes
+        resourceLease.setPCMBuffer(buffer, capacityBytes: bytes)
     }
 
     /// Reads the asset's first audio track as float PCM.
@@ -175,6 +180,8 @@ public final class StudioAudioTrack {
 public final class StudioAudioPlayer {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
+    private let resourceLease = StudioResourceLease(["playerObjects": 1, "engineObjects": 1])
+    private var queuedOutput: StudioAudioOutputHold?
     /// Whether an audio track is resident. Surfaced for outcome 9's player
     /// count, which must report what is actually attached rather than assume.
     public var isAttached: Bool { track != nil }
@@ -205,7 +212,17 @@ public final class StudioAudioPlayer {
         public let correctionCount: Int
     }
 
-    public init() {}
+    public init() {
+        resourceLease.setProbe { [weak self] in
+            guard let self else { return [:] }
+            return [
+                "runningEngines": self.engine.isRunning ? 1 : 0,
+                "attachedTracks": self.track == nil ? 0 : 1,
+                "playingPlayers": self.player.isPlaying ? 1 : 0,
+                "playersWithQueuedOutput": self.queuedOutput?.isActive == true ? 1 : 0,
+            ]
+        }
+    }
 
     public var sampleRate: Int { track?.sampleRate ?? 0 }
     public var hasAudio: Bool { track != nil }
@@ -387,7 +404,12 @@ public final class StudioAudioPlayer {
         // pause() does not, so it is never the gap/missing-asset silence path.
         player.stop()
         hasQueuedOutput = false
-        player.scheduleBuffer(scheduled, at: nil, options: [])
+        queuedOutput?.complete()
+        let outputHold = StudioAudioOutputHold(track: track, buffer: scheduled)
+        queuedOutput = outputHold
+        player.scheduleBuffer(scheduled, at: nil, options: [], completionCallbackType: .dataPlayedBack) { _ in
+            outputHold.complete()
+        }
         player.play()
         isPlaying = true
         hasQueuedOutput = true
@@ -422,6 +444,10 @@ public final class StudioAudioPlayer {
     /// refusal cannot resume the last audible clip later.
     public func silence() {
         player.stop()
+        // stop() flushes the node's scheduled output. A late callback only owns
+        // its own hold, so it cannot retire a newer schedule after a seek.
+        queuedOutput?.complete()
+        queuedOutput = nil
         scheduledAssetId = nil
         hasQueuedOutput = false
         isPlaying = false
@@ -493,5 +519,29 @@ public final class StudioAudioPlayer {
         clock = nil
         attachedAssetId = nil
         lastScheduledAssetId = nil
+    }
+}
+
+/// A queued view aliases the track's PCM allocation; its bytes are never added
+/// to the owned PCM capacity. Completion is idempotent across stop/callback races.
+final class StudioAudioOutputHold: @unchecked Sendable {
+    private let lock = NSLock()
+    private var track: StudioAudioTrack?
+    private let resourceLease: StudioResourceLease
+
+    init(track: StudioAudioTrack, buffer: AVAudioPCMBuffer) {
+        self.track = track
+        let planes = buffer.format.isInterleaved ? 1 : Int(buffer.format.channelCount)
+        let bytes = Int(buffer.frameLength) * Int(buffer.format.streamDescription.pointee.mBytesPerFrame) * planes
+        self.resourceLease = StudioResourceLease(["queuedBuffers": 1, "queuedPcmBytes": bytes])
+    }
+
+    var isActive: Bool { resourceLease.isActive }
+
+    func complete() {
+        lock.lock()
+        track = nil
+        resourceLease.finish()
+        lock.unlock()
     }
 }

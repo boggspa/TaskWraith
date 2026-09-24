@@ -615,13 +615,14 @@ export type StudioProposeEditOutcome =
     }
 
 export type StudioResolveProposalOutcome =
-  | {
+  | ({
       ok: true
       revision: number
       proposalId: string
-      decision: StudioProposalDecision
-      appliedOp?: StudioEditOp
-    }
+    } & (
+      | { decision: 'accept'; appliedOp: StudioEditOp; tracks: StudioTrack[] }
+      | { decision: 'reject'; appliedOp?: never; tracks?: never }
+    ))
   | {
       ok: false
       code: StudioEditErrorCode | 'stale_base'
@@ -1106,15 +1107,16 @@ export class StudioRevisionStore {
       }
 
       const revision = await this.commitOperationLocked(operation, nextDocument)
-      return {
-        ok: true as const,
-        revision,
-        proposalId,
-        decision,
-        ...(decision === 'accept' && proposal !== undefined
-          ? { appliedOp: structuredClone(proposal.op) }
-          : {})
-      }
+      return decision === 'accept' && proposal !== undefined
+        ? {
+            ok: true as const,
+            revision,
+            proposalId,
+            decision,
+            appliedOp: structuredClone(proposal.op),
+            tracks: structuredClone(nextDocument.tracks)
+          }
+        : { ok: true as const, revision, proposalId, decision: 'reject' as const }
     })
   }
 

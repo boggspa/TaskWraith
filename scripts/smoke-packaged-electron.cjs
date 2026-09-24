@@ -15,6 +15,11 @@ const maxAsarBytes = readMegabyteLimit('TASKWRAITH_MAX_ASAR_MB', 500)
 const maxZipBytes = readMegabyteLimit('TASKWRAITH_MAX_ZIP_MB', 700)
 const launchSmokeTimeoutMs = readIntegerEnv('TASKWRAITH_PACKAGE_SMOKE_TIMEOUT_MS', 8000)
 const DEVELOPER_ID_LEAF_PREFIX = 'Developer ID Application:'
+const MAC_BRIDGE_IDENTITY_KEYS = Object.freeze([
+  'CFBundleIdentifier',
+  'CFBundleShortVersionString',
+  'CFBundleVersion'
+])
 
 // Requiring this script — its unit tests do, to exercise the signing-posture
 // helpers — must not launch the smoke run against the real repository. Only
@@ -704,8 +709,35 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
       )
     }
   }
-  const bridgeDaemon = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
+  const bridgeApp = path.join(path.dirname(resourcesDir), 'Helpers', 'TaskWraith Bridge.app')
+  const bridgeInfoPath = path.join(bridgeApp, 'Contents', 'Info.plist')
+  const bridgeDaemon = path.join(bridgeApp, 'Contents', 'MacOS', 'TaskWraithBridgeDaemon')
+  assertDir(bridgeApp, 'TaskWraith Bridge.app')
+  assertFile(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
+  const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
+  // The helper shares the packaged app's consent identity and version, whatever
+  // distribution identity (beta or debut) the app carries. The parent plist is
+  // separately bound to the embedded distribution appId by
+  // validateMacAppPermissionMetadata, so this is one chain with no literal.
+  const parentInfoPath = path.join(contentsDir, 'Info.plist')
+  assertFile(parentInfoPath, 'packaged app Info.plist')
+  const parentInfo = readPlistAsJson(parentInfoPath, 'packaged app Info.plist')
+  const bridgeIdentityFailures = collectMacBridgeIdentityFailures(bridgeInfo, parentInfo)
+  if (bridgeIdentityFailures.length > 0) {
+    fail(bridgeIdentityFailures.join(' '))
+  }
+  if (bridgeInfo.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
+    fail(
+      `TaskWraith Bridge CFBundleExecutable must be TaskWraithBridgeDaemon, got ${String(bridgeInfo.CFBundleExecutable)}.`
+    )
+  }
+  if (
+    typeof bridgeInfo.NSSpeechRecognitionUsageDescription !== 'string' ||
+    bridgeInfo.NSSpeechRecognitionUsageDescription.trim().length === 0
+  ) {
+    fail('TaskWraith Bridge Info.plist is missing NSSpeechRecognitionUsageDescription.')
+  }
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
 
   const studioApp = path.join(resourcesDir, 'studio', 'TaskWraith Studio.app')
@@ -752,6 +784,26 @@ function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
     )
   }
   console.log('validated Electron Framework code signature')
+}
+
+function collectMacBridgeIdentityFailures(bridgeInfo, parentInfo) {
+  const failures = []
+  for (const key of MAC_BRIDGE_IDENTITY_KEYS) {
+    const parentValue = parentInfo && parentInfo[key]
+    if (typeof parentValue !== 'string' || parentValue.trim().length === 0) {
+      failures.push(
+        `Packaged app Info.plist is missing a non-empty ${key}; TaskWraith Bridge identity cannot be verified.`
+      )
+      continue
+    }
+    const bridgeValue = bridgeInfo && bridgeInfo[key]
+    if (bridgeValue !== parentValue) {
+      failures.push(
+        `TaskWraith Bridge ${key} must match the packaged app ${key} ${parentValue}, got ${String(bridgeValue)}.`
+      )
+    }
+  }
+  return failures
 }
 
 function validateMacAppPermissionMetadata(packageRoot, distributionMetadata) {
@@ -862,8 +914,10 @@ function validateMacAppSignature(packageRoot) {
   const bridgeDaemon = path.join(
     packageRoot,
     'Contents',
-    'Resources',
-    'bridge',
+    'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'MacOS',
     'TaskWraithBridgeDaemon'
   )
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
@@ -1430,6 +1484,7 @@ module.exports = {
   stopSmokeChild,
   evaluateMacSigningIdentity,
   collectMacSigningPostureFailures,
+  collectMacBridgeIdentityFailures,
   describeMacSigningPosture,
   readMacSigningIdentity,
   readPackagedDistributionMetadata,

@@ -37,7 +37,7 @@ import {
   studioError,
   type StudioApplyEditParams,
   type StudioApplyEditResult,
-  type StudioDocumentOperation,
+  type StudioEditCommittedOperation,
   type StudioMediaAsset,
   type StudioMessage,
   type StudioOpenMediaResult,
@@ -52,6 +52,8 @@ import {
   type StudioEffectPreview
 } from './StudioProtocol'
 import { buildEditCommittedNotification, handleStudioMessage } from './StudioDispatcher'
+import { StudioResourceSnapshotQueries } from './StudioResourceSnapshotQuery'
+import type { StudioResourceSnapshotOutcome } from '../../shared/studioResourceSnapshot'
 import type {
   StudioOpenMediaOutcome,
   StudioRevisionStore,
@@ -169,7 +171,7 @@ function describeError(error: unknown): string {
 function extractCommittedEdit(
   request: unknown,
   response: StudioResponseMessage
-): { revision: number; op: StudioDocumentOperation } | null {
+): { revision: number; op: StudioEditCommittedOperation } | null {
   if (typeof request !== 'object' || request === null) return null
   const candidate = request as { method?: unknown; params?: unknown }
   if (!('result' in response)) return null
@@ -226,12 +228,32 @@ function extractCommittedEdit(
     ) {
       return null
     }
+    if (result.decision === 'accept') {
+      if (
+        typeof result.appliedOp !== 'object' ||
+        result.appliedOp === null ||
+        !Array.isArray(result.tracks)
+      ) {
+        return null
+      }
+      return {
+        revision: result.revision,
+        op: {
+          type: 'resolve_proposal',
+          proposalId: result.proposalId,
+          decision: 'accept',
+          appliedOp: structuredClone(result.appliedOp),
+          tracks: structuredClone(result.tracks)
+        }
+      }
+    }
+    if (result.appliedOp !== undefined || result.tracks !== undefined) return null
     return {
       revision: result.revision,
       op: {
         type: 'resolve_proposal',
         proposalId: result.proposalId,
-        decision: result.decision
+        decision: 'reject'
       }
     }
   }
@@ -268,6 +290,7 @@ export class StudioCompanionSupervisor {
   private currentState: StudioSupervisorState = 'idle'
   private child: StudioCompanionChild | null = null
   private hydratedChild: StudioCompanionChild | null = null
+  private readonly resourceQueries = new StudioResourceSnapshotQueries()
   private childSettled = false
   private decoder: StudioNdjsonDecoder | null = null
   private inbound: Promise<void> = Promise.resolve()
@@ -301,6 +324,40 @@ export class StudioCompanionSupervisor {
     }
   }
 
+  /** Observes only the current hydrated child; never starts or restarts it. */
+  getResourceSnapshot(): Promise<StudioResourceSnapshotOutcome> {
+    const child = this.child
+    const pid = child?.pid
+    if (
+      this.currentState !== 'running' ||
+      !child ||
+      this.hydratedChild !== child ||
+      !Number.isSafeInteger(pid) ||
+      (pid ?? 0) <= 0
+    )
+      return Promise.resolve({
+        ok: false,
+        code: 'studio_unavailable',
+        message: 'Studio is not ready.'
+      })
+    const ticket = this.resourceQueries.reserve(child, pid as number)
+    if (ticket.pending) {
+      void this.enqueueSerialized(async () => {
+        if (
+          this.child !== child ||
+          this.hydratedChild !== child ||
+          this.currentState !== 'running'
+        ) {
+          ticket.cancel('studio_unavailable', 'The observed Studio process is no longer ready.')
+          return
+        }
+        ticket.send(this.store.revision, (message) => this.writeToChild(child, message))
+      })
+    }
+    // Waiting inside enqueueSerialized would prevent its own reply from being handled.
+    return ticket.result
+  }
+
   /** Launch the companion. Rejects while an instance is live (single-instance). */
   start(): void {
     if (
@@ -323,6 +380,9 @@ export class StudioCompanionSupervisor {
    * quit signal), then SIGTERM, then SIGKILL, one grace period apart.
    */
   stop(): Promise<void> {
+    if (this.child) {
+      this.resourceQueries.cancelChild(this.child, 'resource_query_stopped', 'Studio is stopping.')
+    }
     if (this.restartTimer !== null) {
       clearTimeout(this.restartTimer)
       this.restartTimer = null
@@ -527,6 +587,11 @@ export class StudioCompanionSupervisor {
     signal: NodeJS.Signals | null
   ): void {
     if (child !== this.child || this.childSettled) return
+    this.resourceQueries.cancelChild(
+      child,
+      'resource_query_child_exited',
+      'The observed Studio process exited.'
+    )
     this.childSettled = true
     this.child = null
     this.hydratedChild = null
@@ -603,6 +668,7 @@ export class StudioCompanionSupervisor {
   }
 
   private async handleInboundMessage(child: StudioCompanionChild, value: unknown): Promise<void> {
+    if (this.resourceQueries.handle(child, value)) return
     let response: StudioResponseMessage | null
     try {
       response = await handleStudioMessage(this.store, value)

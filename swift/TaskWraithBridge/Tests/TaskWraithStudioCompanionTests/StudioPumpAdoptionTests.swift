@@ -61,14 +61,16 @@ final class StudioPumpAdoptionTests: XCTestCase {
             openedAssets: [],
             proposals: [],
             resolvedProposalIds: [],
+            acceptedInserts: [],
             transcripts: []
         )
         let fields = Mirror(reflecting: step).children.compactMap(\.label).sorted()
         XCTAssertEqual(
             fields,
             [
-                "effectPreview", "exitCode", "openedAssets", "outboundLines", "proposals",
-                "protocolErrors", "resolvedProposalIds", "transcripts",
+                "acceptedInserts", "effectPreview", "exitCode", "openedAssets",
+                "outboundLines", "proposals", "protocolErrors", "resolvedProposalIds", "resourceQueries",
+                "transcripts",
             ],
             "StudioCompanionSession.Step changed shape — does "
                 + "StudioViewerAppState.adopt(update:) handle the new field, or is it "
@@ -103,6 +105,7 @@ final class StudioPumpAdoptionTests: XCTestCase {
                 openedAssets: [],
                 proposals: [],
                 resolvedProposalIds: [],
+                acceptedInserts: [],
                 transcripts: []
             ),
             latestRevision: 7,
@@ -281,6 +284,155 @@ final class StudioPumpAdoptionTests: XCTestCase {
             60,
             "an open hydrated ghost must win over the committed sequence at its affected range"
         )
+    }
+
+    func testAcceptedResolutionImmediatelyAdoptsCurrentAndRejectOnlyClearsGhost() async throws {
+        guard let device = MTLCreateSystemDefaultDevice() else {
+            throw XCTSkip("no Metal device")
+        }
+        let primaryURL = try await makeMovie(lumaLevels: [16, 80, 160])
+        let insertedURL = try await makeMovie(lumaLevels: [235, 235])
+        defer {
+            try? FileManager.default.removeItem(at: primaryURL)
+            try? FileManager.default.removeItem(at: insertedURL)
+        }
+        let timebase = try XCTUnwrap(StudioTimebase(timescale: 30, frameDurationTicks: 1))
+        let documentTimebase = try XCTUnwrap(
+            StudioTimebase(timescale: 1000, frameDurationTicks: 1))
+        let authority = StudioPlaybackAuthority(
+            clock: StudioPlaybackClock(timebase: timebase, durationTicks: 300))
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let sourceController = StudioViewerWindowController(
+            renderer: sourceRenderer, authority: authority, route: .source)
+        let reviewController = StudioViewerWindowController(
+            renderer: reviewRenderer, authority: authority, route: .review)
+        let state = StudioViewerAppState(
+            controller: sourceController, renderer: sourceRenderer,
+            reviewController: reviewController, presentSource: {})
+        let primary = StudioMediaAsset(assetId: "primary", path: primaryURL.path)
+        let inserted = StudioMediaAsset(assetId: "inserted", path: insertedURL.path)
+        let base = StudioTimelineSequence(items: [
+            StudioSequenceItem(
+                itemId: "base", assetId: primary.assetId,
+                startTicks: 0, endTicks: 100, sourceInTicks: 0),
+        ], timebase: documentTimebase)
+
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: []),
+            latestRevision: 7,
+            hydration: StudioCompanionSession.Hydration(
+                assets: [primary, inserted], proposals: [], transcripts: [], sequence: base)))
+
+        func proposal(id: String, assetId: String, itemId: String, at: Int64)
+            -> StudioEditProposal
+        {
+            StudioEditProposal(
+                proposalId: id, createdRevision: 8,
+                op: StudioInsertRangeOp(
+                    itemId: itemId, assetId: assetId,
+                    sourceIn: StudioRationalTime(n: 0, d: 30)!,
+                    sourceOut: StudioRationalTime(n: 2, d: 30)!,
+                    at: StudioRationalTime(n: at, d: 30)!))
+        }
+
+        let baseItem: [String: Any] = [
+            "itemId": "base", "assetId": primary.assetId,
+            "position": ["n": 0, "d": 1], "duration": ["n": 1, "d": 10],
+            "sourceIn": ["n": 0, "d": 1], "sourceOut": ["n": 1, "d": 10],
+        ]
+        let crossItem: [String: Any] = [
+            "itemId": "cross-item", "assetId": inserted.assetId,
+            "position": ["n": 1, "d": 10], "duration": ["n": 1, "d": 15],
+            "sourceIn": ["n": 0, "d": 30], "sourceOut": ["n": 2, "d": 30],
+        ]
+        let sameItem: [String: Any] = [
+            "itemId": "same-item", "assetId": primary.assetId,
+            "position": ["n": 1, "d": 6], "duration": ["n": 1, "d": 15],
+            "sourceIn": ["n": 0, "d": 30], "sourceOut": ["n": 2, "d": 30],
+        ]
+        func materialized(_ items: [[String: Any]]) throws -> StudioTimelineSequence {
+            try StudioTimelineSequenceDecoder.strictSequence(
+                fromTracks: [["trackId": "V1", "kind": "video", "items": items]],
+                timebase: documentTimebase)
+        }
+
+        let accepted = proposal(id: "accept-cross", assetId: inserted.assetId,
+                                itemId: "cross-item", at: 3)
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [],
+                proposals: [accepted]), latestRevision: 8, hydration: nil))
+        XCTAssertTrue(reviewController.hasOpenReview)
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [],
+                resolvedProposalIds: [accepted.proposalId],
+                acceptedInserts: [StudioCompanionSession.AcceptedInsertCommit(
+                    appliedOp: accepted.op,
+                    sequence: try materialized([baseItem, crossItem]))]),
+            latestRevision: 9, hydration: nil))
+
+        XCTAssertEqual(reviewController.nextProposalBaseRevision, 9)
+        XCTAssertFalse(reviewController.hasOpenReview, "the accepted ghost was not cleared")
+        let acceptedSequence = try XCTUnwrap(reviewRenderer.sequence)
+        XCTAssertEqual(
+            acceptedSequence.sample(atTicks: 100),
+            .item(itemId: "cross-item", assetId: inserted.assetId, sourceTicks: 0),
+            "Current did not adopt the accepted host operation in its editCommitted turn")
+        XCTAssertEqual(reviewRenderer.residentSequenceAssetCount, 2)
+        XCTAssertEqual(acceptedSequence, try materialized([baseItem, crossItem]))
+
+        let decoderCountBeforeSameAssetAccept = state.sharedDecoderCreationCount
+        let sameAsset = proposal(id: "accept-same", assetId: primary.assetId,
+                                 itemId: "same-item", at: 5)
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [], proposals: [sameAsset]),
+            latestRevision: 10, hydration: nil))
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [],
+                resolvedProposalIds: [sameAsset.proposalId],
+                acceptedInserts: [StudioCompanionSession.AcceptedInsertCommit(
+                    appliedOp: sameAsset.op,
+                    sequence: try materialized([baseItem, crossItem, sameItem]))]),
+            latestRevision: 11, hydration: nil))
+        let bothAcceptedSequence = try XCTUnwrap(reviewRenderer.sequence)
+        XCTAssertEqual(
+            bothAcceptedSequence.sample(atTicks: 167),
+            .item(itemId: "same-item", assetId: primary.assetId, sourceTicks: 0))
+        XCTAssertEqual(
+            state.sharedDecoderCreationCount, decoderCountBeforeSameAssetAccept,
+            "same-asset acceptance decoded a second copy instead of reusing residency")
+
+        let rejected = proposal(id: "reject-same", assetId: primary.assetId,
+                                itemId: "must-not-appear", at: 7)
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [], proposals: [rejected]),
+            latestRevision: 12, hydration: nil))
+        XCTAssertTrue(reviewController.hasOpenReview)
+        await state.adopt(update: StudioCompanionStdioPump.Update(
+            step: StudioCompanionSession.Step(
+                outboundLines: [], exitCode: nil, protocolErrors: [],
+                resolvedProposalIds: [rejected.proposalId]),
+            latestRevision: 13, hydration: nil))
+        XCTAssertFalse(reviewController.hasOpenReview)
+        XCTAssertEqual(reviewRenderer.sequence, bothAcceptedSequence,
+                       "reject mutated Current instead of only clearing the ghost")
+
+        let laterHydration = StudioCompanionSession.hydration(from: [
+            "assets": [], "proposals": [], "transcripts": [],
+            "tracks": [[
+                "trackId": "V1", "kind": "video",
+                "items": [baseItem, crossItem, sameItem],
+            ] as [String: Any]],
+        ] as [String: Any])
+        XCTAssertEqual(
+            laterHydration.sequence, bothAcceptedSequence,
+            "immediate adoption diverged from the later durable hydration projection")
     }
 
     /// Executes the hydration -> app state -> two real renderer hop. The pixel

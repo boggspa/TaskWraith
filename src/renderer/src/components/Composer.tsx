@@ -103,6 +103,7 @@ import { ExternalPathAboveRow } from '../components/ExternalPathAboveRow'
 import { ExternalPathGrantPromptCard } from '../components/ExternalPathGrantPromptCard'
 import { GhostCompanion } from '../components/FxLayers'
 import { NotificationZone } from '../components/NotificationZone'
+import { StudioTranscriptStatusNotice } from './StudioTranscriptStatusNotice'
 import { GitCommitControls } from '../components/GitCommitControls'
 import { ComposerBranchWorktreePopover } from '../components/ComposerBranchWorktreePopover'
 import { ComposerWelcomeBranchPicker } from '../components/ComposerWelcomeBranchPicker'
@@ -6281,6 +6282,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
           />
         )}
       </ComposerPrimaryStack>
+      <StudioTranscriptStatusNotice />
       {/* Pane-bottom timecode bar — the unpacked timecode picker, glued
                 under the composer as its own centred row (Turn on the left,
                 total thread wall time on the right). Last child of .composer-area

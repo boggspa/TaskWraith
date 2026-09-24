@@ -83,7 +83,7 @@ files:
   - '!papercuts/**'
   - '!.githooks/**'
   # Native/mobile source trees are development inputs only. The mac app
-  # receives the release TaskWraithBridgeDaemon via `mac.extraResources`
+  # receives the release TaskWraithBridgeDaemon via `mac.extraFiles`
   # below; packaging the full Swift/iOS `.build` trees into app.asar
   # bloated debug builds by hundreds of megabytes.
   - '!swift/**'
@@ -239,6 +239,8 @@ mac:
   # _taskwraith-quic._udp carrier was being dropped before reaching
   # the daemon: NSBonjourServices was sitting under "5", not at root.
   extendInfo:
+    CFBundleName: TaskWraith
+    CFBundleDisplayName: TaskWraith
     # Start without a Dock tile, including CLI bridge invocations. Bootstrap
     # promotes only the primary desktop process to a regular application.
     LSUIElement: true
@@ -259,8 +261,9 @@ mac:
       - _taskwraith._tcp
       - _taskwraith-quic._udp
   notarize: false
-  # Bundle the Swift TaskWraithBridgeDaemon as an extraResource so the
-  # main process can spawn it from the packaged .app. The binary is
+  # Bundle the Swift TaskWraithBridgeDaemon as a real helper app so macOS TCC
+  # can resolve its privacy usage descriptions. Mach-O helpers do not belong
+  # in Resources, and an unbundled executable has no Info.plist for TCC. It is
   # compiled by `scripts/build-bridge-daemon.cjs` (run via the
   # `prebuild:bridge-daemon` npm script in all mac build targets).
   # macOS-only: the daemon uses Apple Network framework + Bonjour +
@@ -268,9 +271,10 @@ mac:
   # pre-lipo'd by scripts/build-studio-companion.cjs so both temporary apps in
   # the universal merge contain the same nested bundle. It stays unsigned here;
   # the parent macOS signing pass seals nested code in final-inside-out order.
+  extraFiles:
+    - from: swift/TaskWraithBridge/.build/bridge/TaskWraith Bridge.app
+      to: Helpers/TaskWraith Bridge.app
   extraResources:
-    - from: swift/TaskWraithBridge/.build/release/TaskWraithBridgeDaemon
-      to: bridge/TaskWraithBridgeDaemon
     - from: swift/TaskWraithBridge/.build/studio/TaskWraith Studio.app
       to: studio/TaskWraith Studio.app
 dmg:

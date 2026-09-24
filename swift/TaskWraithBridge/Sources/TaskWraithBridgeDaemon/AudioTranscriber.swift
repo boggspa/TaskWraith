@@ -42,6 +42,44 @@ enum AudioTranscriber {
         }
     }
 
+    private final class AuthorizationState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>?
+        private var timer: DispatchSourceTimer?
+        private var finished = false
+
+        init(
+            continuation: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>,
+            timeoutSeconds: Double
+        ) {
+            self.continuation = continuation
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timer.schedule(deadline: .now() + timeoutSeconds)
+            timer.setEventHandler { [self] in
+                finish(.notDetermined)
+            }
+            self.timer = timer
+            timer.resume()
+        }
+
+        func finish(_ status: SFSpeechRecognizerAuthorizationStatus) {
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            let continuation = continuation
+            let timer = timer
+            self.continuation = nil
+            self.timer = nil
+            lock.unlock()
+
+            timer?.cancel()
+            continuation?.resume(returning: status)
+        }
+    }
+
     /// One recognized span — a substring of the transcript with its start/end
     /// in whole milliseconds and the recognizer's confidence (0..1). Timings
     /// come from each `SFTranscriptionSegment`'s `timestamp`/`duration`
@@ -80,6 +118,93 @@ enum AudioTranscriber {
         }
     }
 
+    private final class RecognitionState: @unchecked Sendable {
+        private let lock = NSLock()
+        private var continuation: CheckedContinuation<TranscriptResult, Error>?
+        private var recognitionTask: SFSpeechRecognitionTask?
+        private var timer: DispatchSourceTimer?
+        private var finished = false
+
+        init(continuation: CheckedContinuation<TranscriptResult, Error>) {
+            self.continuation = continuation
+        }
+
+        func install(_ task: SFSpeechRecognitionTask) {
+            lock.lock()
+            let alreadyFinished = finished
+            if !alreadyFinished {
+                recognitionTask = task
+            }
+            lock.unlock()
+            if alreadyFinished {
+                task.cancel()
+            }
+        }
+
+        func armTimeout(seconds: Double) {
+            let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+            timer.schedule(deadline: .now() + seconds)
+            timer.setEventHandler { [self] in
+                finish(
+                    .failure(
+                        TranscribeError.recognitionFailed(
+                            "on-device speech recognition timed out after \(Int(seconds)) seconds"
+                        )
+                    )
+                )
+            }
+            timer.resume()
+
+            lock.lock()
+            let alreadyFinished = finished
+            if !alreadyFinished {
+                self.timer = timer
+            }
+            lock.unlock()
+            if alreadyFinished {
+                timer.cancel()
+            }
+        }
+
+        func finish(_ outcome: Result<TranscriptResult, Error>) {
+            lock.lock()
+            guard !finished else {
+                lock.unlock()
+                return
+            }
+            finished = true
+            let continuation = continuation
+            let recognitionTask = recognitionTask
+            let timer = timer
+            self.continuation = nil
+            self.recognitionTask = nil
+            self.timer = nil
+            lock.unlock()
+
+            timer?.cancel()
+            recognitionTask?.cancel()
+            continuation?.resume(with: outcome)
+        }
+    }
+
+    private static func speechAuthorizationStatus(
+        timeoutSeconds: Double = 10
+    ) async -> SFSpeechRecognizerAuthorizationStatus {
+        let current = SFSpeechRecognizer.authorizationStatus()
+        guard current == .notDetermined else {
+            return current
+        }
+        return await withCheckedContinuation { continuation in
+            let state = AuthorizationState(
+                continuation: continuation,
+                timeoutSeconds: timeoutSeconds
+            )
+            SFSpeechRecognizer.requestAuthorization { status in
+                state.finish(status)
+            }
+        }
+    }
+
     // MARK: - Public entry
 
     /// Transcribe the audio at `sourcePath` entirely on-device.
@@ -91,11 +216,7 @@ enum AudioTranscriber {
         // 1) Authorization. `requestAuthorization` is completion-style; wrap it
         //    in a continuation. A non-`.authorized` status is a caller-
         //    correctable `.badInput` carrying the exact System Settings path.
-        let authStatus: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
-                continuation.resume(returning: status)
-            }
-        }
+        let authStatus = await speechAuthorizationStatus()
         guard authStatus == .authorized else {
             throw TranscribeError.badInput(
                 "Speech Recognition permission not granted — enable it in System Settings › Privacy & Security › Speech Recognition"
@@ -134,26 +255,22 @@ enum AudioTranscriber {
         // 5) Run the task. `recognitionTask(with:resultHandler:)` is completion-
         //    style and the callback FIRES REPEATEDLY (progressive results); even
         //    with partials off, an error path and a final-result path can both
-        //    arrive, so we MUST resume the continuation exactly once. A
-        //    `hasResumed` Bool guards against a double-resume (which would be a
-        //    fatal `SWIFT_TASK_CONTINUATION_MISUSE` trap killing the daemon). We
-        //    resume only on `error` or `result.isFinal == true`; any non-final
+        //    arrive, so the locked state resumes exactly once, retains the task
+        //    until a terminal callback, and cancels it on completion or timeout.
+        //    We resume only on error or result.isFinal == true; any non-final
         //    result is ignored.
         return try await withCheckedThrowingContinuation { continuation in
-            var hasResumed = false
-            let resumeOnce: (Result<TranscriptResult, Error>) -> Void = { outcome in
-                // Single-resume guard: the FIRST terminal callback wins; all later
-                // callbacks (and the never-both case) are dropped.
-                if hasResumed { return }
-                hasResumed = true
-                continuation.resume(with: outcome)
-            }
-
-            recognizer.recognitionTask(with: request) { result, error in
+            let state = RecognitionState(continuation: continuation)
+            state.armTimeout(seconds: 90)
+            let task = recognizer.recognitionTask(with: request) { result, error in
                 if let error = error {
-                    resumeOnce(.failure(TranscribeError.recognitionFailed(
-                        "speech recognition failed: \(error.localizedDescription)"
-                    )))
+                    state.finish(
+                        .failure(
+                            TranscribeError.recognitionFailed(
+                                "speech recognition failed: \(error.localizedDescription)"
+                            )
+                        )
+                    )
                     return
                 }
                 guard let result = result else { return }
@@ -172,13 +289,18 @@ enum AudioTranscriber {
                         confidence: Double(seg.confidence)
                     )
                 }
-                resumeOnce(.success(TranscriptResult(
-                    text: best.formattedString,
-                    segments: segments,
-                    localeIdentifier: resolvedLocaleId,
-                    onDevice: true
-                )))
+                state.finish(
+                    .success(
+                        TranscriptResult(
+                            text: best.formattedString,
+                            segments: segments,
+                            localeIdentifier: resolvedLocaleId,
+                            onDevice: true
+                        )
+                    )
+                )
             }
+            state.install(task)
         }
     }
 }

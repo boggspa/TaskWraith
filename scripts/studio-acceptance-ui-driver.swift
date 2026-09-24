@@ -50,9 +50,17 @@ struct DriverAction: Codable {
     let playheadMaximumForwardAdvanceTicks: Int64?
     let playheadStepFrames: Int?
     let accessibilityLabel: String?
+    let accessibilityIdentifier: String?
+    let pairedAccessibilityIdentifier: String?
+    let accessibilityRole: String?
     let accessibilityAction: String?
+    let routeValueBefore: String?
+    let routeValueAfter: String?
+    let pairedRouteValueBefore: String?
+    let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
+    let route: String?
 }
 
 struct DriverRequest: Codable {
@@ -168,6 +176,23 @@ struct WorkspaceObservationReceipt: Codable {
 }
 
 struct ActionReceipt: Codable {
+    private enum CodingKeys: String, CodingKey {
+        case index, type, key, screenshotPath, byteLength, xFraction, yFraction, audioProbe
+        case routeHealth, avSyncPeakValue, avSyncCurrentValue
+        case resourceMatchCount, resourceDetailValue
+        case routeResourceMatchCount, routeResourceDetailValue
+        case playheadTicks, playheadToleranceTicks, playheadMaximumForwardAdvanceTicks
+        case playheadStepFrames, playheadTicksBefore, observedPlayheadTicks
+        case accessibilityLabel, accessibilityIdentifier, pairedAccessibilityIdentifier
+        case accessibilityRole
+        case accessibilityMatchCount, accessibilityValue, accessibilityAction
+        case routeValueBefore, routeValueAfter, pairedRouteValueBefore, pairedRouteValueAfter
+        case playbackValueBefore, playbackValueAfter
+        case route
+        case inPointTicks, outPointTicks, loopingRange
+        case workspace
+    }
+
     let index: Int
     let type: String
     let key: String?
@@ -179,6 +204,10 @@ struct ActionReceipt: Codable {
     let routeHealth: CoreAudioRouteHealthReceipt?
     let avSyncPeakValue: String?
     let avSyncCurrentValue: String?
+    let resourceMatchCount: Int?
+    let resourceDetailValue: String?
+    let routeResourceMatchCount: Int?
+    let routeResourceDetailValue: String?
     let playheadTicks: Int64?
     let playheadToleranceTicks: Int64?
     let playheadMaximumForwardAdvanceTicks: Int64?
@@ -186,12 +215,22 @@ struct ActionReceipt: Codable {
     let playheadTicksBefore: Int64?
     let observedPlayheadTicks: Int64?
     let accessibilityLabel: String?
+    let accessibilityIdentifier: String?
+    let pairedAccessibilityIdentifier: String?
     let accessibilityRole: String?
     let accessibilityMatchCount: Int?
     let accessibilityValue: String?
     let accessibilityAction: String?
+    let routeValueBefore: String?
+    let routeValueAfter: String?
+    let pairedRouteValueBefore: String?
+    let pairedRouteValueAfter: String?
     let playbackValueBefore: String?
     let playbackValueAfter: String?
+    let route: String?
+    let inPointTicks: Int64?
+    let outPointTicks: Int64?
+    let loopingRange: Bool?
     let workspace: WorkspaceObservationReceipt?
 
     init(
@@ -206,6 +245,10 @@ struct ActionReceipt: Codable {
         routeHealth: CoreAudioRouteHealthReceipt? = nil,
         avSyncPeakValue: String? = nil,
         avSyncCurrentValue: String? = nil,
+        resourceMatchCount: Int? = nil,
+        resourceDetailValue: String? = nil,
+        routeResourceMatchCount: Int? = nil,
+        routeResourceDetailValue: String? = nil,
         playheadTicks: Int64? = nil,
         playheadToleranceTicks: Int64? = nil,
         playheadMaximumForwardAdvanceTicks: Int64? = nil,
@@ -213,12 +256,22 @@ struct ActionReceipt: Codable {
         playheadTicksBefore: Int64? = nil,
         observedPlayheadTicks: Int64? = nil,
         accessibilityLabel: String? = nil,
+        accessibilityIdentifier: String? = nil,
+        pairedAccessibilityIdentifier: String? = nil,
         accessibilityRole: String? = nil,
         accessibilityMatchCount: Int? = nil,
         accessibilityValue: String? = nil,
         accessibilityAction: String? = nil,
+        routeValueBefore: String? = nil,
+        routeValueAfter: String? = nil,
+        pairedRouteValueBefore: String? = nil,
+        pairedRouteValueAfter: String? = nil,
         playbackValueBefore: String? = nil,
         playbackValueAfter: String? = nil,
+        route: String? = nil,
+        inPointTicks: Int64? = nil,
+        outPointTicks: Int64? = nil,
+        loopingRange: Bool? = nil,
         workspace: WorkspaceObservationReceipt? = nil
     ) {
         self.index = index
@@ -232,6 +285,10 @@ struct ActionReceipt: Codable {
         self.routeHealth = routeHealth
         self.avSyncPeakValue = avSyncPeakValue
         self.avSyncCurrentValue = avSyncCurrentValue
+        self.resourceMatchCount = resourceMatchCount
+        self.resourceDetailValue = resourceDetailValue
+        self.routeResourceMatchCount = routeResourceMatchCount
+        self.routeResourceDetailValue = routeResourceDetailValue
         self.playheadTicks = playheadTicks
         self.playheadToleranceTicks = playheadToleranceTicks
         self.playheadMaximumForwardAdvanceTicks = playheadMaximumForwardAdvanceTicks
@@ -239,13 +296,72 @@ struct ActionReceipt: Codable {
         self.playheadTicksBefore = playheadTicksBefore
         self.observedPlayheadTicks = observedPlayheadTicks
         self.accessibilityLabel = accessibilityLabel
+        self.accessibilityIdentifier = accessibilityIdentifier
+        self.pairedAccessibilityIdentifier = pairedAccessibilityIdentifier
         self.accessibilityRole = accessibilityRole
         self.accessibilityMatchCount = accessibilityMatchCount
         self.accessibilityValue = accessibilityValue
         self.accessibilityAction = accessibilityAction
+        self.routeValueBefore = routeValueBefore
+        self.routeValueAfter = routeValueAfter
+        self.pairedRouteValueBefore = pairedRouteValueBefore
+        self.pairedRouteValueAfter = pairedRouteValueAfter
         self.playbackValueBefore = playbackValueBefore
         self.playbackValueAfter = playbackValueAfter
+        self.route = route
+        self.inPointTicks = inPointTicks
+        self.outPointTicks = outPointTicks
+        self.loopingRange = loopingRange
         self.workspace = workspace
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(index, forKey: .index)
+        try container.encode(type, forKey: .type)
+        try container.encodeIfPresent(key, forKey: .key)
+        try container.encodeIfPresent(screenshotPath, forKey: .screenshotPath)
+        try container.encodeIfPresent(byteLength, forKey: .byteLength)
+        try container.encodeIfPresent(xFraction, forKey: .xFraction)
+        try container.encodeIfPresent(yFraction, forKey: .yFraction)
+        try container.encodeIfPresent(audioProbe, forKey: .audioProbe)
+        try container.encodeIfPresent(routeHealth, forKey: .routeHealth)
+        try container.encodeIfPresent(avSyncPeakValue, forKey: .avSyncPeakValue)
+        try container.encodeIfPresent(avSyncCurrentValue, forKey: .avSyncCurrentValue)
+        try container.encodeIfPresent(resourceMatchCount, forKey: .resourceMatchCount)
+        try container.encodeIfPresent(resourceDetailValue, forKey: .resourceDetailValue)
+        try container.encodeIfPresent(routeResourceMatchCount, forKey: .routeResourceMatchCount)
+        try container.encodeIfPresent(routeResourceDetailValue, forKey: .routeResourceDetailValue)
+        try container.encodeIfPresent(playheadTicks, forKey: .playheadTicks)
+        try container.encodeIfPresent(playheadToleranceTicks, forKey: .playheadToleranceTicks)
+        try container.encodeIfPresent(
+            playheadMaximumForwardAdvanceTicks,
+            forKey: .playheadMaximumForwardAdvanceTicks
+        )
+        try container.encodeIfPresent(playheadStepFrames, forKey: .playheadStepFrames)
+        try container.encodeIfPresent(playheadTicksBefore, forKey: .playheadTicksBefore)
+        try container.encodeIfPresent(observedPlayheadTicks, forKey: .observedPlayheadTicks)
+        try container.encodeIfPresent(accessibilityLabel, forKey: .accessibilityLabel)
+        try container.encodeIfPresent(accessibilityIdentifier, forKey: .accessibilityIdentifier)
+        try container.encodeIfPresent(
+            pairedAccessibilityIdentifier,
+            forKey: .pairedAccessibilityIdentifier
+        )
+        try container.encodeIfPresent(accessibilityRole, forKey: .accessibilityRole)
+        try container.encodeIfPresent(accessibilityMatchCount, forKey: .accessibilityMatchCount)
+        try container.encodeIfPresent(accessibilityValue, forKey: .accessibilityValue)
+        try container.encodeIfPresent(accessibilityAction, forKey: .accessibilityAction)
+        try container.encodeIfPresent(routeValueBefore, forKey: .routeValueBefore)
+        try container.encodeIfPresent(routeValueAfter, forKey: .routeValueAfter)
+        try container.encodeIfPresent(pairedRouteValueBefore, forKey: .pairedRouteValueBefore)
+        try container.encodeIfPresent(pairedRouteValueAfter, forKey: .pairedRouteValueAfter)
+        try container.encodeIfPresent(playbackValueBefore, forKey: .playbackValueBefore)
+        try container.encodeIfPresent(playbackValueAfter, forKey: .playbackValueAfter)
+        try container.encodeIfPresent(route, forKey: .route)
+        try container.encodeIfPresent(inPointTicks, forKey: .inPointTicks)
+        try container.encodeIfPresent(outPointTicks, forKey: .outPointTicks)
+        try container.encodeIfPresent(loopingRange, forKey: .loopingRange)
+        try container.encodeIfPresent(workspace, forKey: .workspace)
     }
 }
 
@@ -361,36 +477,81 @@ func validateWindow(_ request: DriverRequest) throws {
     }
 }
 
+func exactWindowIsTopmost(at point: CGPoint, request: DriverRequest) -> Bool {
+    let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+    let rows = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]] ?? []
+    for row in rows {
+        guard let layer = (row[kCGWindowLayer as String] as? NSNumber)?.intValue,
+              layer == 0,
+              let alpha = (row[kCGWindowAlpha as String] as? NSNumber)?.doubleValue,
+              alpha > 0,
+              let bounds = row[kCGWindowBounds as String] as? [String: Any],
+              let x = (bounds["X"] as? NSNumber)?.doubleValue,
+              let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+              let width = (bounds["Width"] as? NSNumber)?.doubleValue,
+              let height = (bounds["Height"] as? NSNumber)?.doubleValue,
+              width > 0,
+              height > 0,
+              point.x >= x,
+              point.x < x + width,
+              point.y >= y,
+              point.y < y + height else {
+            continue
+        }
+        let ownerPid = (row[kCGWindowOwnerPID as String] as? NSNumber)?.intValue
+        let windowId = (row[kCGWindowNumber as String] as? NSNumber)?.uint32Value
+        return ownerPid == Int(request.expectedPid) && windowId == request.windowId
+    }
+    return false
+}
+
+func exactTitleBarPoint(_ request: DriverRequest) -> CGPoint {
+    CGPoint(
+        x: request.windowBounds.x + request.windowBounds.width / 2,
+        y: request.windowBounds.y + min(16, request.windowBounds.height / 4)
+    )
+}
+
 func exactAccessibilityWindow(_ request: DriverRequest) throws -> AXUIElement {
     guard AXIsProcessTrusted() else {
         throw DriverFailure.refused("macOS Accessibility access is unavailable")
     }
     let applicationElement = AXUIElementCreateApplication(pid_t(request.expectedPid))
-    var rawWindows: CFTypeRef?
-    guard AXUIElementCopyAttributeValue(
-        applicationElement,
-        kAXWindowsAttribute as CFString,
-        &rawWindows
-    ) == .success,
-        let windows = rawWindows as? [AXUIElement]
-    else {
-        throw DriverFailure.refused("could not inspect the exact Companion accessibility windows")
-    }
-    let matches = windows.filter { window in
-        var rawTitle: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(
-            window,
-            kAXTitleAttribute as CFString,
-            &rawTitle
+    let deadline = Date().addingTimeInterval(5)
+    var inspectedWindows = false
+    repeat {
+        var rawWindows: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            applicationElement,
+            kAXWindowsAttribute as CFString,
+            &rawWindows
         ) == .success,
-            let title = rawTitle as? String
-        else { return false }
-        return title == request.windowTitle
-    }
-    guard matches.count == 1, let window = matches.first else {
-        throw DriverFailure.refused("exact Companion accessibility window identity is unavailable")
-    }
-    return window
+            let windows = rawWindows as? [AXUIElement]
+        {
+            inspectedWindows = true
+            let matches = windows.filter { window in
+                var rawTitle: CFTypeRef?
+                guard AXUIElementCopyAttributeValue(
+                    window,
+                    kAXTitleAttribute as CFString,
+                    &rawTitle
+                ) == .success,
+                    let title = rawTitle as? String
+                else { return false }
+                return title == request.windowTitle
+            }
+            if matches.count == 1, let window = matches.first { return window }
+            if matches.count > 1 {
+                throw DriverFailure.refused(
+                    "exact Companion accessibility window identity is duplicated")
+            }
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    } while Date() <= deadline
+    throw DriverFailure.refused(
+        inspectedWindows
+            ? "exact Companion accessibility window identity is unavailable"
+            : "could not inspect the exact Companion accessibility windows")
 }
 
 func stringAttribute(_ attribute: String, of element: AXUIElement) -> String? {
@@ -468,12 +629,27 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
         visited += 1
-        let accessibilityLabel =
-            stringAttribute(kAXIdentifierAttribute, of: element) ??
-            stringAttribute(kAXDescriptionAttribute, of: element) ??
-            stringAttribute(kAXTitleAttribute, of: element)
-        if accessibilityLabel == "Playback" {
-            labeledMatches.append(element)
+        // A transcript segment can truthfully contain the single word
+        // "Playback" and is also exposed as an AXButton. Do not count a label
+        // before proving the complete operable transport identity promised by
+        // the product: its stable identifier + label, role, action and state.
+        if stringAttribute(kAXIdentifierAttribute, of: element) == "Playback",
+            stringAttribute(kAXDescriptionAttribute, of: element) == "Playback",
+            stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole
+        {
+            var rawActions: CFArray?
+            let actionStatus = AXUIElementCopyActionNames(element, &rawActions)
+            let actionNames = rawActions as? [String]
+            let playbackValue = stringAttribute(kAXValueAttribute, of: element)
+            if actionStatus == .success,
+                let actionNames,
+                actionNames.contains(kAXPressAction),
+                let playbackValue,
+                playbackValue == "playing" || playbackValue == "paused",
+                !labeledMatches.contains(where: { CFEqual($0, element) })
+            {
+                labeledMatches.append(element)
+            }
         }
         guard depth < 8 else { continue }
         var rawChildren: CFTypeRef?
@@ -500,6 +676,13 @@ func exactAccessibilityPlaybackControl(in window: AXUIElement) throws -> AXUIEle
             labeledMatches.isEmpty
                 ? "Playback accessibility control is absent"
                 : "Playback accessibility control is duplicated"
+        )
+    }
+    guard stringAttribute(kAXIdentifierAttribute, of: playback) == "Playback",
+        stringAttribute(kAXDescriptionAttribute, of: playback) == "Playback"
+    else {
+        throw DriverFailure.refused(
+            "Playback accessibility control lost its exact identity"
         )
     }
     guard stringAttribute(kAXRoleAttribute, of: playback) == kAXButtonRole else {
@@ -630,12 +813,15 @@ func readAccessibilityTransportMutation(
 
 let avSyncPeakAccessibilityLabel = "A/V sync detail"
 let avSyncCurrentAccessibilityLabel = "A/V sync current detail"
+let resourceDetailAccessibilityLabel = "Resource detail"
 
 struct AvSyncAccessibilityRead {
     let peakMatchCount: Int
     let currentMatchCount: Int
     let peakValue: String
     let currentValue: String
+    let resourceMatchCount: Int
+    let resourceDetailValue: String
 }
 
 /// Reads retained peak and live current from one bounded traversal of one exact
@@ -645,6 +831,7 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
     var queue: [(AXUIElement, Int)] = [(window, 0)]
     var peakMatches: [AXUIElement] = []
     var currentMatches: [AXUIElement] = []
+    var resourceMatches: [AXUIElement] = []
     var visited = 0
     while !queue.isEmpty && visited < 512 {
         let (element, depth) = queue.removeFirst()
@@ -658,6 +845,8 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
                 peakMatches.append(element)
             } else if label == avSyncCurrentAccessibilityLabel {
                 currentMatches.append(element)
+            } else if label == resourceDetailAccessibilityLabel {
+                resourceMatches.append(element)
             }
         }
         guard depth < 8 else { continue }
@@ -675,15 +864,23 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
             queue.append(contentsOf: children.map { ($0, depth + 1) })
         }
     }
+    let resourceValues = resourceMatches.compactMap({
+        stringAttribute(kAXValueAttribute, of: $0)
+    })
     guard visited < 512,
           peakMatches.count == 1,
           currentMatches.count == 1,
+          resourceMatches.count >= 1,
+          resourceMatches.count <= 2,
           let peak = peakMatches.first,
           let current = currentMatches.first,
           let peakValue = stringAttribute(kAXValueAttribute, of: peak),
           let currentValue = stringAttribute(kAXValueAttribute, of: current),
           peakValue.hasPrefix("av1 "),
-          currentValue.hasPrefix("avc1 ") else {
+          currentValue.hasPrefix("avc1 "),
+          resourceValues.count == resourceMatches.count,
+          resourceValues.allSatisfy({ $0 == resourceValues[0] }),
+          resourceValues[0].hasPrefix("res1 ") else {
         throw DriverFailure.refused(
             "exact peak and current A/V sync accessibility identities are unavailable"
         )
@@ -692,7 +889,9 @@ func exactAccessibilityAvSync(in window: AXUIElement) throws -> AvSyncAccessibil
         peakMatchCount: peakMatches.count,
         currentMatchCount: currentMatches.count,
         peakValue: peakValue,
-        currentValue: currentValue
+        currentValue: currentValue,
+        resourceMatchCount: resourceMatches.count,
+        resourceDetailValue: resourceValues[0]
     )
 }
 
@@ -730,6 +929,208 @@ func readAccessibilityAvSync(
         )
     }
     return observed
+}
+
+let sourceRouteResourceDetailAccessibilityLabel = "Source route resource detail"
+let reviewRouteResourceDetailAccessibilityLabel = "Review route resource detail"
+let sourceRouteResourceDetailAccessibilityIdentifier = "studio.workspace.resource.source"
+let reviewRouteResourceDetailAccessibilityIdentifier = "studio.workspace.resource.review"
+
+struct RouteResourceAccessibilityRead {
+    let matchCount: Int
+    let value: String
+}
+
+/// Reads the renderer-owned route resource export. This is deliberately a
+/// separate AX identity from the process-wide `Resource detail` export: the
+/// latter cannot prove which route owns a decoder, retained frame, or surface.
+func readAccessibilityRouteResource(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication,
+    expectedRoute: String
+) throws -> RouteResourceAccessibilityRead {
+    guard expectedRoute == "source" || expectedRoute == "review" else {
+        throw DriverFailure.refused("route-resource read requires an explicit Source or Review route")
+    }
+    let expectedLabel =
+        expectedRoute == "source"
+            ? sourceRouteResourceDetailAccessibilityLabel
+            : reviewRouteResourceDetailAccessibilityLabel
+    let expectedIdentifier =
+        expectedRoute == "source"
+            ? sourceRouteResourceDetailAccessibilityIdentifier
+            : reviewRouteResourceDetailAccessibilityIdentifier
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background route-resource read requires the exact inactive Companion"
+        )
+    }
+    try validateWindow(request)
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let identifier = stringAttribute(kAXIdentifierAttribute, of: element)
+        let label =
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole,
+           identifier == expectedIdentifier,
+           label == expectedLabel
+        {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused(
+                    "route-resource accessibility tree exceeds 512 elements"
+                )
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512,
+          matches.count == 1,
+          let value = stringAttribute(kAXValueAttribute, of: matches[0]),
+          value.hasPrefix("rr1 ") else {
+        throw DriverFailure.refused(
+            "exact (expectedLabel) AXStaticText identity is unavailable"
+        )
+    }
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "route-resource observation changed foreground, process, or executable identity"
+        )
+    }
+    return RouteResourceAccessibilityRead(matchCount: matches.count, value: value)
+}
+
+struct ReviewRangeAccessibilityRead {
+    let inPointTicks: Int64
+    let outPointTicks: Int64
+    let loopingRange: Bool
+}
+
+/// Reads the exact numeric In/Out descriptors already published by the live
+/// overlay. OCR or the generic transport mutation string is insufficient here:
+/// the review-loop acceptance bar needs actual half-open endpoints and loop
+/// state from one accessibility traversal.
+func readAccessibilityReviewRange(
+    in window: AXUIElement,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> ReviewRangeAccessibilityRead {
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableBefore = application.executableURL?.standardizedFileURL.path
+    let pgidBefore = getpgid(pid_t(request.expectedPid))
+    guard request.inputDelivery == "background-observation-only",
+          !request.allowForegroundInput,
+          foregroundBefore != request.expectedPid,
+          !application.isActive,
+          executableBefore == request.expectedExecutablePath,
+          pgidBefore == request.expectedPgid else {
+        throw DriverFailure.refused(
+            "background review-range read requires the exact inactive Companion"
+        )
+    }
+
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var inMatches: [AXUIElement] = []
+    var outMatches: [AXUIElement] = []
+    var loopMatches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        let label =
+            stringAttribute(kAXIdentifierAttribute, of: element) ??
+            stringAttribute(kAXDescriptionAttribute, of: element) ??
+            stringAttribute(kAXTitleAttribute, of: element)
+        if stringAttribute(kAXRoleAttribute, of: element) == kAXStaticTextRole {
+            switch label {
+            case "In point": inMatches.append(element)
+            case "Out point": outMatches.append(element)
+            case "Loop marked range": loopMatches.append(element)
+            default: break
+            }
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("review-range accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+
+    guard visited < 512,
+          inMatches.count == 1,
+          outMatches.count == 1,
+          loopMatches.count == 1,
+          let inRaw = stringAttribute(kAXValueAttribute, of: inMatches[0]),
+          let outRaw = stringAttribute(kAXValueAttribute, of: outMatches[0]),
+          let inTicks = Int64(inRaw),
+          let outTicks = Int64(outRaw),
+          outTicks > inTicks,
+          let loopRaw = stringAttribute(kAXValueAttribute, of: loopMatches[0]),
+          loopRaw == "on" || loopRaw == "off" else {
+        throw DriverFailure.refused(
+            "exact review-range In/Out/Loop accessibility identities are unavailable"
+        )
+    }
+
+    try validateWindow(request)
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    let executableAfter = application.executableURL?.standardizedFileURL.path
+    let pgidAfter = getpgid(pid_t(request.expectedPid))
+    guard foregroundAfter == foregroundBefore,
+          foregroundAfter != request.expectedPid,
+          !application.isActive,
+          executableAfter == executableBefore,
+          pgidAfter == pgidBefore else {
+        throw DriverFailure.refused(
+            "review-range observation changed foreground, process, or executable identity"
+        )
+    }
+    return ReviewRangeAccessibilityRead(
+        inPointTicks: inTicks,
+        outPointTicks: outTicks,
+        loopingRange: loopRaw == "on"
+    )
 }
 
 func workspacePoint(of element: AXUIElement) -> CGPoint? {
@@ -834,6 +1235,171 @@ func exactWorkspaceObservation(in window: AXUIElement) throws -> WorkspaceObserv
         )
     }
     return WorkspaceObservationReceipt(elements: elements)
+}
+
+/// Studio route observation helpers begin here; keep them outside the
+/// playhead's forward-advance policy block below.
+
+/// Finds one exact Source or Timeline route control and verifies that the
+/// control itself exposes AXPress. Route identity is an accessibility
+/// contract, not a coordinate or a keyboard shortcut.
+func exactAccessibilityWorkspaceRoute(
+    in window: AXUIElement,
+    identifier: String
+) throws -> AXUIElement {
+    guard identifier == workspaceSourceRouteIdentifier ||
+            identifier == workspaceTimelineRouteIdentifier else {
+        throw DriverFailure.refused("workspace route identifier is not one of the fixed routes")
+    }
+    var queue: [(AXUIElement, Int)] = [(window, 0)]
+    var matches: [AXUIElement] = []
+    var visited = 0
+    while !queue.isEmpty && visited < 512 {
+        let (element, depth) = queue.removeFirst()
+        visited += 1
+        if stringAttribute(kAXIdentifierAttribute, of: element) == identifier {
+            matches.append(element)
+        }
+        guard depth < 8 else { continue }
+        var rawChildren: CFTypeRef?
+        if AXUIElementCopyAttributeValue(
+            element,
+            kAXChildrenAttribute as CFString,
+            &rawChildren
+        ) == .success,
+            let children = rawChildren as? [AXUIElement]
+        {
+            guard visited + queue.count + children.count <= 512 else {
+                throw DriverFailure.refused("workspace accessibility tree exceeds 512 elements")
+            }
+            queue.append(contentsOf: children.map { ($0, depth + 1) })
+        }
+    }
+    guard visited < 512, matches.count == 1, let route = matches.first else {
+        throw DriverFailure.refused(
+            "workspace route accessibility identifier is absent or duplicated"
+        )
+    }
+    guard stringAttribute(kAXRoleAttribute, of: route) == kAXCheckBoxRole else {
+        throw DriverFailure.refused("workspace route accessibility control is not an AXCheckBox")
+    }
+    guard workspaceBoolAttribute(kAXEnabledAttribute, of: route) == true else {
+        throw DriverFailure.refused("workspace route accessibility control is not enabled")
+    }
+    var rawActions: CFArray?
+    guard AXUIElementCopyActionNames(route, &rawActions) == .success,
+          let actionNames = rawActions as? [String],
+          actionNames.contains(kAXPressAction) else {
+        throw DriverFailure.refused("workspace route accessibility control has no AXPress action")
+    }
+    guard let value = stringAttribute(kAXValueAttribute, of: route),
+          value == "selected" || value == "not selected" else {
+        throw DriverFailure.refused("workspace route accessibility value is invalid")
+    }
+    return route
+}
+
+func pressAccessibilityWorkspaceRoute(
+    _ route: AXUIElement,
+    in window: AXUIElement,
+    identifier: String,
+    pairedIdentifier: String,
+    accessibilityAction: String,
+    routeValueBefore: String,
+    routeValueAfter: String,
+    pairedRouteValueBefore: String,
+    pairedRouteValueAfter: String,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws -> (before: String, after: String, pairedBefore: String, pairedAfter: String) {
+    let exactRouteIdentifiers = Set([
+        workspaceSourceRouteIdentifier,
+        workspaceTimelineRouteIdentifier,
+    ])
+    let requestedRouteTransitionIsExact =
+        (routeValueBefore == "not selected" && routeValueAfter == "selected")
+        || (routeValueBefore == "selected" && routeValueAfter == "not selected")
+    guard Set([identifier, pairedIdentifier]) == exactRouteIdentifiers,
+          accessibilityAction == "AXPress",
+          requestedRouteTransitionIsExact,
+          pairedRouteValueBefore == "selected",
+          pairedRouteValueAfter == "selected",
+          let observedBefore = stringAttribute(kAXValueAttribute, of: route),
+          observedBefore == routeValueBefore,
+          let pairedRoute = try? exactAccessibilityWorkspaceRoute(
+              in: window,
+              identifier: pairedIdentifier
+          ),
+          let observedPairedBefore = stringAttribute(kAXValueAttribute, of: pairedRoute),
+          observedPairedBefore == pairedRouteValueBefore else {
+        throw DriverFailure.refused("exact workspace AXPress route request does not match observed control")
+    }
+    let foregroundBefore = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard foregroundBefore != request.expectedPid, !application.isActive else {
+        throw DriverFailure.refused("background workspace route control refuses an active Companion")
+    }
+    guard AXUIElementPerformAction(route, kAXPressAction as CFString) == .success else {
+        throw DriverFailure.refused("exact workspace route AXPress failed")
+    }
+    let deadline = Date().addingTimeInterval(1)
+    var observedAfter: String?
+    var observedPairedAfter: String?
+    var lastObservationFailure: String?
+    while Date() < deadline {
+        do {
+            try validateWindow(request)
+            let freshWindow = try exactAccessibilityWindow(request)
+            let freshRoute = try exactAccessibilityWorkspaceRoute(
+                in: freshWindow,
+                identifier: identifier
+            )
+            let freshPairedRoute = try exactAccessibilityWorkspaceRoute(
+                in: freshWindow,
+                identifier: pairedIdentifier
+            )
+            guard let candidate = stringAttribute(kAXValueAttribute, of: freshRoute),
+                  let pairedCandidate = stringAttribute(
+                    kAXValueAttribute,
+                    of: freshPairedRoute
+                  ) else {
+                throw DriverFailure.refused("workspace route accessibility value is unreadable")
+            }
+            observedAfter = candidate
+            observedPairedAfter = pairedCandidate
+            lastObservationFailure = nil
+        } catch let failure as DriverFailure {
+            observedAfter = nil
+            observedPairedAfter = nil
+            lastObservationFailure = failure.description
+        } catch {
+            observedAfter = nil
+            observedPairedAfter = nil
+            lastObservationFailure = String(describing: error)
+        }
+        if observedAfter == routeValueAfter &&
+            observedPairedAfter == pairedRouteValueAfter {
+            break
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+    }
+    let foregroundAfter = NSWorkspace.shared.frontmostApplication?.processIdentifier
+    guard observedAfter == routeValueAfter,
+          observedPairedAfter == pairedRouteValueAfter,
+          foregroundAfter == foregroundBefore,
+          !application.isActive else {
+        throw DriverFailure.refused(
+            "workspace route AXPress did not settle: identifier=\(identifier) " +
+                "requestedBefore=\(routeValueBefore) observedBefore=\(observedBefore) " +
+                "requestedAfter=\(routeValueAfter) observedAfter=\(String(describing: observedAfter)) " +
+                "pairedIdentifier=\(pairedIdentifier) " +
+                "pairedRequestedBefore=\(pairedRouteValueBefore) " +
+                "pairedObservedBefore=\(observedPairedBefore) " +
+                "pairedRequestedAfter=\(pairedRouteValueAfter) " +
+                "pairedObservedAfter=\(String(describing: observedPairedAfter)) " +
+                "lastObservationFailure=\(lastObservationFailure ?? "none")"
+        )
+    }
+    return (observedBefore, observedAfter!, observedPairedBefore, observedPairedAfter!)
 }
 
 func readWorkspaceObservation(
@@ -1075,31 +1641,100 @@ func activateExactWindowForExplicitForeground(
     application: NSRunningApplication,
     window: AXUIElement
 ) throws {
-    guard application.activate(options: [.activateAllWindows]),
-          AXUIElementSetAttributeValue(
-            AXUIElementCreateApplication(pid_t(request.expectedPid)),
-            kAXFrontmostAttribute as CFString,
-            kCFBooleanTrue
-          ) == .success,
-          AXUIElementSetAttributeValue(
-            AXUIElementCreateApplication(pid_t(request.expectedPid)),
-            kAXFocusedWindowAttribute as CFString,
-            window
-          ) == .success,
-          AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
-        throw DriverFailure.refused("explicit foreground input could not activate the exact window")
+    let applicationElement = AXUIElementCreateApplication(pid_t(request.expectedPid))
+    guard AXUIElementPerformAction(window, kAXRaiseAction as CFString) == .success else {
+        throw DriverFailure.refused("explicit foreground input could not raise the exact window")
     }
-    let deadline = Date().addingTimeInterval(3)
+    _ = application.activate(options: [.activateAllWindows])
+    _ = AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFrontmostAttribute as CFString,
+        kCFBooleanTrue
+    )
+    _ = AXUIElementSetAttributeValue(
+        applicationElement,
+        kAXFocusedWindowAttribute as CFString,
+        window
+    )
+
+    var deadline = Date().addingTimeInterval(0.75)
     while Date() < deadline &&
         (!application.isActive ||
             NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
     {
         RunLoop.current.run(until: Date().addingTimeInterval(0.05))
     }
+
+    if !application.isActive ||
+        NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid
+    {
+        // macOS 26 treats NSRunningApplication.activate as advisory for an
+        // accessory app. The request already carries explicit foreground-input
+        // consent, so click only the immutable exact window's title-bar centre,
+        // then prove that the same PID became frontmost before sending a key.
+        try validateWindow(request)
+        let point = exactTitleBarPoint(request)
+        guard exactWindowIsTopmost(at: point, request: request) else {
+            throw DriverFailure.refused(
+                "exact Studio title bar is not topmost at the activation point"
+            )
+        }
+        guard let source = CGEventSource(stateID: .hidSystemState),
+              let down = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseDown,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ),
+              let up = CGEvent(
+                mouseEventSource: source,
+                mouseType: .leftMouseUp,
+                mouseCursorPosition: point,
+                mouseButton: .left
+              ) else {
+            throw DriverFailure.refused("could not construct exact title-bar activation click")
+        }
+        down.post(tap: .cghidEventTap)
+        up.post(tap: .cghidEventTap)
+        deadline = Date().addingTimeInterval(3)
+        while Date() < deadline &&
+            (!application.isActive ||
+                NSWorkspace.shared.frontmostApplication?.processIdentifier != request.expectedPid)
+        {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        }
+    }
     guard application.isActive,
           NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid else {
         throw DriverFailure.refused("explicit foreground input did not reach the exact window")
     }
+    try validateWindow(request)
+}
+
+func restoreForegroundAfterExplicitInput(
+    _ previous: NSRunningApplication,
+    request: DriverRequest,
+    application: NSRunningApplication
+) throws {
+    guard !previous.isTerminated,
+          previous.processIdentifier != request.expectedPid,
+          previous.activate(options: [.activateAllWindows]) else {
+        throw DriverFailure.refused("prior foreground application is unavailable for restoration")
+    }
+    let deadline = Date().addingTimeInterval(3)
+    while Date() < deadline &&
+        (application.isActive ||
+            NSWorkspace.shared.frontmostApplication?.processIdentifier !=
+                previous.processIdentifier)
+    {
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+    }
+    guard !application.isActive,
+          NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+            previous.processIdentifier else {
+        throw DriverFailure.refused("prior foreground application was not restored")
+    }
+    try validateWindow(request)
 }
 
 func boundedScreenshotURL(_ path: String, artifactRoot: String) throws -> URL {
@@ -1128,6 +1763,32 @@ final class CaptureResultBox: @unchecked Sendable {
     var result: Result<CGImage, Error>?
 }
 
+func nativeCaptureScale(window: SCWindow, displays: [SCDisplay]) throws -> CGFloat {
+    let display = displays.max { left, right in
+        let leftIntersection = left.frame.intersection(window.frame)
+        let rightIntersection = right.frame.intersection(window.frame)
+        let leftArea = leftIntersection.isNull ? 0 : leftIntersection.width * leftIntersection.height
+        let rightArea =
+            rightIntersection.isNull ? 0 : rightIntersection.width * rightIntersection.height
+        return leftArea < rightArea
+    }
+    guard let display,
+          display.frame.width > 0,
+          display.frame.height > 0 else {
+        throw DriverFailure.refused("exact Studio window has no bounded capture display")
+    }
+    let horizontal = CGFloat(display.width) / display.frame.width
+    let vertical = CGFloat(display.height) / display.frame.height
+    guard horizontal.isFinite,
+          vertical.isFinite,
+          horizontal >= 0.5,
+          horizontal <= 4,
+          abs(horizontal - vertical) <= 0.001 else {
+        throw DriverFailure.refused("exact Studio display has no uniform native capture scale")
+    }
+    return horizontal
+}
+
 func capture(windowId: UInt32, pid: Int32, to destination: URL) throws -> Int {
     let semaphore = DispatchSemaphore(value: 0)
     let box = CaptureResultBox()
@@ -1144,10 +1805,11 @@ func capture(windowId: UInt32, pid: Int32, to destination: URL) throws -> Int {
                     "ScreenCaptureKit could not find the exact isolated Studio window"
                 )
             }
+            let captureScale = try nativeCaptureScale(window: window, displays: content.displays)
             let filter = SCContentFilter(desktopIndependentWindow: window)
             let configuration = SCStreamConfiguration()
-            configuration.width = max(1, Int(window.frame.width * 2))
-            configuration.height = max(1, Int(window.frame.height * 2))
+            configuration.width = max(1, Int((window.frame.width * captureScale).rounded()))
+            configuration.height = max(1, Int((window.frame.height * captureScale).rounded()))
             configuration.captureResolution = .best
             configuration.ignoreShadowsSingleWindow = true
             configuration.showsCursor = false
@@ -1704,6 +2366,22 @@ do {
     if request.actions.contains(where: { $0.type == "press-playback" }) {
         _ = try exactAccessibilityPlaybackControl(in: accessibilityWindow)
     }
+    if let routeAction = request.actions.first(where: {
+        $0.type == "press-workspace-route"
+    }) {
+        guard let identifier = routeAction.accessibilityIdentifier,
+              let pairedIdentifier = routeAction.pairedAccessibilityIdentifier else {
+            throw DriverFailure.refused("workspace route AXPress request has incomplete identifiers")
+        }
+        _ = try exactAccessibilityWorkspaceRoute(
+            in: accessibilityWindow,
+            identifier: identifier
+        )
+        _ = try exactAccessibilityWorkspaceRoute(
+            in: accessibilityWindow,
+            identifier: pairedIdentifier
+        )
+    }
     if let transportMutationAction = request.actions.first(where: {
         $0.type == "read-transport-mutation"
     }) {
@@ -1715,12 +2393,44 @@ do {
             expectedLabel: label
         )
     }
+    if request.actions.contains(where: { $0.type == "read-review-range" }) {
+        _ = try readAccessibilityReviewRange(
+            in: accessibilityWindow,
+            request: request,
+            application: application
+        )
+    }
+    if request.actions.contains(where: { $0.type == "read-route-resource" }) {
+        guard let route = request.actions.first(where: { $0.type == "read-route-resource" })?.route else {
+            throw DriverFailure.refused("route-resource read has no explicit route selector")
+        }
+        _ = try readAccessibilityRouteResource(
+            in: accessibilityWindow,
+            request: request,
+            application: application,
+            expectedRoute: route
+        )
+    }
+    var foregroundToRestore: NSRunningApplication?
     if request.inputDelivery == "foreground-global-explicit" {
+        guard let currentForeground = NSWorkspace.shared.frontmostApplication,
+              currentForeground.processIdentifier != request.expectedPid else {
+            throw DriverFailure.refused("explicit foreground input has no distinct prior app")
+        }
+        foregroundToRestore = currentForeground
         try activateExactWindowForExplicitForeground(
             request,
             application: application,
             window: accessibilityWindow
         )
+    }
+    defer {
+        if let previous = foregroundToRestore,
+           !previous.isTerminated,
+           NSWorkspace.shared.frontmostApplication?.processIdentifier == request.expectedPid
+        {
+            _ = previous.activate(options: [.activateAllWindows])
+        }
     }
     try validateWindow(request)
 
@@ -1781,7 +2491,9 @@ do {
                     yFraction: nil,
                     audioProbe: nil,
                     avSyncPeakValue: observed.peakValue,
-                    avSyncCurrentValue: observed.currentValue
+                    avSyncCurrentValue: observed.currentValue,
+                    resourceMatchCount: observed.resourceMatchCount,
+                    resourceDetailValue: observed.resourceDetailValue
                 )
             )
         } else if action.type == "coreaudio-route-health",
@@ -1832,6 +2544,54 @@ do {
                     accessibilityValue: observed.value
                 )
             )
+        } else if action.type == "read-review-range",
+                  request.inputDelivery == "background-observation-only"
+        {
+            let observed = try readAccessibilityReviewRange(
+                in: accessibilityWindow,
+                request: request,
+                application: application
+            )
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-review-range",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    inPointTicks: observed.inPointTicks,
+                    outPointTicks: observed.outPointTicks,
+                    loopingRange: observed.loopingRange
+                )
+            )
+        } else if action.type == "read-route-resource",
+                  request.inputDelivery == "background-observation-only",
+                  let route = action.route
+        {
+            let observed = try readAccessibilityRouteResource(
+                in: accessibilityWindow,
+                request: request,
+                application: application,
+                expectedRoute: route
+            )
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "read-route-resource",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    routeResourceMatchCount: observed.matchCount,
+                    routeResourceDetailValue: observed.value,
+                    route: route
+                )
+            )
         } else if action.type == "press-playback",
            request.inputDelivery == "background-observation-only",
            let accessibilityLabel = action.accessibilityLabel,
@@ -1865,6 +2625,58 @@ do {
                     accessibilityAction: accessibilityAction,
                     playbackValueBefore: observed.before,
                     playbackValueAfter: observed.after
+                )
+            )
+        } else if action.type == "press-workspace-route",
+                  request.inputDelivery == "background-observation-only",
+                  let accessibilityIdentifier = action.accessibilityIdentifier,
+                  let pairedAccessibilityIdentifier = action.pairedAccessibilityIdentifier,
+                  let accessibilityRole = action.accessibilityRole,
+                  let accessibilityAction = action.accessibilityAction,
+                  let routeValueBefore = action.routeValueBefore,
+                  let routeValueAfter = action.routeValueAfter,
+                  let pairedRouteValueBefore = action.pairedRouteValueBefore,
+                  let pairedRouteValueAfter = action.pairedRouteValueAfter
+        {
+            guard accessibilityRole == kAXCheckBoxRole else {
+                throw DriverFailure.refused("workspace route AXPress request is not an AXCheckBox")
+            }
+            let route = try exactAccessibilityWorkspaceRoute(
+                in: accessibilityWindow,
+                identifier: accessibilityIdentifier
+            )
+            let observed = try pressAccessibilityWorkspaceRoute(
+                route,
+                in: accessibilityWindow,
+                identifier: accessibilityIdentifier,
+                pairedIdentifier: pairedAccessibilityIdentifier,
+                accessibilityAction: accessibilityAction,
+                routeValueBefore: routeValueBefore,
+                routeValueAfter: routeValueAfter,
+                pairedRouteValueBefore: pairedRouteValueBefore,
+                pairedRouteValueAfter: pairedRouteValueAfter,
+                request: request,
+                application: application
+            )
+            try validateWindow(request)
+            receipts.append(
+                ActionReceipt(
+                    index: index,
+                    type: "press-workspace-route",
+                    key: nil,
+                    screenshotPath: nil,
+                    byteLength: nil,
+                    xFraction: nil,
+                    yFraction: nil,
+                    audioProbe: nil,
+                    accessibilityIdentifier: accessibilityIdentifier,
+                    pairedAccessibilityIdentifier: pairedAccessibilityIdentifier,
+                    accessibilityRole: accessibilityRole,
+                    accessibilityAction: accessibilityAction,
+                    routeValueBefore: observed.before,
+                    routeValueAfter: observed.after,
+                    pairedRouteValueBefore: observed.pairedBefore,
+                    pairedRouteValueAfter: observed.pairedAfter
                 )
             )
         } else if action.type == "set-playhead-ticks",
@@ -1930,7 +2742,20 @@ do {
                     observedPlayheadTicks: observed.after
                 )
             )
-        } else if action.type == "key", let key = action.key, let code = keyCodes[key] {
+        } else if action.type == "key",
+                  request.inputDelivery == "foreground-global-explicit",
+                  let key = action.key,
+                  let code = keyCodes[key]
+        {
+            let titleBarPoint = exactTitleBarPoint(request)
+            guard application.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    request.expectedPid,
+                  exactWindowIsTopmost(at: titleBarPoint, request: request) else {
+                throw DriverFailure.refused(
+                    "exact Studio window lost foreground or z-order before key delivery"
+                )
+            }
             guard let down = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: true),
                   let up = CGEvent(keyboardEventSource: nil, virtualKey: code, keyDown: false) else {
                 throw DriverFailure.refused("could not construct bounded keyboard event")
@@ -1939,8 +2764,18 @@ do {
                 down.flags = .maskShift
                 up.flags = .maskShift
             }
-            down.postToPid(pid_t(request.expectedPid))
-            up.postToPid(pid_t(request.expectedPid))
+            down.post(tap: .cghidEventTap)
+            up.post(tap: .cghidEventTap)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+            guard application.isActive,
+                  NSWorkspace.shared.frontmostApplication?.processIdentifier ==
+                    request.expectedPid,
+                  exactWindowIsTopmost(at: titleBarPoint, request: request) else {
+                throw DriverFailure.refused(
+                    "exact Studio window lost foreground or z-order after key delivery"
+                )
+            }
+            try validateWindow(request)
             receipts.append(
                 ActionReceipt(
                     index: index,
@@ -2047,6 +2882,15 @@ do {
             throw DriverFailure.refused("unsupported bounded action at index \(index)")
         }
         usleep(120_000)
+    }
+
+    if let previous = foregroundToRestore {
+        try restoreForegroundAfterExplicitInput(
+            previous,
+            request: request,
+            application: application
+        )
+        foregroundToRestore = nil
     }
 
     let formatter = ISO8601DateFormatter()

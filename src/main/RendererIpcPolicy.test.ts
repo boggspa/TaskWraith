@@ -179,6 +179,14 @@ describe('RendererIpcPolicy', () => {
     }
   })
 
+  it('keeps the process-wide Studio resource snapshot main-renderer-only', () => {
+    const channel = 'studio:resource-snapshot'
+    expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.has(channel)).toBe(true)
+    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+    expect(IPC_ARGUMENT_SCHEMAS).toHaveProperty(channel)
+  })
+
   it.each([
     'channels:append',
     'channels:approve-human-review',

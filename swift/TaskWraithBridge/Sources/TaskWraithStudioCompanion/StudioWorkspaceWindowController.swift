@@ -13,16 +13,18 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   let sourceController: StudioViewerWindowController
   let reviewController: StudioViewerWindowController?
 
-  private let rootStack: NSStackView
+  private let rootStack: StudioWorkspaceRootStack
+  private let workspaceStack: NSStackView
   private let upperStack: NSStackView
   private let lowerStack: NSStackView
   private let viewerDeck: NSStackView
+  let workspaceToolbar: StudioWorkspaceToolbarView
   let viewerDeckChrome: StudioViewerDeckChrome
-  private let browserPane: NSView
-  private let inspectorPane: NSView
-  private let transcriptPane: NSView
-  private let timelinePane: NSView
-  private let proposalBarPane: NSView
+  private let browserPane: StudioWorkspaceBrowserSurface
+  private let inspectorPane: StudioWorkspaceInspectorSurface
+  private let transcriptPane: StudioWorkspaceTranscriptRail
+  private let timelinePane: StudioWorkspaceTimelineSurface
+  private let proposalBarPane: StudioWorkspaceProposalBar
   private let sourceHost: NSView
   private let reviewHost: NSView
 
@@ -30,8 +32,11 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   private var visibleRoutes: Set<StudioViewerRoute> = [.source]
   private var activeSequence: StudioTimelineSequence?
   private var activeProposalId: String?
+  private var pendingFirstResponderRoute: StudioViewerRoute?
   private var viewport: StudioWorkspaceViewport
   private var hasPresented = false
+  private var browserWidthConstraint: NSLayoutConstraint?
+  private var inspectorWidthConstraint: NSLayoutConstraint?
 
   private(set) var lastSnapshot: StudioWorkspacePresentationSnapshot
 
@@ -58,28 +63,18 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     )
     workspaceWindow.title = "TaskWraith Studio"
     workspaceWindow.isReleasedWhenClosed = false
+    workspaceWindow.appearance = NSAppearance(named: .darkAqua)
+    workspaceWindow.backgroundColor = StudioWorkspacePalette.canvas
+    workspaceWindow.titlebarAppearsTransparent = true
+    workspaceWindow.contentMinSize = NSSize(width: 800, height: 620)
     window = workspaceWindow
 
-    browserPane = Self.makePane(
-      identifier: "studio.workspace.browser",
-      accessibilityLabel: "Media browser"
-    )
-    inspectorPane = Self.makePane(
-      identifier: "studio.workspace.inspector",
-      accessibilityLabel: "Inspector"
-    )
-    transcriptPane = Self.makePane(
-      identifier: "studio.workspace.transcript",
-      accessibilityLabel: "Transcript"
-    )
-    timelinePane = Self.makePane(
-      identifier: "studio.workspace.timeline",
-      accessibilityLabel: "Timeline"
-    )
-    proposalBarPane = Self.makePane(
-      identifier: "studio.workspace.proposal-bar",
-      accessibilityLabel: "Active proposal"
-    )
+    workspaceToolbar = StudioWorkspaceToolbarView()
+    browserPane = StudioWorkspaceBrowserSurface()
+    inspectorPane = StudioWorkspaceInspectorSurface()
+    transcriptPane = StudioWorkspaceTranscriptRail()
+    timelinePane = StudioWorkspaceTimelineSurface()
+    proposalBarPane = StudioWorkspaceProposalBar()
     let sourceHostView = Self.makeViewerHost(
       identifier: "studio.workspace.viewer.source",
       accessibilityLabel: "Source viewer"
@@ -100,29 +95,81 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     viewerDeck = NSStackView(views: [viewerDeckChrome, routeStack])
     viewerDeck.identifier = NSUserInterfaceItemIdentifier("studio.workspace.viewer-deck")
     viewerDeck.orientation = .vertical
+    viewerDeck.alignment = .width
     viewerDeck.distribution = .fill
     viewerDeck.spacing = 1
+    viewerDeck.wantsLayer = true
+    viewerDeck.layer?.backgroundColor = StudioWorkspacePalette.canvas.cgColor
 
     upperStack = NSStackView(views: [browserPane, viewerDeck, inspectorPane])
+    upperStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.upper-deck")
     upperStack.orientation = .horizontal
+    upperStack.alignment = .height
     upperStack.distribution = .fill
     upperStack.spacing = 1
 
     lowerStack = NSStackView(views: [transcriptPane, timelinePane, proposalBarPane])
+    lowerStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.lower-deck")
     lowerStack.orientation = .vertical
+    lowerStack.alignment = .width
     lowerStack.distribution = .fill
     lowerStack.spacing = 1
 
-    rootStack = NSStackView(views: [upperStack, lowerStack])
+    workspaceStack = NSStackView(views: [upperStack, lowerStack])
+    workspaceStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.editor-deck")
+    workspaceStack.orientation = .vertical
+    workspaceStack.alignment = .width
+    workspaceStack.distribution = .fill
+    workspaceStack.spacing = 1
+
+    rootStack = StudioWorkspaceRootStack(views: [workspaceToolbar, workspaceStack])
     rootStack.identifier = NSUserInterfaceItemIdentifier("studio.workspace.root")
     rootStack.setAccessibilityElement(true)
     rootStack.setAccessibilityRole(.group)
     rootStack.setAccessibilityLabel("Studio workspace")
     rootStack.orientation = .vertical
+    rootStack.alignment = .width
     rootStack.distribution = .fill
     rootStack.spacing = 1
     rootStack.frame = workspaceWindow.contentLayoutRect
     rootStack.autoresizingMask = [.width, .height]
+    browserWidthConstraint = browserPane.widthAnchor.constraint(
+      equalToConstant: StudioWorkspaceSurfaceMetrics.browserWidth
+    )
+    inspectorWidthConstraint = inspectorPane.widthAnchor.constraint(
+      equalToConstant: StudioWorkspaceSurfaceMetrics.inspectorWidth
+    )
+    NSLayoutConstraint.activate([
+      workspaceToolbar.heightAnchor.constraint(
+        equalToConstant: StudioWorkspaceSurfaceMetrics.toolbarHeight
+      ),
+      workspaceToolbar.widthAnchor.constraint(equalTo: rootStack.widthAnchor),
+      workspaceStack.widthAnchor.constraint(equalTo: rootStack.widthAnchor),
+      upperStack.widthAnchor.constraint(equalTo: workspaceStack.widthAnchor),
+      lowerStack.widthAnchor.constraint(equalTo: workspaceStack.widthAnchor),
+      routeStack.widthAnchor.constraint(equalTo: viewerDeck.widthAnchor),
+      upperStack.heightAnchor.constraint(
+        equalTo: workspaceStack.heightAnchor,
+        multiplier: StudioWorkspaceSurfaceMetrics.upperDeckFraction
+      ),
+      viewerDeck.widthAnchor.constraint(
+        greaterThanOrEqualToConstant: StudioWorkspaceSurfaceMetrics.minimumViewerWidth
+      ),
+      viewerDeckChrome.heightAnchor.constraint(equalToConstant: 34),
+      transcriptPane.heightAnchor.constraint(
+        equalToConstant: StudioWorkspaceSurfaceMetrics.transcriptHeight
+      ),
+      proposalBarPane.heightAnchor.constraint(
+        equalToConstant: StudioWorkspaceSurfaceMetrics.proposalHeight
+      ),
+      timelinePane.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+    ])
+    browserPane.setContentHuggingPriority(.init(999), for: .horizontal)
+    browserPane.setContentCompressionResistancePriority(.init(999), for: .horizontal)
+    inspectorPane.setContentHuggingPriority(.init(999), for: .horizontal)
+    inspectorPane.setContentCompressionResistancePriority(.init(999), for: .horizontal)
+    viewerDeck.setContentHuggingPriority(.defaultLow, for: .horizontal)
+    viewerDeck.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
     workspaceWindow.contentView = rootStack
 
     let sourceController = StudioViewerWindowController(
@@ -150,6 +197,34 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
     }
 
     super.init()
+    let sourceZero = StudioRouteResourceSnapshot(
+      route: .source,
+      activeSourceCount: 0,
+      retainedFrameCount: 0,
+      capacity: 0,
+      surfaceIDs: []
+    ).diagnosticsExportText
+    let reviewZero = StudioRouteResourceSnapshot(
+      route: .review,
+      activeSourceCount: 0,
+      retainedFrameCount: 0,
+      capacity: 0,
+      surfaceIDs: []
+    ).diagnosticsExportText
+    let reviewResourceProvider: () -> String
+    if let reviewController {
+      reviewResourceProvider = { [weak reviewController] in
+        reviewController?.routeResourceDetail ?? reviewZero
+      }
+    } else {
+      reviewResourceProvider = { reviewZero }
+    }
+    rootStack.setRouteResourceProviders(
+      source: { [weak sourceController] in
+        sourceController?.routeResourceDetail ?? sourceZero
+      },
+      review: reviewResourceProvider
+    )
     sourceController.onPresentationStateChanged = { [weak self] in
       self?.refreshChrome()
     }
@@ -210,6 +285,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
       ? .source
       : route
     presentationState.setActiveRoute(availableRoute)
+    pendingFirstResponderRoute = availableRoute
     refresh()
   }
 
@@ -243,6 +319,7 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
 
   func windowWillClose(_ notification: Notification) {
     hasPresented = false
+    pendingFirstResponderRoute = presentationState.activeRoute
     sourceController.detachPresentation()
     reviewController?.detachPresentation()
   }
@@ -293,6 +370,11 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
   }
 
   private func apply(_ snapshot: StudioWorkspacePresentationSnapshot) {
+    inspectorPane.update(content: snapshot.inspectorContent)
+    timelinePane.update(sequence: activeSequence, activeProposalId: activeProposalId)
+    proposalBarPane.update(proposalId: activeProposalId)
+    browserWidthConstraint?.isActive = snapshot.browserVisible
+    inspectorWidthConstraint?.isActive = snapshot.inspectorVisible
     browserPane.isHidden = !snapshot.browserVisible
     inspectorPane.isHidden = !snapshot.inspectorVisible
     transcriptPane.isHidden = !snapshot.transcriptVisible
@@ -324,27 +406,31 @@ final class StudioWorkspaceWindowController: NSObject, NSWindowDelegate {
         reviewController.detachPresentation()
       }
     }
-  }
 
-  private static func makePane(
-    identifier: String,
-    accessibilityLabel: String
-  ) -> NSView {
-    let view = NSView()
-    view.identifier = NSUserInterfaceItemIdentifier(identifier)
-    view.setAccessibilityElement(true)
-    view.setAccessibilityRole(.group)
-    view.setAccessibilityLabel(accessibilityLabel)
-    view.wantsLayer = true
-    view.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-    return view
+    guard let pendingFirstResponderRoute else { return }
+    let focused: Bool
+    switch pendingFirstResponderRoute {
+    case .source:
+      focused = sourceController.focusPresentation()
+    case .review:
+      focused = reviewController?.focusPresentation() ?? false
+    }
+    if focused {
+      self.pendingFirstResponderRoute = nil
+    }
   }
 
   private static func makeViewerHost(
     identifier: String,
     accessibilityLabel: String
   ) -> NSView {
-    let view = makePane(identifier: identifier, accessibilityLabel: accessibilityLabel)
+    let view = NSView()
+    view.identifier = NSUserInterfaceItemIdentifier(identifier)
+    view.setAccessibilityElement(true)
+    view.setAccessibilityIdentifier(identifier)
+    view.setAccessibilityRole(.group)
+    view.setAccessibilityLabel(accessibilityLabel)
+    view.wantsLayer = true
     view.layer?.backgroundColor = NSColor.black.cgColor
     return view
   }

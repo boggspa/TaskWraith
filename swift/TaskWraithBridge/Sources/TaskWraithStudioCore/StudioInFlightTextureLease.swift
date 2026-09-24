@@ -55,6 +55,7 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
     private var nextID: UInt64 = 1
     private var leases: [Lease] = []
     private var seeded: [Frame] = []
+    private let resourceLease: StudioResourceLease
 
     private struct Lease {
         let id: UInt64
@@ -66,6 +67,7 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
     init(maxInFlight: Int) {
         precondition(maxInFlight > 0)
         self.maxInFlight = maxInFlight
+        self.resourceLease = StudioResourceLease(["presentationLeaseCapacity": maxInFlight])
     }
 
     var count: Int {
@@ -86,6 +88,7 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         while leases.count >= maxInFlight {
             if leases[0].completed {
                 leases.removeFirst()
+                updateResourceCount()
                 continue
             }
             let oldest = leases[0]
@@ -96,9 +99,12 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         let id = nextID
         nextID += 1
         leases.append(Lease(id: id, frame: frame, buffer: buffer, completed: false))
+        updateResourceCount()
         lock.unlock()
 
+        let completionHold = StudioCommandFrameHold(frame)
         buffer.addCompletedHandler { [weak self] in
+            completionHold.complete()
             self?.markCompleted(id: id)
         }
     }
@@ -113,13 +119,22 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
         if seeded.count > maxInFlight {
             seeded.removeFirst(seeded.count - maxInFlight)
         }
+        updateResourceCount()
     }
 
     func releaseAll() {
         lock.lock()
         leases.removeAll(keepingCapacity: true)
         seeded.removeAll(keepingCapacity: true)
+        updateResourceCount()
         lock.unlock()
+    }
+
+    private func updateResourceCount() {
+        resourceLease.update([
+            "presentationLeases": leases.count + seeded.count,
+            "presentationLeaseCapacity": maxInFlight,
+        ])
     }
 
     private func markCompleted(id: UInt64) {
@@ -158,5 +173,23 @@ final class StudioInFlightTextureLease<Frame>: @unchecked Sendable {
             }
         }
         return live.map(\.frame)
+    }
+}
+
+/// The ring can be cleared or destroyed before the GPU completes. This hold
+/// independently keeps the frame alive, then explicitly drops it on completion
+/// even when a command buffer retains its callback afterward.
+private final class StudioCommandFrameHold<Frame>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var frame: Frame?
+    private let resourceLease = StudioResourceLease(["gpuCommandFrameHolds": 1])
+
+    init(_ frame: Frame) { self.frame = frame }
+
+    func complete() {
+        lock.lock()
+        frame = nil
+        resourceLease.finish()
+        lock.unlock()
     }
 }

@@ -96,6 +96,10 @@ final class StudioViewerDeckChromeTests: XCTestCase {
       XCTAssertEqual(button.title, label)
       XCTAssertEqual(button.accessibilityLabel(), label)
       XCTAssertEqual(button.accessibilityRole(), role)
+      XCTAssertTrue(
+        button.isAccessibilitySelectorAllowed(#selector(NSButton.accessibilityPerformPress)),
+        "projected route/review controls must expose AXPress"
+      )
     }
 
     for (identifier, label) in [
@@ -108,6 +112,53 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     }
 
     XCTAssertEqual(workspace.window.title, "TaskWraith Studio")
+  }
+
+  func testChromeUsesCompactRouteAndComparisonGroups() throws {
+    let workspace = try makeWorkspace()
+    workspace.show()
+    workspace.window.contentView?.layoutSubtreeIfNeeded()
+    let chrome = workspace.viewerDeckChrome
+
+    XCTAssertEqual(chrome.deckTitleText, "VIEWER")
+    XCTAssertFalse(chrome.hasAmbiguousLayout)
+    XCTAssertNotNil(
+      view(identifier: "studio.workspace.viewer-deck.routes", in: chrome)
+    )
+    XCTAssertNotNil(
+      view(identifier: "studio.workspace.viewer-deck.comparison", in: chrome)
+    )
+
+    let source = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.route.source")
+    )
+    let timeline = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.route.timeline")
+    )
+    let current = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.review-version.current")
+    )
+    let proposed = try XCTUnwrap(
+      chrome.button(identifier: "studio.workspace.review-version.proposed")
+    )
+    for button in [source, timeline, current, proposed] {
+      XCTAssertLessThanOrEqual(button.frame.width, 78)
+      XCTAssertEqual(button.frame.height, 24, accuracy: 0.5)
+    }
+    XCTAssertEqual(source.layer?.borderWidth, 1)
+    XCTAssertEqual(timeline.layer?.borderWidth, 0)
+    XCTAssertEqual(current.alphaValue, 1, accuracy: 0.01)
+    XCTAssertEqual(proposed.alphaValue, 1, accuracy: 0.01)
+    XCTAssertEqual(current.focusRingType, .default)
+    XCTAssertEqual(proposed.focusRingType, .default)
+
+    let timelineFrame = timeline.convert(timeline.bounds, to: chrome)
+    let currentFrame = current.convert(current.bounds, to: chrome)
+    XCTAssertGreaterThan(
+      currentFrame.minX - timelineFrame.maxX,
+      100,
+      "route and comparison controls should frame the viewer instead of stretching equally"
+    )
   }
 
   func testRouteButtonsBindToAppStateAndRemainIndependent() throws {
@@ -131,7 +182,7 @@ final class StudioViewerDeckChromeTests: XCTestCase {
     XCTAssertEqual(source.state, .on)
     XCTAssertEqual(timeline.state, .off)
 
-    timeline.performClick(nil)
+    XCTAssertTrue(timeline.accessibilityPerformPress())
     XCTAssertEqual(source.state, .on)
     XCTAssertEqual(timeline.state, .on)
 

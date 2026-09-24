@@ -135,8 +135,9 @@ public enum StudioMediaSourceLoader {
         var syncFlags: [Bool] = []
         var dependentSampleCount = 0
         while let sampleBuffer = output.copyNextSampleBuffer() {
+            StudioResourceDiagnostics.record("samplePayloadReads")
             guard CMSampleBufferGetDataBuffer(sampleBuffer) != nil else { continue }
-            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let presentationTime = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
             guard presentationTime.isValid else { continue }
             let isSync = Self.isSyncSample(sampleBuffer)
             if !isSync { dependentSampleCount += 1 }
@@ -275,8 +276,9 @@ public enum StudioMediaSourceLoader {
         var syncFlags: [Bool] = []
         var dependentSampleCount = 0
         while let sampleBuffer = output.copyNextSampleBuffer() {
+            StudioResourceDiagnostics.record("samplePayloadReads")
             guard CMSampleBufferGetDataBuffer(sampleBuffer) != nil else { continue }
-            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+            let presentationTime = CMSampleBufferGetOutputPresentationTimeStamp(sampleBuffer)
             guard presentationTime.isValid else { continue }
             let isSync = Self.isSyncSample(sampleBuffer)
             if !isSync { dependentSampleCount += 1 }
@@ -440,9 +442,9 @@ public enum StudioMediaSourceLoader {
     // MARK: - Timing
 
     /// Prefers the track's declared minimum frame duration; falls back to the
-    /// MEASURED delta between the first two presentation times, which is exact
-    /// for constant-frame-rate content and is often more trustworthy than a
-    /// nominal frame rate expressed as a Float.
+    /// smallest positive delta in PRESENTATION order. Compressed packets arrive
+    /// in decode order, so the first two output timestamps can be non-adjacent
+    /// B frames (or even move backwards) despite a constant frame rate.
     static func resolveFrameDuration(
         minFrameDuration: CMTime,
         presentationTimes: [CMTime]
@@ -450,14 +452,27 @@ public enum StudioMediaSourceLoader {
         if minFrameDuration.isValid, minFrameDuration.value > 0 {
             return minFrameDuration
         }
-        guard presentationTimes.count >= 2 else {
+        let ordered = presentationTimes
+            .filter { $0.isValid && $0.isNumeric }
+            .sorted { CMTimeCompare($0, $1) < 0 }
+        var minimumPositiveDelta: CMTime?
+        for index in 1..<ordered.count {
+            let delta = CMTimeSubtract(ordered[index], ordered[index - 1])
+            guard delta.isValid, delta.isNumeric, CMTimeCompare(delta, .zero) > 0 else {
+                continue
+            }
+            if let currentMinimum = minimumPositiveDelta {
+                if CMTimeCompare(delta, currentMinimum) < 0 {
+                    minimumPositiveDelta = delta
+                }
+            } else {
+                minimumPositiveDelta = delta
+            }
+        }
+        guard let minimumPositiveDelta else {
             throw StudioMediaLoadError.indeterminateFrameDuration
         }
-        let delta = CMTimeSubtract(presentationTimes[1], presentationTimes[0])
-        guard delta.isValid, delta.value > 0 else {
-            throw StudioMediaLoadError.indeterminateFrameDuration
-        }
-        return delta
+        return minimumPositiveDelta
     }
 
     /// Exact integer frame index: (pts.value * fd.timescale) / (pts.timescale *

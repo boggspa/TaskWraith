@@ -416,7 +416,9 @@ import {
 } from './studio/StudioProductionLifecycle'
 import { type SpeechRecognitionResult } from './studio/StudioTranscriptAdapter'
 import { registerStudioEffectPreviewHandlers } from './studio/StudioEffectPreviewHandlers'
+import { registerStudioResourceSnapshotHandlers } from './studio/StudioResourceSnapshotHandlers'
 import { createStudioOpenInStudioHandler } from './studio/StudioOpenMediaHop'
+import { StudioTranscriptStatusCoordinator } from './studio/StudioTranscriptStatusBroadcast'
 import { bridgeResultDiffStats, bridgeToolDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
 import { rejoinHeldSurrogate } from './bridge/StreamTextIntegrity'
@@ -60368,6 +60370,9 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    const studioTranscriptStatusCoordinator = new StudioTranscriptStatusCoordinator(() =>
+      BrowserWindow.getAllWindows()
+    )
     registerMediaAssetHandlers({
       isRecord,
       getUserDataPath: () => app.getPath('userData'),
@@ -60399,9 +60404,13 @@ if (isGeminiMcpBridgeProcess) {
             timeoutMs: 120_000
           })
         },
+        onTranscriptStarted: ({ assetId, operationId }) => {
+          studioTranscriptStatusCoordinator.started(assetId, operationId)
+        },
         // A denied Speech permission used to look exactly like a clip with no
         // speech in it: the media opened and the band stayed empty. Name it.
-        onTranscriptOutcome: ({ assetId, outcome }) => {
+        onTranscriptOutcome: ({ assetId, operationId, outcome }) => {
+          studioTranscriptStatusCoordinator.completed(assetId, operationId, outcome)
           if (outcome.ok) return
           console.warn(
             `[studio] transcript unavailable for ${assetId}: ${outcome.code} - ${outcome.message}`
@@ -60417,6 +60426,9 @@ if (isGeminiMcpBridgeProcess) {
       copyFile: (src, dest) => fs.copyFile(src, dest)
     })
 
+    registerStudioResourceSnapshotHandlers(ipcMain, {
+      getLifecycle: () => studioProductionLifecycleRef
+    })
     // Studio effect preview (LUT). The renderer supplies NO path — the dialog
     // lives here, so the only filesystem path that can reach the host is one the
     // operator personally selected in a trusted OS dialog.

@@ -213,6 +213,7 @@ public final class StudioTestPatternRenderer {
 
         if let drawable {
             commandBuffer.present(drawable)
+            StudioResourceDiagnostics.record("presentedFrames")
             commandBuffer.commit()
             return
         }

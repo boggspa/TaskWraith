@@ -34,9 +34,12 @@ public protocol StudioSampleProvider {
 /// Kept as the default for short assets and as the explicit-limit test path.
 public struct EagerStudioSampleProvider: StudioSampleProvider {
     public let samples: [StudioCompressedSample]
+    private let resourceLease: StudioResourceLease
 
     public init(samples: [StudioCompressedSample]) {
         self.samples = samples
+        self.resourceLease = StudioResourceLease()
+        self.resourceLease.setCompressedBuffers(samples.map(\.sampleBuffer), capacity: samples.count)
     }
 
     public var sampleCount: Int { samples.count }
@@ -71,6 +74,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
     private let makeReader: (CMTime) throws -> AVAssetReader
     private let makeOutput: (AVAssetReader) throws -> AVAssetReaderTrackOutput
     private let payloadCacheLimit: Int
+    private let resourceLease = StudioResourceLease()
 
     private var cache: [Int: CMSampleBuffer] = [:]
     private var cacheOrder: [Int] = []
@@ -98,6 +102,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         self.makeReader = makeReader
         self.makeOutput = makeOutput
         self.payloadCacheLimit = max(1, payloadCacheLimit)
+        resourceLease.setCompressedBuffers([], capacity: self.payloadCacheLimit)
     }
 
     /// Compressed payloads pulled from the reader since construction.
@@ -228,7 +233,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
         // be silently off by that difference. Wrong pictures at correct-looking
         // timestamps is the failure class this whole arc has been chasing, so a
         // mismatch is an error rather than a best effort.
-        let observed = CMSampleBufferGetPresentationTimeStamp(finalBuffer)
+        let observed = CMSampleBufferGetOutputPresentationTimeStamp(finalBuffer)
         guard CMTimeCompare(observed, startTime) == 0 else {
             throw StudioMediaLoadError.readFailed(
                 "scoped reader started at \(observed.seconds)s, expected "
@@ -265,8 +270,9 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
             // Counted at the single pull site, so it measures real reader work
             // rather than a caller-side estimate.
             payloadReadCount += 1
+            StudioResourceDiagnostics.record("samplePayloadReads")
             if CMSampleBufferGetDataBuffer(buffer) != nil,
-                CMSampleBufferGetPresentationTimeStamp(buffer).isValid
+                CMSampleBufferGetOutputPresentationTimeStamp(buffer).isValid
             {
                 return buffer
             }
@@ -282,6 +288,7 @@ public final class BoundedStudioSampleProvider: StudioSampleProvider {
             let evicted = cacheOrder.removeFirst()
             cache.removeValue(forKey: evicted)
         }
+        resourceLease.setCompressedBuffers(Array(cache.values), capacity: payloadCacheLimit)
     }
 
     private func touch(_ index: Int) {

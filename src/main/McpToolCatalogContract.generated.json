@@ -1,6 +1,6 @@
 {
-  "digest": "sha256:5d78bd19819ed12188430c07720909a97445e699411c4aea038cf37377487559",
-  "toolCount": 225,
+  "digest": "sha256:755ab9ccd18c3825e9df06eba1e72ba74955755a3d9e9e88ea0d0e1b8fec2396",
+  "toolCount": 226,
   "antigravityOptIn": {
     "digest": "sha256:9e085ba27c0dce7c08499b533a49af9ca364680d0e6bbabfe727d7c22f843478",
     "changedPaths": [
@@ -2456,6 +2456,111 @@
         "type": "object"
       },
       "name": "completion_claim_check"
+    },
+    "computer_use": {
+      "annotations": {
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true,
+        "readOnlyHint": false
+      },
+      "description": "Use a browser or approved app window with one observe–act–observe interface. Start with list, open a URL (browser) or launchId (approved native window), then act using refs from the returned observation. Open, observe and successful actions return a fresh element tree and screenshot image when capture is permitted. Check action execution and observation separately; a capture failure does not mean an action failed. Browser coordinates are viewport CSS pixels, not image pixels; prefer refs. Native windows support observe/click/fill only, with an exact foreground-window lease, ref, expectedObservationId and expectedInputEpoch. Other browser actions are key, scroll, hover, select and navigate. No provider-specific model is required; visual reasoning requires a model/transport that accepts images. Each underlying operation keeps its own permission, human-takeover and approval checks. Stop and re-observe on refusal; never replay an unconfirmed action blindly.",
+      "inputSchema": {
+        "additionalProperties": false,
+        "examples": [
+          {
+            "action": "list"
+          },
+          {
+            "action": "open",
+            "url": "https://example.com"
+          }
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "list",
+              "open",
+              "observe",
+              "click",
+              "fill",
+              "key",
+              "scroll",
+              "hover",
+              "select",
+              "navigate",
+              "close"
+            ],
+            "type": "string"
+          },
+          "canvasId": {
+            "description": "From list/open; required after opening.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "deltaX": {
+            "description": "Horizontal scroll in CSS pixels.",
+            "type": "number"
+          },
+          "deltaY": {
+            "description": "Vertical scroll in CSS pixels.",
+            "type": "number"
+          },
+          "expectedInputEpoch": {
+            "description": "Latest observation inputEpoch.",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "expectedObservationId": {
+            "description": "Latest native observationId.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "key": {
+            "description": "Browser non-text key, e.g. Enter, Escape, Tab or ArrowDown.",
+            "type": "string"
+          },
+          "launchId": {
+            "description": "Managed app launch for open; omit url.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "navigation": {
+            "enum": ["back", "forward", "reload", "stop"],
+            "type": "string"
+          },
+          "ref": {
+            "description": "Element ref from the latest observation.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "selector": {
+            "description": "Browser CSS selector when no ref is available.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "text": {
+            "description": "Non-secret field value for fill or option for select.",
+            "type": "string"
+          },
+          "url": {
+            "description": "Browser URL for open or navigate.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "x": {
+            "description": "Browser viewport CSS x; never native-window coordinates.",
+            "type": "number"
+          },
+          "y": {
+            "description": "Browser viewport CSS y.",
+            "type": "number"
+          }
+        },
+        "required": ["action"],
+        "type": "object"
+      },
+      "name": "computer_use"
     },
     "create_directory": {
       "annotations": {

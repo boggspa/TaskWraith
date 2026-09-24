@@ -384,6 +384,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'launch_adopt',
     'launch_stop',
     'launch_status',
+    'computer_use',
     'canvas_open',
     'canvas_render_html',
     'canvas_render_chart',

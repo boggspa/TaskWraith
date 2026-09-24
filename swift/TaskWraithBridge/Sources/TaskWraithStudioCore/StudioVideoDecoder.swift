@@ -60,6 +60,16 @@ public enum StudioHardwareDecodeStatus: Equatable, Sendable {
 public struct StudioDecodedFrame {
     public let pixelBuffer: CVPixelBuffer
     public let presentationTime: CMTime
+    private let resourceLease: StudioResourceLease
+
+    public init(pixelBuffer: CVPixelBuffer, presentationTime: CMTime) {
+        self.pixelBuffer = pixelBuffer
+        self.presentationTime = presentationTime
+        self.resourceLease = StudioResourceLease(
+            ["decodedFrameObjects": 1],
+            surface: CVPixelBufferGetIOSurface(pixelBuffer)?.takeUnretainedValue()
+        )
+    }
 }
 
 public enum StudioVideoDecoderError: Error, Equatable {
@@ -91,6 +101,7 @@ public final class StudioVideoDecoder {
     public private(set) var failedDecodeCount = 0
 
     private var session: VTDecompressionSession?
+    private var sessionResourceLease: StudioResourceLease?
 
     /// False once `invalidate()` has run. Resource-lifecycle diagnostics for
     /// outcome 9: a viewer that closes and reopens must show this going false
@@ -129,6 +140,7 @@ public final class StudioVideoDecoder {
         let hardware = create(preferHardware: true)
         if hardware.status == noErr, let created = hardware.session {
             session = created
+            sessionResourceLease = StudioResourceLease(["decoderSessions": 1])
             hardwareDecodeStatus = Self.measureHardwareDecodeStatus(of: created)
             return
         }
@@ -138,6 +150,7 @@ public final class StudioVideoDecoder {
             throw StudioVideoDecoderError.sessionCreationFailed(software.status)
         }
         session = created
+        sessionResourceLease = StudioResourceLease(["decoderSessions": 1])
         hardwareDecodeStatus = Self.measureHardwareDecodeStatus(of: created)
     }
 
@@ -188,7 +201,14 @@ public final class StudioVideoDecoder {
             throw StudioVideoDecoderError.sessionInvalidated
         }
 
+        let active = StudioResourceLease(["activeDecodeOperations": 1])
+        var completed = false
+        defer {
+            if !completed { StudioResourceDiagnostics.record("decodeFailures") }
+            active.finish()
+        }
         let outcome = DecodeOutcome()
+        StudioResourceDiagnostics.record("decodeSubmissions")
         let submission = VTDecompressionSessionDecodeFrame(
             session,
             sampleBuffer: sampleBuffer,
@@ -228,6 +248,8 @@ public final class StudioVideoDecoder {
         }
 
         decodedFrameCount += 1
+        completed = true
+        StudioResourceDiagnostics.record("decodeCompletions")
         return StudioDecodedFrame(
             pixelBuffer: pixelBuffer,
             presentationTime: outcome.presentationTime
@@ -241,6 +263,7 @@ public final class StudioVideoDecoder {
         VTDecompressionSessionWaitForAsynchronousFrames(session)
         VTDecompressionSessionInvalidate(session)
         self.session = nil
+        sessionResourceLease = nil
     }
 
     /// Mutable carrier for the decode callback.

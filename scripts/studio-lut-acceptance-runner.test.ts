@@ -14,16 +14,28 @@ const { PNG } = require('pngjs') as {
 }
 const {
   JOURNEY_PHASES,
+  LUT_PHASE_TIMEOUT_MS,
+  PHASE_PORTS,
   assertObservationOnlyRequest,
   buildObservationRequest,
   captureNative,
   classifyTrackedDirt,
   createSyntheticRedReference,
   custodyMatches,
+  compareDecodedSample,
   evaluatePureRedCapture,
+  evaluatePureRedSample,
+  hudAssetIdentityToken,
+  materializePortableInputs,
   matchHudAssetIdentity,
+  parseHudObservations,
+  phaseSessionOptions,
+  pressPlaybackTransition,
+  readSourceWorkspaceObservation,
+  waitForPausedMediaReadiness,
   parseCli,
   resolveArtifactRoot,
+  treeDigest,
   validateClearedState,
   validateInvalidReplacement,
   validateReplayState,
@@ -32,6 +44,11 @@ const {
   validateTerminalReceipt
 } = require('./studio-lut-acceptance-runner.cjs') as {
   JOURNEY_PHASES: readonly string[]
+  LUT_PHASE_TIMEOUT_MS: number
+  PHASE_PORTS: readonly Readonly<{
+    remoteDebuggingPort: number
+    mainInspectorPort: number
+  }>[]
   assertObservationOnlyRequest: (request: Record<string, any>) => Record<string, any>
   buildObservationRequest: (name: string) => Record<string, any>
   captureNative: (
@@ -55,12 +72,32 @@ const {
     height: number
   }) => Record<string, any>
   custodyMatches: (actual: Record<string, any>, expected: Record<string, any>) => boolean
+  compareDecodedSample: (
+    sample: Record<string, any>,
+    referencePath: string,
+    bounds: Record<string, number>,
+    label: string,
+    comparator?: (...args: any[]) => Record<string, any>
+  ) => Record<string, any>
+  evaluatePureRedSample: (
+    sample: Record<string, any>,
+    referencePath: string,
+    bounds: Record<string, number>,
+    label: string,
+    options?: Record<string, any>
+  ) => Record<string, any>
   evaluatePureRedCapture: (options: {
     capturePath: string
     referencePath: string
     windowBounds: { width: number; height: number }
     hudOverlayHeight?: number
+    sourceHostFrame?: { x: number; y: number; width: number; height: number }
   }) => Record<string, any>
+  hudAssetIdentityToken: (assetId: string) => string
+  materializePortableInputs: (
+    artifactRoot: string,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   matchHudAssetIdentity: (
     hud: { observations: Array<{ text: string }> },
     assetId: string
@@ -73,8 +110,32 @@ const {
     distance: number
     threshold: number
   }
+  parseHudObservations: (observations: Array<{ text: string }>) => Record<string, any>
+  phaseSessionOptions: (phaseIndex: number) => Record<string, any>
+  pressPlaybackTransition: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    before: string,
+    after: string,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
+  readSourceWorkspaceObservation: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
+  waitForPausedMediaReadiness: (
+    plan: Record<string, any>,
+    target: Record<string, any>,
+    prefix: string,
+    runDriver?: (...args: any[]) => Promise<Record<string, any>>
+  ) => Promise<Record<string, any>>
   parseCli: (argv: string[]) => Record<string, any>
   resolveArtifactRoot: (candidate: string, acceptanceRoot?: string) => string
+  treeDigest: (
+    directory: string,
+    options?: { excludeTui?: boolean }
+  ) => { fileCount: number; digest: string }
   validateClearedState: (
     state: Record<string, any>,
     operation: Record<string, any>,
@@ -163,6 +224,94 @@ function transportMutationReceipt(
         accessibilityRole: 'AXStaticText',
         accessibilityMatchCount: 1,
         accessibilityValue
+      }
+    ]
+  }
+}
+
+function workspaceReceipt(
+  sourceVisible = true,
+  sourceSelected = true,
+  sourceFrame = { x: 0, y: 30, width: 640, height: 360 }
+): Record<string, any> {
+  const element = (
+    identifier: string,
+    visible: boolean,
+    role: string | null,
+    value: string | null,
+    enabled: boolean | null,
+    frame: Record<string, number> | null
+  ) => ({ identifier, visible, role, value, enabled, frame })
+  return {
+    inputDelivery: 'background-observation-only',
+    actions: [
+      {
+        index: 0,
+        type: 'read-workspace',
+        workspace: {
+          elements: [
+            element('studio.workspace.root', true, 'AXGroup', null, null, {
+              x: 0,
+              y: 0,
+              width: 640,
+              height: 400
+            }),
+            element(
+              'studio.workspace.route.source',
+              true,
+              'AXCheckBox',
+              sourceSelected ? 'selected' : 'not selected',
+              true,
+              {
+                x: 4,
+                y: 4,
+                width: 40,
+                height: 20
+              }
+            ),
+            element('studio.workspace.route.timeline', true, 'AXCheckBox', 'not selected', true, {
+              x: 48,
+              y: 4,
+              width: 48,
+              height: 20
+            }),
+            element(
+              'studio.workspace.viewer.source',
+              sourceVisible,
+              sourceVisible ? 'AXGroup' : null,
+              null,
+              null,
+              sourceVisible ? sourceFrame : null
+            ),
+            element('studio.workspace.viewer.timeline', false, null, null, null, null),
+            element(
+              'studio.workspace.review-version.current',
+              true,
+              'AXRadioButton',
+              'unavailable',
+              false,
+              {
+                x: 100,
+                y: 4,
+                width: 60,
+                height: 20
+              }
+            ),
+            element(
+              'studio.workspace.review-version.proposed',
+              true,
+              'AXRadioButton',
+              'unavailable',
+              false,
+              {
+                x: 164,
+                y: 4,
+                width: 80,
+                height: 20
+              }
+            )
+          ]
+        }
       }
     ]
   }
@@ -302,6 +451,179 @@ afterEach(async () => {
 })
 
 describe('studio LUT acceptance runner contract', () => {
+  it('parses transport only from one exact PLAY or PAUSE observation token', () => {
+    expect(parseHudObservations([{ text: 'play 2' }]).parsed.state).toBeNull()
+    expect(parseHudObservations([{ text: 'PLAY' }, { text: 'PAUSE' }]).parsed.state).toBeNull()
+    expect(parseHudObservations([{ text: 'PLAY' }]).parsed.state).toBe('PLAY')
+  })
+
+  it('requires an exact visible Source workspace for checkpoints', async () => {
+    const target = {
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
+    }
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt(false))
+    ).rejects.toThrow(/Source selected and visibly presented/)
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt(true, false))
+    ).rejects.toThrow(/Source selected and visibly presented/)
+    await expect(
+      readSourceWorkspaceObservation({}, target, async () => workspaceReceipt())
+    ).resolves.toMatchObject({ sourceHostFrame: { width: 640, height: 360 } })
+  })
+
+  it('rejects a forged Playback receipt and preserves exact transition identity', async () => {
+    const target = {
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
+    }
+    await expect(
+      pressPlaybackTransition({}, target, 'paused', 'playing', async () => ({
+        inputDelivery: 'background-observation-only',
+        actions: [
+          {
+            index: 0,
+            type: 'press-playback',
+            accessibilityLabel: 'Playback',
+            accessibilityAction: 'AXPress',
+            playbackValueBefore: 'paused',
+            playbackValueAfter: 'playing',
+            forged: true
+          }
+        ]
+      }))
+    ).rejects.toThrow(/forged or malformed/)
+  })
+
+  it('waits through a paused readiness race before accepting playback', async () => {
+    let attempts = 0
+    const target = {
+      asset: { sha256: 'asset' },
+      window: {
+        windows: [{ title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }]
+      }
+    }
+    const result = await waitForPausedMediaReadiness(
+      {},
+      target,
+      'readiness-test',
+      async () => workspaceReceipt(),
+      {
+        captureGuarded: async () => {
+          attempts += 1
+          return {
+            path: `/tmp/readiness-${attempts}.png`,
+            transportMutationBracket: {
+              ok: true,
+              after: { parsedValue: { afterDurationTicks: attempts === 1 ? '0' : '6000' } }
+            }
+          }
+        },
+        ocrScreenshot: () => ({
+          observations: [{ text: attempts === 1 ? 'No media' : 'PAUSE' }],
+          parsed: { state: attempts === 1 ? null : 'PAUSE', contentPtsSeconds: 0 }
+        }),
+        matchHudAssetIdentity: () => ({ matched: attempts > 1, distance: attempts > 1 ? 0 : 1 })
+      }
+    )
+    expect(attempts).toBe(2)
+    expect(result.assetMatch.distance).toBe(0)
+    expect(result.capture.path).toContain('readiness-2')
+  })
+
+  it.each([
+    ['malformed workspace', async () => ({ actions: [] })],
+    [
+      'capture error',
+      async () => {
+        throw new Error('capture failed')
+      }
+    ]
+  ])('fails immediately on %s during readiness', async (_label, readOrThrow) => {
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        {
+          asset: { sha256: 'asset' },
+          window: {
+            windows: [
+              { title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }
+            ]
+          }
+        },
+        'readiness-error',
+        readOrThrow,
+        { captureGuarded: async () => ({}) }
+      )
+    ).rejects.toThrow(/workspace read|capture failed|one exact background action/i)
+  })
+
+  it('fails immediately when the readiness transport bracket is not complete', async () => {
+    await expect(
+      waitForPausedMediaReadiness(
+        {},
+        {
+          asset: { sha256: 'asset' },
+          window: {
+            windows: [
+              { title: 'TaskWraith Studio', bounds: { x: 0, y: 0, width: 640, height: 400 } }
+            ]
+          }
+        },
+        'readiness-bracket',
+        async () => workspaceReceipt(),
+        { captureGuarded: async () => ({ transportMutationBracket: { ok: false } }) }
+      )
+    ).rejects.toThrow(/bracket is not complete/)
+  })
+  it('derives media and LUT inputs inside the fresh artifact root', async () => {
+    const directory = await temporaryDirectory()
+    const calls: string[][] = []
+    const inputs = await materializePortableInputs(directory, {
+      resolveMediaTool: (name: string) => `/virtual/${name}`,
+      runExact: (command: string, args: string[]) => {
+        calls.push([command, ...args])
+        if (command === '/usr/bin/say') {
+          fs.writeFileSync(args[args.indexOf('-o') + 1], 'deterministic speech')
+        } else {
+          fs.writeFileSync(args.at(-1) as string, 'deterministic muxed fixture')
+        }
+        return { command: [command, ...args], exitCode: 0, stdout: '', stderr: '' }
+      }
+    })
+
+    expect(inputs.fixturePath).toBe(path.join(directory, 'inputs', 'acceptance-speech-600s.mp4'))
+    expect(inputs.fixtureSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(inputs.fixtureAssetId).toMatch(/^[A-Za-z0-9_-]{43}$/)
+    expect(inputs.validCubeSha256).toBe(
+      'cba0938400fb53b07606fb8c8718b20b0c8613f775d8e2b148b4d6c072f8f5c7'
+    )
+    expect(inputs.invalidCubeSha256).toBe(
+      '984b585b670394bb49a9b0f3688d36d53e76a6627071bf9da78bc0949e1363a7'
+    )
+    expect(inputs.fixtureManifest).toMatchObject({
+      durationSeconds: 600,
+      frameRate: 30,
+      expectedFrameCount: 18_000,
+      outputPath: inputs.fixturePath
+    })
+    expect(calls).toHaveLength(2)
+    expect(calls[1]).toContain('lavfi')
+  })
+
+  it('keeps Finder metadata out of source and build custody digests', async () => {
+    const directory = await temporaryDirectory()
+    await fsPromises.writeFile(path.join(directory, 'product.js'), 'product')
+    const before = treeDigest(directory)
+    await fsPromises.writeFile(path.join(directory, '.DS_Store'), 'finder metadata')
+    await fsPromises.mkdir(path.join(directory, 'tui'))
+    await fsPromises.writeFile(path.join(directory, 'tui/cli.js'), 'unrelated TUI output')
+    expect(treeDigest(directory, { excludeTui: true })).toEqual(before)
+  })
+
   it('passes matching pins with foreign tracked dirt and seals its hashes into evidence', async () => {
     const dirt = classifyTrackedDirt(
       ' M src/main/collaboration/ExternalSeatResolution.ts\0 M src/main/index.ts\0',
@@ -345,7 +667,16 @@ describe('studio LUT acceptance runner contract', () => {
     'scripts/studio-acceptance-ui-driver.swift',
     'scripts/studio-acceptance-watchdog.cjs',
     'scripts/studio-acceptance-window-probe.swift',
-    'scripts/studio-pixel-evidence-verifier.cjs'
+    'scripts/studio-pixel-evidence-verifier.cjs',
+    'scripts/studio-hud-ocr.swift',
+    'scripts/studio-input-isolation-snapshot.swift',
+    'scripts/studio-generate-speech-fixture.cjs',
+    'scripts/studio-acceptance-session.cjs',
+    'scripts/studio-bounded-diagnostics-runner.cjs',
+    'scripts/studio-bounded-lifecycle-runner.cjs',
+    'scripts/studio-av-endurance-runner.cjs',
+    'scripts/studio-av-endurance-acceptance-runner.cjs',
+    'scripts/studio-av-endurance-live-runner.cjs'
   ])('rejects tracked dirt in protected Studio script %s', (relativePath) => {
     const trackedStatus = ` M ${relativePath}\0`
     const dirt = classifyTrackedDirt(trackedStatus, () => 'c'.repeat(64))
@@ -383,6 +714,24 @@ describe('studio LUT acceptance runner contract', () => {
       'phase-1-neutral-load-invalid-retention',
       'phase-2-restart-replay-clear'
     ])
+    expect(PHASE_PORTS).toEqual([
+      { remoteDebuggingPort: 9510, mainInspectorPort: 9910 },
+      { remoteDebuggingPort: 9511, mainInspectorPort: 9911 }
+    ])
+    expect(LUT_PHASE_TIMEOUT_MS).toBe(600_000)
+    expect(phaseSessionOptions(0)).toEqual({
+      phase: 'phase-1-neutral-load-invalid-retention',
+      remoteDebuggingPort: 9510,
+      mainInspectorPort: 9910,
+      timeoutMs: 600_000
+    })
+    expect(phaseSessionOptions(1)).toEqual({
+      phase: 'phase-2-restart-replay-clear',
+      remoteDebuggingPort: 9511,
+      mainInspectorPort: 9911,
+      timeoutMs: 600_000
+    })
+    expect(() => phaseSessionOptions(2)).toThrow(/outside the fixed two-phase plan/)
   })
 
   it('builds screenshot-only background observation requests', () => {
@@ -692,6 +1041,26 @@ describe('studio LUT acceptance runner contract', () => {
     expect(captureSource).toContain('transportMutationBracket')
   })
 
+  it('uses tracked native helpers and the one-window Studio title', async () => {
+    const source = await fsPromises.readFile(
+      path.resolve(__dirname, 'studio-lut-acceptance-runner.cjs'),
+      'utf8'
+    )
+
+    expect(source).toContain("path.join(repoRoot, 'scripts', 'studio-hud-ocr.swift')")
+    expect(source).toContain(
+      "path.join(repoRoot, 'scripts', 'studio-input-isolation-snapshot.swift')"
+    )
+    expect(source).not.toContain(
+      '.local-only/taskwraith-studio/acceptance/w1acc10e/studio-hud-ocr.swift'
+    )
+    expect(source).not.toContain(
+      '.local-only/taskwraith-studio/acceptance/w1acc10e/input-isolation-snapshot.swift'
+    )
+    expect(source).not.toContain("'TaskWraith Studio — Source'")
+    expect(source).toContain("entry.title === 'TaskWraith Studio'")
+  })
+
   it.each([
     {
       inputDelivery: 'foreground-global-explicit',
@@ -748,30 +1117,36 @@ describe('studio LUT acceptance runner contract', () => {
 
   it('matches an exact normalized full SHA-256 asset identity', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
     const result = matchHudAssetIdentity(
-      { observations: [{ text: `HUD asset: ${assetId}` }] },
+      { observations: [{ text: `HUD asset: ${token}` }] },
       assetId
     )
 
     expect(result).toMatchObject({
       matched: true,
-      expected: assetId.toLowerCase(),
-      observedCandidate: assetId.toLowerCase(),
+      expected: token.toLowerCase(),
+      observedCandidate: token.toLowerCase(),
       observationIndex: 0,
-      comparedLength: 43,
+      comparedLength: 64,
       distance: 0,
-      threshold: 12
+      threshold: 0
     })
+    expect(token).toBe('KPPA2NPH32HHA22ACACD42M33XHNN34EPAP234KDPP3CT2X32FENDNXCA9ANDC9C')
   })
 
-  it('accepts the deterministic w2lut0816h full-ID OCR observation at distance 12', () => {
+  it('rejects the deterministic fuzzy OCR observation that previously false-greened', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
+    const fuzzy = Array.from(token, (character, index) =>
+      index < 12 ? (character === '2' ? '3' : '2') : character
+    ).join('')
     const result = matchHudAssetIdentity(
       {
         observations: [
           { text: 'PLAY' },
           {
-            text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+            text: `${fuzzy} drop 0 held 3 shown 1976 cache 24 tex 1334 play 2`
           }
         ]
       },
@@ -779,12 +1154,12 @@ describe('studio LUT acceptance runner contract', () => {
     )
 
     expect(result).toMatchObject({
-      matched: true,
-      observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+      matched: false,
+      observedCandidate: fuzzy.toLowerCase(),
       observationIndex: 1,
-      comparedLength: 43,
-      distance: 12,
-      threshold: 12
+      comparedLength: 64,
+      distance: 10,
+      threshold: 0
     })
   })
 
@@ -795,73 +1170,85 @@ describe('studio LUT acceptance runner contract', () => {
     'does not let a near-complete short prefix shadow the sealed full observation: %s',
     (_name, shortFirst, expectedObservationIndex) => {
       const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+      const token = hudAssetIdentityToken(assetId)
+      const fuzzy = Array.from(token, (character, index) =>
+        index < 12 ? (character === '2' ? '3' : '2') : character
+      ).join('')
       const sealedObservation = {
-        text: 'rdQMZRCZARUVICXH02B39TQEabdFf0hCHXSSUNNZ 2 -80 i5aDk 833,3 drão held 3 shoun 1976 cache 24 tex 1334 play 2'
+        text: `${fuzzy} drop 0 held 3 shown 1976 cache 24 tex 1334 play 2`
       }
-      const shortObservation = { text: assetId.slice(0, 40) }
+      const shortObservation = { text: token.slice(0, 60) }
       const observations = shortFirst
         ? [shortObservation, sealedObservation]
         : [sealedObservation, shortObservation]
       const result = matchHudAssetIdentity({ observations }, assetId)
 
       expect(result).toMatchObject({
-        matched: true,
-        observedCandidate: 'rdqmzrczaruvicxh02b39tqeabdff0hchxssunnz2-8',
+        matched: false,
+        observedCandidate: fuzzy.toLowerCase(),
         observationIndex: expectedObservationIndex,
-        comparedLength: 43,
-        distance: 12,
-        threshold: 12
+        comparedLength: 64,
+        distance: 10,
+        threshold: 0
       })
     }
   )
 
   it('rejects a full ID with the same first 24 characters and a wrong tail', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
-    const wrongTail = `${assetId.slice(0, 24)}${'A'.repeat(19)}`
+    const token = hudAssetIdentityToken(assetId)
+    const wrongTail =
+      token.slice(0, 32) +
+      Array.from(token.slice(32), (character) => (character === '2' ? '3' : '2')).join('')
     const result = matchHudAssetIdentity({ observations: [{ text: wrongTail }] }, assetId)
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBe(43)
+    expect(result.comparedLength).toBe(64)
     expect(result.distance).toBeGreaterThan(12)
   })
 
-  it('rejects the first candidate beyond the full-ID edit-distance boundary', () => {
+  it('rejects the first candidate beyond the exact full-ID boundary', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
-    const thirteenEdits = Array.from(assetId, (character, index) =>
-      index < 13 ? (character.toLowerCase() === 'a' ? 'B' : 'A') : character
+    const token = hudAssetIdentityToken(assetId)
+    const oneEdit = Array.from(token, (character, index) =>
+      index === 0 ? (character === '2' ? '3' : '2') : character
     ).join('')
-    const result = matchHudAssetIdentity({ observations: [{ text: thirteenEdits }] }, assetId)
+    const result = matchHudAssetIdentity({ observations: [{ text: oneEdit }] }, assetId)
 
     expect(result).toMatchObject({
       matched: false,
-      comparedLength: 43,
-      distance: 13,
-      threshold: 12
+      comparedLength: 64,
+      distance: 1,
+      threshold: 0
     })
   })
 
   it.each([
-    ['short fragment', 'rdQM2RCZQARUViCxHpzBJ9TQEqbdF'],
+    [
+      'short fragment',
+      hudAssetIdentityToken('rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU').slice(0, 48)
+    ],
     ['no-media HUD', 'No media | PAUSE | 00:00:00:00']
   ])('rejects %s observations as full asset identities', (_name, text) => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
     const result = matchHudAssetIdentity({ observations: [{ text }] }, assetId)
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBeLessThan(43)
+    expect(result.comparedLength).toBeLessThan(64)
   })
 
   it('never concatenates separate OCR observations into one asset identity', () => {
     const assetId = 'rdQM2RCZQARUViCxHpzBJ9TQEqbdFfDhCHxs5UNMZTU'
+    const token = hudAssetIdentityToken(assetId)
     const result = matchHudAssetIdentity(
       {
-        observations: [{ text: assetId.slice(0, 24) }, { text: assetId.slice(24) }]
+        observations: [{ text: token.slice(0, 32) }, { text: token.slice(32) }]
       },
       assetId
     )
 
     expect(result.matched).toBe(false)
-    expect(result.comparedLength).toBeLessThan(43)
+    expect(result.comparedLength).toBeLessThan(64)
   })
 
   it('uses the verifier overlay default for LUT material-color gates', async () => {
@@ -888,6 +1275,50 @@ describe('studio LUT acceptance runner contract', () => {
       videoHeight: 180
     })
     expect(result.absolute.redDominantFraction).toBe(1)
+  })
+
+  it('propagates each checkpoint Source host frame into decoded and pure-red comparators', async () => {
+    const directory = await temporaryDirectory()
+    const capturePath = path.join(directory, 'checkpoint.png')
+    writeCapture(capturePath, 'pure-red')
+    const sample = {
+      capture: { path: capturePath },
+      workspaceObservation: { sourceHostFrame: { x: 12, y: 34, width: 320, height: 180 } }
+    }
+    const seen: Record<string, any>[] = []
+    const comparator = (
+      _capture: string,
+      _reference: string,
+      _bounds: Record<string, number>,
+      options: Record<string, any>
+    ) => {
+      seen.push(options)
+      return {
+        clean: true,
+        registration: { captureX: 0, captureY: 0, videoWidth: 1, videoHeight: 1 },
+        metrics: {},
+        thresholds: {}
+      }
+    }
+    compareDecodedSample(
+      sample,
+      '/tmp/reference.png',
+      { width: 320, height: 210 },
+      'neutral',
+      comparator
+    )
+    const pure = evaluatePureRedSample(
+      sample,
+      '/tmp/reference.png',
+      { width: 320, height: 210 },
+      'active',
+      { compareWindowCaptureToReference: comparator }
+    )
+    expect(pure.comparator.clean).toBe(true)
+    expect(seen).toEqual([
+      { sourceHostFrame: sample.workspaceObservation.sourceHostFrame },
+      { sourceHostFrame: sample.workspaceObservation.sourceHostFrame, hudOverlayHeight: 118 }
+    ])
   })
 
   it('accepts a pure-red material plane through the real comparator and absolute gate', async () => {

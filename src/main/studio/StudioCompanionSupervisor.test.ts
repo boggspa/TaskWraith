@@ -18,6 +18,7 @@ import {
   STUDIO_TRANSCRIPT_SCHEMA_VERSION
 } from './StudioProtocol'
 import { StudioRevisionStore } from './StudioRevisionStore'
+import { resourceSnapshotFixture } from './StudioResourceSnapshot.test-fixtures'
 
 /** Loose view of one NDJSON line the supervisor wrote to the companion. */
 interface StudioWireRecord {
@@ -159,8 +160,105 @@ const insertOp = {
   sourceOut: { n: 30030, d: 30000 },
   at: { n: 0, d: 1 }
 }
+const materializedTracks = [
+  {
+    trackId: 'V1',
+    kind: 'video',
+    items: [
+      {
+        itemId: 'sup-item-1',
+        assetId: 'asset-1',
+        sourceIn: { n: 0, d: 1 },
+        sourceOut: { n: 1001, d: 1000 },
+        position: { n: 0, d: 1 },
+        duration: { n: 1001, d: 1000 }
+      }
+    ]
+  }
+]
 
 describe('StudioCompanionSupervisor', () => {
+  it('does not start or hydrate a child in order to query resources', async () => {
+    const harness = await createHarness()
+    await expect(harness.supervisor.getResourceSnapshot()).resolves.toMatchObject({
+      ok: false,
+      code: 'studio_unavailable'
+    })
+    expect(harness.children).toHaveLength(0)
+    harness.supervisor.start()
+    await expect(harness.supervisor.getResourceSnapshot()).resolves.toMatchObject({
+      ok: false,
+      code: 'studio_unavailable'
+    })
+    expect(harness.children[0].messages).toEqual([])
+  })
+
+  it('handles a fragmented resource reply on the inbound queue without deadlocking or changing the journal', async () => {
+    const harness = await createHarness()
+    harness.supervisor.start()
+    const child = harness.children[0]
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    child.send({ jsonrpc: '2.0', id: 2, method: STUDIO_METHODS.getDocument })
+    await until(() => child.messages.some((message) => message.id === 2))
+    const pending = harness.supervisor.getResourceSnapshot()
+    await until(() =>
+      child.messages.some((message) => message.method === STUDIO_METHODS.getResourceSnapshot)
+    )
+    const wire = child.messages.find(
+      (message) => message.method === STUDIO_METHODS.getResourceSnapshot
+    )!
+    const snapshot = resourceSnapshotFixture({
+      nonce: String(wire.params?.nonce),
+      documentRevision: Number(wire.params?.expectedRevision)
+    })
+    const response = JSON.stringify({ jsonrpc: '2.0', id: wire.id, result: snapshot }) + '\n'
+    const split = Math.floor(response.length / 2)
+    child.sendRaw(response.slice(0, split))
+    child.sendRaw(response.slice(split))
+    await expect(pending).resolves.toEqual({ ok: true, snapshot })
+    expect(harness.store.revision).toBe(0)
+    expect(harness.children).toHaveLength(1)
+    expect(harness.events.filter((event) => event.type === 'restart_scheduled')).toHaveLength(0)
+  })
+
+  it('settles outstanding resource queries when the captured child exits and ignores its late reply', async () => {
+    const harness = await createHarness({ maxRestarts: 0 })
+    harness.supervisor.start()
+    const child = harness.children[0]
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.hello,
+      params: { protocolVersion: 1 }
+    })
+    child.send({ jsonrpc: '2.0', id: 2, method: STUDIO_METHODS.getDocument })
+    await until(() => child.messages.some((message) => message.id === 2))
+    const pending = harness.supervisor.getResourceSnapshot()
+    await until(() =>
+      child.messages.some((message) => message.method === STUDIO_METHODS.getResourceSnapshot)
+    )
+    const wire = child.messages.find(
+      (message) => message.method === STUDIO_METHODS.getResourceSnapshot
+    )!
+    child.exit(1)
+    await expect(pending).resolves.toMatchObject({ ok: false, code: 'resource_query_child_exited' })
+    child.send({
+      jsonrpc: '2.0',
+      id: wire.id,
+      result: resourceSnapshotFixture({ nonce: String(wire.params?.nonce) })
+    })
+    await expect(harness.supervisor.getResourceSnapshot()).resolves.toMatchObject({
+      ok: false,
+      code: 'studio_unavailable'
+    })
+    expect(harness.children).toHaveLength(1)
+  })
+
   it('serves companion-driven hydration: hello then getDocument', async () => {
     const harness = await createHarness()
     harness.supervisor.start()
@@ -294,24 +392,88 @@ describe('StudioCompanionSupervisor', () => {
       }
     })
     await until(() => second.messages.length >= 4)
-    expect(second.messages[2]).toMatchObject({
+    expect(second.messages[2]).toEqual({
+      jsonrpc: '2.0',
       id: 6,
-      result: { revision: 2, proposalId: 'proposal-restart', decision: 'accept' }
+      result: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        revision: 2,
+        proposalId: 'proposal-restart',
+        decision: 'accept',
+        appliedOp: insertOp,
+        tracks: materializedTracks
+      }
     })
-    expect(second.messages[3]).toMatchObject({
+    expect(second.messages[3]).toEqual({
+      jsonrpc: '2.0',
       method: STUDIO_METHODS.editCommitted,
       params: {
         revision: 2,
         op: {
           type: 'resolve_proposal',
           proposalId: 'proposal-restart',
-          decision: 'accept'
+          decision: 'accept',
+          appliedOp: insertOp,
+          tracks: materializedTracks
         }
       }
     })
     expect(harness.store.getDocument()).toMatchObject({
       proposals: [],
       tracks: [{ items: [{ itemId: 'sup-item-1' }] }]
+    })
+    await harness.supervisor.stop()
+  })
+
+  it('clears a rejected proposal without inventing an applied operation', async () => {
+    const harness = await createHarness()
+    harness.supervisor.start()
+    const child = harness.children[0]
+    child.send({
+      jsonrpc: '2.0',
+      id: 1,
+      method: STUDIO_METHODS.proposeEdit,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 0,
+        proposalId: 'proposal-reject',
+        op: insertOp
+      }
+    })
+    await until(() => child.messages.length >= 2)
+    child.send({
+      jsonrpc: '2.0',
+      id: 2,
+      method: STUDIO_METHODS.resolveProposal,
+      params: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        baseRevision: 1,
+        proposalId: 'proposal-reject',
+        decision: 'reject'
+      }
+    })
+    await until(() => child.messages.length >= 4)
+    expect(child.messages[2]).toEqual({
+      jsonrpc: '2.0',
+      id: 2,
+      result: {
+        schemaVersion: STUDIO_PROPOSAL_SCHEMA_VERSION,
+        revision: 2,
+        proposalId: 'proposal-reject',
+        decision: 'reject'
+      }
+    })
+    expect(child.messages[3]).toEqual({
+      jsonrpc: '2.0',
+      method: STUDIO_METHODS.editCommitted,
+      params: {
+        revision: 2,
+        op: {
+          type: 'resolve_proposal',
+          proposalId: 'proposal-reject',
+          decision: 'reject'
+        }
+      }
     })
     await harness.supervisor.stop()
   })

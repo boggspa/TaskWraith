@@ -826,6 +826,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'studio:effect-preview-load': [],
   'studio:effect-preview-clear': [],
   'studio:effect-preview-state': [],
+  // Pathless and processless: Main's lifecycle alone selects the running
+  // Companion, so the renderer invocation carries no payload.
+  'studio:resource-snapshot': [],
   'favicon:getForUrl': ['nonEmptyString'],
   'start-pty': ['workspacePath', 'optionalString'],
   'stop-pty': ['optionalString'],
@@ -1235,7 +1238,8 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
       channel === 'canvas:clear-browser-profile' ||
       channel.startsWith('channels:') ||
       channel.startsWith('host-lifecycle:') ||
-      channel.startsWith('studio:effect-preview-')) &&
+      channel.startsWith('studio:effect-preview-') ||
+      channel === 'studio:resource-snapshot') &&
     args.length > schema.length
   ) {
     throw new Error(`${channel} received too many arguments.`)

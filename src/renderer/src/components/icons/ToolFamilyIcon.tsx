@@ -324,6 +324,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'tw_history_read':
     case 'tw_checkpoint':
       return 'memory'
+    case 'computer_use':
     case 'canvas_open':
     case 'canvas_render_html':
     case 'canvas_open_attachment':

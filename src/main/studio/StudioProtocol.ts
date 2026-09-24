@@ -29,6 +29,7 @@ export const STUDIO_SERVER_NAME = 'taskwraith-studio-host'
 export const STUDIO_METHODS = Object.freeze({
   hello: 'studio/hello',
   getDocument: 'studio/getDocument',
+  getResourceSnapshot: 'studio/getResourceSnapshot',
   applyEdit: 'studio/applyEdit',
   openMedia: 'studio/openMedia',
   proposeEdit: 'studio/proposeEdit',
@@ -135,6 +136,21 @@ export interface StudioInsertRangeOp {
 
 export type StudioEditOp = StudioInsertRangeOp
 
+export interface StudioMaterializedClipItem {
+  itemId: string
+  assetId: string
+  sourceIn: StudioRationalTime
+  sourceOut: StudioRationalTime
+  position: StudioRationalTime
+  duration: StudioRationalTime
+}
+
+export interface StudioMaterializedTrack {
+  trackId: string
+  kind: 'video' | 'audio'
+  items: StudioMaterializedClipItem[]
+}
+
 /** Durable document mutation emitted by studio/openMedia. */
 export interface StudioOpenMediaOp {
   type: 'open_media'
@@ -162,6 +178,25 @@ export interface StudioResolveProposalOp {
   proposalId: string
   decision: StudioProposalDecision
 }
+
+/** Resolve payload after host materialisation, carried only by editCommitted. */
+export type StudioResolveProposalCommittedOp =
+  | {
+      type: 'resolve_proposal'
+      proposalId: string
+      decision: 'accept'
+      /** Exact edit atomically materialised by this resolution. */
+      appliedOp: StudioEditOp
+      /** Complete host materialisation; decoded identically to reconnect hydration. */
+      tracks: StudioMaterializedTrack[]
+    }
+  | {
+      type: 'resolve_proposal'
+      proposalId: string
+      decision: 'reject'
+      /** Rejection never materialises timeline state. */
+      appliedOp?: never
+    }
 
 /** Half-open source range for one stable transcript selection unit. */
 export interface StudioTranscriptSegment {
@@ -222,6 +257,10 @@ export type StudioDocumentOperation =
   | StudioSetTranscriptOp
   | StudioSetEffectPreviewOp
 
+export type StudioEditCommittedOperation =
+  | Exclude<StudioDocumentOperation, StudioResolveProposalOp>
+  | StudioResolveProposalCommittedOp
+
 export interface StudioHelloParams {
   protocolVersion: number
   client?: string
@@ -277,14 +316,17 @@ export interface StudioResolveProposalParams {
   decision: StudioProposalDecision
 }
 
-export interface StudioResolveProposalResult {
+interface StudioResolveProposalResultBase {
   schemaVersion: typeof STUDIO_PROPOSAL_SCHEMA_VERSION
   revision: number
   proposalId: string
-  decision: StudioProposalDecision
-  /** Present only when acceptance applied the proposal to the timeline. */
-  appliedOp?: StudioEditOp
 }
+
+export type StudioResolveProposalResult = StudioResolveProposalResultBase &
+  (
+    | { decision: 'accept'; appliedOp: StudioEditOp; tracks: StudioMaterializedTrack[] }
+    | { decision: 'reject'; appliedOp?: never; tracks?: never }
+  )
 
 export interface StudioSetTranscriptParams {
   schemaVersion: typeof STUDIO_TRANSCRIPT_SCHEMA_VERSION
@@ -303,7 +345,7 @@ export interface StudioSetTranscriptResult {
 
 export interface StudioEditCommittedParams {
   revision: number
-  op: StudioDocumentOperation
+  op: StudioEditCommittedOperation
 }
 
 export function studioResult(id: number, result: unknown): StudioSuccessResponseMessage {

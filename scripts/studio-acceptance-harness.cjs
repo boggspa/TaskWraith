@@ -23,6 +23,7 @@ const fsPromises = require('node:fs/promises')
 const path = require('node:path')
 const { execFile, fork } = require('node:child_process')
 const { PNG } = require('pngjs')
+const mediaLimits = require('../src/shared/mediaLimits.json')
 const {
   buildElectronSpawnPlan,
   assertExactChildOwnsDebugPorts
@@ -31,11 +32,17 @@ const {
   resolveUnpackagedDevUserDataPath,
   sanitizeDevInstanceId
 } = require('./perf/devUserDataPath.cjs')
-const { assertLaunchPortsFree } = require('./perf/portGuard.cjs')
+const {
+  assertLaunchPortsFree,
+  listListeningPidsForPort
+} = require('./perf/portGuard.cjs')
 const { attachRendererCdpSession } = require('./perf/cdpWebSocketSession.cjs')
+const { hasVerifiedLaunchServicesExit } = require('./studio-acceptance-watchdog.cjs')
+const { assertPackagedRuntimeCustody } = require('./studio-packaged-runtime-custody.cjs')
 const {
   parseAvSyncCurrentExport,
-  parseAvSyncPeakExport
+  parseAvSyncPeakExport,
+  parseResourceDetailExport
 } = require('./studio-av-endurance-runner.cjs')
 const {
   buildMuxCommand,
@@ -149,19 +156,29 @@ const INSTALLED_STUDIO_EXECUTABLE =
 const STUDIO_ACCEPTANCE_REQUIRED_PRODUCT_ANCESTOR = '4b4c1913acd777277d16ae638c39bae635f1355e'
 const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
   'scripts/studio-acceptance-ui-driver.swift':
-    'a358524787405a1e1e9cf9b4bb7923d82c05012abbf2abe6d2ab9a50d9dc6172',
+    '31e049ce81bd5dc1d0e1366c33c5b3f6f85bc10ccfcfd751f8925678bc67aa29',
   'scripts/studio-acceptance-window-probe.swift':
     'fb6b385479e33883e2dab7b74c3308459d7aa6e6ba46f861e6b353b3b2963154',
   'scripts/studio-acceptance-watchdog.cjs':
-    'c12daaf4e2068090f5db0fc178e4cf46f044e844041778f3a8d0a68358a6b69f',
+    '0409f5584499bafeaa8c99bf9bef8c4e84d5834b5885d4bb228d10715f2a4dcc',
   'scripts/studio-acceptance-detached-coordinator.cjs':
     'ef316fe25a3c8f57e5963cede12e7b8f3d9f7005865f36545aceadf900a93bd2',
   'scripts/studio-generate-speech-fixture.cjs':
     '734c336b46aac7ebe3748144216514dfbd49c1206962055c703f79a063936e4f',
   'scripts/studio-av-endurance-runner.cjs':
-    '8c1cbbad000ddb66466f98128c90ad912d5f36fe117c812c127e78343fb24a6e',
+    'bb72914c8750fc27ea984bda21b1a62aedb7e3854e9a64f7e57745e162caa578',
+  'scripts/studio-av-endurance-live-runner.cjs':
+    '015e519ae5f58f4c15c70ea485fc0e0925e4ed6695bdb3934076b5225762d7d1',
+  'scripts/studio-av-endurance-acceptance-runner.cjs':
+    'fc18cffa691f5aaa2518db2d307c6800ccc936905fdb8adaeddfc17bb4ec5be7',
+  'scripts/studio-packaged-runtime-custody.cjs':
+    '710f8253daa9883e6650f0e430699493db62721e631e9d157bae38e43d2c59ca',
   'scripts/perf/electronChildSession.cjs':
-    'b7cb57ed1ada3cd9fd00817b96bd0c033b33080b87706beb051c4a4478f8c4e9',
+    '20f18797a4266f1b09298bb7ab20fef433fd41211b58fa12d8d46412e25103cd',
+  'scripts/perf/isolatedHome.cjs':
+    'd8aad8578e7993fbe9bb06ce4c675eb27afd7c0ce6b60c30cd6ea65429852b6c',
+  'scripts/perf/isolatedLaunch.cjs':
+    'cef0e6beb9bc1a357814992f0dc984c325c4ecdce10c41344d6780c278e8e2e1',
   'scripts/perf/devUserDataPath.cjs':
     'f40f3f27676d591a8cd78024201cda51cd8c07c2953cc92c26f0ec19db9fd24b',
   'scripts/perf/portGuard.cjs': '1066e3f1222d48bd4de8974f0fe139218799adad73c0ac570faccecf52b8edad',
@@ -169,7 +186,7 @@ const STUDIO_ACCEPTANCE_EXPECTED_SUPPORT_HASHES = Object.freeze({
     '3bd5394220bf612bb79dfaf4438b5df8e9a0c72572be4d10abe5cb482a3afbe7'
 })
 const STUDIO_ACCEPTANCE_BUILD_INPUT_EXACT_PATHS = Object.freeze([
-  'build/icon.icns',
+  'design-assets/suite-app-icons/studio/app-icon.icns',
   'electron.vite.config.ts',
   'package-lock.json',
   'package.json',
@@ -187,6 +204,7 @@ const STUDIO_ACCEPTANCE_OPTIONAL_ENV_PATHS = Object.freeze([
   '.env.production.local'
 ])
 const STUDIO_ACCEPTANCE_RUNNER_PATH = 'scripts/studio-acceptance-harness.cjs'
+const MACOS_OPEN_PATH = '/usr/bin/open'
 const STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS = Object.freeze({
   bridgeDaemon: Object.freeze({
     label: 'selected bridge daemon',
@@ -253,14 +271,14 @@ const STUDIO_ACCEPTANCE_BUILD_ENVIRONMENT_NAMES = Object.freeze([
  * old native product was rebuilt from newer source.
  */
 const STUDIO_ACCEPTANCE_EXPECTED_CUSTODY_PINS = Object.freeze({
-  sourceDigest: '9d000306f0aa7313865bc29b383cd98d151068268338687de02dd4caecc3416d',
-  sourceCount: 2294,
+  sourceDigest: 'cece2557f39bde8f342a94a187813280d9bb387271a48ba3850fc95d1c338faf',
+  sourceCount: 3123,
   buildEnvironmentDigest: '4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945',
   buildEnvironmentCount: 0,
   companionPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion.relativePath,
-  companionSha256: '21f70055169e10b1bf05f9b235459635a41e458a9d0b230a32d7d823086d1104',
+  companionSha256: 'd86c520d7276fed6932d6a1eea9a64613fd02e4130b5a1e6998a8c61014da36a',
   bridgeDaemonPath: STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.bridgeDaemon.relativePath,
-  bridgeDaemonSha256: 'ba3cd5ce8630b143eb64f4c8d726b1c22afea02a10133807039ba485617961cb'
+  bridgeDaemonSha256: 'afa8ce83f54f44981ffb6143886ec63614ac1c5e598b01562e45dca12ad72775'
 })
 
 function isRecord(value) {
@@ -421,6 +439,125 @@ function parseStudioTransportMutationText(text) {
   }
 }
 
+function validateStudioReviewRangeReceipt(observed) {
+  if (!isRecord(observed)) throw new Error('Studio UI driver review-range receipt is not an object')
+  const keys = Object.keys(observed).sort()
+  const expected = ['inPointTicks', 'index', 'loopingRange', 'outPointTicks', 'type']
+  if (JSON.stringify(keys) !== JSON.stringify(expected)) {
+    throw new Error('Studio UI driver review-range action receipt has missing or extra keys')
+  }
+  if (
+    observed.type !== 'read-review-range' ||
+    !Number.isSafeInteger(observed.index) ||
+    !Number.isSafeInteger(observed.inPointTicks) ||
+    observed.inPointTicks < 0 ||
+    !Number.isSafeInteger(observed.outPointTicks) ||
+    observed.outPointTicks <= observed.inPointTicks ||
+    typeof observed.loopingRange !== 'boolean'
+  ) {
+    throw new Error('Studio UI driver review-range receipt is invalid')
+  }
+  return observed
+}
+
+const ROUTE_RESOURCE_DETAIL_MAX_BYTES = 65_536
+const ROUTE_RESOURCE_DETAIL_MAX_SURFACE_IDS = 7_000
+const ROUTE_RESOURCE_DETAIL_FIELDS = ['route', 'active', 'retained', 'cap', 'surf', 'ids']
+
+/** Strict parser for the renderer-owned `rr1` route resource export. */
+function parseRouteResourceDetailExport(text) {
+  if (typeof text !== 'string' || text.length === 0) {
+    return { ok: false, reason: 'empty route resource receipt' }
+  }
+  if (Buffer.byteLength(text, 'utf8') > ROUTE_RESOURCE_DETAIL_MAX_BYTES) {
+    return { ok: false, reason: 'route resource receipt exceeds its bounded byte length' }
+  }
+  const parts = text.split(' ')
+  if (parts.length !== 7 || parts[0] !== 'rr1' || parts.some((part) => part.length === 0)) {
+    return { ok: false, reason: 'route resource receipt is not canonical whitespace' }
+  }
+  const fields = new Map()
+  for (const part of parts.slice(1)) {
+    const separator = part.indexOf('=')
+    if (separator <= 0 || separator !== part.lastIndexOf('=')) {
+      return { ok: false, reason: `malformed route resource field ${part}` }
+    }
+    const key = part.slice(0, separator)
+    if (fields.has(key)) return { ok: false, reason: `duplicate route resource field ${key}` }
+    fields.set(key, part.slice(separator + 1))
+  }
+  for (const key of ROUTE_RESOURCE_DETAIL_FIELDS) {
+    if (!fields.has(key)) return { ok: false, reason: `missing route resource field ${key}` }
+  }
+  for (const key of fields.keys()) {
+    if (!ROUTE_RESOURCE_DETAIL_FIELDS.includes(key)) {
+      return { ok: false, reason: `unknown route resource field ${key}` }
+    }
+  }
+  const route = fields.get('route')
+  if (route !== 'source' && route !== 'review') {
+    return { ok: false, reason: 'route resource route is not source or review' }
+  }
+  const exactNonNegativeInteger = (key) => {
+    const raw = fields.get(key)
+    if (!/^(?:0|[1-9]\d*)$/.test(raw)) return null
+    const value = Number(raw)
+    return Number.isSafeInteger(value) ? value : null
+  }
+  const activeSourceCount = exactNonNegativeInteger('active')
+  const retainedFrameCount = exactNonNegativeInteger('retained')
+  const capacity = exactNonNegativeInteger('cap')
+  const surfaceCount = exactNonNegativeInteger('surf')
+  if (
+    [activeSourceCount, retainedFrameCount, capacity, surfaceCount].some((value) => value === null)
+  ) {
+    return { ok: false, reason: 'route resource counts are not canonical non-negative integers' }
+  }
+  if (
+    surfaceCount > ROUTE_RESOURCE_DETAIL_MAX_SURFACE_IDS ||
+    retainedFrameCount > capacity ||
+    surfaceCount > capacity
+  ) {
+    return { ok: false, reason: 'route resource counts exceed capacity or export bounds' }
+  }
+  const rawIds = fields.get('ids')
+  if (rawIds === '!') {
+    return { ok: false, reason: 'route resource receipt declares an IOSurface export overflow' }
+  }
+  let ioSurfaceIds = []
+  if (rawIds === '-') {
+    if (surfaceCount !== 0) {
+      return { ok: false, reason: 'route resource ids are empty but surf is nonzero' }
+    }
+  } else {
+    const tokens = rawIds.split(',')
+    if (tokens.length !== surfaceCount || tokens.length === 0) {
+      return { ok: false, reason: 'route resource ids do not match surf' }
+    }
+    let previous = -1
+    for (const token of tokens) {
+      if (!/^[0-9A-F]{8}$/.test(token)) {
+        return { ok: false, reason: 'route resource IOSurface ids are not canonical 8-hex values' }
+      }
+      const id = Number.parseInt(token, 16)
+      if (id <= previous) {
+        return { ok: false, reason: 'route resource IOSurface ids are not strictly increasing' }
+      }
+      previous = id
+      ioSurfaceIds.push(token)
+    }
+  }
+  return {
+    ok: true,
+    route,
+    activeSourceCount,
+    retainedFrameCount,
+    capacity,
+    surfaceCount,
+    ioSurfaceIds
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -439,6 +576,7 @@ function parseArgs(argv) {
     generateSpeechFixture: false,
     mediaPath: null,
     mimeType: null,
+    packagedExecutablePath: null,
     remoteDebuggingPort: null,
     mainInspectorPort: null,
     timeoutMs: DEFAULT_TIMEOUT_MS,
@@ -459,6 +597,9 @@ function parseArgs(argv) {
     else if (argument === '--generate-speech-fixture') parsed.generateSpeechFixture = true
     else if (argument.startsWith('--media=')) parsed.mediaPath = argument.slice(8)
     else if (argument.startsWith('--mime=')) parsed.mimeType = argument.slice(7)
+    else if (argument.startsWith('--packaged-executable=')) {
+      parsed.packagedExecutablePath = argument.slice('--packaged-executable='.length)
+    }
     else if (argument.startsWith('--remote-debugging-port=')) {
       parsed.remoteDebuggingPort = Number(argument.slice(24))
     } else if (argument.startsWith('--main-inspector-port=')) {
@@ -506,12 +647,20 @@ function buildStudioAcceptancePlan(options = {}) {
       path.join(repoRoot, '.local-only', 'taskwraith-studio', 'acceptance', instanceId)
   )
   const home = path.resolve(options.home || path.join(artifactRoot, 'home'))
-  const profile = resolveUnpackagedDevUserDataPath({
+  const unpackagedProfile = resolveUnpackagedDevUserDataPath({
     instanceId,
     platform: options.platform || process.platform,
     home,
     env: options.env || process.env
   })
+  const profile = options.packagedExecutablePath
+    ? {
+        ...unpackagedProfile,
+        appName: 'taskwraith',
+        userDataPath: path.join(home, 'Library', 'Application Support', 'taskwraith'),
+        isPackagedProfile: true
+      }
+    : unpackagedProfile
   const spawnPlan = buildElectronSpawnPlan({
     instanceId,
     repoRoot,
@@ -519,10 +668,14 @@ function buildStudioAcceptancePlan(options = {}) {
     platform: options.platform || process.platform,
     workload: 'dual_run',
     fxPosture: 'reduce_motion',
+    userDataPath: profile.userDataPath,
     ...(options.remoteDebuggingPort == null
       ? {}
       : { remoteDebuggingPort: options.remoteDebuggingPort }),
     ...(options.mainInspectorPort == null ? {} : { mainInspectorPort: options.mainInspectorPort }),
+    ...(options.packagedExecutablePath
+      ? { packagedExecutablePath: options.packagedExecutablePath }
+      : {}),
     ...(options.adapters ? { adapters: options.adapters } : {})
   })
   spawnPlan.env.TASKWRAITH_STUDIO_COMPANION = '1'
@@ -538,6 +691,9 @@ function buildStudioAcceptancePlan(options = {}) {
     home,
     transcriptTimeoutMs,
     profile,
+    packagedExecutablePath: options.packagedExecutablePath
+      ? path.resolve(options.packagedExecutablePath)
+      : null,
     spawnPlan,
     receiptPath,
     evidencePath,
@@ -606,6 +762,30 @@ function assertLaunchAuthorized(args, plan) {
   }
   if (!plan.spawnPlan.argv.includes('--use-mock-keychain')) {
     throw new Error('Refuse launch without disposable macOS mock keychain')
+  }
+  if (args.packagedExecutablePath !== null) {
+    const executable = path.resolve(String(args.packagedExecutablePath))
+    const relative = path.relative(plan.repoRoot, executable)
+    let stat = null
+    try {
+      stat = fs.statSync(executable)
+    } catch {
+      // The refusal below names the exact packaged precondition.
+    }
+    if (
+      !path.isAbsolute(args.packagedExecutablePath) ||
+      !relative ||
+      relative.startsWith('..') ||
+      path.isAbsolute(relative) ||
+      !executable.includes('.app' + path.sep + 'Contents' + path.sep + 'MacOS' + path.sep) ||
+      !stat?.isFile() ||
+      plan.spawnPlan.packaged !== true ||
+      plan.spawnPlan.electronBinary !== executable
+    ) {
+      throw new Error(
+        'Packaged Studio acceptance requires a regular worktree .app executable'
+      )
+    }
   }
   return { launch: true }
 }
@@ -887,7 +1067,12 @@ async function measureStudioAcceptanceSelectedNativeProduct(repoRoot, product) {
 }
 
 async function measureStudioAcceptanceArtifacts(repoRoot) {
-  const outEntries = await collectStudioAcceptanceCustodyEntries(repoRoot, 'out')
+  const outEntries = await collectStudioAcceptanceCustodyEntries(
+    repoRoot,
+    'out',
+    (relativePath) =>
+      !isStudioAcceptanceCustodyNoise(relativePath) && !relativePath.startsWith('out/tui/')
+  )
   const companionEntry = await measureStudioAcceptanceSelectedNativeProduct(
     repoRoot,
     STUDIO_ACCEPTANCE_SELECTED_NATIVE_PRODUCTS.companion
@@ -907,6 +1092,150 @@ async function measureStudioAcceptanceArtifacts(repoRoot) {
     companionSha256: companionEntry.sha256,
     bridgeDaemonPath: bridgeEntry.path,
     bridgeDaemonSha256: bridgeEntry.sha256
+  }
+}
+
+async function measurePackagedStudioExecution(repoRoot, executablePath, adapters = {}) {
+  const root = path.resolve(repoRoot)
+  const executable = path.resolve(String(executablePath || ''))
+  const relativeExecutable = path.relative(root, executable)
+  const match = executable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/)
+  if (
+    !relativeExecutable ||
+    relativeExecutable.startsWith('..') ||
+    path.isAbsolute(relativeExecutable) ||
+    !match
+  ) {
+    throw new Error('packaged Studio executable escaped its worktree app bundle')
+  }
+  const appRoot = match[1]
+  const candidates = {
+    executable,
+    infoPlist: path.join(appRoot, 'Contents', 'Info.plist'),
+    appAsar: path.join(appRoot, 'Contents', 'Resources', 'app.asar'),
+    companion: path.join(
+      appRoot,
+      'Contents',
+      'Resources',
+      'studio',
+      'TaskWraith Studio.app',
+      'Contents',
+      'MacOS',
+      'TaskWraithStudioCompanion'
+    ),
+    bridgeDaemon: path.join(
+      appRoot,
+      'Contents',
+      'Helpers',
+      'TaskWraith Bridge.app',
+      'Contents',
+      'MacOS',
+      'TaskWraithBridgeDaemon'
+    ),
+    bridgeInfoPlist: path.join(
+      appRoot,
+      'Contents',
+      'Helpers',
+      'TaskWraith Bridge.app',
+      'Contents',
+      'Info.plist'
+    )
+  }
+  const files = {}
+  for (const [name, filePath] of Object.entries(candidates)) {
+    await assertSafeRegularFile(filePath, 'packaged Studio ' + name)
+    files[name] = {
+      path: path.relative(root, filePath).split(path.sep).join('/'),
+      sha256: await sha256Hex(filePath)
+    }
+  }
+  const runtime = assertPackagedRuntimeCustody({ repoRoot: root, appRoot })
+  const runtimeCustody = { schemaVersion: runtime.schemaVersion, ok: runtime.ok }
+  for (const kind of ['electron', 'host']) {
+    const { fileCount, byteLength, manifestSha256 } = runtime[kind]
+    runtimeCustody[kind] = { fileCount, byteLength, manifestSha256 }
+  }
+  const runExec = adapters.execFile || defaultExecFile
+  await runExec('/usr/bin/codesign', ['--verify', '--deep', '--strict', appRoot], {
+    timeoutMs: 60_000
+  })
+  const speechUsage = await runExec(
+    '/usr/bin/plutil',
+    [
+      '-extract',
+      'NSSpeechRecognitionUsageDescription',
+      'raw',
+      '-o',
+      '-',
+      candidates.infoPlist
+    ],
+    { timeoutMs: 10_000 }
+  )
+  if (!String(speechUsage.stdout || '').trim()) {
+    throw new Error('packaged Studio app omits its Speech Recognition usage description')
+  }
+  const bridgeSpeechUsage = await runExec(
+    '/usr/bin/plutil',
+    [
+      '-extract',
+      'NSSpeechRecognitionUsageDescription',
+      'raw',
+      '-o',
+      '-',
+      candidates.bridgeInfoPlist
+    ],
+    { timeoutMs: 10_000 }
+  )
+  if (!String(bridgeSpeechUsage.stdout || '').trim()) {
+    throw new Error('packaged Studio bridge omits its Speech Recognition usage description')
+  }
+  // The bridge helper must share the packaged app's consent identity and
+  // version, whichever distribution identity (beta or debut) the app carries.
+  // Compare against the parent Info.plist rather than a literal appId.
+  const bundleIdentityKeys = ['CFBundleIdentifier', 'CFBundleShortVersionString', 'CFBundleVersion']
+  const bundleIdentity = { app: {}, bridge: {} }
+  for (const [member, plistPath] of [
+    ['app', candidates.infoPlist],
+    ['bridge', candidates.bridgeInfoPlist]
+  ]) {
+    for (const key of bundleIdentityKeys) {
+      const extracted = await runExec(
+        '/usr/bin/plutil',
+        ['-extract', key, 'raw', '-o', '-', plistPath],
+        { timeoutMs: 10_000 }
+      )
+      const value = String(extracted.stdout || '').trim()
+      if (!value) {
+        throw new Error(`packaged Studio ${member} bundle omits ${key}`)
+      }
+      bundleIdentity[member][key] = value
+    }
+  }
+  for (const key of bundleIdentityKeys) {
+    if (bundleIdentity.bridge[key] !== bundleIdentity.app[key]) {
+      throw new Error(
+        `packaged Studio bridge ${key} ${bundleIdentity.bridge[key]} does not share the app bundle ${key} ${bundleIdentity.app[key]}`
+      )
+    }
+  }
+  return {
+    appRoot: path.relative(root, appRoot).split(path.sep).join('/'),
+    bundleIdentityDigest: sha256Text(JSON.stringify(files)),
+    files,
+    runtimeCustody,
+    executablePath: files.executable.path,
+    executableSha256: files.executable.sha256,
+    companionPath: files.companion.path,
+    companionSha256: files.companion.sha256,
+    bridgeDaemonPath: files.bridgeDaemon.path,
+    bridgeDaemonSha256: files.bridgeDaemon.sha256,
+    speechUsageDescription: String(speechUsage.stdout).trim(),
+    bridgeSpeechUsageDescription: String(bridgeSpeechUsage.stdout).trim(),
+    bundleIdentifier: bundleIdentity.app.CFBundleIdentifier,
+    bundleShortVersion: bundleIdentity.app.CFBundleShortVersionString,
+    bundleVersion: bundleIdentity.app.CFBundleVersion,
+    bridgeBundleIdentifier: bundleIdentity.bridge.CFBundleIdentifier,
+    codeSignatureVerified: true
   }
 }
 
@@ -1258,6 +1587,7 @@ const DETACHED_REQUEST_ARG_KEYS = new Set([
   'generateSpeechFixture',
   'mediaPath',
   'mimeType',
+  'packagedExecutablePath',
   'remoteDebuggingPort',
   'mainInspectorPort',
   'timeoutMs',
@@ -1396,6 +1726,7 @@ function launchDetachedCoordinator(args, adapters = {}) {
     transcriptTimeoutMs: args.transcriptTimeoutMs,
     remoteDebuggingPort: args.remoteDebuggingPort,
     mainInspectorPort: args.mainInspectorPort,
+    packagedExecutablePath: args.packagedExecutablePath,
     ...(adapters.planOptions || {})
   })
   try {
@@ -1704,6 +2035,17 @@ async function validateDetachedCompletion(paths, manifest) {
   }
   if (!isRecord(evidence.watchdogTerminal)) {
     return detachedRed('succeeded', 'detached evidence is missing the terminal watchdog join', {
+      evidenceSha256: actualEvidenceSha256
+    })
+  }
+  if (
+    !hasVerifiedLaunchServicesExit(receipt) ||
+    !hasVerifiedLaunchServicesExit(evidence.watchdogTerminal) ||
+    receipt.launchServicesExecutable !== evidence.watchdogTerminal.launchServicesExecutable ||
+    JSON.stringify(receipt.launchServicesAdoption) !==
+      JSON.stringify(evidence.watchdogTerminal.launchServicesAdoption)
+  ) {
+    return detachedRed('succeeded', 'detached evidence/watchdog LaunchServices adoption mismatch', {
       evidenceSha256: actualEvidenceSha256
     })
   }
@@ -2075,7 +2417,8 @@ async function runDetachedCoordinatorProcess() {
       instanceId: request.args.instanceId,
       transcriptTimeoutMs: request.args.transcriptTimeoutMs,
       remoteDebuggingPort: request.args.remoteDebuggingPort,
-      mainInspectorPort: request.args.mainInspectorPort
+      mainInspectorPort: request.args.mainInspectorPort,
+      packagedExecutablePath: request.args.packagedExecutablePath
     })
     assertDetachedLaunchAuthorized(request.args, plan)
   }
@@ -2246,15 +2589,23 @@ async function sha256Base64Url(filePath) {
   return hash.digest('base64url')
 }
 
-async function materializeOwnedMedia(options) {
+async function materializeOwnedMedia(options, adapters = {}) {
   const sourcePath = path.resolve(options.mediaPath)
   const before = await fsPromises.lstat(sourcePath)
   if (before.isSymbolicLink() || !before.isFile() || before.size <= 0) {
     throw new Error('Acceptance media must be a non-empty regular file, not a symlink')
   }
+  const mimeType = options.mimeType.toLowerCase()
+  if (
+    mimeType.startsWith('video/') &&
+    before.size > mediaLimits.transcriptMediaMaxVideoBytes
+  ) {
+    throw new Error(
+      `Acceptance video exceeds the shared ${mediaLimits.transcriptMediaMaxVideoBytes}-byte product cap`
+    )
+  }
   const realSource = await fsPromises.realpath(sourcePath)
   const hash = await sha256Base64Url(realSource)
-  const mimeType = options.mimeType.toLowerCase()
   const baseDir = path.join(options.userDataPath, TRANSCRIPT_MEDIA_DIR)
   const shard = path.join(baseDir, hash.slice(0, 2))
   const target = path.join(shard, `${hash}.${mediaExtension(mimeType)}`)
@@ -2271,8 +2622,22 @@ async function materializeOwnedMedia(options) {
     if (!error || error.code !== 'ENOENT') throw error
     const temp = path.join(shard, `.${hash}.${process.pid}.tmp`)
     try {
-      await fsPromises.copyFile(realSource, temp, fs.constants.COPYFILE_EXCL)
+      await (adapters.copyFile || fsPromises.copyFile)(
+        realSource,
+        temp,
+        fs.constants.COPYFILE_EXCL
+      )
       await fsPromises.chmod(temp, 0o600)
+      const copied = await fsPromises.lstat(temp)
+      if (
+        copied.isSymbolicLink() ||
+        !copied.isFile() ||
+        copied.size !== before.size ||
+        (mimeType.startsWith('video/') &&
+          copied.size > mediaLimits.transcriptMediaMaxVideoBytes)
+      ) {
+        throw new Error('Acceptance media temp copy violates the shared product byte cap or identity')
+      }
       const copiedHash = await sha256Base64Url(temp)
       if (copiedHash !== hash) throw new Error('Acceptance media copy hash mismatch')
       await fsPromises.rename(temp, target)
@@ -2282,12 +2647,23 @@ async function materializeOwnedMedia(options) {
     }
   }
 
+  const assetPath = await fsPromises.realpath(target)
+  const materialized = await fsPromises.lstat(assetPath)
+  if (
+    materialized.isSymbolicLink() ||
+    !materialized.isFile() ||
+    materialized.size !== before.size ||
+    (mimeType.startsWith('video/') &&
+      materialized.size > mediaLimits.transcriptMediaMaxVideoBytes)
+  ) {
+    throw new Error('Materialized acceptance media violates the shared product byte cap or identity')
+  }
   return {
     sha256: hash,
     mimeType,
     sourcePath: realSource,
-    assetPath: await fsPromises.realpath(target),
-    byteLength: before.size
+    assetPath,
+    byteLength: materialized.size
   }
 }
 
@@ -2582,6 +2958,23 @@ async function materializeIsolatedProviderGuards(options) {
   return { grokBinaryPath, sha256 }
 }
 
+function isLaunchServicesAdoptionAcknowledgment(message, target, executable) {
+  return (
+    isRecord(message) &&
+    Object.keys(message).every((key) =>
+      ['type', 'requestId', 'pid', 'pgid', 'executable', 'startedAt'].includes(key)
+    ) &&
+    message.type === 'adopted' &&
+    typeof message.requestId === 'string' &&
+    /^[A-Za-z0-9-]{1,80}$/.test(message.requestId) &&
+    message.pid === target.pid &&
+    message.pgid === target.pgid &&
+    message.executable === executable &&
+    typeof message.startedAt === 'string' &&
+    /^[A-Za-z]{3}\s+[A-Za-z]{3}\s+\d+\s+\d{2}:\d{2}:\d{2}\s+\d{4}$/.test(message.startedAt)
+  )
+}
+
 function launchUnderWatchdog(spec, adapters = {}) {
   const forkProcess =
     adapters.fork ||
@@ -2601,6 +2994,8 @@ function launchUnderWatchdog(spec, adapters = {}) {
   return new Promise((resolve, reject) => {
     let settled = false
     let terminalMessage = null
+    let pendingAdoption = null
+    let adoptionAcknowledgment = null
     const terminalWaiters = []
     const disconnectController = () => {
       if (!controller.connected) return
@@ -2609,6 +3004,14 @@ function launchUnderWatchdog(spec, adapters = {}) {
       } catch {
         // The controller may have exited between the connected check and disconnect.
       }
+    }
+    const rejectAdoption = (error) => {
+      if (!pendingAdoption) return
+      const pending = pendingAdoption
+      pendingAdoption = null
+      clearTimeout(pending.timer)
+      pending.reject(error)
+      disconnectController()
     }
     const rejectBeforeLaunch = (error) => {
       if (settled) return
@@ -2625,12 +3028,37 @@ function launchUnderWatchdog(spec, adapters = {}) {
 
     const settleTerminal = (message) => {
       terminalMessage = message
+      rejectAdoption(new Error('LaunchServices adoption ended before watchdog acknowledgment'))
       while (terminalWaiters.length > 0) terminalWaiters.shift()(message)
     }
 
     controller.on('message', (message) => {
       if (!isRecord(message)) return
       if (message.type === 'terminal') settleTerminal(message)
+      if (
+        pendingAdoption &&
+        ['adopted', 'adoption-rejected'].includes(message.type) &&
+        message.requestId === pendingAdoption.request.requestId
+      ) {
+        if (
+          !isLaunchServicesAdoptionAcknowledgment(
+            message,
+            pendingAdoption.request,
+            spec.launchServicesExecutable
+          )
+        ) {
+          rejectAdoption(
+            new Error('LaunchServices adoption acknowledgment was rejected or mismatched')
+          )
+        } else {
+          const pending = pendingAdoption
+          pendingAdoption = null
+          clearTimeout(pending.timer)
+          adoptionAcknowledgment = { ...message }
+          pending.resolve(adoptionAcknowledgment)
+        }
+        return
+      }
       if (message.type === 'error' && !settled) {
         rejectBeforeLaunch(new Error(String(message.error || 'watchdog launch failed')))
         return
@@ -2646,6 +3074,54 @@ function launchUnderWatchdog(spec, adapters = {}) {
         remoteDebuggingPort: spec.remoteDebuggingPort,
         mainInspectorPort: spec.mainInspectorPort,
         instanceId: spec.env.TASKWRAITH_INSTANCE_ID,
+        adoptLaunchServices(target) {
+          if (
+            !spec.launchServicesExecutable ||
+            !controller.connected ||
+            terminalMessage ||
+            pendingAdoption ||
+            adoptionAcknowledgment ||
+            !isRecord(target) ||
+            !Number.isSafeInteger(target.pid) ||
+            target.pid <= 0 ||
+            !Number.isSafeInteger(target.pgid) ||
+            target.pgid <= 0 ||
+            target.pgid === message.childPgid
+          ) {
+            return Promise.reject(new Error('invalid LaunchServices adoption handoff'))
+          }
+          const request = {
+            type: 'adopt-launch-services',
+            requestId: crypto.randomUUID(),
+            pid: target.pid,
+            pgid: target.pgid
+          }
+          return new Promise((accept, deny) => {
+            const timeoutMs = adapters.adoptionTimeoutMs || 5_000
+            pendingAdoption = {
+              request,
+              resolve: accept,
+              reject: deny,
+              timer: setTimeout(
+                () =>
+                  rejectAdoption(
+                    new Error(
+                      `LaunchServices adoption acknowledgment timed out after ${timeoutMs}ms`
+                    )
+                  ),
+                timeoutMs
+              )
+            }
+            try {
+              controller.send(request, (error) => {
+                if (error)
+                  rejectAdoption(new Error(`LaunchServices adoption IPC failed: ${error.message}`))
+              })
+            } catch (error) {
+              rejectAdoption(new Error(`LaunchServices adoption IPC failed: ${error.message}`))
+            }
+          })
+        },
         waitForTerminal(timeoutMs = 15_000) {
           if (terminalMessage) return Promise.resolve(terminalMessage)
           return new Promise((accept, deny) => {
@@ -2660,9 +3136,22 @@ function launchUnderWatchdog(spec, adapters = {}) {
           })
         },
         async stop(reason = 'owner_requested') {
-          if (terminalMessage) return terminalMessage
-          if (controller.connected) controller.send({ type: 'stop', reason })
-          return this.waitForTerminal()
+          if (!terminalMessage && controller.connected) controller.send({ type: 'stop', reason })
+          const terminal = terminalMessage || (await this.waitForTerminal())
+          if (
+            spec.launchServicesExecutable &&
+            (!adoptionAcknowledgment ||
+              terminal.launchServicesExecutable !== spec.launchServicesExecutable ||
+              !hasVerifiedLaunchServicesExit(terminal) ||
+              ['requestId', 'pid', 'pgid', 'executable', 'startedAt'].some(
+                (key) => terminal.launchServicesAdoption[key] !== adoptionAcknowledgment[key]
+              ))
+          ) {
+            throw new Error(
+              'LaunchServices terminal did not prove the acknowledged adoption group exited'
+            )
+          }
+          return terminal
         },
         disconnectOwnerForTest() {
           controller.disconnect()
@@ -2672,9 +3161,13 @@ function launchUnderWatchdog(spec, adapters = {}) {
     })
 
     controller.once('error', (error) => {
+      rejectAdoption(new Error(`LaunchServices adoption controller failed: ${error.message}`))
       rejectBeforeLaunch(error)
     })
     controller.once('exit', (code, signal) => {
+      rejectAdoption(
+        new Error(`LaunchServices adoption controller exited code=${code} signal=${signal}`)
+      )
       if (!settled) {
         settled = true
         clearTimeout(timer)
@@ -2682,6 +3175,11 @@ function launchUnderWatchdog(spec, adapters = {}) {
           new Error(`Studio acceptance watchdog exited before launch code=${code} signal=${signal}`)
         )
       }
+    })
+    controller.once('disconnect', () => {
+      rejectAdoption(
+        new Error('LaunchServices adoption controller disconnected before acknowledgment')
+      )
     })
 
     try {
@@ -2692,6 +3190,129 @@ function launchUnderWatchdog(spec, adapters = {}) {
       rejectBeforeLaunch(error)
     }
   })
+}
+
+function packagedAppRootFromExecutable(executablePath) {
+  const executable = path.resolve(String(executablePath || ''))
+  const match = executable.match(/^(.*\.app)\/Contents\/MacOS\/[^/]+$/)
+  if (!match) {
+    throw new Error('packaged Studio executable is not a macOS app main executable')
+  }
+  return match[1]
+}
+
+function buildStudioWatchdogLaunchSpec(plan, args, options = {}) {
+  const direct = {
+    kind: 'electron',
+    command: plan.spawnPlan.electronBinary,
+    args: plan.spawnPlan.argv,
+    cwd: plan.repoRoot,
+    env: plan.spawnPlan.env,
+    timeoutMs: args.timeoutMs,
+    forceAfterMs: 4_000,
+    receiptPath: plan.receiptPath,
+    remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
+    mainInspectorPort: plan.spawnPlan.mainInspectorPort
+  }
+  const platform = options.platform || process.platform
+  if (platform !== 'darwin' || plan.spawnPlan.packaged !== true) return direct
+
+  const executable = path.resolve(plan.spawnPlan.electronBinary)
+  const appRoot = packagedAppRootFromExecutable(executable)
+  const launchEnvironment = Object.entries(direct.env)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .flatMap(([name, value]) => ['--env', `${name}=${value}`])
+  return {
+    ...direct,
+    command: MACOS_OPEN_PATH,
+    args: [
+      '-n',
+      '-F',
+      '-W',
+      // Do not use open's hidden stdio-routing flags here. On macOS 26 they
+      // make this signed Electron bundle fail in LaunchServices with -10810.
+      // The coordinator's joined evidence remains authoritative and the
+      // watchdog still owns both the waiting launcher and adopted app PGIDs.
+      ...launchEnvironment,
+      appRoot,
+      '--args',
+      ...direct.args
+    ],
+    launchServicesExecutable: executable,
+    launchServicesAppRoot: appRoot
+  }
+}
+
+function terminalWaitError(message) {
+  const error = new Error(message)
+  error.waitForTerminal = true
+  return error
+}
+
+async function adoptLaunchServicesElectronSession(session, plan, adapters = {}) {
+  if (plan.spawnPlan.packaged !== true || (adapters.platform || process.platform) !== 'darwin') {
+    return session
+  }
+  const listPortPids =
+    adapters.listPortPids ||
+    ((port) => listListeningPidsForPort(port, adapters.portAdapters || {}))
+  const runExec = adapters.execFile || defaultExecFile
+  const expectedExecutable = path.resolve(plan.spawnPlan.electronBinary)
+  if (typeof session.adoptLaunchServices !== 'function') {
+    throw new Error('LaunchServices adoption requires an acknowledged watchdog handoff')
+  }
+  const target = await waitFor({
+    label: 'LaunchServices TaskWraith exact process adoption',
+    timeoutMs: adapters.timeoutMs || 20_000,
+    intervalMs: adapters.intervalMs || 100,
+    probe: async () => {
+      const listenerPids = [
+        ...new Set(
+          (await listPortPids(plan.spawnPlan.remoteDebuggingPort)).filter(
+            (pid) => Number.isSafeInteger(pid) && pid > 0
+          )
+        )
+      ].sort((left, right) => left - right)
+      if (listenerPids.length === 0) return null
+
+      const sample = await runExec('/bin/ps', ['-axww', '-o', 'pid=,ppid=,pgid=,command='])
+      const rows = parseProcessTable(sample.stdout)
+      const listeners = listenerPids.map((pid) => rows.find((row) => row.pid === pid))
+      if (listeners.some((row) => !row)) return null
+      const pgids = [...new Set(listeners.map((row) => row.pgid))]
+      if (pgids.length !== 1 || !Number.isSafeInteger(pgids[0]) || pgids[0] <= 0) {
+        throw terminalWaitError('LaunchServices CDP listeners do not share one exact process group')
+      }
+      const targetPgid = pgids[0]
+      const members = rows.filter((row) => row.pgid === targetPgid)
+      const targets = members.filter((row) =>
+        commandRunsExactExecutable(row.command, expectedExecutable)
+      )
+      if (targets.length !== 1) {
+        throw terminalWaitError(
+          'LaunchServices CDP group does not contain exactly one custodied TaskWraith executable'
+        )
+      }
+      return {
+        pid: targets[0].pid,
+        pgid: targetPgid,
+        ownedPids: members.map((row) => row.pid).sort((left, right) => left - right)
+      }
+    }
+  })
+  // Port discovery proposes an identity. Only the watchdog's independent current
+  // process proof can authorize and acknowledge custody of its detached group.
+  const acknowledgment = await session.adoptLaunchServices({ pid: target.pid, pgid: target.pgid })
+  if (!isLaunchServicesAdoptionAcknowledgment(acknowledgment, target, expectedExecutable)) {
+    throw new Error('LaunchServices adoption acknowledgment does not match the discovered app')
+  }
+  return {
+    ...session,
+    ...target,
+    launcherPid: session.pid,
+    launcherPgid: session.pgid || null,
+    launchMode: 'launch-services'
+  }
 }
 
 async function evaluateByValue(session, expression) {
@@ -2714,11 +3335,32 @@ async function waitFor(options) {
   const deadline = Date.now() + timeoutMs
   let lastError = null
   while (Date.now() <= deadline) {
+    const remainingMs = deadline - Date.now()
+    if (remainingMs <= 0) break
+    let probeTimer = null
     try {
-      const value = await options.probe()
+      const value = await Promise.race([
+        Promise.resolve().then(() => options.probe()),
+        new Promise((_, reject) => {
+          probeTimer = setTimeout(
+            () =>
+              reject(
+                terminalWaitError(
+                  `${options.label} probe exceeded its remaining ${remainingMs}ms deadline`
+                )
+              ),
+            remainingMs
+          )
+        })
+      ])
       if (value) return value
     } catch (error) {
+      if (error && typeof error === 'object' && error.waitForTerminal === true) {
+        throw error
+      }
       lastError = error
+    } finally {
+      if (probeTimer) clearTimeout(probeTimer)
     }
     await sleep(intervalMs)
   }
@@ -2728,9 +3370,22 @@ async function waitFor(options) {
   throw new Error(`${options.label} timed out after ${timeoutMs}ms${suffix}`)
 }
 
-async function invokeAuthorizedStudioOpen(renderer, asset) {
+async function invokeAuthorizedStudioOpen(renderer, asset, options = {}) {
+  const timeoutMs = options.timeoutMs ?? DEFAULT_WAIT_MS
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < DEFAULT_WAIT_MS || timeoutMs > 5 * 60_000) {
+    throw new Error('Studio open timeout must be an integer from 45000 to 300000ms')
+  }
+  const deadline = Date.now() + timeoutMs
+  const remainingTimeoutMs = (phase) => {
+    const remaining = deadline - Date.now()
+    if (remaining <= 0) {
+      throw new Error(`Studio open ${phase} exceeded the shared ${timeoutMs}ms deadline`)
+    }
+    return remaining
+  }
   await waitFor({
     label: 'renderer preload Studio API',
+    timeoutMs: remainingTimeoutMs('preload'),
     probe: async () =>
       (await evaluateByValue(
         renderer,
@@ -2742,6 +3397,7 @@ async function invokeAuthorizedStudioOpen(renderer, asset) {
   )}, ${JSON.stringify(asset.mimeType)})`
   return waitFor({
     label: 'hydrated Studio open_media result',
+    timeoutMs: remainingTimeoutMs('hydration'),
     intervalMs: 250,
     probe: async () => {
       const result = await evaluateByValue(renderer, expression)
@@ -2957,6 +3613,9 @@ function validatePriorWatchdogReceipt(entry) {
   if (receipt.childPid !== receipt.childPgid) {
     return { ...entry, malformed: 'receipt does not identify the exact owned process group' }
   }
+  if (!hasVerifiedLaunchServicesExit(receipt)) {
+    return { ...entry, malformed: 'LaunchServices adoption has no verified exact app-group exit' }
+  }
 
   const trusted =
     receipt.schemaVersion === TRUSTED_RECEIPT_SCHEMA_VERSION &&
@@ -3107,7 +3766,8 @@ function assertCleanWatchdogTerminal(terminal) {
     terminal.status !== 'reaped' ||
     terminal.groupExitVerified !== true ||
     terminal.detachedGroupExitVerified !== true ||
-    terminal.reason !== 'owner_requested'
+    terminal.reason !== 'owner_requested' ||
+    !hasVerifiedLaunchServicesExit(terminal)
   ) {
     throw new Error(
       `Studio acceptance watchdog did not confirm clean owner-requested teardown: ${JSON.stringify(
@@ -3318,6 +3978,33 @@ function buildStudioUiDriverRequest(options) {
       }
     }
     if (
+      action.type === 'press-workspace-route' &&
+      (action.route === 'source' || action.route === 'timeline') &&
+      (action.selectedAfter === undefined || typeof action.selectedAfter === 'boolean')
+    ) {
+      const selectedAfter = action.selectedAfter !== false
+      const accessibilityIdentifier =
+        action.route === 'source'
+          ? STUDIO_WORKSPACE_SOURCE_ROUTE_ID
+          : STUDIO_WORKSPACE_TIMELINE_ROUTE_ID
+      const pairedAccessibilityIdentifier =
+        action.route === 'source'
+          ? STUDIO_WORKSPACE_TIMELINE_ROUTE_ID
+          : STUDIO_WORKSPACE_SOURCE_ROUTE_ID
+      return {
+        type: 'press-workspace-route',
+        route: action.route,
+        accessibilityIdentifier,
+        pairedAccessibilityIdentifier,
+        accessibilityRole: 'AXCheckBox',
+        accessibilityAction: 'AXPress',
+        routeValueBefore: selectedAfter ? 'not selected' : 'selected',
+        routeValueAfter: selectedAfter ? 'selected' : 'not selected',
+        pairedRouteValueBefore: 'selected',
+        pairedRouteValueAfter: 'selected'
+      }
+    }
+    if (
       action.type === 'set-playhead-ticks' &&
       Number.isSafeInteger(action.playheadTicks) &&
       action.playheadTicks >= 0 &&
@@ -3352,6 +4039,15 @@ function buildStudioUiDriverRequest(options) {
         type: 'read-transport-mutation',
         accessibilityLabel: 'Transport mutation detail'
       }
+    }
+    if (action.type === 'read-review-range') {
+      return { type: 'read-review-range' }
+    }
+    if (action.type === 'read-route-resource') {
+      if (action.route !== 'source' && action.route !== 'review') {
+        throw new Error('read-route-resource requires an explicit source or review selector')
+      }
+      return { type: 'read-route-resource', route: action.route }
     }
     if (action.type === 'read-workspace') {
       return { type: 'read-workspace' }
@@ -3939,6 +4635,19 @@ async function waitForStudioJournalOperation(plan, expectation, options = {}) {
     timeoutMs: options.timeoutMs,
     intervalMs: options.intervalMs || 100,
     probe: async () => {
+      if (typeof options.failureProbe === 'function') {
+        const failure = await options.failureProbe()
+        if (failure) {
+          throw Object.assign(
+            new Error(
+              typeof failure === 'string'
+                ? failure
+                : 'Studio acceptance observed a terminal failure while waiting for the journal'
+            ),
+            { waitForTerminal: true }
+          )
+        }
+      }
       const entries = await (options.readJournalOperations || readStudioJournalOperations)(plan)
       return (
         entries.find((entry) => studioJournalOperationMatches(entry, expectation, afterRevision)) ||
@@ -4152,6 +4861,22 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       ) {
         throw new Error('Studio UI driver Playback receipt does not match the bounded request')
       }
+      if (action.type === 'press-workspace-route') {
+        if (
+          observed.accessibilityIdentifier !== action.accessibilityIdentifier ||
+          observed.pairedAccessibilityIdentifier !== action.pairedAccessibilityIdentifier ||
+          observed.accessibilityRole !== action.accessibilityRole ||
+          observed.accessibilityAction !== action.accessibilityAction ||
+          observed.routeValueBefore !== action.routeValueBefore ||
+          observed.routeValueAfter !== action.routeValueAfter ||
+          observed.pairedRouteValueBefore !== action.pairedRouteValueBefore ||
+          observed.pairedRouteValueAfter !== action.pairedRouteValueAfter
+        ) {
+          throw new Error(
+            'Studio UI driver workspace AXPress route transition receipt does not match the bounded request'
+          )
+        }
+      }
       if (
         action.type === 'set-playhead-ticks' &&
         (observed.playheadTicks !== action.playheadTicks ||
@@ -4196,7 +4921,48 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
           )
         }
       }
+      if (action.type === 'read-review-range') {
+        validateStudioReviewRangeReceipt(observed)
+      }
+      if (action.type === 'read-route-resource') {
+        const routeActionKeys = Object.keys(observed).sort()
+        const expectedRouteActionKeys = [
+          'index',
+          'route',
+          'routeResourceDetailValue',
+          'routeResourceMatchCount',
+          'type'
+        ]
+        if (JSON.stringify(routeActionKeys) !== JSON.stringify(expectedRouteActionKeys)) {
+          throw new Error(
+            'Studio UI driver route-resource action receipt has missing or extra keys'
+          )
+        }
+        if (
+          observed.type !== 'read-route-resource' ||
+          observed.route !== action.route ||
+          (observed.route !== 'source' && observed.route !== 'review') ||
+          !Number.isSafeInteger(observed.index) ||
+          !Number.isSafeInteger(observed.routeResourceMatchCount) ||
+          observed.routeResourceMatchCount !== 1
+        ) {
+          throw new Error('Studio UI driver route-resource action receipt is invalid')
+        }
+        const routeResource = parseRouteResourceDetailExport(observed.routeResourceDetailValue)
+        if (!routeResource.ok) {
+          throw new Error(
+            `Studio UI driver route-resource receipt is invalid: ${routeResource.reason}`
+          )
+        }
+      }
       if (action.type === 'read-workspace') {
+        const actionKeys = Object.keys(observed)
+        const allowedActionKeys = new Set(['index', 'type', 'workspace'])
+        if (actionKeys.some((key) => !allowedActionKeys.has(key))) {
+          throw new Error(
+            'Studio UI driver read-workspace action receipt has an extra top-level key'
+          )
+        }
         failureEvidence.failureStage = 'workspace-observation-validation'
         try {
           validateStudioWorkspaceObservation(observed.workspace, request.windowBounds)
@@ -4208,6 +4974,18 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
       }
       if (action.type === 'read-av-sync') {
         failureEvidence.failureStage = 'av-sync-validation'
+        const avActionKeys = Object.keys(observed).sort()
+        const expectedAvActionKeys = [
+          'avSyncCurrentValue',
+          'avSyncPeakValue',
+          'index',
+          'resourceDetailValue',
+          'resourceMatchCount',
+          'type'
+        ]
+        if (JSON.stringify(avActionKeys) !== JSON.stringify(expectedAvActionKeys)) {
+          throw new Error('Studio UI driver A/V sync action receipt has missing or extra keys')
+        }
         const peak = parseAvSyncPeakExport(observed.avSyncPeakValue)
         if (!peak.ok) {
           throw new Error(
@@ -4217,6 +4995,17 @@ async function runStudioUiDriver(plan, target, actions, adapters = {}) {
         const current = parseAvSyncCurrentExport(observed.avSyncCurrentValue)
         if (!current.ok) {
           throw new Error(`Studio UI driver A/V sync current receipt is invalid: ${current.reason}`)
+        }
+        if (
+          !Number.isSafeInteger(observed.resourceMatchCount) ||
+          observed.resourceMatchCount < 1 ||
+          observed.resourceMatchCount > 2
+        ) {
+          throw new Error('Studio UI driver A/V sync resource match count is invalid')
+        }
+        const resource = parseResourceDetailExport(observed.resourceDetailValue)
+        if (!resource.ok) {
+          throw new Error(`Studio UI driver resource detail receipt is invalid: ${resource.reason}`)
         }
       }
       if (action.type === 'coreaudio-route-health') {
@@ -4355,6 +5144,21 @@ function readStudioJourneyCapture(capturePath) {
   }
 }
 
+function studioJourneyCaptureScale(image, logicalWidth, logicalHeight) {
+  const horizontal = Number(image?.width) / logicalWidth
+  const vertical = Number(image?.height) / logicalHeight
+  if (
+    !Number.isFinite(horizontal) ||
+    !Number.isFinite(vertical) ||
+    horizontal < 0.5 ||
+    horizontal > 4 ||
+    Math.abs(horizontal - vertical) > 0.001
+  ) {
+    throw new Error('Studio journey capture does not have one uniform native window scale')
+  }
+  return horizontal
+}
+
 function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   const logicalX = Number(windowBounds?.x)
   const logicalY = Number(windowBounds?.y)
@@ -4370,11 +5174,7 @@ function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   if (
     !isRecord(hostFrame) ||
     !['x', 'y', 'width', 'height'].every(
@@ -4404,10 +5204,10 @@ function studioReviewHostCaptureRegion(image, windowBounds, hostFrame) {
   if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
     throw new Error('Studio review host capture region must not equal the whole window')
   }
-  const x = Math.round(clipX * 2)
-  const y = Math.round(clipY * 2)
-  const width = Math.round(clipWidth * 2)
-  const height = Math.round(clipHeight * 2)
+  const x = Math.round(clipX * captureScale)
+  const y = Math.round(clipY * captureScale)
+  const width = Math.round(clipWidth * captureScale)
+  const height = Math.round(clipHeight * captureScale)
   if (x < 0 || y < 0 || width <= 0 || height <= 0 || x + width > image.width || y + height > image.height) {
     throw new Error('Studio review host capture region is outside the screenshot')
   }
@@ -4434,11 +5234,7 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   if (
     !isRecord(hostFrame) ||
     !['x', 'y', 'width', 'height'].every(
@@ -4463,10 +5259,10 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   if (clipX <= 0 && clipY <= 0 && clipWidth >= logicalWidth && clipHeight >= logicalHeight) {
     throw new Error('Studio source host capture region must not equal the whole window')
   }
-  const hostX = Math.round(clipX * 2)
-  const hostY = Math.round(clipY * 2)
-  const hostWidth = Math.round(clipWidth * 2)
-  const hostHeight = Math.round(clipHeight * 2)
+  const hostX = Math.round(clipX * captureScale)
+  const hostY = Math.round(clipY * captureScale)
+  const hostWidth = Math.round(clipWidth * captureScale)
+  const hostHeight = Math.round(clipHeight * captureScale)
   if (
     hostX < 0 ||
     hostY < 0 ||
@@ -4477,7 +5273,7 @@ function studioSourceHostOverlayCaptureRegion(image, windowBounds, hostFrame) {
   ) {
     throw new Error('Studio source host capture region is outside the screenshot')
   }
-  const overlayHeight = STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  const overlayHeight = Math.round(STUDIO_JOURNEY_OVERLAY_POINTS * captureScale)
   if (overlayHeight <= 0 || overlayHeight > hostHeight) {
     throw new Error('Studio source host overlay band does not fit the live host frame')
   }
@@ -4506,19 +5302,16 @@ function studioJourneyCaptureRegion(image, windowBounds, region, reviewHostFrame
   ) {
     throw new Error('Studio journey capture window bounds are invalid')
   }
-  const captureWidth = logicalWidth * 2
-  const captureHeight = logicalHeight * 2
-  if (image.width !== captureWidth || image.height !== captureHeight) {
-    throw new Error('Studio journey capture does not match the exact 2x window bounds')
-  }
+  const captureScale = studioJourneyCaptureScale(image, logicalWidth, logicalHeight)
   const logicalVideoHeight = Math.round((logicalWidth * 9) / 16)
   const logicalTitleBarHeight = logicalHeight - logicalVideoHeight
   if (logicalTitleBarHeight < 20 || logicalTitleBarHeight > 40) {
     throw new Error('Studio journey capture is outside the bounded Companion geometry')
   }
-  const videoTop = logicalTitleBarHeight * 2
-  const videoBottom = videoTop + logicalVideoHeight * 2
-  const materialBottom = videoBottom - STUDIO_JOURNEY_OVERLAY_POINTS * 2
+  const videoTop = Math.round(logicalTitleBarHeight * captureScale)
+  const videoBottom = videoTop + Math.round(logicalVideoHeight * captureScale)
+  const materialBottom =
+    videoBottom - Math.round(STUDIO_JOURNEY_OVERLAY_POINTS * captureScale)
   if (materialBottom <= videoTop || videoBottom > image.height) {
     throw new Error('Studio journey capture comparison region is invalid')
   }
@@ -4731,9 +5524,22 @@ function exactDriverAction(receipt, type) {
   return matches[0]
 }
 
-function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt) {
+function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt, routeReceipt) {
   const source = exactDriverAction(sourceReceipt, 'step-playhead-frame')
   const review = exactDriverAction(reviewReceipt, 'step-playhead-frame')
+  const route = exactDriverAction(routeReceipt, 'press-workspace-route')
+  if (
+    route.accessibilityIdentifier !== STUDIO_WORKSPACE_TIMELINE_ROUTE_ID ||
+    route.pairedAccessibilityIdentifier !== STUDIO_WORKSPACE_SOURCE_ROUTE_ID ||
+    route.accessibilityRole !== 'AXCheckBox' ||
+    route.accessibilityAction !== 'AXPress' ||
+    route.routeValueBefore !== 'not selected' ||
+    route.routeValueAfter !== 'selected' ||
+    route.pairedRouteValueBefore !== 'selected' ||
+    route.pairedRouteValueAfter !== 'selected'
+  ) {
+    throw new Error('Studio journey did not prove an AXPress route transition from Source to Review')
+  }
   if (
     source.playheadStepFrames !== 1 ||
     review.playheadStepFrames !== -1 ||
@@ -4747,7 +5553,16 @@ function adjudicateSharedStudioClock(sourceReceipt, reviewReceipt) {
     sourceBeforeTicks: source.playheadTicksBefore,
     sourceAfterTicks: source.observedPlayheadTicks,
     reviewBeforeTicks: review.playheadTicksBefore,
-    reviewAfterTicks: review.observedPlayheadTicks
+    reviewAfterTicks: review.observedPlayheadTicks,
+    route: {
+      accessibilityIdentifier: route.accessibilityIdentifier,
+      pairedAccessibilityIdentifier: route.pairedAccessibilityIdentifier,
+      accessibilityAction: route.accessibilityAction,
+      before: route.routeValueBefore,
+      after: route.routeValueAfter,
+      pairedBefore: route.pairedRouteValueBefore,
+      pairedAfter: route.pairedRouteValueAfter
+    }
   }
 }
 
@@ -4780,7 +5595,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const compareCaptures = adapters.compareCaptures || compareStudioJourneyCaptures
   const journeyTarget = resolveStudioWorkspaceWindow(target)
   const windowBounds = assertSafeUiDriverTarget(journeyTarget).bounds
-  const waitForWorkspaceReview = () =>
+  const waitForWorkspaceReview = (expectedVersion = null, sourceMustRemainSelected = false) =>
     waitFor({
       label: 'exact visible Studio Review workspace presentation',
       timeoutMs: 10_000,
@@ -4792,7 +5607,36 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
           allowForegroundInput: false
         })
         const workspace = readWorkspaceObservationFromReceipt(receipt, windowBounds)
-        if (!studioWorkspaceReviewPresented(workspace)) {
+        if (
+          !studioWorkspaceReviewPresented(workspace) ||
+          (expectedVersion && workspace[`${expectedVersion}Version`]?.value !== 'selected') ||
+          (sourceMustRemainSelected && workspace.sourceRoute?.value !== 'selected')
+        ) {
+          return null
+        }
+        return workspace
+      }
+    })
+  const waitForWorkspaceSource = () =>
+    waitFor({
+      label: 'exact visible Studio Source workspace presentation',
+      timeoutMs: 10_000,
+      intervalMs: 100,
+      probe: async () => {
+        const receipt = await runDriver(plan, journeyTarget, [{ type: 'read-workspace' }], {
+          ...(adapters.driverAdapters || {}),
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false
+        })
+        const workspace = readWorkspaceObservationFromReceipt(receipt, windowBounds)
+        if (
+          workspace.sourceRoute?.value !== 'selected' ||
+          workspace.timelineRoute?.value !== 'not selected' ||
+          workspace.sourceHost?.visible !== true ||
+          workspace.timelineHost?.visible !== false ||
+          workspace.currentVersion?.value !== 'unavailable' ||
+          workspace.proposedVersion?.value !== 'unavailable'
+        ) {
           return null
         }
         return workspace
@@ -4826,7 +5670,29 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       ...(assetId ? { assetId } : {}),
       requireNonEmptyTranscript: true
     },
-    { afterRevision: 0, timeoutMs: plan.transcriptTimeoutMs }
+    {
+      afterRevision: 0,
+      timeoutMs: plan.transcriptTimeoutMs,
+      ...(typeof adapters.readTranscriptStatus === 'function'
+        ? {
+            failureProbe: async () => {
+              const status = await adapters.readTranscriptStatus()
+              if (
+                status?.state !== 'unavailable' ||
+                (assetId && status.assetId !== assetId)
+              ) {
+                return null
+              }
+              return (
+                'Studio transcript unavailable (' +
+                String(status.code || 'unknown') +
+                '): ' +
+                String(status.message || 'no reason supplied')
+              )
+            }
+          }
+        : {})
+    }
   )
   let recognition = null
   if (target.speechFixture) {
@@ -4870,13 +5736,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     throw new Error('Studio UI journey requires Source selected and visible at journey start')
   }
   const sourceHostFrame = initialWorkspace.sourceHost.frame
-  await drive([
-    {
-      type: 'press-playback',
-      playbackValueBefore: 'playing',
-      playbackValueAfter: 'paused'
-    }
-  ])
   let afterRevision = transcript.revision
   const transcriptBandCapture = await drive([{ type: 'screenshot', name: 'transcript-band' }])
   await drive(['tab'])
@@ -4911,9 +5770,6 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   const acceptedProposalId = acceptedProposalEvidence.proposalId
   afterRevision = acceptedProposal.revision
   await drive([{ type: 'screenshot', name: 'ghost' }], journeyTarget)
-  await drive(['w'], journeyTarget)
-  const acceptedWorkspace = await waitForWorkspaceReview()
-  const acceptedReviewHostFrame = acceptedWorkspace.timelineHost.frame
   await drive(
     [
       {
@@ -4925,11 +5781,36 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     ],
     journeyTarget
   )
+  const sourceStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
+    journeyTarget
+  )
+  const routeTransition = await drive(
+    [{ type: 'press-workspace-route', route: 'timeline' }],
+    journeyTarget
+  )
+  const acceptedWorkspace = await waitForWorkspaceReview('current', true)
+  const acceptedReviewHostFrame = acceptedWorkspace.timelineHost.frame
+  const reviewStep = await drive(
+    [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
+    journeyTarget
+  )
   const currentCapture = await drive(
     [{ type: 'screenshot', name: 'current' }],
     journeyTarget
   )
   await drive(['v'], journeyTarget)
+  const proposedWorkspaceReceipt = await drive([{ type: 'read-workspace' }], journeyTarget)
+  const proposedWorkspace = readWorkspaceObservationFromReceipt(
+    proposedWorkspaceReceipt,
+    windowBounds
+  )
+  if (
+    proposedWorkspace.proposedVersion.value !== 'selected' ||
+    proposedWorkspace.currentVersion.value !== 'not selected'
+  ) {
+    throw new Error('Studio Current/Proposed journey did not prove Proposed is selected after v')
+  }
   await drive(
     [
       {
@@ -4957,15 +5838,7 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     'review-host',
     acceptedReviewHostFrame
   )
-  const sourceStep = await drive(
-    [{ type: 'step-playhead-frame', playheadStepFrames: 1 }],
-    journeyTarget
-  )
-  const reviewStep = await drive(
-    [{ type: 'step-playhead-frame', playheadStepFrames: -1 }],
-    journeyTarget
-  )
-  const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep)
+  const sharedClock = adjudicateSharedStudioClock(sourceStep, reviewStep, routeTransition)
   await drive(['a', { type: 'screenshot', name: 'accept-sent' }], journeyTarget)
   const acceptedResolution = await waitJournal(
     plan,
@@ -4978,7 +5851,12 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
   )
   afterRevision = acceptedResolution.revision
 
-  await drive(['w', 'tab', 'bracket-right', 'return'], journeyTarget)
+  await drive(
+    [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: false }],
+    journeyTarget
+  )
+  const sourceBeforeRejectedProposal = await waitForWorkspaceSource()
+  await drive(['tab', 'bracket-right', 'return'], journeyTarget)
   const rejectedProposal = await waitJournal(plan, { type: 'propose_edit' }, { afterRevision })
   const rejectedProposalEvidence = studioProposalInsertionEvidence(
     rejectedProposal,
@@ -4989,7 +5867,10 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
     throw new Error('Studio accept and reject journeys reused one proposal identity')
   }
   afterRevision = rejectedProposal.revision
-  await drive(['w'], journeyTarget)
+  await drive(
+    [{ type: 'press-workspace-route', route: 'timeline', selectedAfter: true }],
+    journeyTarget
+  )
   const rejectedWorkspace = await waitForWorkspaceReview()
   const rejectedReviewHostFrame = rejectedWorkspace.timelineHost.frame
   // ADJUDICATE THE GHOST, DO NOT MERELY PHOTOGRAPH IT.
@@ -5072,6 +5953,8 @@ async function driveStudioUiJourney(plan, target, adapters = {}) {
       playbackRoundTrip,
       workspace: {
         accepted: acceptedWorkspace,
+        proposedAfterV: proposedWorkspace,
+        sourceBeforeRejectedProposal,
         rejected: rejectedWorkspace
       }
     },
@@ -5264,6 +6147,7 @@ async function runStudioAcceptance(args, adapters = {}) {
     transcriptTimeoutMs: args.transcriptTimeoutMs,
     remoteDebuggingPort: args.remoteDebuggingPort,
     mainInspectorPort: args.mainInspectorPort,
+    packagedExecutablePath: args.packagedExecutablePath,
     ...(adapters.planOptions || {})
   })
   const authorization = assertLaunchAuthorized(args, plan)
@@ -5349,21 +6233,19 @@ async function runStudioAcceptance(args, adapters = {}) {
       expected: custodyExpected
     }
   )
+  const measurePackaged =
+    adapters.measurePackagedExecution || measurePackagedStudioExecution
+  const packagedExecutionBefore = plan.packagedExecutablePath
+    ? await measurePackaged(
+        plan.repoRoot,
+        plan.packagedExecutablePath,
+        adapters.packagedExecutionAdapters || {}
+      )
+    : null
 
-  const spec = {
-    kind: 'electron',
-    command: plan.spawnPlan.electronBinary,
-    args: plan.spawnPlan.argv,
-    cwd: plan.repoRoot,
-    env: plan.spawnPlan.env,
-    timeoutMs: args.timeoutMs,
-    forceAfterMs: 4_000,
-    receiptPath: plan.receiptPath,
-    remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
-    mainInspectorPort: plan.spawnPlan.mainInspectorPort
-  }
+  const spec = (adapters.buildWatchdogLaunchSpec || buildStudioWatchdogLaunchSpec)(plan, args)
   const watchdogLaunch = adapters.launchUnderWatchdog || launchUnderWatchdog
-  const session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
+  let session = await watchdogLaunch(spec, adapters.watchdogAdapters || {})
   let renderer = null
   let openResult = null
   let durable = null
@@ -5374,21 +6256,37 @@ async function runStudioAcceptance(args, adapters = {}) {
   let evidence = null
   let acceptanceError = null
   try {
+    if (spec.launchServicesExecutable) {
+      session = await (
+        adapters.adoptLaunchServicesSession || adoptLaunchServicesElectronSession
+      )(session, plan, adapters.launchServicesAdoptionAdapters || {})
+    }
     await (adapters.assertExactChildOwnsDebugPorts || assertExactChildOwnsDebugPorts)(
       session,
-      adapters.portOwnershipAdapters || {}
+      {
+        ...(adapters.portOwnershipAdapters || {}),
+        requireMainInspector: plan.spawnPlan.packaged !== true
+      }
     )
     renderer = await (adapters.attachRenderer || attachRendererCdpSession)({
       port: plan.spawnPlan.remoteDebuggingPort,
       ...(adapters.cdpAdapters ? { adapters: adapters.cdpAdapters } : {})
     })
-    openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(renderer, asset)
+    openResult = await (adapters.invokeStudioOpen || invokeAuthorizedStudioOpen)(
+      renderer,
+      asset,
+      adapters.openAdapters || {}
+    )
     durable = await (adapters.verifyDurableOpen || verifyDurableOpen)(plan, asset)
     companion = await (adapters.findCompanion || findStudioCompanion)(
       session.pid,
       adapters.processAdapters || {}
     )
-    companionCustody = assertStudioCompanionMatchesCustody(companion, custodyBefore, plan.repoRoot)
+    companionCustody = assertStudioCompanionMatchesCustody(
+      companion,
+      packagedExecutionBefore || custodyBefore,
+      plan.repoRoot
+    )
     window = await (adapters.probeWindow || probeNativeWindow)(
       companion.pid,
       adapters.windowAdapters || {}
@@ -5402,7 +6300,14 @@ async function runStudioAcceptance(args, adapters = {}) {
         asset,
         speechFixture
       },
-      adapters.journeyAdapters || {}
+      {
+        ...(adapters.journeyAdapters || {}),
+        readTranscriptStatus: () =>
+          evaluateByValue(
+            renderer,
+            '(() => { const node = document.querySelector(".studio-transcript-status"); return node ? { assetId: node.getAttribute("data-studio-transcript-asset-id"), state: node.getAttribute("data-studio-transcript-state"), code: node.getAttribute("data-studio-transcript-code"), message: node.textContent || "" } : null })()'
+          )
+      }
     )
     evidence = {
       ok: true,
@@ -5410,6 +6315,9 @@ async function runStudioAcceptance(args, adapters = {}) {
       electron: {
         pid: session.pid,
         pgid: session.pgid || null,
+        launchMode: session.launchMode || 'direct',
+        launcherPid: session.launcherPid || null,
+        launcherPgid: session.launcherPgid || null,
         remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
         mainInspectorPort: plan.spawnPlan.mainInspectorPort
       },
@@ -5421,6 +6329,7 @@ async function runStudioAcceptance(args, adapters = {}) {
       custodyFixture,
       custodySource,
       custodyBefore,
+      packagedExecutionBefore,
       companionCustody,
       providerGuards,
       openResult,
@@ -5474,10 +6383,30 @@ async function runStudioAcceptance(args, adapters = {}) {
   } catch (error) {
     custodyError = error
   }
+  let packagedExecutionAfter = null
+  let packagedExecutionError = null
+  if (packagedExecutionBefore) {
+    try {
+      packagedExecutionAfter = await measurePackaged(
+        plan.repoRoot,
+        plan.packagedExecutablePath,
+        adapters.packagedExecutionAdapters || {}
+      )
+      if (JSON.stringify(packagedExecutionAfter) !== JSON.stringify(packagedExecutionBefore)) {
+        throw new Error('packaged Studio execution custody changed during the run')
+      }
+    } catch (error) {
+      packagedExecutionError = error
+    }
+  }
 
-  const failures = [acceptanceError, rendererCloseError, watchdogError, custodyError].filter(
-    Boolean
-  )
+  const failures = [
+    acceptanceError,
+    rendererCloseError,
+    watchdogError,
+    custodyError,
+    packagedExecutionError
+  ].filter(Boolean)
   let failureEvidenceWriteError = null
   if (failures.length > 0) {
     try {
@@ -5489,6 +6418,9 @@ async function runStudioAcceptance(args, adapters = {}) {
         electron: {
           pid: session.pid,
           pgid: session.pgid || null,
+          launchMode: session.launchMode || 'direct',
+          launcherPid: session.launcherPid || null,
+          launcherPgid: session.launcherPgid || null,
           remoteDebuggingPort: plan.spawnPlan.remoteDebuggingPort,
           mainInspectorPort: plan.spawnPlan.mainInspectorPort
         },
@@ -5501,6 +6433,8 @@ async function runStudioAcceptance(args, adapters = {}) {
         custodySource,
         custodyBefore,
         custodyAfter,
+        packagedExecutionBefore,
+        packagedExecutionAfter,
         companionCustody,
         providerGuards,
         openResult,
@@ -5545,7 +6479,12 @@ async function runStudioAcceptance(args, adapters = {}) {
     )
   }
 
-  const completedEvidence = { ...evidence, watchdogTerminal, custodyAfter }
+  const completedEvidence = {
+    ...evidence,
+    watchdogTerminal,
+    custodyAfter,
+    packagedExecutionAfter
+  }
   await (adapters.writeEvidence || writeEvidence)(plan, completedEvidence)
   return { launched: true, plan, evidence: completedEvidence }
 }
@@ -5645,6 +6584,7 @@ Optional:
   --detach (requires --launch and an explicit unique --instance-id)
   --detached-status --instance-id=<id> --detached-token=<token>
   --instance-id=<unique 2-16 char id>
+  --packaged-executable=/absolute/worktree/path/to/App.app/Contents/MacOS/executable
   --remote-debugging-port=<port>
   --main-inspector-port=<port>
   --timeout-ms=<30000..1800000>
@@ -5706,6 +6646,8 @@ module.exports = {
   ACCEPTANCE_SCHEMA_VERSION,
   parseArgs,
   parseStudioTransportMutationText,
+  validateStudioReviewRangeReceipt,
+  parseRouteResourceDetailExport,
   buildStudioAcceptancePlan,
   adjudicateRecognizedTranscript,
   buildDetachedCoordinatorPaths,
@@ -5723,10 +6665,14 @@ module.exports = {
   measureStudioAcceptanceCustody,
   measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
+  measurePackagedStudioExecution,
   assertStudioAcceptanceCustody,
   materializeIsolatedProviderGuards,
   launchUnderWatchdog,
+  buildStudioWatchdogLaunchSpec,
+  adoptLaunchServicesElectronSession,
   evaluateByValue,
+  invokeAuthorizedStudioOpen,
   parseProcessTable,
   findAcceptanceArtifactGroups,
   descendantsOf,
@@ -5746,6 +6692,8 @@ module.exports = {
   compareStudioJourneyCaptures,
   resolveStudioWorkspaceWindow,
   validateStudioWorkspaceObservation,
+  waitFor,
+  parseResourceDetailExport,
   studioReviewHostCaptureRegion,
   studioSourceHostOverlayCaptureRegion,
   studioWorkspaceReviewPresented,

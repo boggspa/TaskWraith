@@ -4,11 +4,14 @@ import { EventEmitter } from 'node:events'
 import * as fsPromises from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { finished } from 'node:stream/promises'
 import { PNG } from 'pngjs'
+import mediaLimits from '../src/shared/mediaLimits.json'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 // The production harness is CommonJS because it is run directly by Node.
 /* eslint-disable @typescript-eslint/no-require-imports */
+const asar = require('@electron/asar')
 const {
   adjudicatePlaybackRoundTrip,
   adjudicateRecognizedTranscript,
@@ -19,14 +22,17 @@ const {
   measureStudioAcceptanceCustody,
   measureStudioAcceptanceSource,
   measureStudioAcceptanceArtifacts,
+  measurePackagedStudioExecution,
   assertCleanWatchdogTerminal,
   assertDetachedLaunchAuthorized,
   assertLaunchAuthorized,
   assertNoPriorStudioOrphans,
+  adoptLaunchServicesElectronSession,
   buildDetachedCoordinatorIdentity,
   buildDetachedCoordinatorPaths,
   buildStudioAcceptanceJourney,
   buildStudioAcceptancePlan,
+  buildStudioWatchdogLaunchSpec,
   buildStudioUiDriverRequest,
   buildStubSpec,
   compareStudioJourneyCaptures,
@@ -34,13 +40,17 @@ const {
   driveStudioUiJourney,
   findAcceptanceArtifactGroups,
   generateAcceptanceSpeechFixture,
+  invokeAuthorizedStudioOpen,
   launchDetachedCoordinator,
   launchUnderWatchdog,
   materializeIsolatedProviderGuards,
   materializeOwnedMedia,
   parseArgs,
+  parseRouteResourceDetailExport,
+  parseResourceDetailExport,
   parseProcessTable,
   parseStudioTransportMutationText,
+  validateStudioReviewRangeReceipt,
   readDetachedCoordinatorStatus,
   runStudioAcceptanceBuild,
   runStudioUiDriver,
@@ -51,6 +61,7 @@ const {
   studioWorkspaceReviewPresented,
   validateStudioWorkspaceObservation,
   validateDetachedCoordinatorRequest,
+  waitFor: waitForHarnessProbe,
   waitForStudioJournalOperation,
   runStudioAcceptance
 } = require('./studio-acceptance-harness.cjs') as {
@@ -61,7 +72,8 @@ const {
   ) => Record<string, any>
   adjudicateSharedStudioClock: (
     sourceReceipt: Record<string, any>,
-    reviewReceipt: Record<string, any>
+    reviewReceipt: Record<string, any>,
+    routeReceipt: Record<string, any>
   ) => Record<string, any>
   assertGeneratedSpeechFixtureCustody: (
     fixture: Record<string, any>,
@@ -84,6 +96,11 @@ const {
     repoRoot: string
   ) => Promise<{ digest: string; fileCount: number }>
   measureStudioAcceptanceArtifacts: (repoRoot: string) => Promise<Record<string, any>>
+  measurePackagedStudioExecution: (
+    repoRoot: string,
+    executablePath: string,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   assertCleanWatchdogTerminal: (terminal: Record<string, unknown>) => Record<string, unknown>
   assertDetachedLaunchAuthorized: (
     args: Record<string, any>,
@@ -113,6 +130,16 @@ const {
   }>
   buildStudioAcceptanceJourney: () => Array<Record<string, any>>
   buildStudioAcceptancePlan: (options?: Record<string, unknown>) => Record<string, any>
+  buildStudioWatchdogLaunchSpec: (
+    plan: Record<string, any>,
+    args: Record<string, any>,
+    options?: Record<string, any>
+  ) => Record<string, any>
+  adoptLaunchServicesElectronSession: (
+    session: Record<string, any>,
+    plan: Record<string, any>,
+    adapters?: Record<string, any>
+  ) => Promise<Record<string, any>>
   buildStudioUiDriverRequest: (options: Record<string, any>) => Record<string, any>
   buildStubSpec: (options: {
     directory: string
@@ -150,6 +177,11 @@ const {
     options: Record<string, any>,
     adapters?: Record<string, any>
   ) => Promise<Record<string, any>>
+  invokeAuthorizedStudioOpen: (
+    renderer: Record<string, any>,
+    asset: Record<string, any>,
+    options?: Record<string, any>
+  ) => Promise<Record<string, any>>
   launchDetachedCoordinator: (
     args: Record<string, any>,
     adapters?: Record<string, any>
@@ -162,6 +194,7 @@ const {
     pid: number
     pgid?: number
     receiptPath: string
+    adoptLaunchServices: (target: { pid: number; pgid: number }) => Promise<Record<string, any>>
     stop: () => Promise<Record<string, unknown>>
   }>
   readDetachedCoordinatorStatus: (
@@ -180,7 +213,7 @@ const {
     mediaPath: string
     mimeType: string
     userDataPath: string
-  }) => Promise<{
+  }, adapters?: Record<string, any>) => Promise<{
     sha256: string
     mimeType: string
     sourcePath: string
@@ -188,10 +221,13 @@ const {
     byteLength: number
   }>
   parseArgs: (argv: string[]) => Record<string, any>
+  parseResourceDetailExport: (value: string) => Record<string, any>
   parseProcessTable: (
     stdout: string
   ) => Array<{ pid: number; ppid: number; pgid: number; command: string }>
   parseStudioTransportMutationText: (text: string) => Record<string, unknown>
+  parseRouteResourceDetailExport: (value: string) => Record<string, any>
+  validateStudioReviewRangeReceipt: (value: Record<string, any>) => Record<string, any>
   studioProposalInsertionEvidence: (
     entry: Record<string, any>,
     boundary: { assetId: string; durationSeconds: number }
@@ -211,6 +247,7 @@ const {
     workspace: Record<string, any>,
     windowBounds: Record<string, number>
   ) => Record<string, any>
+  waitFor: (options: Record<string, any>) => Promise<any>
   studioWorkspaceReviewPresented: (workspace: Record<string, any>) => boolean
   runStudioUiDriver: (
     plan: Record<string, any>,
@@ -236,7 +273,7 @@ const { buildMuxCommand, buildSayCommand, describeFixturePlan, expectedTranscrip
     describeFixturePlan: (options: Record<string, any>) => Record<string, any>
     expectedTranscriptPhrases: () => string[]
   }
-const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog.cjs') as {
+const { classifyDetachedArtifactGroups, validateSpec: validateWatchdogSpec } = require('./studio-acceptance-watchdog.cjs') as {
   classifyDetachedArtifactGroups: (options: {
     rows: Array<{ pid: number; ppid: number; pgid: number; command: string }>
     artifactHomeAliases: string[]
@@ -253,6 +290,7 @@ const { classifyDetachedArtifactGroups } = require('./studio-acceptance-watchdog
     mixedOwnershipGroups: Array<{ pgid: number; memberPids: number[]; baselinePids: number[] }>
     protectedInstalledGroups: Array<{ pgid: number; memberPids: number[] }>
   }
+  validateSpec: (spec: Record<string, any>) => Record<string, any>
 }
 /* eslint-enable @typescript-eslint/no-require-imports */
 
@@ -270,7 +308,10 @@ function workspaceElement(
   return { identifier, visible, role, value, enabled, frame }
 }
 
-function validWorkspaceObservation(review: boolean): { elements: Array<Record<string, any>> } {
+function validWorkspaceObservation(
+  review: boolean,
+  proposed = false
+): { elements: Array<Record<string, any>> } {
   return {
     elements: [
       workspaceElement('studio.workspace.root', true, 'AXGroup', null, null, {
@@ -283,7 +324,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.route.source',
         true,
         'AXCheckBox',
-        review ? 'not selected' : 'selected',
+        'selected',
         true,
         { x: 4, y: 4, width: 40, height: 20 }
       ),
@@ -315,7 +356,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.review-version.current',
         true,
         'AXRadioButton',
-        review ? 'selected' : 'unavailable',
+        review ? (proposed ? 'not selected' : 'selected') : 'unavailable',
         review ? true : false,
         { x: 100, y: 4, width: 60, height: 20 }
       ),
@@ -323,7 +364,7 @@ function validWorkspaceObservation(review: boolean): { elements: Array<Record<st
         'studio.workspace.review-version.proposed',
         true,
         'AXRadioButton',
-        review ? 'not selected' : 'unavailable',
+        review ? (proposed ? 'selected' : 'not selected') : 'unavailable',
         review ? true : false,
         { x: 164, y: 4, width: 80, height: 20 }
       )
@@ -354,6 +395,7 @@ const validAvSyncPeakText =
 const validAvSyncCurrentText =
   'avc1 ts=30000 fd=1000 pf=1000 ap=1100 err=-100 errms=-3.333 ' +
   'win=1000000 winms=1.000 drawn=1 expl=explained'
+const validResourceDetailText = 'res1 dec=1 cap=3 surf=1 ids=0000002A'
 const validCoreAudioRouteHealthReceipt = {
   id: 42,
   name: 'Acceptance Output',
@@ -376,10 +418,154 @@ afterEach(async () => {
   )
 })
 
+describe('buildStudioUiDriverRequest for read-review-range', () => {
+  it('normalizes the exact review-range observation action', () => {
+    const built = buildStudioUiDriverRequest({
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+      },
+      artifactRoot: '/virtual/acceptance/studioReviewRange01',
+      actions: [{ type: 'read-review-range', callerControlledValue: 'ignored' }]
+    })
+    expect(built).toMatchObject({
+      inputDelivery: 'background-observation-only',
+      allowForegroundInput: false,
+      actions: [{ type: 'read-review-range' }]
+    })
+    expect(Object.keys(built.actions[0])).toEqual(['type'])
+  })
+})
+
+describe('buildStudioUiDriverRequest for read-route-resource', () => {
+  it('normalizes the exact route-owned observation action', () => {
+    const built = buildStudioUiDriverRequest({
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+      },
+      artifactRoot: '/virtual/acceptance/studioRouteResource01',
+      actions: [{ type: 'read-route-resource', route: 'review', callerCannotControl: true }]
+    })
+    expect(built.actions).toEqual([{ type: 'read-route-resource', route: 'review' }])
+    expect(Object.keys(built.actions[0])).toEqual(['type', 'route'])
+  })
+
+  it.each([undefined, 'timeline', ''])('rejects non-explicit selector %s', (route) => {
+    expect(() =>
+      buildStudioUiDriverRequest({
+        companion: {
+          pid: 7002,
+          ppid: 7001,
+          pgid: 7001,
+          command: '/virtual/TaskWraithStudioCompanion --viewer'
+        },
+        electronPgid: 7001,
+        window: {
+          pid: 7002,
+          visibleWindowCount: 1,
+          windows: [{ windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }]
+        },
+        artifactRoot: '/virtual/acceptance/studioRouteResourceInvalid',
+        actions: [{ type: 'read-route-resource', route }]
+      })
+    ).toThrow(/explicit source or review selector/)
+  })
+})
+
+describe('validateStudioReviewRangeReceipt', () => {
+  it.each([
+    ['missing In', { index: 0, type: 'read-review-range', outPointTicks: 20, loopingRange: true }],
+    [
+      'reversed endpoints',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 20,
+        outPointTicks: 20,
+        loopingRange: true
+      }
+    ],
+    [
+      'non-boolean loop',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: 'on'
+      }
+    ],
+    [
+      'duplicate-shaped extra field',
+      {
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: true,
+        matchCount: 2
+      }
+    ]
+  ])('rejects %s', (_label, value) => {
+    expect(() => validateStudioReviewRangeReceipt(value)).toThrow(/review-range/)
+  })
+
+  it('accepts one exact non-empty range receipt', () => {
+    expect(
+      validateStudioReviewRangeReceipt({
+        index: 0,
+        type: 'read-review-range',
+        inPointTicks: 10,
+        outPointTicks: 20,
+        loopingRange: true
+      })
+    ).toMatchObject({ inPointTicks: 10, outPointTicks: 20, loopingRange: true })
+  })
+})
+
 async function temporaryRoot(label: string): Promise<string> {
   const root = await fsPromises.mkdtemp(path.join(os.tmpdir(), label))
   roots.push(root)
   return root
+}
+
+async function packagedRuntimeFixture(repoRoot: string, appRoot: string) {
+  const staging = path.join(repoRoot, 'archive-input')
+  const resources = path.join(appRoot, 'Contents/Resources')
+  for (const relative of ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html']) {
+    for (const base of [repoRoot, staging]) {
+      await fsPromises.mkdir(path.dirname(path.join(base, relative)), { recursive: true })
+      await fsPromises.writeFile(path.join(base, relative), relative)
+    }
+  }
+  for (const base of [path.join(repoRoot, 'out/host'), path.join(resources, 'host')]) {
+    await fsPromises.mkdir(base, { recursive: true })
+    await fsPromises.writeFile(path.join(base, 'cli.js'), 'host runtime')
+  }
+  const pack = async (version: string) => {
+    await fsPromises.writeFile(path.join(staging, 'package.json'), JSON.stringify({ version }))
+    const stream = await asar.createPackage(staging, path.join(resources, 'app.asar'))
+    if (stream) await finished(stream)
+  }
+  await pack('1.0.0')
+  return { pack }
 }
 
 async function waitFor<T>(
@@ -527,7 +713,390 @@ async function writeDetachedCompletionFixture(
   return { plan, paths, manifest, evidence, receipt }
 }
 
+describe('LaunchServices watchdog custody (fake controller)', () => {
+  const executable = '/virtual/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+  const identity = {
+    pid: 7200,
+    pgid: 7200,
+    executable,
+    startedAt: 'Thu Sep 24 02:00:00 2026'
+  }
+  const receipt = () => ({
+    kind: 'taskwraith-studio-acceptance-watchdog',
+    schemaVersion: 2,
+    status: 'reaped',
+    reason: 'owner_requested',
+    command: '/usr/bin/open',
+    childPid: 7101,
+    childPgid: 7101,
+    groupExitVerified: true,
+    detachedGroupExitVerified: true,
+    detachedProcessGroups: [{ pgid: 7200, evidencePids: [7200], memberPids: [7200] }],
+    launchServicesExecutable: executable,
+    launchServicesAdoption: {
+      ...identity,
+      requestId: 'adopt-1',
+      acknowledged: true,
+      groupExitVerified: true
+    }
+  })
+  async function fakeSession(packaged = true) {
+    const controller = Object.assign(new EventEmitter(), {
+      pid: 7100,
+      connected: true,
+      send: vi.fn(),
+      disconnect: vi.fn(() => {
+        controller.connected = false
+      })
+    })
+    const pending = launchUnderWatchdog(
+      {
+        env: { TASKWRAITH_INSTANCE_ID: 'studioAdopt01' },
+        ...(packaged ? { launchServicesExecutable: executable } : {})
+      },
+      { fork: () => controller, adoptionTimeoutMs: 20 }
+    )
+    controller.emit('message', {
+      type: 'launched',
+      controllerPid: 7100,
+      childPid: 7101,
+      childPgid: 7101,
+      receiptPath: '/virtual/watchdog.json'
+    })
+    return { controller, session: await pending }
+  }
+
+  it('waits for the exact watchdog acknowledgment and ignores a foreign request acknowledgment', async () => {
+    const { controller, session } = await fakeSession()
+    let adopted = false
+    const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 }).then((ack) => {
+      adopted = true
+      return ack
+    })
+    const request = controller.send.mock.calls.find(
+      ([message]) => message.type === 'adopt-launch-services'
+    )![0]
+    controller.emit('message', { type: 'adopted', requestId: 'foreign', ...identity })
+    await Promise.resolve()
+    expect(adopted).toBe(false)
+    controller.emit('message', { type: 'adopted', requestId: request.requestId, ...identity })
+    await expect(pending).resolves.toMatchObject(identity)
+    const terminal = receipt()
+    terminal.launchServicesAdoption.requestId = request.requestId
+    controller.emit('message', { type: 'terminal', ...terminal })
+    await expect(session.stop()).resolves.toMatchObject(terminal)
+  })
+
+  it.each(['pid', 'pgid', 'executable', 'startedAt', 'extra field'])(
+    'rejects a mismatched watchdog acknowledgment: %s',
+    async (damage) => {
+      const { controller, session } = await fakeSession()
+      const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 })
+      const checked = expect(pending).rejects.toThrow(/adoption.*acknowledgment/i)
+      const request = controller.send.mock.calls.find(
+        ([message]) => message.type === 'adopt-launch-services'
+      )![0]
+      const ack: Record<string, unknown> = {
+        type: 'adopted',
+        requestId: request.requestId,
+        ...identity
+      }
+      if (damage === 'pid' || damage === 'pgid') ack[damage] = 9999
+      if (damage === 'executable') ack.executable = '/Applications/Foreign'
+      if (damage === 'startedAt') ack.startedAt = ''
+      if (damage === 'extra field') ack.trusted = true
+      controller.emit('message', ack)
+      await checked
+      expect(controller.disconnect).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('fails closed and disconnects if no adoption acknowledgment arrives', async () => {
+    const { controller, session } = await fakeSession()
+    await expect(session.adoptLaunchServices({ pid: 7200, pgid: 7200 })).rejects.toThrow(
+      /adoption.*timed out/i
+    )
+    expect(controller.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it.each(['adoption-rejected', 'exit'])(
+    'rejects pending adoption when the controller reports %s',
+    async (event) => {
+      const { controller, session } = await fakeSession()
+      const pending = session.adoptLaunchServices({ pid: 7200, pgid: 7200 })
+      const checked = expect(pending).rejects.toThrow(/adoption/i)
+      const request = controller.send.mock.calls.find(
+        ([message]) => message.type === 'adopt-launch-services'
+      )![0]
+      if (event === 'exit') controller.emit('exit', 1, null)
+      else
+        controller.emit('message', {
+          type: event,
+          requestId: request.requestId,
+          error: 'identity is foreign'
+        })
+      await checked
+    }
+  )
+
+  it('adopts the exact app after its HOME-bearing helper disappeared, only after acknowledgment', async () => {
+    const session = {
+      pid: 7101,
+      pgid: 7101,
+      adoptLaunchServices: vi.fn(async () => ({
+        type: 'adopted',
+        requestId: 'adopt-1',
+        ...identity
+      }))
+    }
+    const plan = {
+      home: '/virtual/home',
+      spawnPlan: { packaged: true, electronBinary: executable, remoteDebuggingPort: 9444 }
+    }
+    await expect(
+      adoptLaunchServicesElectronSession(session, plan, {
+        platform: 'darwin',
+        listPortPids: async () => [7200],
+        execFile: async () => ({
+          stdout: `7200 1 7200 ${executable} --use-mock-keychain`,
+          stderr: ''
+        }),
+        timeoutMs: 30,
+        intervalMs: 1
+      })
+    ).resolves.toMatchObject({
+      pid: 7200,
+      pgid: 7200,
+      launcherPid: 7101,
+      launcherPgid: 7101,
+      launchMode: 'launch-services'
+    })
+    expect(session.adoptLaunchServices).toHaveBeenCalledExactlyOnceWith({ pid: 7200, pgid: 7200 })
+  })
+
+  it('refuses a stripped LaunchServices terminal from its known packaged session', async () => {
+    const { controller, session } = await fakeSession()
+    controller.emit('message', {
+      type: 'terminal',
+      status: 'reaped',
+      reason: 'owner_requested',
+      groupExitVerified: true,
+      detachedGroupExitVerified: true,
+      detachedProcessGroups: []
+    })
+    await expect(session.stop()).rejects.toThrow(/LaunchServices.*adoption/i)
+  })
+
+  it('preserves direct sessions and direct legacy receipt compatibility', async () => {
+    const { controller, session } = await fakeSession(false)
+    const terminal = {
+      kind: 'taskwraith-studio-acceptance-watchdog',
+      schemaVersion: 2,
+      status: 'reaped',
+      reason: 'owner_requested',
+      childPid: 7101,
+      childPgid: 7101,
+      groupExitVerified: true,
+      detachedGroupExitVerified: true,
+      detachedProcessGroups: []
+    }
+    controller.emit('message', { type: 'terminal', ...terminal })
+    await expect(session.stop()).resolves.toMatchObject(terminal)
+    expect(assertCleanWatchdogTerminal(terminal)).toEqual(terminal)
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: terminal }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).resolves.toMatchObject({ trusted: 1 })
+  })
+
+  it.each([
+    'missing adoption',
+    'missing acknowledgment',
+    'incomplete reap',
+    'wrong group',
+    'missing app',
+    'missing executable',
+    'invalid birth',
+    'extra adoption field',
+    'duplicate group',
+    'missing identity evidence',
+    'launcher as app'
+  ])('rejects terminal and prior LaunchServices receipts with %s', async (damage) => {
+    const terminal: Record<string, any> = receipt()
+    if (damage === 'missing adoption') delete terminal.launchServicesAdoption
+    if (damage === 'missing acknowledgment') terminal.launchServicesAdoption.acknowledged = false
+    if (damage === 'incomplete reap') terminal.launchServicesAdoption.groupExitVerified = false
+    if (damage === 'wrong group') terminal.detachedProcessGroups[0].pgid = 9999
+    if (damage === 'missing app') terminal.detachedProcessGroups[0].memberPids = [7201]
+    if (damage === 'missing executable') delete terminal.launchServicesExecutable
+    if (damage === 'invalid birth') terminal.launchServicesAdoption.startedAt = 'unproven'
+    if (damage === 'extra adoption field') terminal.launchServicesAdoption.trusted = true
+    if (damage === 'duplicate group')
+      terminal.detachedProcessGroups.push({ pgid: 7200, evidencePids: [], memberPids: [] })
+    if (damage === 'missing identity evidence') terminal.detachedProcessGroups[0].evidencePids = []
+    if (damage === 'launcher as app') {
+      terminal.childPid = terminal.launchServicesAdoption.pid
+      terminal.childPgid = terminal.launchServicesAdoption.pgid
+    }
+    expect(() => assertCleanWatchdogTerminal(terminal)).toThrow(/did not confirm clean/)
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: terminal }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).rejects.toThrow(/LaunchServices.*adoption/i)
+  })
+
+  it('trusts a fully reaped exact adopted group in a prior receipt', async () => {
+    expect(assertCleanWatchdogTerminal(receipt())).toEqual(receipt())
+    await expect(
+      assertNoPriorStudioOrphans(
+        { artifactRoot: '/virtual/current' },
+        {
+          readPriorReceipts: async () => [
+            { receiptPath: '/virtual/prior/watchdog-receipt.json', receipt: receipt() }
+          ],
+          execFile: async () => ({ stdout: '', stderr: '' })
+        }
+      )
+    ).resolves.toMatchObject({ trusted: 1 })
+  })
+
+  it.each(['missing disk adoption', 'missing evidence adoption', 'mismatched evidence adoption'])(
+    'keeps detached status RED for %s even when the launcher exited',
+    async (damage) => {
+      const root = await temporaryRoot('studio-ls-receipt-join-')
+      const disk: Record<string, any> = receipt()
+      const terminal: Record<string, any> = receipt()
+      if (damage === 'missing disk adoption') delete disk.launchServicesAdoption
+      if (damage === 'missing evidence adoption') delete terminal.launchServicesAdoption
+      if (damage === 'mismatched evidence adoption')
+        terminal.launchServicesAdoption.requestId = 'foreign'
+      const fixture = await writeDetachedCompletionFixture(root, {
+        receipt: disk,
+        evidence: { watchdogTerminal: terminal }
+      })
+      await expect(
+        readDetachedCoordinatorStatus({
+          instanceId: fixture.plan.instanceId,
+          artifactRoot: root,
+          token: DETACHED_TEST_TOKEN
+        })
+      ).resolves.toMatchObject({
+        green: false,
+        verdict: 'RED',
+        reason: expect.stringMatching(/adoption/i)
+      })
+    }
+  )
+})
+
 describe('Studio acceptance harness', () => {
+  it('parses bounded resource detail schema and rejects overflow/malformed exports', () => {
+    expect(parseResourceDetailExport(validResourceDetailText)).toMatchObject({
+      ok: true,
+      schema: 'res1',
+      residentDecoderCount: 1,
+      ioSurfaceCapacity: 3,
+      liveIoSurfaceIds: [42]
+    })
+    expect(
+      parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002B')
+    ).toMatchObject({ ok: true, liveIoSurfaceIds: [42, 43] })
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=0 ids=-')).toMatchObject({ ok: true })
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=!').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=2A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=01 cap=3 surf=1 ids=0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002A,0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=2 ids=0000002B,0000002A').ok).toBe(false)
+    expect(parseResourceDetailExport('res1 dec=1 cap=3 surf=1 ids=0000002a').ok).toBe(false)
+  })
+  it('parses route-owned resource detail and rejects non-round-trippable identities', () => {
+    expect(
+      parseRouteResourceDetailExport(
+        'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A,0000002B'
+      )
+    ).toMatchObject({
+      ok: true,
+      route: 'review',
+      activeSourceCount: 2,
+      retainedFrameCount: 1,
+      capacity: 3,
+      surfaceCount: 2,
+      ioSurfaceIds: ['0000002A', '0000002B']
+    })
+    expect(
+      parseRouteResourceDetailExport('rr1 route=source active=0 retained=0 cap=0 surf=0 ids=-')
+    ).toMatchObject({ ok: true, route: 'source', ioSurfaceIds: [] })
+    for (const malformed of [
+      'rr1 route=review active=2 retained=1 cap=3 surf=1 ids=!',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002B,0000002A',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002a,0000002B',
+      'rr1 route=review active=2 retained=1 cap=3 surf=2 ids=0000002A,0000002A',
+      'rr1 route=review active=2 retained=4 cap=3 surf=0 ids=-',
+      'rr1 route=review active=02 retained=1 cap=3 surf=0 ids=-',
+      'rr1 route=review active=2 retained=1 cap=3 surf=0 ids=- extra=x',
+      'rr1 route=review active=2 retained=1 cap=3 surf=0 ids= -'
+    ]) {
+      expect(parseRouteResourceDetailExport(malformed).ok).toBe(false)
+    }
+  })
+  it('supports a bounded explicit hydration timeout for large owner media', async () => {
+    let openAttempts = 0
+    const renderer = {
+      send: async (_method: string, input: Record<string, any>) => {
+        const expression = String(input.expression || '')
+        if (expression.includes('typeof window.api')) return { result: { value: true } }
+        openAttempts += 1
+        return {
+          result: {
+            value:
+              openAttempts === 1
+                ? { ok: false, error: 'hydration not completed' }
+                : { ok: true, assetId: 'asset-id' }
+          }
+        }
+      }
+    }
+    await expect(
+      invokeAuthorizedStudioOpen(
+        renderer,
+        { sha256: 'asset-id', mimeType: 'video/mp4' },
+        { timeoutMs: 120_000 }
+      )
+    ).resolves.toEqual({ ok: true, assetId: 'asset-id' })
+    expect(openAttempts).toBe(2)
+    await expect(
+      invokeAuthorizedStudioOpen(
+        renderer,
+        { sha256: 'asset-id', mimeType: 'video/mp4' },
+        { timeoutMs: 300_001 }
+      )
+    ).rejects.toThrow(/45000 to 300000ms/i)
+    const startedAt = Date.now()
+    await expect(
+      waitForHarnessProbe({
+        label: 'hanging Studio probe',
+        timeoutMs: 25,
+        probe: () => new Promise(() => {})
+      })
+    ).rejects.toThrow(/probe exceeded its remaining.*deadline/i)
+    expect(Date.now() - startedAt).toBeLessThan(1_000)
+  })
   it.runIf(process.platform === 'darwin')('requires explicit detached launch consent and a caller-supplied sanitized instance id', () => {
     const parsed = parseArgs([
       '--launch',
@@ -1650,6 +2219,146 @@ describe('Studio acceptance harness', () => {
     expect(plan.transcriptTimeoutMs).toBe(720_000)
   })
 
+  it.runIf(process.platform === 'darwin')(
+    'launches an explicit worktree packaged executable without a dev entry argument',
+    async () => {
+      const root = await temporaryRoot('studio-packaged-plan-')
+      const packagedExecutablePath = path.join(
+        root,
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+      )
+      await fsPromises.mkdir(path.dirname(packagedExecutablePath), { recursive: true })
+      await fsPromises.writeFile(packagedExecutablePath, 'packaged')
+      const args = parseArgs([
+        '--launch',
+        '--i-accept-studio-isolated-launch',
+        '--owner-confirms-existing-orphans-cleared',
+        '--generate-speech-fixture',
+        '--packaged-executable=' + packagedExecutablePath
+      ])
+      const plan = buildStudioAcceptancePlan({
+        instanceId: 'studioPkg01',
+        repoRoot: root,
+        home: path.join(root, '.local-only/studio/home'),
+        platform: 'darwin',
+        packagedExecutablePath
+      })
+
+      expect(assertLaunchAuthorized(args, plan)).toEqual({ launch: true })
+      expect(plan.spawnPlan.packaged).toBe(true)
+      expect(plan.spawnPlan.electronBinary).toBe(packagedExecutablePath)
+      expect(plan.spawnPlan.argv).not.toContain('.')
+      expect(plan.profile).toMatchObject({
+        appName: 'taskwraith',
+        userDataPath: path.join(
+          root,
+          '.local-only/studio/home/Library/Application Support/taskwraith'
+        ),
+        isPackagedProfile: true
+      })
+
+      const launchSpec = buildStudioWatchdogLaunchSpec(plan, args, { platform: 'darwin' })
+      expect(launchSpec).toMatchObject({
+        command: '/usr/bin/open',
+        launchServicesExecutable: packagedExecutablePath,
+        launchServicesAppRoot: path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app')
+      })
+      expect(launchSpec.args).toEqual(
+        expect.arrayContaining([
+          '-n',
+          '-F',
+          '-W',
+          path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app'),
+          '--args',
+          '--use-mock-keychain'
+        ])
+      )
+      expect(launchSpec.args).not.toEqual(
+        expect.arrayContaining(['-i', '-o', '--stderr'])
+      )
+      for (const [name, value] of Object.entries(plan.spawnPlan.env)) {
+        const envIndex = launchSpec.args.findIndex(
+          (entry: string, index: number) =>
+            entry === '--env' && launchSpec.args[index + 1] === `${name}=${value}`
+        )
+        expect(envIndex).toBeGreaterThanOrEqual(0)
+      }
+      expect(validateWatchdogSpec(launchSpec)).toMatchObject({
+        command: '/usr/bin/open',
+        launchServicesExecutable: packagedExecutablePath
+      })
+    }
+  )
+
+  it.runIf(process.platform === 'darwin')(
+    'adopts only the exact LaunchServices app group carrying the isolated profile',
+    async () => {
+      const root = await temporaryRoot('studio-launch-services-adoption-')
+      const home = path.join(root, 'acceptance', 'studioLs01', 'home')
+      const executable = path.join(
+        root,
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug'
+      )
+      const plan = buildStudioAcceptancePlan({
+        instanceId: 'studioLs01',
+        repoRoot: root,
+        home,
+        platform: 'darwin',
+        packagedExecutablePath: executable
+      })
+      const launcherSession = {
+        controllerPid: 7100,
+        pid: 7101,
+        pgid: 7101,
+        adoptLaunchServices: vi.fn(async () => ({
+          type: 'adopted',
+          requestId: 'adopt-1',
+          pid: 7200,
+          pgid: 7200,
+          executable,
+          startedAt: 'Thu Sep 24 02:00:00 2026'
+        })),
+        stop: vi.fn()
+      }
+      const processRows = [
+        `7200 1 7200 ${executable} --use-mock-keychain --remote-debugging-port=9444`,
+        `7201 7200 7200 ${path.join(
+          root,
+          'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Frameworks/TaskWraith Debug Helper.app/Contents/MacOS/TaskWraith Debug Helper'
+        )} --user-data-dir=${path.join(home, 'Library/Application Support/taskwraith')}`
+      ].join('\n')
+
+      const adopted = await adoptLaunchServicesElectronSession(launcherSession, plan, {
+        platform: 'darwin',
+        listPortPids: async () => [7200],
+        execFile: async () => ({ stdout: processRows, stderr: '' }),
+        timeoutMs: 1_000,
+        intervalMs: 1
+      })
+      expect(adopted).toMatchObject({
+        pid: 7200,
+        pgid: 7200,
+        launcherPid: 7101,
+        launcherPgid: 7101,
+        ownedPids: [7200, 7201],
+        launchMode: 'launch-services'
+      })
+
+      await expect(
+        adoptLaunchServicesElectronSession(launcherSession, plan, {
+          platform: 'darwin',
+          listPortPids: async () => [7300],
+          execFile: async () => ({
+            stdout: `7300 1 7300 /Applications/Foreign.app/Contents/MacOS/Foreign --remote-debugging-port=9444`,
+            stderr: ''
+          }),
+          timeoutMs: 1_000,
+          intervalMs: 1
+        })
+      ).rejects.toThrow(/custodied TaskWraith executable/)
+    }
+  )
+
   it.runIf(process.platform === 'darwin')('accepts only one bounded media source for a real launch', () => {
     const plan = buildStudioAcceptancePlan({
       instanceId: 'studioSpeech01',
@@ -1732,6 +2441,44 @@ describe('Studio acceptance harness', () => {
     expect(asset.assetPath.startsWith((await fsPromises.realpath(userDataPath)) + path.sep)).toBe(
       true
     )
+  })
+
+  it('refuses owner video over the shared product cap before materialization', async () => {
+    const root = await temporaryRoot('studio-acceptance-oversized-media-')
+    const source = path.join(root, 'oversized.mp4')
+    const userDataPath = path.join(root, 'home', 'Library', 'Application Support', 'isolated')
+    await fsPromises.writeFile(source, Buffer.from([0]))
+    await fsPromises.truncate(source, mediaLimits.transcriptMediaMaxVideoBytes + 1)
+    await expect(
+      materializeOwnedMedia({ mediaPath: source, mimeType: 'video/mp4', userDataPath })
+    ).rejects.toThrow(/shared 536870912-byte product cap/i)
+    await expect(fsPromises.stat(path.join(userDataPath, 'transcript-media'))).rejects.toMatchObject(
+      { code: 'ENOENT' }
+    )
+  })
+
+  it('removes an oversized or identity-changed temp copy before final rename', async () => {
+    const root = await temporaryRoot('studio-acceptance-media-copy-race-')
+    const source = path.join(root, 'source.mp4')
+    const sourceBytes = Buffer.from('bounded source')
+    const userDataPath = path.join(root, 'home', 'Library', 'Application Support', 'isolated')
+    await fsPromises.writeFile(source, sourceBytes)
+    const sha256 = crypto.createHash('sha256').update(sourceBytes).digest('base64url')
+    const shard = path.join(userDataPath, 'transcript-media', sha256.slice(0, 2))
+    const target = path.join(shard, `${sha256}.mp4`)
+    await expect(
+      materializeOwnedMedia(
+        { mediaPath: source, mimeType: 'video/mp4', userDataPath },
+        {
+          copyFile: async (_source: string, temp: string) => {
+            await fsPromises.writeFile(temp, Buffer.from([0]))
+            await fsPromises.truncate(temp, mediaLimits.transcriptMediaMaxVideoBytes + 1)
+          }
+        }
+      )
+    ).rejects.toThrow(/temp copy violates.*product byte cap or identity/i)
+    await expect(fsPromises.stat(target)).rejects.toMatchObject({ code: 'ENOENT' })
+    expect(await fsPromises.readdir(shard)).toEqual([])
   })
 
   it('generates and seals the bounded 30-second speech fixture inside its artifact root', async () => {
@@ -3201,19 +3948,66 @@ describe('Studio acceptance harness', () => {
       'utf8'
     )
 
-    expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toHaveLength(2)
-    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(2)
+    expect(driverSource.match(/\.postToPid\(pid_t\(request\.expectedPid\)\)/g)).toBeNull()
+    expect(driverSource.match(/\.post\(tap: \.cghidEventTap\)/g)).toHaveLength(6)
     expect(driverSource).toContain('(request.inputDelivery == "background-observation-only" ||')
     expect(driverSource).toContain('((request.inputDelivery == "background-observation-only" &&')
     expect(driverSource).toContain('request.allowForegroundInput &&')
     expect(driverSource).toContain(
       'if request.inputDelivery == "foreground-global-explicit" {\n' +
-        '        try activateExactWindowForExplicitForeground('
+        '        guard let currentForeground = NSWorkspace.shared.frontmostApplication,'
     )
+    expect(driverSource).toContain('try activateExactWindowForExplicitForeground(')
+    expect(driverSource).toContain('try restoreForegroundAfterExplicitInput(')
+    expect(driverSource).toContain('foregroundToRestore = nil')
+    expect(driverSource).toContain('_ = previous.activate(options: [.activateAllWindows])')
+    const activationStart = driverSource.indexOf(
+      'func activateExactWindowForExplicitForeground('
+    )
+    const activationEnd = driverSource.indexOf(
+      'func boundedScreenshotURL(',
+      activationStart
+    )
+    const activationSource = driverSource.slice(activationStart, activationEnd)
+    expect(activationSource).toContain('AXUIElementPerformAction(window, kAXRaiseAction')
+    expect(activationSource).toContain('try validateWindow(request)')
+    expect(activationSource).toContain('let point = exactTitleBarPoint(request)')
+    expect(driverSource).toContain(
+      'x: request.windowBounds.x + request.windowBounds.width / 2'
+    )
+    expect(activationSource).toContain('exactWindowIsTopmost(at: point, request: request)')
+    expect(activationSource).toContain('mouseType: .leftMouseDown')
+    expect(activationSource).toContain('mouseType: .leftMouseUp')
+    expect(activationSource).toContain('NSWorkspace.shared.frontmostApplication?.processIdentifier')
+    const zOrderStart = driverSource.indexOf('func exactWindowIsTopmost(')
+    const zOrderEnd = driverSource.indexOf('func exactAccessibilityWindow(', zOrderStart)
+    const zOrderSource = driverSource.slice(zOrderStart, zOrderEnd)
+    expect(zOrderSource).toContain('CGWindowListCopyWindowInfo')
+    expect(zOrderSource).toContain('layer == 0')
+    expect(zOrderSource).toContain('alpha > 0')
+    expect(zOrderSource).toContain('ownerPid == Int(request.expectedPid)')
+    expect(zOrderSource).toContain('windowId == request.windowId')
     expect(driverSource).toContain(
       'action.type == "click",\n' +
         '                  request.inputDelivery == "foreground-global-explicit"'
     )
+    expect(driverSource).toContain(
+      'action.type == "key",\n' +
+        '                  request.inputDelivery == "foreground-global-explicit"'
+    )
+    expect(driverSource).toContain(
+      'exactWindowIsTopmost(at: titleBarPoint, request: request)'
+    )
+    const keyDeliveryStart = driverSource.indexOf('action.type == "key",')
+    const keyDeliveryEnd = driverSource.indexOf(
+      'action.type == "click",',
+      keyDeliveryStart
+    )
+    const keyDeliverySource = driverSource.slice(keyDeliveryStart, keyDeliveryEnd)
+    expect(
+      keyDeliverySource.match(/exactWindowIsTopmost\(at: titleBarPoint, request: request\)/g)
+    ).toHaveLength(2)
+    expect(keyDeliverySource).toContain('try validateWindow(request)')
     expect(driverSource).toContain(
       'action.type == "set-playhead-ticks",\n' +
         '                  request.inputDelivery == "background-observation-only"'
@@ -3223,12 +4017,60 @@ describe('Studio acceptance harness', () => {
         '           request.inputDelivery == "background-observation-only"'
     )
     expect(driverSource).toContain('func exactAccessibilityPlaybackControl(')
+    expect(driverSource).toContain('let resourceDetailAccessibilityLabel = "Resource detail"')
+    expect(driverSource).toContain('resourceMatchCount')
+    expect(driverSource).toContain('resourceDetailValue')
+    expect(driverSource).toContain('resourceMatches.count >= 1')
+    expect(driverSource).toContain('resourceMatches.count <= 2')
+    expect(driverSource).toContain('resourceValues.allSatisfy({ $0 == resourceValues[0] })')
     expect(driverSource).toContain('kAXButtonRole')
     expect(driverSource).toContain('kAXPressAction')
     expect(driverSource).toContain(
       'AXUIElementPerformAction(playback, kAXPressAction as CFString) == .success'
     )
-    expect(driverSource).toContain('accessibilityLabel == "Playback"')
+    const playbackLookupStart = driverSource.indexOf(
+      'func exactAccessibilityPlaybackControl('
+    )
+    const playbackLookupEnd = driverSource.indexOf(
+      'let transportMutationAccessibilityLabel',
+      playbackLookupStart
+    )
+    const playbackLookupSource = driverSource.slice(playbackLookupStart, playbackLookupEnd)
+    const playbackAppendIndex = playbackLookupSource.indexOf('labeledMatches.append(element)')
+    expect(playbackLookupStart).toBeGreaterThan(0)
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXIdentifierAttribute, of: element) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXDescriptionAttribute, of: element) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole'
+    )
+    expect(playbackLookupSource).toContain('actionNames.contains(kAXPressAction)')
+    expect(playbackLookupSource).toContain(
+      'playbackValue == "playing" || playbackValue == "paused"'
+    )
+    for (const exactIdentityFragment of [
+      'stringAttribute(kAXIdentifierAttribute, of: element) == "Playback"',
+      'stringAttribute(kAXDescriptionAttribute, of: element) == "Playback"',
+      'stringAttribute(kAXRoleAttribute, of: element) == kAXButtonRole',
+      'actionNames.contains(kAXPressAction)',
+      'playbackValue == "playing" || playbackValue == "paused"'
+    ]) {
+      expect(playbackLookupSource.indexOf(exactIdentityFragment)).toBeGreaterThan(0)
+      expect(playbackLookupSource.indexOf(exactIdentityFragment)).toBeLessThan(
+        playbackAppendIndex
+      )
+    }
+    expect(driverSource).toContain('!labeledMatches.contains(where: { CFEqual($0, element) })')
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXIdentifierAttribute, of: playback) == "Playback"'
+    )
+    expect(playbackLookupSource).toContain(
+      'stringAttribute(kAXDescriptionAttribute, of: playback) == "Playback"'
+    )
+    expect(driverSource).toContain('Playback accessibility control lost its exact identity')
     expect(driverSource).toContain('playbackValueBefore == observedBefore')
     expect(driverSource).toContain('playbackValueAfter == observedAfter')
     const playbackPressStart = driverSource.indexOf('func pressAccessibilityPlayback(')
@@ -3256,9 +4098,14 @@ describe('Studio acceptance harness', () => {
     )
     expect(driverSource).toContain(': ticks - candidate <= toleranceTicks')
     expect(driverSource).toContain('foregroundAfter == foregroundBefore')
+    expect(driverSource).toContain(
+      'let captureScale = try nativeCaptureScale(window: window, displays: content.displays)'
+    )
+    expect(driverSource).toContain('CGFloat(display.width) / display.frame.width')
+    expect(driverSource).not.toContain('window.frame.width * 2')
     const transportReadStart = driverSource.indexOf('func exactAccessibilityTransportMutation(')
     const transportReadEnd = driverSource.indexOf(
-      '/// The forward-advance envelope',
+      '/// Studio route observation helpers begin here',
       transportReadStart
     )
     const transportReadSource = driverSource.slice(transportReadStart, transportReadEnd)
@@ -3277,6 +4124,21 @@ describe('Studio acceptance harness', () => {
     expect(transportReadSource).toContain('pgidAfter == pgidBefore')
     expect(transportReadSource).toContain('executableAfter == executableBefore')
     expect(transportReadSource).not.toContain('AXUIElementPerformAction')
+    const routePressStart = driverSource.indexOf('func pressAccessibilityWorkspaceRoute(')
+    const routePressEnd = driverSource.indexOf(
+      'func readWorkspaceObservation(',
+      routePressStart
+    )
+    const routePressSource = driverSource.slice(routePressStart, routePressEnd)
+    expect(routePressStart).toBeGreaterThan(0)
+    expect(routePressSource).toContain('try validateWindow(request)')
+    expect(routePressSource).toContain('let freshWindow = try exactAccessibilityWindow(request)')
+    expect(routePressSource).not.toContain('try? exactAccessibilityWindow')
+    expect(routePressSource).toContain('observedPairedBefore == pairedRouteValueBefore')
+    expect(routePressSource).toContain('observedPairedAfter == pairedRouteValueAfter')
+    expect(routePressSource).toContain(
+      'AXUIElementPerformAction(route, kAXPressAction as CFString) == .success'
+    )
     expect(driverSource).not.toContain('validateAccessibilityWindow')
   })
 
@@ -3315,6 +4177,24 @@ describe('Studio acceptance harness', () => {
         { timeoutMs: 100 }
       )
     ).resolves.toMatchObject({ revision: 2, op: { type: 'set_transcript' } })
+  })
+
+  it('fails the transcript wait immediately on a typed operator-visible refusal', async () => {
+    const failureProbe = vi.fn(async () =>
+      'Studio transcript unavailable (transcribe_failed): Speech permission denied'
+    )
+    await expect(
+      waitForStudioJournalOperation(
+        { studioStateDirectory: '/virtual/unused' },
+        { type: 'set_transcript', assetId: 'asset-a', requireNonEmptyTranscript: true },
+        {
+          timeoutMs: 10_000,
+          failureProbe,
+          readJournalOperations: async () => []
+        }
+      )
+    ).rejects.toThrow(/Speech permission denied/)
+    expect(failureProbe).toHaveBeenCalledTimes(1)
   })
 
   it('adjudicates only an asset-bound, timed, ordered recognized passage', () => {
@@ -3502,6 +4382,8 @@ describe('Studio acceptance harness', () => {
               action.type === 'read-transport-mutation' ? validTransportMutationText : null,
             avSyncPeakValue: action.type === 'read-av-sync' ? validAvSyncPeakText : null,
             avSyncCurrentValue: action.type === 'read-av-sync' ? validAvSyncCurrentText : null,
+            resourceMatchCount: action.type === 'read-av-sync' ? 1 : null,
+            resourceDetailValue: action.type === 'read-av-sync' ? validResourceDetailText : null,
             routeHealth:
               action.type === 'coreaudio-route-health' ? validCoreAudioRouteHealthReceipt : null,
             accessibilityAction: action.accessibilityAction ?? null,
@@ -3528,7 +4410,18 @@ describe('Studio acceptance harness', () => {
                     }
                   }
                 : null
-          }))
+          })).map((action: Record<string, any>) =>
+            action.type === 'read-av-sync'
+              ? {
+                  index: action.index,
+                  type: action.type,
+                  avSyncPeakValue: action.avSyncPeakValue,
+                  avSyncCurrentValue: action.avSyncCurrentValue,
+                  resourceMatchCount: action.resourceMatchCount,
+                  resourceDetailValue: action.resourceDetailValue
+                }
+              : action
+          )
         })}\n`,
         stderr: ''
       }
@@ -3624,7 +4517,9 @@ describe('Studio acceptance harness', () => {
         {
           type: 'read-av-sync',
           avSyncPeakValue: validAvSyncPeakText,
-          avSyncCurrentValue: validAvSyncCurrentText
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         },
         {
           type: 'coreaudio-route-health',
@@ -3798,6 +4693,22 @@ describe('Studio acceptance harness', () => {
       throw new Error('expected Studio measurement receipt failure')
     }
 
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 2,
+          resourceDetailValue: validResourceDetailText
+        }
+      )
+    ).resolves.toMatchObject({
+      actions: [{ type: 'read-av-sync', resourceMatchCount: 2 }]
+    })
+
     const peakInCurrentFailure = await captureFailure(
       run(
         { type: 'read-av-sync' },
@@ -3805,7 +4716,9 @@ describe('Studio acceptance harness', () => {
           index: 0,
           type: 'read-av-sync',
           avSyncPeakValue: validAvSyncPeakText,
-          avSyncCurrentValue: validAvSyncPeakText
+          avSyncCurrentValue: validAvSyncPeakText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         }
       )
     )
@@ -3826,8 +4739,65 @@ describe('Studio acceptance harness', () => {
         {
           index: 0,
           type: 'read-av-sync',
-          avSyncPeakValue: validAvSyncCurrentText,
+          avSyncPeakValue: validAvSyncPeakText,
           avSyncCurrentValue: validAvSyncCurrentText
+        }
+      )
+    ).rejects.toThrow(/missing or extra keys/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 3,
+          resourceDetailValue: validResourceDetailText
+        }
+      )
+    ).rejects.toThrow(/resource match count is invalid/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: 'res1 dec=1 cap=1 surf=1 ids=!'
+        }
+      )
+    ).rejects.toThrow(/resource detail receipt is invalid.*overflow/i)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncPeakText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText,
+          extra: true
+        }
+      )
+    ).rejects.toThrow(/missing or extra keys/)
+
+    await expect(
+      run(
+        { type: 'read-av-sync' },
+        {
+          index: 0,
+          type: 'read-av-sync',
+          avSyncPeakValue: validAvSyncCurrentText,
+          avSyncCurrentValue: validAvSyncCurrentText,
+          resourceMatchCount: 1,
+          resourceDetailValue: validResourceDetailText
         }
       )
     ).rejects.toThrow(/A\/V sync peak receipt is invalid.*av1/i)
@@ -4135,6 +5105,61 @@ describe('Studio acceptance harness', () => {
     await expect(run({ accessibilityAction: 'AXShowMenu' })).rejects.toThrow(/Playback receipt/)
   })
 
+  it('rejects an extra top-level key in a read-workspace action receipt', async () => {
+    const root = await temporaryRoot('studio-acceptance-workspace-receipt-schema-')
+    const target = {
+      companion: {
+        pid: 7002,
+        ppid: 7001,
+        pgid: 7001,
+        command: '/virtual/TaskWraithStudioCompanion --viewer'
+      },
+      electronPgid: 7001,
+      window: {
+        pid: 7002,
+        visibleWindowCount: 1,
+        windows: [
+          {
+            windowId: 42,
+            title: 'TaskWraith Studio',
+            bounds: WORKSPACE_WINDOW_BOUNDS
+          }
+        ]
+      }
+    }
+    await expect(
+      runStudioUiDriver(
+        { artifactRoot: root },
+        target,
+        [{ type: 'read-workspace' }],
+        {
+          execFile: vi.fn(async (_file: string, args: string[]) => {
+            const request = JSON.parse(await fsPromises.readFile(args[1], 'utf8'))
+            return {
+              stdout: `${JSON.stringify({
+                schemaVersion: 1,
+                kind: 'taskwraith-studio-ui-driver-receipt',
+                inputDelivery: request.inputDelivery,
+                pid: request.expectedPid,
+                pgid: request.expectedPgid,
+                windowId: request.windowId,
+                actions: [
+                  {
+                    index: 0,
+                    type: 'read-workspace',
+                    workspace: validWorkspaceObservation(true),
+                    unexpected: true
+                  }
+                ]
+              })}\n`,
+              stderr: ''
+            }
+          })
+        }
+      )
+    ).rejects.toThrow(/read-workspace action receipt.*extra top-level key/i)
+  })
+
   it('bounds live Playhead settlement with an explicit forward-only envelope', async () => {
     const root = await temporaryRoot('studio-acceptance-playhead-envelope-')
     const target = {
@@ -4365,13 +5390,43 @@ describe('Studio acceptance harness', () => {
         }
       ]
     }
-    expect(adjudicateSharedStudioClock(source, review)).toMatchObject({
+    const routeTransition = {
+      actions: [
+        {
+          type: 'press-workspace-route',
+          accessibilityIdentifier: 'studio.workspace.route.timeline',
+          pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+          accessibilityRole: 'AXCheckBox',
+          accessibilityAction: 'AXPress',
+          routeValueBefore: 'not selected',
+          routeValueAfter: 'selected',
+          pairedRouteValueBefore: 'selected',
+          pairedRouteValueAfter: 'selected'
+        }
+      ]
+    }
+    expect(adjudicateSharedStudioClock(source, review, routeTransition)).toMatchObject({
       ok: true,
       reviewAfterTicks: 1_500_000
     })
     const splitClock = structuredClone(review)
     splitClock.actions[0].playheadTicksBefore = 9_000_000
-    expect(() => adjudicateSharedStudioClock(source, splitClock)).toThrow(/one shared clock/)
+    expect(() => adjudicateSharedStudioClock(source, splitClock, routeTransition)).toThrow(
+      /one shared clock/
+    )
+    const sameVisibleControl = structuredClone(routeTransition)
+    sameVisibleControl.actions[0].accessibilityIdentifier = 'studio.workspace.route.source'
+    sameVisibleControl.actions[0].pairedAccessibilityIdentifier =
+      'studio.workspace.route.timeline'
+    sameVisibleControl.actions[0].routeValueBefore = 'selected'
+    expect(() => adjudicateSharedStudioClock(source, review, sameVisibleControl)).toThrow(
+      /AXPress route transition/
+    )
+    const sourceWasNotSelected = structuredClone(routeTransition)
+    sourceWasNotSelected.actions[0].pairedRouteValueBefore = 'not selected'
+    expect(() => adjudicateSharedStudioClock(source, review, sourceWasNotSelected)).toThrow(
+      /AXPress route transition/
+    )
 
     const playback = {
       actions: [
@@ -4412,7 +5467,8 @@ describe('Studio acceptance harness', () => {
     const windowTargetsSeen: Array<Record<string, any>> = []
     let proposalNumber = 0
     let sharedPlayheadTicks = 1_500_000
-    let readWorkspaceCallCount = 0
+    let reviewRouteSelected = false
+    let proposedVersionSelected = false
     const receipt = await driveStudioUiJourney(
       { artifactRoot: '/virtual/acceptance/studioJourney01', transcriptTimeoutMs: 720_000 },
       {
@@ -4524,13 +5580,6 @@ describe('Studio acceptance harness', () => {
           windowTargetsSeen.push(target?.window?.windows?.[0] ?? null)
           if (actions.length === 1 && actions[0].type === 'read-workspace') {
             calls.push('driver:read-workspace')
-            readWorkspaceCallCount += 1
-            // The very first read-workspace call happens at journey start,
-            // before Timeline is ever shown: Source is selected/visible and
-            // Timeline is not. Every later call (the accept/reject
-            // waitForWorkspaceReview polls) happens after `w` has shown
-            // Timeline, so review=true from then on.
-            const review = readWorkspaceCallCount > 1
             return {
               schemaVersion: 1,
               kind: 'taskwraith-studio-ui-driver-receipt',
@@ -4541,7 +5590,10 @@ describe('Studio acceptance harness', () => {
                 {
                   index: 0,
                   type: 'read-workspace',
-                  workspace: validWorkspaceObservation(review)
+                  workspace: validWorkspaceObservation(
+                    reviewRouteSelected,
+                    proposedVersionSelected
+                  )
                 }
               ]
             }
@@ -4555,6 +5607,14 @@ describe('Studio acceptance harness', () => {
             return action.type
           })
           calls.push(`driver:${actionNames.join(',')}`)
+          for (const action of actions) {
+            if (action.type === 'press-workspace-route' && action.route === 'timeline') {
+              reviewRouteSelected = action.selectedAfter !== false
+            }
+            if (action.type === 'key' && action.key === 'v') {
+              proposedVersionSelected = true
+            }
+          }
           return {
             schemaVersion: 1,
             kind: 'taskwraith-studio-ui-driver-receipt',
@@ -4575,6 +5635,19 @@ describe('Studio acceptance harness', () => {
                   accessibilityAction: 'AXPress',
                   playbackValueBefore: action.playbackValueBefore,
                   playbackValueAfter: action.playbackValueAfter
+                })
+              }
+              if (action.type === 'press-workspace-route') {
+                const routeSelectedAfter = action.selectedAfter !== false
+                Object.assign(observed, {
+                  accessibilityIdentifier: 'studio.workspace.route.timeline',
+                  pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+                  accessibilityRole: 'AXCheckBox',
+                  accessibilityAction: 'AXPress',
+                  routeValueBefore: routeSelectedAfter ? 'not selected' : 'selected',
+                  routeValueAfter: routeSelectedAfter ? 'selected' : 'not selected',
+                  pairedRouteValueBefore: 'selected',
+                  pairedRouteValueAfter: 'selected'
                 })
               }
               if (action.type === 'set-playhead-ticks') {
@@ -4629,8 +5702,22 @@ describe('Studio acceptance harness', () => {
         ghostRejectPixels: { ok: true, region: 'review-host' },
         workspace: {
           accepted: {
+            sourceRoute: { value: 'selected' },
             timelineRoute: { value: 'selected' },
             timelineHost: { visible: true }
+          },
+          proposedAfterV: {
+            sourceRoute: { value: 'selected' },
+            currentVersion: { value: 'not selected' },
+            proposedVersion: { value: 'selected' }
+          },
+          sourceBeforeRejectedProposal: {
+            sourceRoute: { value: 'selected' },
+            timelineRoute: { value: 'not selected' },
+            sourceHost: { visible: true },
+            timelineHost: { visible: false },
+            currentVersion: { value: 'unavailable' },
+            proposedVersion: { value: 'unavailable' }
           },
           rejected: {
             timelineRoute: { value: 'selected' },
@@ -4641,7 +5728,16 @@ describe('Studio acceptance harness', () => {
           sourceBeforeTicks: 1_500_000,
           sourceAfterTicks: 1_501_000,
           reviewBeforeTicks: 1_501_000,
-          reviewAfterTicks: 1_500_000
+          reviewAfterTicks: 1_500_000,
+          route: {
+            accessibilityIdentifier: 'studio.workspace.route.timeline',
+            pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+            accessibilityAction: 'AXPress',
+            before: 'not selected',
+            after: 'selected',
+            pairedBefore: 'selected',
+            pairedAfter: 'selected'
+          }
         },
         playbackRoundTrip: {
           ok: true,
@@ -4654,7 +5750,6 @@ describe('Studio acceptance harness', () => {
     expect(calls).toEqual([
       'journal:set_transcript:asset-a',
       'driver:read-workspace',
-      'driver:press-playback',
       'driver:transcript-band',
       'driver:tab',
       'driver:transcript-selected',
@@ -4665,21 +5760,24 @@ describe('Studio acceptance harness', () => {
       'compare:source-host-overlay:transcript-band.png:transcript-selected.png',
       'journal:propose_edit:',
       'driver:ghost',
-      'driver:w',
-      'driver:read-workspace',
       'driver:set:1500000',
+      'driver:step:1',
+      'driver:press-workspace-route',
+      'driver:read-workspace',
+      'driver:step:-1',
       'driver:current',
       'driver:v',
+      'driver:read-workspace',
       'driver:set:1500000',
       'driver:proposed',
       'compare:review-host:current.png:proposed.png',
-      'driver:step:1',
-      'driver:step:-1',
       'driver:a,accept-sent',
       'journal:resolve_proposal:accept',
-      'driver:w,tab,bracket-right,return',
+      'driver:press-workspace-route',
+      'driver:read-workspace',
+      'driver:tab,bracket-right,return',
       'journal:propose_edit:',
-      'driver:w',
+      'driver:press-workspace-route',
       'driver:read-workspace',
       'driver:ghost-reject',
       'driver:r,reject-sent',
@@ -4689,7 +5787,6 @@ describe('Studio acceptance harness', () => {
     ])
     expect(deliveries).toEqual([
       'background-observation-only',
-      'background-observation-only',
       'foreground-global-explicit',
       'background-observation-only',
       'foreground-global-explicit',
@@ -4697,17 +5794,18 @@ describe('Studio acceptance harness', () => {
       'foreground-global-explicit',
       'background-observation-only',
       'background-observation-only',
-      'foreground-global-explicit',
       'background-observation-only',
-      'background-observation-only',
-      'foreground-global-explicit',
       'background-observation-only',
       'background-observation-only',
       'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
+      'background-observation-only',
+      'background-observation-only',
       'foreground-global-explicit',
+      'background-observation-only',
       'foreground-global-explicit',
+      'background-observation-only',
       'background-observation-only',
       'foreground-global-explicit',
       'background-observation-only'
@@ -4865,7 +5963,7 @@ describe('Studio acceptance harness', () => {
     const includedFiles: Record<string, string> = {
       'src/main/product.ts': 'export const product = 1\n',
       'swift/TaskWraithBridge/Sources/Studio/Studio.swift': 'struct Studio {}\n',
-      'build/icon.icns': 'fixture icon',
+      'design-assets/suite-app-icons/studio/app-icon.icns': 'fixture icon',
       'electron.vite.config.ts': 'fixture electron config',
       'package-lock.json': '{}\n',
       'package.json': '{}\n',
@@ -4997,6 +6095,158 @@ describe('Studio acceptance harness', () => {
       bridgeDaemonPath: 'swift/TaskWraithBridge/.build/debug/TaskWraithBridgeDaemon',
       bridgeDaemonSha256: crypto.createHash('sha256').update('debug bridge').digest('hex')
     })
+
+    const beforeFinderMetadata = await measureStudioAcceptanceArtifacts(root)
+    await fsPromises.writeFile(path.join(root, 'out/.DS_Store'), 'finder metadata')
+    await fsPromises.mkdir(path.join(root, 'out/tui'), { recursive: true })
+    await fsPromises.writeFile(path.join(root, 'out/tui/cli.js'), 'unrelated TUI output')
+    const afterFinderMetadata = await measureStudioAcceptanceArtifacts(root)
+    expect(afterFinderMetadata).toEqual(beforeFinderMetadata)
+  })
+
+  it('pins the signed packaged executable, app.asar, native children, and Speech usage', async () => {
+    const root = await temporaryRoot('studio-packaged-custody-')
+    const appRoot = path.join(root, 'dist-debug/mac-arm64/TaskWraith Debug.app')
+    const executablePath = path.join(appRoot, 'Contents/MacOS/TaskWraith Debug')
+    const files = {
+      [executablePath]: 'packaged executable',
+      [path.join(appRoot, 'Contents/Info.plist')]: 'plist',
+      [path.join(appRoot, 'Contents/Resources/app.asar')]: 'asar',
+      [path.join(
+        appRoot,
+        'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+      )]: 'companion',
+      [path.join(
+        appRoot,
+        'Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      )]: 'bridge',
+      [path.join(appRoot, 'Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist')]:
+        'bridge plist'
+    }
+    for (const [filePath, contents] of Object.entries(files)) {
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
+      await fsPromises.writeFile(filePath, contents)
+    }
+    const runtime = await packagedRuntimeFixture(root, appRoot)
+    const execFile = vi.fn(async (command: string, args: string[]) => ({
+      stdout:
+        command !== '/usr/bin/plutil'
+          ? ''
+          : args.includes('CFBundleIdentifier')
+            ? 'com.chrisizatt.taskwraith\n'
+            : args.includes('CFBundleShortVersionString') || args.includes('CFBundleVersion')
+              ? '1.9.8\n'
+              : 'TaskWraith transcribes selected media entirely on-device.\n',
+      stderr: ''
+    }))
+
+    const before = await measurePackagedStudioExecution(root, executablePath, { execFile })
+    expect(before).toMatchObject({
+      executablePath: 'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/MacOS/TaskWraith Debug',
+      companionPath:
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion',
+      bridgeDaemonPath:
+        'dist-debug/mac-arm64/TaskWraith Debug.app/Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon',
+      bridgeBundleIdentifier: 'com.chrisizatt.taskwraith',
+      bundleIdentifier: 'com.chrisizatt.taskwraith',
+      bundleShortVersion: '1.9.8',
+      bundleVersion: '1.9.8',
+      codeSignatureVerified: true
+    })
+    expect(before.bundleIdentityDigest).toMatch(/^[a-f0-9]{64}$/)
+    expect(before.runtimeCustody).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      electron: { fileCount: 3, manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
+      host: { fileCount: 1, manifestSha256: expect.stringMatching(/^[a-f0-9]{64}$/) }
+    })
+    expect(execFile).toHaveBeenCalledWith(
+      '/usr/bin/codesign',
+      ['--verify', '--deep', '--strict', appRoot],
+      { timeoutMs: 60_000 }
+    )
+
+    await runtime.pack('1.0.1')
+    const after = await measurePackagedStudioExecution(root, executablePath, { execFile })
+    expect(after.bundleIdentityDigest).not.toBe(before.bundleIdentityDigest)
+    expect(after.runtimeCustody).toEqual(before.runtimeCustody)
+
+    for (const relative of ['out/main/index.js', 'out/preload/index.js', 'out/renderer/index.html', 'out/host/cli.js']) {
+      const filePath = path.join(root, relative)
+      const original = await fsPromises.readFile(filePath)
+      await fsPromises.writeFile(filePath, 'new build bytes missing from the package')
+      await expect(measurePackagedStudioExecution(root, executablePath, { execFile })).rejects.toThrow(/runtime custody/)
+      await fsPromises.writeFile(filePath, original)
+    }
+  })
+
+  it('binds the bridge helper identity to the packaged app for the debut identity', async () => {
+    const root = await temporaryRoot('studio-packaged-bridge-identity-')
+    const appRoot = path.join(root, 'dist/mac-arm64/TaskWraith.app')
+    const executablePath = path.join(appRoot, 'Contents/MacOS/TaskWraith')
+    const bridgeInfoPlist = path.join(
+      appRoot,
+      'Contents/Helpers/TaskWraith Bridge.app/Contents/Info.plist'
+    )
+    for (const filePath of [
+      executablePath,
+      path.join(appRoot, 'Contents/Info.plist'),
+      path.join(appRoot, 'Contents/Resources/app.asar'),
+      path.join(
+        appRoot,
+        'Contents/Resources/studio/TaskWraith Studio.app/Contents/MacOS/TaskWraithStudioCompanion'
+      ),
+      path.join(
+        appRoot,
+        'Contents/Helpers/TaskWraith Bridge.app/Contents/MacOS/TaskWraithBridgeDaemon'
+      ),
+      bridgeInfoPlist
+    ]) {
+      await fsPromises.mkdir(path.dirname(filePath), { recursive: true })
+      await fsPromises.writeFile(filePath, path.basename(filePath))
+    }
+    await packagedRuntimeFixture(root, appRoot)
+    const plutil = (app: Record<string, string>, bridge: Record<string, string>) =>
+      vi.fn(async (command: string, args: string[]) => {
+        if (command !== '/usr/bin/plutil') return { stdout: '', stderr: '' }
+        const source = args.includes(bridgeInfoPlist) ? bridge : app
+        return { stdout: `${source[args[1]] ?? 'usage description'}\n`, stderr: '' }
+      })
+    const debut = {
+      CFBundleIdentifier: 'com.taskwraith.desktop',
+      CFBundleShortVersionString: '0.1.0',
+      CFBundleVersion: '0.1.0'
+    }
+
+    const aligned = await measurePackagedStudioExecution(root, executablePath, {
+      execFile: plutil(debut, debut)
+    })
+    expect(aligned).toMatchObject({
+      bundleIdentifier: 'com.taskwraith.desktop',
+      bundleShortVersion: '0.1.0',
+      bundleVersion: '0.1.0',
+      bridgeBundleIdentifier: 'com.taskwraith.desktop'
+    })
+
+    // A helper still carrying the pre-pack beta default must be rejected once
+    // the parent app has been debuted.
+    const staleBridge = {
+      CFBundleIdentifier: 'com.chrisizatt.taskwraith',
+      CFBundleShortVersionString: '1.9.8',
+      CFBundleVersion: '1.9.8'
+    }
+    await expect(
+      measurePackagedStudioExecution(root, executablePath, {
+        execFile: plutil(debut, staleBridge)
+      })
+    ).rejects.toThrow(
+      /bridge CFBundleIdentifier com\.chrisizatt\.taskwraith does not share the app bundle CFBundleIdentifier com\.taskwraith\.desktop/
+    )
+    await expect(
+      measurePackagedStudioExecution(root, executablePath, {
+        execFile: plutil(debut, { ...debut, CFBundleVersion: '0.1.0.1' })
+      })
+    ).rejects.toThrow(/bridge CFBundleVersion 0\.1\.0\.1 does not share the app bundle CFBundleVersion 0\.1\.0/)
   })
 
   it('measures current source shape and separately pinned support custody from the workspace', async () => {
@@ -5025,6 +6275,10 @@ describe('Studio acceptance harness', () => {
     expect(receipt.sourceCount).toBeGreaterThan(0)
     expect(receipt.supportHashes).toEqual(receipt.expectedSupportHashes)
     expect(receipt.runnerSha256).toMatch(/^[a-f0-9]{64}$/)
+    expect(receipt.protectedPathScope.buildInputExactPaths).toContain(
+      'design-assets/suite-app-icons/studio/app-icon.icns'
+    )
+    expect(receipt.protectedPathScope.buildInputExactPaths).not.toContain('build/icon.icns')
   }, 30_000)
 
   it('requires one source, built-artifact, fixture, and support custody conjunction before and after', () => {
@@ -5337,7 +6591,7 @@ describe('Studio acceptance harness', () => {
       instanceId: 'studioJoin01',
       generateSpeechFixture: true
     }
-    const adapters = {
+    const adapters: Record<string, any> = {
       custodyExpected,
       measureCustody: async ({ phase }: { phase: string }) => {
         calls.push(`custody.${phase}`)
@@ -5421,7 +6675,13 @@ describe('Studio acceptance harness', () => {
         calls.push('renderer.attach')
         return renderer
       },
-      invokeStudioOpen: async (_renderer: unknown, asset: { sha256: string }) => {
+      openAdapters: { timeoutMs: 120_000 },
+      invokeStudioOpen: async (
+        _renderer: unknown,
+        asset: { sha256: string },
+        openOptions: Record<string, any>
+      ) => {
+        expect(openOptions).toEqual({ timeoutMs: 120_000 })
         calls.push('preload.open')
         return { ok: true, assetId: asset.sha256 }
       },
@@ -5575,6 +6835,41 @@ describe('Studio acceptance harness', () => {
       },
       watchdogTerminal
     })
+
+    calls.length = 0
+    writtenEvidence = null
+    journeyError = null
+    adapters.buildWatchdogLaunchSpec = (plan: Record<string, any>, runArgs: Record<string, any>) => ({
+      ...buildStudioWatchdogLaunchSpec(plan, runArgs, { platform: 'linux' }),
+      launchServicesExecutable: '/virtual/TaskWraith.app/Contents/MacOS/TaskWraith'
+    })
+    adapters.adoptLaunchServicesSession = async () => {
+      calls.push('launchservices.adopt')
+      throw new Error('launchservices adoption refused')
+    }
+    await expect(
+      runStudioAcceptance({ ...args, instanceId: 'studioAdopt01' }, adapters)
+    ).rejects.toThrow(/launchservices adoption refused/)
+    expect(calls).toEqual([
+      'custody.source',
+      'fixture.generate',
+      'ports.free',
+      'build',
+      'custody.before-run',
+      'watchdog.launch',
+      'launchservices.adopt',
+      'watchdog.stop',
+      'custody.after-run',
+      'evidence.write'
+    ])
+    expect(writtenEvidence).toMatchObject({
+      ok: false,
+      verdict: 'RED',
+      failure: expect.objectContaining({ message: 'launchservices adoption refused' }),
+      watchdogTerminal
+    })
+    delete adapters.buildWatchdogLaunchSpec
+    delete adapters.adoptLaunchServicesSession
 
     calls.length = 0
     journeyError = null
@@ -6053,7 +7348,7 @@ describe('Studio acceptance harness', () => {
         ).toThrow(/window bounds are invalid/)
       })
 
-      it('rejects a screenshot that is not exactly 2x the window bounds', () => {
+      it('rejects a screenshot that has no uniform native window scale', () => {
         expect(() =>
           studioReviewHostCaptureRegion({ width: 100, height: 100 }, bounds, {
             x: 740,
@@ -6061,7 +7356,7 @@ describe('Studio acceptance harness', () => {
             width: 620,
             height: 700
           })
-        ).toThrow(/exact 2x window bounds/)
+        ).toThrow(/uniform native window scale/)
       })
 
       it('rejects a non-finite or non-positive host frame', () => {
@@ -6145,6 +7440,102 @@ describe('Studio acceptance harness', () => {
         })
         expect(Object.keys(built.actions[0])).toEqual(['type'])
       })
+
+      it('normalizes a Timeline route AXPress transition to the fixed accessibility contract', () => {
+        const target = {
+          companion: {
+            pid: 7002,
+            ppid: 7001,
+            pgid: 7001,
+            command: '/virtual/TaskWraithStudioCompanion --viewer'
+          },
+          electronPgid: 7001,
+          window: {
+            pid: 7002,
+            visibleWindowCount: 1,
+            windows: [
+              { windowId: 42, title: 'TaskWraith Studio', bounds: WORKSPACE_WINDOW_BOUNDS }
+            ]
+          },
+          artifactRoot: '/virtual/acceptance/studioWorkspaceRoute01'
+        }
+        expect(
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              {
+                type: 'press-workspace-route',
+                route: 'timeline',
+                accessibilityIdentifier: 'caller-controlled',
+                routeValueBefore: 'selected'
+              }
+            ]
+          })
+        ).toMatchObject({
+          inputDelivery: 'background-observation-only',
+          allowForegroundInput: false,
+          actions: [
+            {
+              type: 'press-workspace-route',
+              route: 'timeline',
+              accessibilityIdentifier: 'studio.workspace.route.timeline',
+              pairedAccessibilityIdentifier: 'studio.workspace.route.source',
+              accessibilityRole: 'AXCheckBox',
+              accessibilityAction: 'AXPress',
+              routeValueBefore: 'not selected',
+              routeValueAfter: 'selected',
+              pairedRouteValueBefore: 'selected',
+              pairedRouteValueAfter: 'selected'
+            }
+          ]
+        })
+        expect(
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              {
+                type: 'press-workspace-route',
+                route: 'timeline',
+                selectedAfter: false,
+                routeValueAfter: 'caller-controlled'
+              }
+            ]
+          })
+        ).toMatchObject({
+          actions: [
+            {
+              type: 'press-workspace-route',
+              route: 'timeline',
+              routeValueBefore: 'selected',
+              routeValueAfter: 'not selected',
+              pairedRouteValueBefore: 'selected',
+              pairedRouteValueAfter: 'selected'
+            }
+          ]
+        })
+        expect(() =>
+          buildStudioUiDriverRequest({
+            ...target,
+            actions: [
+              { type: 'press-workspace-route', route: 'timeline', selectedAfter: 'false' }
+            ]
+          })
+        ).toThrow(/unsupported UI action/)
+      })
+
+      it('keeps the Swift route driver exact and bidirectional', async () => {
+        const driverSource = await fsPromises.readFile(
+          path.resolve(__dirname, 'studio-acceptance-ui-driver.swift'),
+          'utf8'
+        )
+        expect(driverSource).toContain(
+          'routeValueBefore == "not selected" && routeValueAfter == "selected"'
+        )
+        expect(driverSource).toContain(
+          'routeValueBefore == "selected" && routeValueAfter == "not selected"'
+        )
+        expect(driverSource).toContain('requestedRouteTransitionIsExact,')
+      })
     })
 
     describe('Hold 1: real one-window transcript-region computation', () => {
@@ -6157,9 +7548,13 @@ describe('Studio acceptance harness', () => {
       async function makeOneWindowCapture(
         root: string,
         name: string,
-        mutate?: (image: InstanceType<typeof PNG>) => void
+        mutate?: (image: InstanceType<typeof PNG>) => void,
+        scale = 2
       ): Promise<string> {
-        const image = new PNG({ width: 2_560, height: 1_600 })
+        const image = new PNG({
+          width: oneWindowBounds.width * scale,
+          height: oneWindowBounds.height * scale
+        })
         image.data.fill(255)
         mutate?.(image)
         const destination = path.join(root, name)
@@ -6220,6 +7615,34 @@ describe('Studio acceptance harness', () => {
         expect(
           studioSourceHostOverlayCaptureRegion({ width: 2_560, height: 1_600 }, oneWindowBounds, sourceHostFrame)
         ).toEqual({ x: 0, y: 1_164, width: 1_280, height: 236 })
+      })
+
+      it('derives the same live Source band on a native 1x external display capture', async () => {
+        const sourceHostFrame = { x: 0, y: 100, width: 640, height: 600 }
+        const root = await temporaryRoot('studio-onewindow-source-overlay-1x-')
+        const before = await makeOneWindowCapture(root, 'before.png', undefined, 1)
+        const after = await makeOneWindowCapture(
+          root,
+          'after.png',
+          (image) => paintOneWindowRectangle(image, 25, 600, 10, 10),
+          1
+        )
+        expect(
+          compareStudioJourneyCaptures(
+            before,
+            after,
+            oneWindowBounds,
+            'source-host-overlay',
+            sourceHostFrame
+          )
+        ).toMatchObject({ ok: true, region: 'source-host-overlay' })
+        expect(
+          studioSourceHostOverlayCaptureRegion(
+            { width: 1_280, height: 800 },
+            oneWindowBounds,
+            sourceHostFrame
+          )
+        ).toEqual({ x: 0, y: 582, width: 640, height: 118 })
       })
 
       it('does not detect a change painted outside the live overlay band (correctly scoped, not whole-host)', async () => {

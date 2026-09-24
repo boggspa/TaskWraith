@@ -52,8 +52,11 @@ export interface StudioOpenMediaHopDeps<TAsset extends StudioOpenMediaAsset> {
    */
   onTranscriptOutcome?: (event: {
     assetId: string
+    operationId: number
     outcome: StudioTranscriptPublishOutcome
   }) => void
+  /** Announces the asynchronous recognizer before the media-open call returns. */
+  onTranscriptStarted?: (event: { assetId: string; operationId: number }) => void
   /** Test seam only; production uses the real adapter. */
   publishTranscript?: typeof publishStudioTranscriptForAsset
 }
@@ -63,6 +66,7 @@ export type StudioOpenMediaResult = { ok: true } | { ok: false; error: string }
 export function createStudioOpenInStudioHandler<TAsset extends StudioOpenMediaAsset>(
   deps: StudioOpenMediaHopDeps<TAsset>
 ): (asset: TAsset) => Promise<StudioOpenMediaResult> {
+  let nextTranscriptOperationId = 1
   return async (asset) => {
     const lifecycle = deps.getLifecycle()
     if (!lifecycle) return { ok: false, error: 'Studio companion is unavailable.' }
@@ -75,6 +79,12 @@ export function createStudioOpenInStudioHandler<TAsset extends StudioOpenMediaAs
     // a silent clip must never fail the operator's media open. The result is
     // reported rather than swallowed.
     const publish = deps.publishTranscript ?? publishStudioTranscriptForAsset
+    const operationId = nextTranscriptOperationId++
+    try {
+      deps.onTranscriptStarted?.({ assetId: asset.assetId, operationId })
+    } catch {
+      // Status observers are advisory and cannot reverse a successful media open.
+    }
     void publish(
       {
         transcribe: deps.transcribe,
@@ -83,19 +93,28 @@ export function createStudioOpenInStudioHandler<TAsset extends StudioOpenMediaAs
       { assetId: asset.assetId, path: asset.path }
     )
       .then((outcome) => {
-        deps.onTranscriptOutcome?.({ assetId: asset.assetId, outcome })
+        try {
+          deps.onTranscriptOutcome?.({ assetId: asset.assetId, operationId, outcome })
+        } catch {
+          // A renderer/status observer cannot change transcript publication.
+        }
       })
       .catch((error: unknown) => {
         // The adapter resolves its own failures, so reaching here means the
         // publication path itself threw. Report it rather than losing it.
-        deps.onTranscriptOutcome?.({
-          assetId: asset.assetId,
-          outcome: {
-            ok: false,
-            code: 'transcribe_failed',
-            message: error instanceof Error ? error.message : String(error)
-          }
-        })
+        try {
+          deps.onTranscriptOutcome?.({
+            assetId: asset.assetId,
+            operationId,
+            outcome: {
+              ok: false,
+              code: 'transcribe_failed',
+              message: error instanceof Error ? error.message : String(error)
+            }
+          })
+        } catch {
+          // Preserve the original publication failure; do not report twice.
+        }
       })
 
     return { ok: true }

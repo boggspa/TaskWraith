@@ -42,6 +42,19 @@ final class StudioProposalSessionTests: XCTestCase {
         ]
     }
 
+    private func materializedTracks() -> [[String: Any]] {
+        [[
+            "trackId": "V1", "kind": "video",
+            "items": [[
+                "itemId": "item-1", "assetId": "asset-1",
+                "sourceIn": ["n": 10, "d": 3],
+                "sourceOut": ["n": 14, "d": 3],
+                "position": ["n": 20, "d": 3],
+                "duration": ["n": 4, "d": 3],
+            ] as [String: Any]],
+        ]]
+    }
+
     // MARK: - End to end
 
     func testAProposeEditCommitBecomesDrawableGhostGeometry() throws {
@@ -78,15 +91,125 @@ final class StudioProposalSessionTests: XCTestCase {
         for decision in ["accept", "reject"] {
             let session = StudioCompanionSession()
             _ = session.consume(chunk: try line(proposeOp()))
+            var resolution: [String: Any] = [
+                "type": "resolve_proposal", "proposalId": "p-1", "decision": decision,
+            ]
+            if decision == "accept" {
+                resolution["appliedOp"] = (proposeOp()["proposal"] as! [String: Any])["op"]
+                resolution["tracks"] = materializedTracks()
+            }
             let step = session.consume(
-                chunk: try line(
-                    ["type": "resolve_proposal", "proposalId": "p-1", "decision": decision],
-                    revision: 3
-                )
+                chunk: try line(resolution, revision: 3)
             )
             XCTAssertEqual(step.resolvedProposalIds, ["p-1"], "decision \(decision)")
+            XCTAssertEqual(step.acceptedInserts.count, decision == "accept" ? 1 : 0)
+            if decision == "accept" {
+                XCTAssertEqual(step.acceptedInserts.first?.appliedOp.itemId, "item-1")
+                XCTAssertEqual(step.acceptedInserts.first?.sequence.items.first?.itemId, "item-1")
+                XCTAssertEqual(step.acceptedInserts.first?.sequence.items.first?.startTicks, 6667)
+            }
             XCTAssertEqual(session.resolvedProposalCount, 1)
         }
+    }
+
+    func testMalformedOrMissingAcceptedAppliedOpIsObservableAndNeverSurfaced() throws {
+        let valid = (proposeOp()["proposal"] as! [String: Any])["op"] as! [String: Any]
+        var unexpected = valid
+        unexpected["unexpected"] = true
+        var fractional = valid
+        fractional["sourceIn"] = ["n": 0.5, "d": 30]
+        for appliedOp in [
+            nil,
+            ["type": "insert_range", "itemId": "bad"],
+            unexpected,
+            fractional,
+        ] as [Any?] {
+            let session = StudioCompanionSession()
+            var resolution: [String: Any] = [
+                "type": "resolve_proposal", "proposalId": "p-1", "decision": "accept",
+            ]
+            if let appliedOp { resolution["appliedOp"] = appliedOp }
+            let step = session.consume(chunk: try line(resolution, revision: 3))
+            XCTAssertTrue(step.resolvedProposalIds.isEmpty)
+            XCTAssertTrue(step.acceptedInserts.isEmpty)
+            XCTAssertEqual(step.protocolErrors.count, 1)
+            XCTAssertNil(session.latestRevision)
+        }
+
+        let rejectWithApplied = StudioCompanionSession().consume(
+            chunk: try line([
+                "type": "resolve_proposal", "proposalId": "p-1", "decision": "reject",
+                "appliedOp": valid,
+            ], revision: 3))
+        XCTAssertTrue(rejectWithApplied.acceptedInserts.isEmpty)
+        XCTAssertTrue(rejectWithApplied.resolvedProposalIds.isEmpty)
+        XCTAssertEqual(rejectWithApplied.protocolErrors.count, 1)
+    }
+
+    func testHostImpossibleAcceptedOperationsNeverSurfaceOrAdvanceRevision() throws {
+        let valid = (proposeOp()["proposal"] as! [String: Any])["op"] as! [String: Any]
+        var tinyNegative = valid
+        tinyNegative["sourceIn"] = ["n": -1, "d": 9_007_199_254_740_991]
+        var nonPositiveRate = valid
+        nonPositiveRate["assetFrameRate"] = ["n": 0, "d": 1]
+        var misalignedRate = valid
+        misalignedRate["assetFrameRate"] = ["n": 30, "d": 1]
+        misalignedRate["sourceIn"] = ["n": 0, "d": 1]
+        misalignedRate["sourceOut"] = ["n": 1, "d": 31]
+        var nestedExtra = valid
+        nestedExtra["sourceIn"] = ["n": 0, "d": 30, "extra": 1]
+
+        for operation in [tinyNegative, nonPositiveRate, misalignedRate, nestedExtra] {
+            let session = StudioCompanionSession()
+            let step = session.consume(chunk: try line([
+                "type": "resolve_proposal", "proposalId": "p-1", "decision": "accept",
+                "appliedOp": operation,
+            ], revision: 3))
+            XCTAssertTrue(step.acceptedInserts.isEmpty)
+            XCTAssertTrue(step.resolvedProposalIds.isEmpty)
+            XCTAssertEqual(step.protocolErrors.count, 1)
+            XCTAssertNil(session.latestRevision)
+        }
+    }
+
+    func testAcceptedResolutionRequiresAnExactSafeRevision() throws {
+        let operation = (proposeOp()["proposal"] as! [String: Any])["op"]!
+        for revision in [nil, "3", -1, 9_007_199_254_740_992] as [Any?] {
+            var params: [String: Any] = [
+                "op": [
+                    "type": "resolve_proposal", "proposalId": "p-1",
+                    "decision": "accept", "appliedOp": operation,
+                ],
+            ]
+            if let revision { params["revision"] = revision }
+            var data = try JSONSerialization.data(withJSONObject: [
+                "jsonrpc": "2.0", "method": "studio/editCommitted", "params": params,
+            ])
+            data.append(0x0A)
+            let session = StudioCompanionSession()
+            let step = session.consume(chunk: data)
+            XCTAssertTrue(step.acceptedInserts.isEmpty)
+            XCTAssertTrue(step.resolvedProposalIds.isEmpty)
+            XCTAssertEqual(step.protocolErrors.count, 1)
+            XCTAssertNil(session.latestRevision)
+        }
+    }
+
+    func testAcceptedOperationMustMatchItsMaterializedTrackIdentityAndTimes() throws {
+        let operation = (proposeOp()["proposal"] as! [String: Any])["op"]!
+        var mismatchedTracks = materializedTracks()
+        var items = mismatchedTracks[0]["items"] as! [[String: Any]]
+        items[0]["position"] = ["n": 21, "d": 3]
+        mismatchedTracks[0]["items"] = items
+        let session = StudioCompanionSession()
+        let step = session.consume(chunk: try line([
+            "type": "resolve_proposal", "proposalId": "p-1", "decision": "accept",
+            "appliedOp": operation, "tracks": mismatchedTracks,
+        ], revision: 3))
+        XCTAssertTrue(step.acceptedInserts.isEmpty)
+        XCTAssertTrue(step.resolvedProposalIds.isEmpty)
+        XCTAssertEqual(step.protocolErrors.count, 1)
+        XCTAssertNil(session.latestRevision)
     }
 
     // MARK: - Operations sharing the notification

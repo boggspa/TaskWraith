@@ -19,6 +19,10 @@ mac:
   # overrides the whole `mac.extendInfo` block from the parent rather
   # than merging it field-by-field.
   extendInfo:
+    # Keep the permission/TCC identity stable even though the filesystem app
+    # and executable remain visibly named "TaskWraith Debug".
+    CFBundleName: TaskWraith
+    CFBundleDisplayName: TaskWraith
     LSUIElement: true
     NSCameraUsageDescription: TaskWraith Debug requests access to the device's camera.
     NSMicrophoneUsageDescription: TaskWraith Debug requests access to the device's microphone.

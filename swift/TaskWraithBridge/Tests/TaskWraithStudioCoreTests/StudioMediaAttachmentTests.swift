@@ -159,6 +159,45 @@ final class StudioMediaAttachmentTests: XCTestCase {
         XCTAssertEqual(attachment.failedCount, 0)
     }
 
+    func testTwoAttachmentsShareOnePoolDecoderAndReleaseOnFinalDetach() async throws {
+        let device = try makeDevice()
+        let url = StudioTestMedia.makeTemporaryMovieURL()
+        defer { try? FileManager.default.removeItem(at: url) }
+        try await StudioTestMedia.writeFlatMovie(
+            lumaLevels: [32, 96, 160],
+            to: url,
+            forceKeyFrames: false
+        )
+        let pool = StudioMediaSourcePool(device: device)
+        let sourceRenderer = try StudioViewerRenderer(device: device)
+        let reviewRenderer = try StudioViewerRenderer(device: device)
+        let source = StudioMediaAttachment(renderer: sourceRenderer, sourcePool: pool)
+        let review = StudioMediaAttachment(renderer: reviewRenderer, sourcePool: pool)
+        let asset = StudioMediaAsset(assetId: "shared", path: url.path, mediaKind: .video)
+
+        let sourceOutcome = await source.attach(asset: asset)
+        let reviewOutcome = await review.attach(asset: asset)
+        XCTAssertTrue(sourceOutcome.didAttach)
+        XCTAssertTrue(reviewOutcome.didAttach)
+        XCTAssertEqual(pool.residentDecoderCount, 1)
+        XCTAssertEqual(pool.decoderCreationCount, 1)
+        let target = try StudioTestPatternRenderer.makeOffscreenTarget(
+            device: device,
+            width: 128,
+            height: 128
+        )
+        _ = sourceRenderer.render(snapshot: snapshot(frame: 0, timebase: .pal25), to: target)
+        _ = reviewRenderer.render(snapshot: snapshot(frame: 0, timebase: .pal25), to: target)
+        XCTAssertEqual(pool.liveIOSurfaceCapacity, StudioVideoFrameSource.defaultReorderCacheDepth)
+        XCTAssertFalse(pool.liveIOSurfaceIDs.isEmpty)
+
+        source.detach()
+        XCTAssertEqual(pool.residentDecoderCount, 1)
+        review.detach()
+        XCTAssertEqual(pool.residentDecoderCount, 0)
+        XCTAssertTrue(pool.liveIOSurfaceIDs.isEmpty)
+    }
+
     /// THE ACCEPTANCE PATH, WITH THE TRANSPORT VISIBLE. Same chain as above, but
     /// the frame is composited under the on-screen HUD, which is what the viewer
     /// actually presents.

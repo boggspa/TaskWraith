@@ -28,6 +28,9 @@ async function validateNativeModules(context) {
   const arch = normalizeArch(context.arch || process.arch)
   const expectedMacArchs = platform === 'darwin' ? expectedMacArchitectures(context, arch) : []
 
+  if (platform === 'darwin') {
+    normalizeMacElectronHelperBundles(resourcesDir, context)
+  }
   if (platform === 'darwin' && expectedMacArchs.length > 1) {
     removeHostOnlyNodePtyBuildBinding(unpackedDir, expectedMacArchs)
   }
@@ -62,13 +65,23 @@ async function validateNativeModules(context) {
     validateWindowsClaudeAgentSdkBinaries(unpackedDir, arch)
   }
 
-  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded
-  // as an extraResource. The mac build chains run
+  // macOS-only: confirm the Swift TaskWraithBridgeDaemon was embedded inside
+  // a real Contents/Helpers app bundle. The mac build chains run
   // `prebuild:bridge-daemon` before electron-builder; this is the safety
   // net that surfaces a clear error if the binary failed to land in the
   // bundle for any reason (broken swift toolchain, missing config, etc.).
   if (platform === 'darwin') {
-    const daemonPath = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
+    // The helper is built once by `prebuild:bridge-daemon` with a pre-pack
+    // default identity. The packaged parent Info.plist is the authority for
+    // CFBundleIdentifier and both version strings (beta vs debut appId, build
+    // number), so copy them into the helper here — before signing — and then
+    // validate the helper against the parent rather than against any literal.
+    const parentIdentity = readMacBundleIdentity(resourcesDir, context)
+    const bridgeInfoPath = resolveMacBridgeInfoPath(resourcesDir)
+    alignMacBridgeHelperIdentity(resourcesDir, parentIdentity)
+    const bridgeInfo = readPlistAsJson(bridgeInfoPath, 'TaskWraith Bridge Info.plist')
+    validateMacBridgeInfo(bridgeInfo, bridgeInfoPath, parentIdentity)
+    const daemonPath = resolveMacBridgeDaemonPath(resourcesDir)
     if (!fs.existsSync(daemonPath)) {
       throw new Error(
         `TaskWraithBridgeDaemon was not packaged at ${daemonPath}. Did \`npm run prebuild:bridge-daemon\` run before electron-builder?`
@@ -99,6 +112,263 @@ async function validateNativeModules(context) {
   )
 
   await hardenElectronFuses(context, resourcesDir)
+}
+
+const MAC_ELECTRON_HELPER_SUFFIXES = ['', ' (GPU)', ' (Plugin)', ' (Renderer)']
+
+function normalizeMacElectronHelperBundles(resourcesDir, context) {
+  const contentsDir = path.dirname(resourcesDir)
+  const frameworksDir = path.join(contentsDir, 'Frameworks')
+  const mainInfoPath = path.join(contentsDir, 'Info.plist')
+  const mainInfo = readPlistAsJson(mainInfoPath, 'packaged app Info.plist')
+  const permissionName = boundedBundleName(mainInfo.CFBundleName, 'CFBundleName')
+  const appInfo = context.packager && context.packager.appInfo
+  const productFilename = boundedBundleName(
+    appInfo && (appInfo.productFilename || appInfo.productName),
+    'electron-builder product filename'
+  )
+  const normalized = []
+
+  for (const suffix of MAC_ELECTRON_HELPER_SUFFIXES) {
+    const sourceName = `${productFilename} Helper${suffix}`
+    const targetName = `${permissionName} Helper${suffix}`
+    const sourceApp = path.join(frameworksDir, `${sourceName}.app`)
+    const targetApp = path.join(frameworksDir, `${targetName}.app`)
+    let changed = false
+
+    if (sourceApp !== targetApp) {
+      if (fs.existsSync(sourceApp) && fs.existsSync(targetApp)) {
+        throw new Error(`Electron helper normalization found both ${sourceApp} and ${targetApp}.`)
+      }
+      if (fs.existsSync(sourceApp)) {
+        fs.renameSync(sourceApp, targetApp)
+        changed = true
+      } else if (!fs.existsSync(targetApp)) {
+        throw new Error(`Electron helper bundle is missing: ${sourceApp}`)
+      }
+    } else if (!fs.existsSync(targetApp)) {
+      throw new Error(`Electron helper bundle is missing: ${targetApp}`)
+    }
+
+    const macosDir = path.join(targetApp, 'Contents', 'MacOS')
+    const sourceExecutable = path.join(macosDir, sourceName)
+    const targetExecutable = path.join(macosDir, targetName)
+    if (sourceExecutable !== targetExecutable) {
+      if (fs.existsSync(sourceExecutable) && fs.existsSync(targetExecutable)) {
+        throw new Error(
+          `Electron helper normalization found both ${sourceExecutable} and ${targetExecutable}.`
+        )
+      }
+      if (fs.existsSync(sourceExecutable)) {
+        fs.renameSync(sourceExecutable, targetExecutable)
+        changed = true
+      } else if (!fs.existsSync(targetExecutable)) {
+        throw new Error(`Electron helper executable is missing: ${sourceExecutable}`)
+      }
+    } else if (!fs.existsSync(targetExecutable)) {
+      throw new Error(`Electron helper executable is missing: ${targetExecutable}`)
+    }
+
+    const helperInfoPath = path.join(targetApp, 'Contents', 'Info.plist')
+    const helperInfo = readPlistAsJson(helperInfoPath, `${targetName} Info.plist`)
+    if (helperInfo.CFBundleExecutable !== targetName) {
+      replacePlistString(helperInfoPath, 'CFBundleExecutable', targetName)
+      changed = true
+    }
+    if (helperInfo.CFBundleDisplayName !== targetName) {
+      replacePlistString(helperInfoPath, 'CFBundleDisplayName', targetName)
+      changed = true
+    }
+    const normalizedInfo = readPlistAsJson(helperInfoPath, `${targetName} Info.plist`)
+    if (
+      normalizedInfo.CFBundleExecutable !== targetName ||
+      normalizedInfo.CFBundleDisplayName !== targetName
+    ) {
+      throw new Error(`Electron helper metadata did not normalize: ${helperInfoPath}`)
+    }
+    normalized.push({ sourceName, targetName, changed })
+  }
+
+  if (normalized.some((entry) => entry.changed)) {
+    console.log(`Normalized Electron helper bundles for permission identity ${permissionName}.`)
+  }
+  return { permissionName, productFilename, helpers: normalized }
+}
+
+function boundedBundleName(value, label) {
+  if (
+    typeof value !== 'string' ||
+    value.length < 1 ||
+    value.length > 100 ||
+    value !== value.trim() ||
+    value.includes('/') ||
+    value.includes('\\') ||
+    value.includes('\0') ||
+    value === '.' ||
+    value === '..'
+  ) {
+    throw new Error(`${label} is not a bounded macOS bundle name.`)
+  }
+  return value
+}
+
+function replacePlistString(plistPath, key, value) {
+  const result = spawnSync('/usr/bin/plutil', ['-replace', key, '-string', value, plistPath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    throw new Error(`Could not update ${key} in ${plistPath}.${detail ? `\n${detail}` : ''}`)
+  }
+}
+
+function resolveMacBridgeInfoPath(resourcesDir) {
+  return path.join(
+    path.dirname(resourcesDir),
+    'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'Info.plist'
+  )
+}
+
+// Parent-app fields the bridge helper must mirror exactly. The helper shares
+// the app's TCC consent identity, so its identifier and both version strings
+// are copied from the packaged parent Info.plist rather than hard-coded.
+const MAC_BUNDLE_IDENTITY_KEYS = Object.freeze([
+  ['bundleIdentifier', 'CFBundleIdentifier'],
+  ['shortVersion', 'CFBundleShortVersionString'],
+  ['bundleVersion', 'CFBundleVersion']
+])
+
+function validateMacBridgeInfo(info, infoPath, expected) {
+  if (!expected || typeof expected !== 'object') {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} cannot be validated without the parent app bundle identity.`
+    )
+  }
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const want = expected[field]
+    if (typeof want !== 'string' || want.trim().length === 0) {
+      throw new Error(
+        `Parent app bundle identity is missing ${key}; refusing to validate TaskWraith Bridge at ${infoPath}.`
+      )
+    }
+    if (info[key] !== want) {
+      throw new Error(
+        `TaskWraith Bridge at ${infoPath} must share parent ${key} ${want}, got ${String(info[key])}.`
+      )
+    }
+  }
+  if (info.CFBundleExecutable !== 'TaskWraithBridgeDaemon') {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} must declare TaskWraithBridgeDaemon as CFBundleExecutable.`
+    )
+  }
+  if (
+    typeof info.NSSpeechRecognitionUsageDescription !== 'string' ||
+    info.NSSpeechRecognitionUsageDescription.trim().length === 0
+  ) {
+    throw new Error(
+      `TaskWraith Bridge at ${infoPath} must declare a non-empty NSSpeechRecognitionUsageDescription.`
+    )
+  }
+}
+
+function bundleIdentityFromInfo(info, infoPath) {
+  const identity = {}
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const value = info && info[key]
+    if (typeof value !== 'string' || value.trim().length === 0 || value !== value.trim()) {
+      throw new Error(`${infoPath} must declare a non-empty ${key}.`)
+    }
+    identity[field] = value
+  }
+  return identity
+}
+
+/**
+ * Read the packaged parent app's bundle identity from its finalized
+ * Contents/Info.plist. electron-builder has already applied appId, version
+ * normalization and the build number by afterPack, so the plist is the
+ * authority; the packager's resolved appId is only cross-checked against it.
+ */
+function readMacBundleIdentity(resourcesDir, context) {
+  const infoPath = path.join(path.dirname(resourcesDir), 'Info.plist')
+  const info = readPlistAsJson(infoPath, 'packaged app Info.plist')
+  const identity = bundleIdentityFromInfo(info, infoPath)
+  const appInfo = context && context.packager && context.packager.appInfo
+  const resolvedAppId = appInfo && typeof appInfo.id === 'string' ? appInfo.id.trim() : ''
+  if (resolvedAppId && resolvedAppId !== identity.bundleIdentifier) {
+    throw new Error(
+      `packaged app Info.plist at ${infoPath} declares CFBundleIdentifier ${identity.bundleIdentifier} but electron-builder resolved appId ${resolvedAppId}.`
+    )
+  }
+  return identity
+}
+
+/**
+ * Copy the parent identity into the TaskWraith Bridge helper Info.plist.
+ * Idempotent: only keys that differ are rewritten, so running it again on an
+ * already-aligned helper (or on both slices of a universal merge) is a no-op.
+ * Every other helper key — executable, name, consent descriptions — is left
+ * exactly as build-bridge-daemon.cjs wrote it.
+ */
+function alignMacBridgeHelperIdentity(resourcesDir, expected) {
+  const infoPath = resolveMacBridgeInfoPath(resourcesDir)
+  const before = readPlistAsJson(infoPath, 'TaskWraith Bridge Info.plist')
+  const rewritten = []
+  for (const [field, key] of MAC_BUNDLE_IDENTITY_KEYS) {
+    const want = expected && expected[field]
+    if (typeof want !== 'string' || want.trim().length === 0) {
+      throw new Error(`Parent app bundle identity is missing ${key}; cannot align ${infoPath}.`)
+    }
+    if (before[key] !== want) {
+      replacePlistString(infoPath, key, want)
+      rewritten.push(key)
+    }
+  }
+  const after = readPlistAsJson(infoPath, 'TaskWraith Bridge Info.plist')
+  validateMacBridgeInfo(after, infoPath, expected)
+  if (rewritten.length > 0) {
+    console.log(
+      `Aligned TaskWraith Bridge identity (${rewritten.join(', ')}) with ${expected.bundleIdentifier} ${expected.shortVersion} (${expected.bundleVersion}).`
+    )
+  }
+  return {
+    infoPath,
+    changed: rewritten.length > 0,
+    rewritten,
+    identity: bundleIdentityFromInfo(after, infoPath)
+  }
+}
+
+function readPlistAsJson(plistPath, label) {
+  const result = spawnSync('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    throw new Error(`Could not read ${label}.${detail ? `\n${detail}` : ''}`)
+  }
+  try {
+    return JSON.parse(result.stdout)
+  } catch (error) {
+    throw new Error(
+      `${label} did not decode as JSON: ${error instanceof Error ? error.message : String(error)}`
+    )
+  }
+}
+
+function resolveMacBridgeDaemonPath(resourcesDir) {
+  return path.join(
+    path.dirname(resourcesDir),
+    'Helpers',
+    'TaskWraith Bridge.app',
+    'Contents',
+    'MacOS',
+    'TaskWraithBridgeDaemon'
+  )
 }
 
 function validatePackagedTuiRuntime(resourcesDir, platform, arch, expectedMacArchs) {
@@ -593,3 +863,11 @@ function formatBytes(bytes) {
 
 module.exports = validateNativeModules
 module.exports.default = validateNativeModules
+module.exports.resolveMacBridgeDaemonPath = resolveMacBridgeDaemonPath
+module.exports.resolveMacBridgeInfoPath = resolveMacBridgeInfoPath
+module.exports.validateMacBridgeInfo = validateMacBridgeInfo
+module.exports.normalizeMacElectronHelperBundles = normalizeMacElectronHelperBundles
+module.exports.readPlistAsJson = readPlistAsJson
+module.exports.bundleIdentityFromInfo = bundleIdentityFromInfo
+module.exports.readMacBundleIdentity = readMacBundleIdentity
+module.exports.alignMacBridgeHelperIdentity = alignMacBridgeHelperIdentity

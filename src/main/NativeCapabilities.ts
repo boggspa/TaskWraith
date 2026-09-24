@@ -3,6 +3,7 @@ import os from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { buildRuntimeFeatureGateSnapshot, type RuntimeFeatureGateSnapshot } from '../shared/runtimeFeatureGates'
+import { resolvePackagedBridgeDaemonPath } from './BridgeDaemonBinaryPath'
 import { getHostToolSnapshot, type HostToolSnapshot } from './HostToolResolver'
 
 export interface NativeFeatureCapability {
@@ -145,10 +146,8 @@ export function resolveBridgeDaemonBinaryPath(input: {
   dirname?: string
 } = {}): string {
   const resourcesPath = input.resourcesPath || process.resourcesPath
-  if (resourcesPath) {
-    const bundled = join(resourcesPath, 'bridge', 'TaskWraithBridgeDaemon')
-    if (existsSync(bundled)) return bundled
-  }
+  const bundled = resolvePackagedBridgeDaemonPath(resourcesPath)
+  if (bundled) return bundled
   const dirname = input.dirname || __dirname
   const devDebug = join(
     dirname,

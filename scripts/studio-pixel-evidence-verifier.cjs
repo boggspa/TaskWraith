@@ -88,6 +88,37 @@ function bilinearChannel(image, x, y, channel) {
   return (1 - yWeight) * topValue + yWeight * bottomValue
 }
 
+function twiceBilinearChannel(
+  image,
+  projectedX,
+  projectedY,
+  channel,
+  intermediateWidth,
+  intermediateHeight,
+  projectedWidth,
+  projectedHeight
+) {
+  const intermediateX = ((projectedX + 0.5) * intermediateWidth) / projectedWidth - 0.5
+  const intermediateY = ((projectedY + 0.5) * intermediateHeight) / projectedHeight - 0.5
+  const left = Math.floor(intermediateX)
+  const top = Math.floor(intermediateY)
+  const xWeight = intermediateX - left
+  const yWeight = intermediateY - top
+  const sampleIntermediate = (x, y) =>
+    bilinearChannel(
+      image,
+      ((x + 0.5) * image.width) / intermediateWidth - 0.5,
+      ((y + 0.5) * image.height) / intermediateHeight - 0.5,
+      channel
+    )
+  const topValue =
+    (1 - xWeight) * sampleIntermediate(left, top) + xWeight * sampleIntermediate(left + 1, top)
+  const bottomValue =
+    (1 - xWeight) * sampleIntermediate(left, top + 1) +
+    xWeight * sampleIntermediate(left + 1, top + 1)
+  return (1 - yWeight) * topValue + yWeight * bottomValue
+}
+
 function quantile(sortedValues, fraction) {
   invariant(sortedValues.length > 0, 'pixel comparison produced no residuals')
   return sortedValues[Math.min(sortedValues.length - 1, Math.floor(sortedValues.length * fraction))]
@@ -121,15 +152,177 @@ function boundedCaptureExtent(capture) {
   return { x: 0, y: 0, width: maximumX + 1, height: maximumY + 1 }
 }
 
+function opaqueCaptureProjection(capture, windowWidth, windowHeight) {
+  let minimumX = capture.width
+  let minimumY = capture.height
+  let maximumX = -1
+  let maximumY = -1
+  for (let y = 0; y < capture.height; y += 1) {
+    for (let x = 0; x < capture.width; x += 1) {
+      if (capture.data[(y * capture.width + x) * 4 + 3] < 200) continue
+      minimumX = Math.min(minimumX, x)
+      minimumY = Math.min(minimumY, y)
+      maximumX = Math.max(maximumX, x)
+      maximumY = Math.max(maximumY, y)
+    }
+  }
+  if (maximumX < minimumX || maximumY < minimumY) return null
+  const extent = {
+    x: minimumX,
+    y: minimumY,
+    width: maximumX - minimumX + 1,
+    height: maximumY - minimumY + 1
+  }
+  const scaleX = extent.width / windowWidth
+  const scaleY = extent.height / windowHeight
+  const uniformTolerance = Math.max(0.001, 3 / Math.min(windowWidth, windowHeight))
+  const materiallyInset =
+    extent.width <= capture.width * 0.98 && extent.height <= capture.height * 0.98
+  if (
+    !materiallyInset ||
+    scaleX < 0.5 ||
+    scaleX > 4 ||
+    scaleY < 0.5 ||
+    scaleY > 4 ||
+    Math.abs(scaleX - scaleY) > uniformTolerance
+  ) {
+    return null
+  }
+  return { extent, scaleX, scaleY, uniformTolerance }
+}
+
+function validateSourceHostFrame(sourceHostFrame, windowBounds) {
+  invariant(
+    sourceHostFrame && typeof sourceHostFrame === 'object' && !Array.isArray(sourceHostFrame),
+    'source host frame is malformed'
+  )
+  const keys = Object.keys(sourceHostFrame).sort()
+  invariant(
+    exactJson(keys, ['height', 'width', 'x', 'y']),
+    'source host frame has malformed fields'
+  )
+  const windowX = Number(windowBounds?.x)
+  const windowY = Number(windowBounds?.y)
+  const windowWidth = Number(windowBounds?.width)
+  const windowHeight = Number(windowBounds?.height)
+  const values = [
+    sourceHostFrame.x,
+    sourceHostFrame.y,
+    sourceHostFrame.width,
+    sourceHostFrame.height,
+    windowX,
+    windowY,
+    windowWidth,
+    windowHeight
+  ]
+  invariant(
+    values.every((value) => typeof value === 'number' && Number.isFinite(value)),
+    'source host frame or window bounds are not finite logical numbers'
+  )
+  invariant(
+    sourceHostFrame.width > 0 && sourceHostFrame.height > 0,
+    'source host frame dimensions are invalid'
+  )
+  invariant(
+    sourceHostFrame.x >= windowX &&
+      sourceHostFrame.y >= windowY &&
+      sourceHostFrame.x + sourceHostFrame.width <= windowX + windowWidth &&
+      sourceHostFrame.y + sourceHostFrame.height <= windowY + windowHeight,
+    'source host frame is outside immutable window bounds'
+  )
+  invariant(
+    !(
+      sourceHostFrame.x === windowX &&
+      sourceHostFrame.y === windowY &&
+      sourceHostFrame.width === windowWidth &&
+      sourceHostFrame.height === windowHeight
+    ),
+    'source host frame must not equal the full immutable window'
+  )
+  return {
+    x: sourceHostFrame.x,
+    y: sourceHostFrame.y,
+    width: sourceHostFrame.width,
+    height: sourceHostFrame.height
+  }
+}
+
+function sourceHostWindowEdgeInsets(sourceHostFrame, windowBounds) {
+  const close = (left, right) =>
+    Math.abs(left - right) <= 1e-6 * Math.max(1, Math.abs(left), Math.abs(right))
+  return {
+    left: close(sourceHostFrame.x, windowBounds.x) ? 1 : 0,
+    top: close(sourceHostFrame.y, windowBounds.y) ? 1 : 0,
+    right: close(sourceHostFrame.x + sourceHostFrame.width, windowBounds.x + windowBounds.width)
+      ? 1
+      : 0,
+    bottom: close(sourceHostFrame.y + sourceHostFrame.height, windowBounds.y + windowBounds.height)
+      ? 1
+      : 0
+  }
+}
+
+function projectedHostPixelEdge(
+  globalLogicalEdge,
+  globalWindowOrigin,
+  scale,
+  edgeInset,
+  leading,
+  opaqueProjection,
+  opaquePolicy
+) {
+  const projected = (globalLogicalEdge - globalWindowOrigin) * scale
+  if (!opaqueProjection || opaquePolicy === 'round-local') {
+    return Math.round(projected) + (leading ? edgeInset : -edgeInset)
+  }
+  invariant(opaquePolicy === 'floor-local', 'unknown opaque host-pixel edge policy')
+  if (leading) return Math.floor(projected) + edgeInset
+  return (edgeInset > 0 ? Math.ceil(projected) : Math.floor(projected)) - edgeInset
+}
+
+function visualThresholdScore(comparison) {
+  const metrics = comparison.metrics
+  const thresholds = comparison.thresholds
+  return Math.max(
+    metrics.meanAbsoluteChannelResidual / thresholds.maximumMeanAbsoluteChannelResidual,
+    metrics.p99ChannelResidual / thresholds.maximumP99ChannelResidual,
+    metrics.fractionAbove40 / thresholds.maximumFractionAbove40,
+    metrics.fractionAbove80 / thresholds.maximumFractionAbove80
+  )
+}
+
+function selectOpaqueHostPixelCandidate(candidates) {
+  const clean = candidates.filter((candidate) => candidate.comparison.clean)
+  const eligible = clean.length > 0 ? clean : candidates
+  const selected = [...eligible].sort(
+    (left, right) =>
+      visualThresholdScore(left.comparison) - visualThresholdScore(right.comparison) ||
+      left.policy.localeCompare(right.policy)
+  )[0]
+  return {
+    selected,
+    receipt: {
+      selectedPolicy: selected.policy,
+      cleanCandidateCount: clean.length,
+      candidates: candidates.map(({ policy, comparison }) => ({
+        policy,
+        clean: comparison.clean,
+        thresholdScore: visualThresholdScore(comparison),
+        hostPixelEdges: comparison.registration.hostPixelEdges,
+        metrics: comparison.metrics
+      }))
+    }
+  }
+}
+
 function compareWindowCaptureToReference(capturePath, referencePath, windowBounds, options = {}) {
   const capture = PNG.sync.read(fs.readFileSync(capturePath))
   const reference = PNG.sync.read(fs.readFileSync(referencePath))
-  const captureExtent = boundedCaptureExtent(capture)
   const windowWidth = Number(windowBounds?.width)
   const windowHeight = Number(windowBounds?.height)
   invariant(
-    Number.isInteger(windowWidth) &&
-      Number.isInteger(windowHeight) &&
+    Number.isFinite(windowWidth) &&
+      Number.isFinite(windowHeight) &&
       windowWidth > 0 &&
       windowHeight > 0,
     'visual checkpoint window bounds are invalid'
@@ -141,61 +334,205 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     'visual reference is not a 16:9 frame'
   )
 
-  const logicalVideoWidth = windowWidth
-  const logicalVideoHeight = Math.round((logicalVideoWidth * reference.height) / reference.width)
+  const sourceHostFrame = options.sourceHostFrame
+    ? validateSourceHostFrame(options.sourceHostFrame, windowBounds)
+    : null
+  const logicalVideoWidth = sourceHostFrame ? sourceHostFrame.width : windowWidth
+  const logicalVideoHeight = sourceHostFrame
+    ? sourceHostFrame.height
+    : Math.round((logicalVideoWidth * reference.height) / reference.width)
   const logicalTitleBarHeight = windowHeight - logicalVideoHeight
   invariant(
-    logicalTitleBarHeight >= 20 && logicalTitleBarHeight <= 40,
+    sourceHostFrame || (logicalTitleBarHeight >= 20 && logicalTitleBarHeight <= 40),
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
-  const scaleCandidates = [1, 2, 3, 4]
-    .map((backingScale) => {
-      const scaledWindowWidth = windowWidth * backingScale
-      const scaledWindowHeight = windowHeight * backingScale
-      const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
-      const verticalShadowPixels = captureExtent.height - scaledWindowHeight
-      const shadowless = verticalShadowPixels === 0
-      const boundedWindowShadow =
-        verticalShadowPixels >= 16 * backingScale &&
-        (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
-      const valid =
-        horizontalShadowPixels >= 0 &&
-        horizontalShadowPixels % (2 * backingScale) === 0 &&
-        verticalShadowPixels >= 0 &&
-        (shadowless || boundedWindowShadow)
-      return {
-        backingScale,
-        horizontalShadowPixels,
-        verticalShadowPixels,
-        valid,
-        shadowScore: horizontalShadowPixels + verticalShadowPixels
-      }
+  const canvasBackingScales = [1, 2, 3, 4].filter(
+    (backingScale) =>
+      capture.width === Math.round(windowWidth * backingScale) &&
+      capture.height === Math.round(windowHeight * backingScale)
+  )
+  const opaqueProjection = opaqueCaptureProjection(capture, windowWidth, windowHeight)
+  const exactCanvasCandidates = (opaqueProjection ? [] : canvasBackingScales).map(
+    (backingScale) => ({
+      backingScale,
+      canvasBackingScale: backingScale,
+      horizontalShadowPixels: 0,
+      verticalShadowPixels: 0,
+      valid: true,
+      shadowScore: 0,
+      captureMode: 'exact-window-canvas',
+      scaleX: backingScale,
+      scaleY: backingScale,
+      windowOriginX: 0,
+      windowOriginY: 0
     })
-    .filter((candidate) => candidate.valid)
-    .sort(
-      (left, right) =>
-        left.shadowScore - right.shadowScore || right.backingScale - left.backingScale
-    )
+  )
+  const captureExtent = opaqueProjection
+    ? opaqueProjection.extent
+    : exactCanvasCandidates.length > 0
+      ? { x: 0, y: 0, width: capture.width, height: capture.height }
+      : boundedCaptureExtent(capture)
+  const scaleCandidates = opaqueProjection
+    ? [
+        {
+          backingScale: (opaqueProjection.scaleX + opaqueProjection.scaleY) / 2,
+          canvasBackingScale: canvasBackingScales.length === 1 ? canvasBackingScales[0] : null,
+          scaleX: opaqueProjection.scaleX,
+          scaleY: opaqueProjection.scaleY,
+          horizontalShadowPixels: 0,
+          verticalShadowPixels: 0,
+          valid: true,
+          shadowScore: 0,
+          captureMode: 'opaque-window-projection',
+          windowOriginX: opaqueProjection.extent.x,
+          windowOriginY: opaqueProjection.extent.y
+        }
+      ]
+    : exactCanvasCandidates.length > 0
+      ? exactCanvasCandidates
+      : [1, 2, 3, 4]
+          .map((backingScale) => {
+            const scaledWindowWidth = Math.round(windowWidth * backingScale)
+            const scaledWindowHeight = Math.round(windowHeight * backingScale)
+            const horizontalShadowPixels = captureExtent.width - scaledWindowWidth
+            const verticalShadowPixels = captureExtent.height - scaledWindowHeight
+            const shadowless = verticalShadowPixels === 0
+            const boundedWindowShadow =
+              verticalShadowPixels >= 16 * backingScale &&
+              (verticalShadowPixels - 16 * backingScale) % (2 * backingScale) === 0
+            const valid =
+              horizontalShadowPixels >= 0 &&
+              horizontalShadowPixels % (2 * backingScale) === 0 &&
+              verticalShadowPixels >= 0 &&
+              (shadowless || boundedWindowShadow)
+            return {
+              backingScale,
+              canvasBackingScale: backingScale,
+              horizontalShadowPixels,
+              verticalShadowPixels,
+              valid,
+              shadowScore: horizontalShadowPixels + verticalShadowPixels,
+              captureMode: 'bounded-alpha-extent',
+              scaleX: backingScale,
+              scaleY: backingScale,
+              windowOriginX: null,
+              windowOriginY: null
+            }
+          })
+          .filter((candidate) => candidate.valid)
+          .sort(
+            (left, right) =>
+              left.shadowScore - right.shadowScore || right.backingScale - left.backingScale
+          )
   invariant(
     scaleCandidates.length > 0,
     'WindowServer capture geometry is outside the bounded Companion shape'
   )
 
   const geometry = scaleCandidates[0]
+  if (
+    geometry.captureMode === 'opaque-window-projection' &&
+    sourceHostFrame &&
+    options.opaqueHostPixelEdgePolicy === undefined
+  ) {
+    const candidates = ['floor-local', 'round-local'].map((policy) => ({
+      policy,
+      comparison: compareWindowCaptureToReference(capturePath, referencePath, windowBounds, {
+        ...options,
+        opaqueHostPixelEdgePolicy: policy
+      })
+    }))
+    const selection = selectOpaqueHostPixelCandidate(candidates)
+    return {
+      ...selection.selected.comparison,
+      registration: {
+        ...selection.selected.comparison.registration,
+        opaqueHostPixelCandidateSelection: selection.receipt
+      }
+    }
+  }
   const backingScale = geometry.backingScale
-  const videoWidth = logicalVideoWidth * backingScale
-  const videoHeight = logicalVideoHeight * backingScale
-  const titleBarHeight = logicalTitleBarHeight * backingScale
+  const canvasBackingScale = geometry.canvasBackingScale
+  const scaleX = geometry.scaleX
+  const scaleY = geometry.scaleY
+  const windowEdgeInsets = sourceHostFrame
+    ? sourceHostWindowEdgeInsets(sourceHostFrame, windowBounds)
+    : null
+  const hostPixelEdges = sourceHostFrame
+    ? {
+        // A host that reaches the outer window edge includes AppKit's clipped
+        // one-pixel border in its AX frame. That pixel is window chrome, not
+        // decoded media; exclude exactly one backing pixel at each touching
+        // edge while retaining the entire interior material surface.
+        left: projectedHostPixelEdge(
+          sourceHostFrame.x,
+          Number(windowBounds.x),
+          scaleX,
+          windowEdgeInsets.left,
+          true,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        ),
+        top: projectedHostPixelEdge(
+          sourceHostFrame.y,
+          Number(windowBounds.y),
+          scaleY,
+          windowEdgeInsets.top,
+          true,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        ),
+        right: projectedHostPixelEdge(
+          sourceHostFrame.x + sourceHostFrame.width,
+          Number(windowBounds.x),
+          scaleX,
+          windowEdgeInsets.right,
+          false,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        ),
+        bottom: projectedHostPixelEdge(
+          sourceHostFrame.y + sourceHostFrame.height,
+          Number(windowBounds.y),
+          scaleY,
+          windowEdgeInsets.bottom,
+          false,
+          geometry.captureMode === 'opaque-window-projection',
+          options.opaqueHostPixelEdgePolicy
+        )
+      }
+    : null
+  const videoWidth = hostPixelEdges
+    ? hostPixelEdges.right - hostPixelEdges.left
+    : Math.round(logicalVideoWidth * scaleX)
+  const videoHeight = hostPixelEdges
+    ? hostPixelEdges.bottom - hostPixelEdges.top
+    : Math.round(logicalVideoHeight * scaleY)
+  invariant(
+    videoWidth > 0 && videoHeight > 0,
+    'source host frame rounds to an empty pixel rectangle'
+  )
+  const hostPixelRect = hostPixelEdges
+    ? {
+        x: hostPixelEdges.left,
+        y: hostPixelEdges.top,
+        width: videoWidth,
+        height: videoHeight
+      }
+    : null
+  const titleBarHeight = Math.round(logicalTitleBarHeight * scaleY)
   const horizontalShadowPixels = geometry.horizontalShadowPixels
   const verticalShadowPixels = geometry.verticalShadowPixels
-  const captureX = captureExtent.x + horizontalShadowPixels / 2
   const topShadowPixels =
     verticalShadowPixels === 0 ? 0 : (verticalShadowPixels - 16 * backingScale) / 2
-  const captureY = captureExtent.y + topShadowPixels + titleBarHeight
+  const windowOriginX = geometry.windowOriginX ?? captureExtent.x + horizontalShadowPixels / 2
+  const windowOriginY = geometry.windowOriginY ?? captureExtent.y + topShadowPixels
+  const captureX = windowOriginX + (sourceHostFrame ? hostPixelEdges.left : 0)
+  const captureY = windowOriginY + (sourceHostFrame ? hostPixelEdges.top : titleBarHeight)
   const logicalHudOverlayHeight =
     options.hudOverlayHeight ?? DEFAULT_STUDIO_OVERLAY_EXCLUSION_POINTS
-  const hudOverlayHeight = logicalHudOverlayHeight * backingScale
+  const hudOverlayHeight = Math.round(logicalHudOverlayHeight * scaleY)
   const comparisonHeight = videoHeight - hudOverlayHeight
   invariant(
     Number.isInteger(logicalHudOverlayHeight) &&
@@ -207,6 +544,37 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   )
 
   const materialPixelCount = videoWidth * comparisonHeight
+  const projectedVideoWidth =
+    videoWidth + (windowEdgeInsets?.left || 0) + (windowEdgeInsets?.right || 0)
+  const projectedVideoHeight =
+    videoHeight + (windowEdgeInsets?.top || 0) + (windowEdgeInsets?.bottom || 0)
+  const intermediateVideoWidth = Number.isInteger(canvasBackingScale)
+    ? Math.max(1, Math.round(logicalVideoWidth * canvasBackingScale))
+    : null
+  const intermediateVideoHeight = Number.isInteger(canvasBackingScale)
+    ? Math.max(1, Math.round(logicalVideoHeight * canvasBackingScale))
+    : null
+  const usesProjectedWindowResampling =
+    geometry.captureMode === 'opaque-window-projection' &&
+    intermediateVideoWidth !== null &&
+    intermediateVideoHeight !== null
+  const referenceChannel = (x, y, channel) => {
+    if (usesProjectedWindowResampling) {
+      return twiceBilinearChannel(
+        reference,
+        x + (windowEdgeInsets?.left || 0),
+        y + (windowEdgeInsets?.top || 0),
+        channel,
+        intermediateVideoWidth,
+        intermediateVideoHeight,
+        projectedVideoWidth,
+        projectedVideoHeight
+      )
+    }
+    const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
+    const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
+    return bilinearChannel(reference, referenceX, referenceY, channel)
+  }
   const channelFits = []
   for (let channel = 0; channel < 3; channel += 1) {
     let referenceSum = 0
@@ -214,10 +582,8 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     let referenceSquaredSum = 0
     let crossProductSum = 0
     for (let y = 0; y < comparisonHeight; y += 1) {
-      const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
       for (let x = 0; x < videoWidth; x += 1) {
-        const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
-        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const referenceValue = referenceChannel(x, y, channel)
         const captureValue = pixelChannel(capture, captureX + x, captureY + y, channel)
         referenceSum += referenceValue
         captureSum += captureValue
@@ -237,12 +603,10 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
   let pixelsAbove40 = 0
   let pixelsAbove80 = 0
   for (let y = 0; y < comparisonHeight; y += 1) {
-    const referenceY = ((y + 0.5) * reference.height) / videoHeight - 0.5
     for (let x = 0; x < videoWidth; x += 1) {
-      const referenceX = ((x + 0.5) * reference.width) / videoWidth - 0.5
       let maximumPixelResidual = 0
       for (let channel = 0; channel < 3; channel += 1) {
-        const referenceValue = bilinearChannel(reference, referenceX, referenceY, channel)
+        const referenceValue = referenceChannel(x, y, channel)
         const predictedCaptureValue =
           channelFits[channel].scale * referenceValue + channelFits[channel].offset
         const residual = Math.abs(
@@ -289,6 +653,7 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
     },
     registration: {
       backingScale,
+      canvasBackingScale,
       captureExtent,
       captureX,
       captureY,
@@ -298,10 +663,23 @@ function compareWindowCaptureToReference(capturePath, referencePath, windowBound
       logicalVideoWidth,
       logicalVideoHeight,
       logicalTitleBarHeight,
+      sourceHostFrame,
+      hostPixelEdges,
+      hostPixelEdgePolicy: sourceHostFrame
+        ? geometry.captureMode === 'opaque-window-projection'
+          ? options.opaqueHostPixelEdgePolicy
+          : 'round-symmetric'
+        : null,
+      hostPixelRect,
+      windowEdgeInsets,
       logicalHudOverlayHeight,
       hudOverlayHeight,
       horizontalShadowPixels,
       verticalShadowPixels,
+      captureMode: geometry.captureMode,
+      referenceProjection: usesProjectedWindowResampling
+        ? 'logical-host-then-window'
+        : 'direct-to-capture',
       comparisonHeight
     },
     colorFit: channelFits,
@@ -657,6 +1035,7 @@ module.exports = {
   VISUAL_THRESHOLDS,
   compareWindowCaptureToReference,
   expectedValueSequence,
+  sourceHostWindowEdgeInsets,
   verifyDriverCadenceSource,
   verifyStudioPixelEvidence,
   verifyStudioPixelEvidenceFiles

@@ -73,6 +73,8 @@ final class StudioViewerView: NSView {
     /// revert it to prove a value-set does nothing when unbound. Production
     /// leaves it bound so there is still exactly one transport authority.
     var playheadAccessibilityBinding = StudioPlayheadAccessibilityBinding()
+    var resourceDetailProvider: (() -> String?)?
+    var routeResourceDetailProvider: (() -> String?)?
     private var frameLink: CADisplayLink?
 
     /// Timecode entry, also tested in Core. The view supplies keystrokes and
@@ -303,9 +305,11 @@ final class StudioViewerView: NSView {
         }
 
         updateDrawableSize()
-        mutateTransport(.lifecycleAttach) { controller, host in
-            controller.play(atHost: host)
-        }
+        // Opening an editor viewer must not begin an unbounded decode loop
+        // before the operator or assistive client can act. Retain the lifecycle
+        // observation even though attachment deliberately preserves the paused
+        // transport.
+        mutateTransport(.lifecycleAttach, recordsDeclaredMutation: true) { _, _ in }
 
         let link = displayLink(target: self, selector: #selector(handleDisplayLink(_:)))
         link.add(to: .main, forMode: .common)
@@ -425,11 +429,11 @@ final class StudioViewerView: NSView {
         after: StudioTransportController,
         afterReading: TransportHostReading,
         previousHost: Double?,
-        recordsDeclaredTransition: Bool = false
+        recordsDeclaredMutation: Bool = false
     ) {
         let controllerChanged =
             TransportMutationSignature(before) != TransportMutationSignature(after)
-        guard controllerChanged || recordsDeclaredTransition else {
+        guard controllerChanged || recordsDeclaredMutation else {
             return
         }
         transport = after
@@ -448,6 +452,7 @@ final class StudioViewerView: NSView {
 
     private func mutateTransport(
         _ kind: StudioTransportMutationKind,
+        recordsDeclaredMutation: Bool = false,
         _ body: (inout StudioTransportController, Double) -> Void
     ) {
         let reading = transportMutationHostReading
@@ -460,7 +465,8 @@ final class StudioViewerView: NSView {
             beforeReading: reading,
             after: after,
             afterReading: reading,
-            previousHost: nil
+            previousHost: nil,
+            recordsDeclaredMutation: recordsDeclaredMutation
         )
     }
 
@@ -523,7 +529,7 @@ final class StudioViewerView: NSView {
             after: after,
             afterReading: TransportHostReading(source: afterSource, seconds: afterHost),
             previousHost: beforeHost,
-            recordsDeclaredTransition: true
+            recordsDeclaredMutation: true
         )
         authority.didReanchorTransport(to: afterSource, atHost: afterHost)
     }
@@ -874,7 +880,9 @@ final class StudioViewerView: NSView {
                     + ((route == .source && suspendsLocalAudioForSequence)
                         ? 0
                         : (audioPlayer.isAttached ? 1 : 0))
-            )
+            ),
+            resourceDetail: resourceDetailProvider?(),
+            routeResourceDetail: routeResourceDetailProvider?()
         )
         // ROUTE-SPECIFIC CONTENT. Source/Audition previews the selected asset
         // "independently of the timeline" (briefing) — so ghosts and the
@@ -972,7 +980,7 @@ final class StudioViewerView: NSView {
             controller = StudioTransportController(
                 clock: StudioPlaybackClock(timebase: timebase, durationTicks: durationTicks)
             )
-            controller.play(atHost: host)
+            controller.pause(atHost: host)
         }
         // A half-typed timecode belongs to the PREVIOUS asset's timebase, so
         // carrying it across an open would resolve it against the wrong rate.
@@ -1332,6 +1340,18 @@ final class StudioViewerView: NSView {
         return true
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        // AppKit normally reserves Tab for the window key-view loop before an
+        // NSView's keyDown can see it. Studio owns Tab as transcript traversal,
+        // so consume that one declared equivalent and leave every other menu
+        // or system shortcut to AppKit.
+        guard event.type == .keyDown, event.keyCode == Key.tab else {
+            return super.performKeyEquivalent(with: event)
+        }
+        keyDown(with: event)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         if handleTimecodeEntry(event) { return }
 
@@ -1669,6 +1689,7 @@ final class StudioViewerWindowController {
     /// briefing requires exactly that, and one shared renderer could not
     /// deliver it.
     let renderer: StudioViewerRenderer
+    private var routeResourceSnapshotProvider: () -> StudioRouteResourceSnapshot
 
     convenience init(
         renderer: StudioViewerRenderer,
@@ -1733,6 +1754,15 @@ final class StudioViewerWindowController {
     ) {
         self.route = route
         self.renderer = renderer
+        self.routeResourceSnapshotProvider = {
+            StudioRouteResourceSnapshot(
+                route: route,
+                activeSourceCount: renderer.activeSourceCount,
+                retainedFrameCount: renderer.retainedFrameCount,
+                capacity: renderer.liveIOSurfaceCapacity,
+                surfaceIDs: renderer.liveIOSurfaceIDs
+            )
+        }
         self.window = window
         self.presentationHost = presentationHost
         self.presentWindow = presentWindow
@@ -1756,6 +1786,20 @@ final class StudioViewerWindowController {
             return view.superview === presentationHost && view.window === window
         }
         return window.contentView === view && view.window === window
+    }
+
+    var isPresentationFirstResponder: Bool {
+        window.firstResponder === view
+    }
+
+    /// Hands the shared workspace's next keyboard shortcut to this route once
+    /// its presentation view is actually attached. Route visibility and route
+    /// focus arrive as separate host projections, so callers may retry after
+    /// attachment without reaching into the private Metal view.
+    @discardableResult
+    func focusPresentation() -> Bool {
+        guard isPresentationAttached else { return false }
+        return window.makeFirstResponder(view)
     }
 
     var audioPlayerIdentity: ObjectIdentifier {
@@ -1790,6 +1834,34 @@ final class StudioViewerWindowController {
     var activeReviewContext: StudioReviewContext? { view.activeReviewContext }
 
     var playbackAuthority: StudioPlaybackAuthority { view.authority }
+
+    func setResourceDetailProvider(_ provider: @escaping () -> String?) {
+        view.resourceDetailProvider = provider
+    }
+
+    func setRouteResourceDetailProvider(_ provider: @escaping () -> String?) {
+        view.routeResourceDetailProvider = provider
+    }
+
+    var currentResourceDetailForTesting: String? {
+        view.resourceDetailProvider?()
+    }
+
+    var currentRouteResourceDetailForTesting: String? {
+        view.routeResourceDetailProvider?()
+    }
+
+    var routeResourceSnapshot: StudioRouteResourceSnapshot {
+        routeResourceSnapshotProvider()
+    }
+
+    var routeResourceDetail: String { routeResourceSnapshot.diagnosticsExportText }
+
+    func replaceRouteResourceSnapshotProviderForTesting(
+        _ provider: @escaping () -> StudioRouteResourceSnapshot
+    ) {
+        routeResourceSnapshotProvider = provider
+    }
 
     func attachPresentation() {
         // Attaching the Metal view starts its display link. Keep it detached
@@ -1915,6 +1987,7 @@ final class StudioViewerAppState {
     private var routes = StudioRouteVisibility()
     private let reviewController: StudioViewerWindowController?
     private let workspaceController: StudioWorkspaceWindowController?
+    private let resourceSnapshotResponder = StudioViewerResourceSnapshotResponder()
 
     /// Everything one pump update means, applied.
     ///
@@ -1955,9 +2028,27 @@ final class StudioViewerAppState {
         if !update.step.proposals.isEmpty {
             await adopt(proposals: update.step.proposals)
         }
+        if !update.step.acceptedInserts.isEmpty {
+            await adopt(acceptedInserts: update.step.acceptedInserts)
+        }
         if !update.step.resolvedProposalIds.isEmpty {
             adopt(resolvedProposals: update.step.resolvedProposalIds)
         }
+        for request in update.step.resourceQueries {
+            StudioOutboundWriter.shared.write([resourceSnapshotResponse(to: request)])
+        }
+    }
+
+    func resourceSnapshotResponse(to request: StudioResourceQueryRequest) -> Data {
+        resourceSnapshotResponder.response(
+            to: request,
+            window: workspaceController?.window ?? controller.window,
+            sourcePresentationAttached: controller.isPresentationAttached,
+            reviewPresentationAttached: reviewController?.isPresentationAttached ?? false,
+            sourceAssetId: openAssetId,
+            reviewAssetId: reviewAttachment?.attachedAssetId,
+            sequenceAssetIds: activeSequence?.referencedAssetIds.sorted() ?? []
+        )
     }
 
     /// Restores the durable document without turning a supervisor reconnect into
@@ -2008,6 +2099,19 @@ final class StudioViewerAppState {
             guard let self else { return nil }
             return self.reviewAttachment?.residentAudio(for: assetId)
                 ?? self.attachment.residentAudio(for: assetId)
+        }
+        let resourceProvider: () -> String? = { [weak self] in
+            self?.resourceSnapshot.diagnosticsExportText
+        }
+        controller.setResourceDetailProvider(resourceProvider)
+        reviewController?.setResourceDetailProvider(resourceProvider)
+        controller.setRouteResourceDetailProvider { [weak controller] in
+            controller?.routeResourceDetail
+        }
+        if let reviewController {
+            reviewController.setRouteResourceDetailProvider { [weak reviewController] in
+                reviewController?.routeResourceDetail
+            }
         }
         controller.onPresentationDetached = { [weak self] in
             self?.attachment.detach()
@@ -2133,6 +2237,24 @@ final class StudioViewerAppState {
     var sharedDecoderCreationCount: Int { sourcePool.decoderCreationCount }
     var sharedResidentDecoderCount: Int { sourcePool.residentDecoderCount }
 
+    var resourceSnapshot: StudioResourceSnapshot {
+        StudioResourceSnapshot(
+            decoderCount: sourcePool.residentDecoderCount,
+            sharedPoolSurfaceIDs: sourcePool.liveIOSurfaceIDs,
+            sharedPoolCapacity: sourcePool.liveIOSurfaceCapacity,
+            presentationRingSurfaceIDs: [
+                controller.renderer.presentationRingIOSurfaceIDs,
+                reviewController?.renderer.presentationRingIOSurfaceIDs ?? []
+            ],
+            presentationRingCapacities: [
+                controller.renderer.presentationRingCapacity,
+                reviewController?.renderer.presentationRingCapacity ?? 0
+            ]
+        )
+    }
+
+    var resourceDetail: String { resourceSnapshot.diagnosticsExportText }
+
     /// Applies the host-authorized inline LUT to both real route renderers.
     /// Invalid content holds the last valid preview; it is never silently
     /// substituted with a parser fallback or applied to just one route.
@@ -2221,7 +2343,7 @@ final class StudioViewerAppState {
             controller.adopt(
                 timebase: timebase,
                 durationTicks: durationTicks,
-                label: "\(openAssetId) · \(frameCount) frames"
+                label: "\(asset.visibleIdentityToken ?? openAssetId) · \(frameCount) frames"
             )
             controller.attachAudio(
                 track: attachment.attachedAudio,
@@ -2341,6 +2463,26 @@ final class StudioViewerAppState {
         Self.report("proposal \(openProposalId) resolved — review cleared")
     }
 
+    /// Applies the exact host-materialised insert before clearing its ghost.
+    /// The host owns durability and revision identity; this is only immediate
+    /// adoption of that same committed operation into the resident projection.
+    private func adopt(
+        acceptedInserts commits: [StudioCompanionSession.AcceptedInsertCommit]
+    ) async {
+        for commit in commits {
+            guard let sequence = activeSequence else {
+                Self.report("accepted insert held — no committed sequence hydrated")
+                continue
+            }
+            do {
+                let next = try sequence.replacingCommittedSequence(with: commit.sequence)
+                await adopt(sequence: next)
+            } catch {
+                Self.report("accepted insert rejected — \(error)")
+            }
+        }
+    }
+
     /// Adopts the committed timeline and makes the Review route able to PLAY
     /// it: every referenced asset the companion can resolve becomes a resident
     /// decode source keyed by id.
@@ -2417,7 +2559,9 @@ final class StudioViewerAppState {
                 controller.adopt(
                     timebase: timebase,
                     durationTicks: durationTicks,
-                    label: "\(assetId) · \(frameCount) frames"
+                    label:
+                        "\(proposalAssets[assetId]?.visibleIdentityToken ?? assetId)"
+                        + " · \(frameCount) frames"
                 )
                 // Audio after the clock, so it anchors against the timebase the
                 // viewer just adopted rather than the previous asset's.

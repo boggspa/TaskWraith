@@ -3,6 +3,7 @@ import os from 'os'
 import path from 'path'
 import { createHash, randomUUID } from 'crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import mediaLimits from '../../shared/mediaLimits.json'
 import {
   TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
@@ -1158,6 +1159,7 @@ describe('TranscriptMediaAssetStore', () => {
     )
     expect(TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES).toBeGreaterThan(TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES)
     expect(TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES).toBeGreaterThan(TRANSCRIPT_MEDIA_MAX_AUDIO_BYTES)
+    expect(TRANSCRIPT_MEDIA_MAX_VIDEO_BYTES).toBe(mediaLimits.transcriptMediaMaxVideoBytes)
   })
 
   it('reads back an audio asset larger than the 8MB image cap without truncating', () => {

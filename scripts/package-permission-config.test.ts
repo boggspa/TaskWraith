@@ -53,6 +53,14 @@ describe('macOS package permission metadata', () => {
   it.each([
     ['release', releaseExtendInfo],
     ['debug', debugExtendInfo]
+  ])('keeps the signed permission identity exactly TaskWraith in %s', (_label, extendInfo) => {
+    expect(extendInfo.CFBundleName).toBe('TaskWraith')
+    expect(extendInfo.CFBundleDisplayName).toBe('TaskWraith')
+  })
+
+  it.each([
+    ['release', releaseExtendInfo],
+    ['debug', debugExtendInfo]
   ])('starts %s processes without a Dock tile until desktop promotion', (_label, extendInfo) => {
     expect(extendInfo.LSUIElement).toBe(true)
     expect(extendInfo.LSBackgroundOnly).not.toBe(true)

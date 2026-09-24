@@ -416,6 +416,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'studio:effect-preview-load',
   'studio:effect-preview-clear',
   'studio:effect-preview-state',
+  // The resource snapshot measures the one process-wide Companion that Main's
+  // lifecycle selects; popouts gain no independent process observation.
+  'studio:resource-snapshot',
   // Owner-signed agent membership and zero-click mention authority always
   // require the primary renderer plus a main-owned native confirmation sheet.
   'channels:agent:overview',
