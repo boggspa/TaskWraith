@@ -30,6 +30,7 @@ import {
   HOST_PERSIST_ENV
 } from '../host-runtime/HostLeaseRegistry'
 import { readHostRegistryEntry } from '../host-runtime/HostRegistry'
+import { HOST_END_PROCESS_FLUSH_MS } from '../host-runtime/cli'
 import { observeProcessBirthIdentity } from '../host-runtime/ProcessBirthIdentity'
 
 const paths: string[] = []
@@ -773,11 +774,16 @@ describe('production Host CLI subprocess: lease lifetime', () => {
    * A test-only hook on the built Host: a preload that replaces the history
    * writers' drain, the step a busy-cap stop cancelling many runs can run
    * past its bound. `fail` first writes a megabyte to stderr, the backlog a
-   * reader that has fallen behind leaves queued, then rejects; `hang` never
-   * settles and keeps an interval running, a live handle of the kind a wedged
-   * step leaves.
+   * reader that has fallen behind leaves queued, then rejects, and given a
+   * path records there when it did; `hang` never settles and keeps an interval
+   * running, a live handle of the kind a wedged step leaves.
    */
-  function writersDrainHook(root: string, cli: string, mode: 'fail' | 'hang'): string {
+  function writersDrainHook(
+    root: string,
+    cli: string,
+    mode: 'fail' | 'hang',
+    failedAtPath?: string
+  ): string {
     const publisher = join(
       dirname(dirname(cli)),
       'host-shared',
@@ -791,7 +797,11 @@ describe('production Host CLI subprocess: lease lifetime', () => {
         "'use strict'",
         `const { ThreadCatalogueSourcePublisher } = require(${JSON.stringify(publisher)})`,
         mode === 'fail'
-          ? "ThreadCatalogueSourcePublisher.prototype.dispose = async () => { process.stderr.write('x'.repeat(1024 * 1024) + '\\n'); throw new Error('History source writers have not drained') }"
+          ? "ThreadCatalogueSourcePublisher.prototype.dispose = async () => { process.stderr.write('x'.repeat(1024 * 1024) + '\\n'); " +
+            (failedAtPath
+              ? `require('node:fs').writeFileSync(${JSON.stringify(failedAtPath)}, String(Date.now())); `
+              : '') +
+            "throw new Error('History source writers have not drained') }"
           : 'ThreadCatalogueSourcePublisher.prototype.dispose = () => new Promise(() => { setInterval(() => {}, 1_000) })',
         ''
       ].join('\n')
@@ -905,6 +915,62 @@ describe('production Host CLI subprocess: lease lifetime', () => {
     expect(existsSync(join(profile, HOST_PROFILE_AUTHORITY_LEASE_FILENAME))).toBe(true)
     await takesTheProfileOver(cli, profile, root)
   }, 90_000)
+
+  /**
+   * S1a review N2b. endHostProcess exits once stderr has drained, and only its
+   * fallback, HOST_END_PROCESS_FLUSH_MS, ends a Host whose reader is alive but
+   * has stopped reading: a Desktop main that hangs, or any parent that stopped
+   * draining. The tests above all read the Host's stderr, so none of them
+   * reaches it. Here the parent never reads, and the failing drain's megabyte
+   * fills the pipe ahead of the failure's lines. Windows writes a stdio pipe
+   * synchronously, so there the megabyte blocks the Host inside the write
+   * itself, where no timer runs: the fallback is not what ends it there.
+   */
+  it.skipIf(process.platform === 'win32')(
+    'ends the process within HOST_END_PROCESS_FLUSH_MS of a failed stop when its stderr reader never reads',
+    async () => {
+      const root = mkdtempSync(join(tmpdir(), 'host-unread-stderr-subprocess-'))
+      paths.push(root)
+      const cli = buildCli(root)
+      const profile = join(root, 'unread')
+      mkdirSync(profile, { recursive: true })
+      hostProfiles.push(profile)
+      const failedAtPath = join(root, 'failed-at')
+      const env: NodeJS.ProcessEnv = {
+        ...process.env,
+        PATH: '',
+        TASKWRAITH_HOST_REGISTRY_ROOT: join(root, 'registry'),
+        [HOST_LEASE_TIMING_ENV]: 'heartbeat:200,ttl:1000,grace:1500,stop:5000'
+      }
+      delete env[HOST_PERSIST_ENV]
+      delete env[HOST_LEASE_DISABLED_ENV]
+      const child = spawn(
+        process.execPath,
+        [
+          '--require',
+          writersDrainHook(root, cli, 'fail', failedAtPath),
+          cli,
+          'serve',
+          '--mode',
+          'production',
+          '--profile',
+          profile
+        ],
+        // Piped, and never read: no listener is ever attached to its stderr.
+        { env, stdio: ['ignore', 'ignore', 'pipe'] }
+      )
+      spawned.push(child)
+      await waitForExit(child, 20_000)
+      const exitedAt = Date.now()
+      expect(child.exitCode).toBe(1)
+      const sinceFailure = exitedAt - Number(readFileSync(failedAtPath, 'utf8'))
+      // Not at once: the flush never completes, so it is the fallback that
+      // ends the process. And not later than the fallback plus scheduling.
+      expect(sinceFailure).toBeGreaterThanOrEqual(HOST_END_PROCESS_FLUSH_MS / 2)
+      expect(sinceFailure).toBeLessThan(HOST_END_PROCESS_FLUSH_MS + 4_000)
+    },
+    90_000
+  )
 
   it('ends the process at its deadline while a stop step still holds it open, and a second Host takes the profile', async () => {
     const root = mkdtempSync(join(tmpdir(), 'host-hung-stop-subprocess-'))
