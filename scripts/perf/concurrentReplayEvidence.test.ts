@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const require = createRequire(import.meta.url)
 const { runConcurrentReplayLanes, drainBudgetMs } = require('./concurrentReplayLanes.cjs')
+const { pairedRunRecord } = require('./runT2Baseline.cjs')
 const {
   assertPairedRunCompatibility,
   pairRuns,
@@ -64,10 +65,13 @@ function lane(role = 'light', chatId = role) {
 function api() {
   return {
     getChat: vi.fn(async () => null),
-    saveChat: vi.fn(async (record: { persistenceRevision?: number }) => ({
-      persistenceRevision: (record.persistenceRevision || 0) + 1
-    }))
+    saveChat: vi.fn(async (record: { appChatId: string; persistenceRevision?: number }) =>
+      acknowledged((record.persistenceRevision || 0) + 1, record.appChatId)
+    )
   }
+}
+function acknowledged(persistenceRevision: number, appChatId = 'light') {
+  return { accepted: true, appChatId, persistenceRevision }
 }
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -203,6 +207,129 @@ describe('qualified replay evidence', () => {
     expect(result.run.evidence.windows[0].lanes[0].failedEvents).toBe(1)
     expect(result.signals['light.applyLatencyMs'].count).toBe(0)
     assertIneligible(result.run, beside.run)
+  })
+
+  it('retains the failed event and Host timeout boundary in serialized paired diagnostics', async () => {
+    const adapter = api()
+    const error = new Error('TaskWraith Host request timed out: command.submit private-payload')
+    adapter.saveChat.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 7))
+      throw error
+    })
+    const population = lane()
+    population.schedule[0].seq = 41
+    const result = await measured({ api: adapter, lanes: [population] })
+    const serialized = JSON.stringify(pairedRunRecord(result))
+    const observed = JSON.parse(serialized).windows[0].lanes[0]
+    expect(observed.failureDetails).toEqual([
+      {
+        eventIndex: 0,
+        eventSeq: 41,
+        eventKind: 'seed_chat',
+        apiMethod: 'saveChat',
+        elapsedMs: 7,
+        reason: 'host_request_timeout',
+        hostMethod: 'command.submit'
+      }
+    ])
+    expect(observed.failureDetailsOmitted).toBe(0)
+    expect(observed.failedEvents).toBe(1)
+    expect(serialized).not.toContain('private-payload')
+    expect(serialized).not.toContain(error.stack)
+    expect(result.evidenceEligible).toBe(false)
+    expect(result.signals['light.applyLatencyMs'].count).toBe(0)
+  })
+
+  it.each([
+    ['TaskWraith Host projection client closed.', 'host_client_closed'],
+    ['Timed out connecting to the TaskWraith Host.', 'host_connection_timeout'],
+    [
+      'T2 replay page evaluation failed: Error: TaskWraith Host projection client closed.\n at save',
+      'host_client_closed'
+    ],
+    ['Unrelated failure quoting TaskWraith Host request timed out: command.submit', 'exception'],
+    [undefined, 'exception'],
+    [null, 'exception']
+  ])('records a bounded failure classification for %s', async (failure, reason) => {
+    const adapter = api()
+    adapter.saveChat.mockRejectedValue(failure)
+    const result = await measured({ api: adapter })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails[0]).toMatchObject({
+      eventIndex: 0,
+      eventSeq: null,
+      eventKind: 'seed_chat',
+      apiMethod: 'saveChat',
+      reason,
+      hostMethod: null
+    })
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it.each([
+    ['T2_REPLAY_SAVE_REJECTED', 'replay_save_rejected'],
+    ['host_unavailable', 'host_unavailable']
+  ])('prioritizes explicit %s over Host-like message text', async (code, reason) => {
+    const adapter = api()
+    const failure = Object.assign(new Error('TaskWraith Host request timed out: command.submit'), {
+      code
+    })
+    adapter.saveChat.mockRejectedValue(failure)
+    const result = await measured({ api: adapter })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails[0]).toMatchObject({
+      reason,
+      hostMethod: null
+    })
+    expect(result.run.evidence.windows[0].lanes[0].failedEvents).toBe(1)
+    expect(result.signals['light.applyLatencyMs'].count).toBe(0)
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it('caps diagnostic examples without dropping failure counts or serializing rejection objects', async () => {
+    const failure = { secret: 'private-payload' }
+    Object.defineProperty(failure, 'message', {
+      get() {
+        throw new Error('getter must not break replay')
+      }
+    })
+    Object.assign(failure, { cause: failure })
+    const adapter = api()
+    adapter.getChat.mockRejectedValue(failure)
+    const population = lane()
+    population.schedule = Array.from({ length: 24 }, (_, seq) => ({
+      kind: 'run_still_running',
+      appChatId: 'light',
+      seq
+    }))
+    const result = await measured({ api: adapter, lanes: [population] })
+    const observed = result.run.evidence.windows[0].lanes[0]
+    expect(observed.failedEvents).toBe(24)
+    expect(observed.failureDetails).toHaveLength(8)
+    expect(observed.failureDetails.map((failure) => failure.eventSeq)).toEqual([
+      0, 1, 2, 3, 4, 5, 6, 7
+    ])
+    expect(observed.failureDetailsOmitted).toBe(16)
+    expect(observed.failureDetails.every((failure) => failure.reason === 'exception')).toBe(true)
+    expect(JSON.stringify(result)).not.toContain('private-payload')
+    expect(result.lanes[0].eventFailures).toBe(24)
+    expect(result.evidenceEligible).toBe(false)
+  })
+
+  it('identifies a missing expected run separately from an adapter exception', async () => {
+    const adapter = api()
+    adapter.getChat.mockResolvedValue({ runs: [] })
+    const population = lane()
+    population.schedule = [{ kind: 'run_still_running', appChatId: 'light', runId: 'expected-run' }]
+    const result = await measured({ api: adapter, lanes: [population] })
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails).toEqual([
+      expect.objectContaining({
+        eventKind: 'run_still_running',
+        apiMethod: 'getChat',
+        reason: 'run_missing',
+        hostMethod: null
+      })
+    ])
+    expect(result.run.failed).toBe(true)
+    expect(result.evidenceEligible).toBe(false)
   })
 
   it('distinguishes unsupported events and no-op events from measured latency', async () => {
@@ -417,7 +544,7 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('does not start a second repetition or reuse a chat until late effects settle', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter })
     await vi.advanceTimersByTimeAsync(120_000)
@@ -435,7 +562,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // Ownership is per chat: unrelated work on the same attached instance is fine.
     const unrelated = await measured({ api: adapter, lanes: [lane('light', 'unrelated')] })
     expect(unrelated.ok).toBe(true)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.advanceTimersByTimeAsync(0)
     expect(JSON.stringify(result.run)).toBe(snapshot)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
@@ -448,14 +575,14 @@ describe('deadlines retain unresolved effect ownership', () => {
     // late event instead of stranded pending, and repetitions 2 and 3 still run.
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter, windowMs: 10, cleanupTimeoutMs: 50 })
     await vi.advanceTimersByTimeAsync(10)
     // Past the deadline but inside the drain bound: settling ON the deadline
     // would be an on-time completion, not the late effect this pins.
     await vi.advanceTimersByTimeAsync(5)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.runAllTimersAsync()
     const result = await pending
     expect(result.run.evidence.windows).toHaveLength(3)
@@ -473,7 +600,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // inside its own per-event budget is slow, not stuck.
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({
       api: adapter,
@@ -485,7 +612,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     // Far past the cleanup bound the old drain used, and far inside the event
     // budget the save was actually promised.
     await vi.advanceTimersByTimeAsync(900)
-    late.resolve({ persistenceRevision: 1 })
+    late.resolve(acknowledged(1))
     await vi.runAllTimersAsync()
     const result = await pending
     expect(result.run.evidence.windows).toHaveLength(3)
@@ -510,7 +637,7 @@ describe('deadlines retain unresolved effect ownership', () => {
   it('keeps raw effects owned after a per-event timeout and observes late rejection safely', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({ api: adapter, eventTimeoutMs: 5 })
     await vi.advanceTimersByTimeAsync(5)
@@ -520,15 +647,18 @@ describe('deadlines retain unresolved effect ownership', () => {
     expect(result.run.evidence.windows).toHaveLength(1)
     expect(result.evidenceEligible).toBe(false)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
+    expect(result.run.evidence.windows[0].lanes[0].failureDetails).toEqual([])
+    const frozenEvidence = JSON.stringify(result.run)
     late.reject(new Error('late failure'))
     await vi.advanceTimersByTimeAsync(0)
+    expect(JSON.stringify(result.run)).toBe(frozenEvidence)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
   })
 
   it('only releases unresolved ownership on an explicit positive drain acknowledgement', async () => {
     vi.useFakeTimers()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const cancelPending = vi.fn(async () => {
       late.reject(new Error('owned adapter cancelled and drained'))
@@ -553,7 +683,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     async (status) => {
       vi.useFakeTimers()
       const adapter = api()
-      const late = deferred<{ persistenceRevision: number }>()
+      const late = deferred<ReturnType<typeof acknowledged>>()
       adapter.saveChat.mockImplementationOnce(() => late.promise)
       const cancelPending = vi.fn(() => {
         if (status === 'failed') throw new Error('cannot cancel')
@@ -567,7 +697,7 @@ describe('deadlines retain unresolved effect ownership', () => {
       expect(result.cleanup.status).toBe(status)
       expect(result.run.evidence.windows).toHaveLength(1)
       await expect(start({ api: adapter })).rejects.toThrow('still owned')
-      late.resolve({ persistenceRevision: 1 })
+      late.resolve(acknowledged(1))
       await vi.advanceTimersByTimeAsync(0)
     }
   )
@@ -578,7 +708,7 @@ describe('deadlines retain unresolved effect ownership', () => {
     const adapter = api()
     adapter.saveChat.mockImplementation(async (record) => {
       calls += 1
-      return { persistenceRevision: (record.persistenceRevision || 0) + 1 }
+      return acknowledged((record.persistenceRevision || 0) + 1, record.appChatId)
     })
     const result = await start({
       api: adapter,
@@ -674,7 +804,7 @@ describe('measurement-clock deadline wakeups', () => {
     vi.useFakeTimers()
     const origin = Date.now()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     let arms = 0
     const pending = start({
@@ -698,7 +828,7 @@ describe('measurement-clock deadline wakeups', () => {
     expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
     expect(adapter.saveChat).toHaveBeenCalledTimes(1)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
   })
@@ -709,7 +839,7 @@ describe('measurement-clock deadline wakeups', () => {
       vi.useFakeTimers()
       const origin = Date.now()
       const adapter = api()
-      const late = deferred<{ persistenceRevision: number }>()
+      const late = deferred<ReturnType<typeof acknowledged>>()
       adapter.saveChat.mockImplementationOnce(() => late.promise)
       const pending = start({
         api: adapter,
@@ -733,7 +863,7 @@ describe('measurement-clock deadline wakeups', () => {
       )
       expect(result.run.evidence.windows[0].lanes[0].pendingEvents).toBe(1)
       await expect(start({ api: adapter })).rejects.toThrow('still owned')
-      late.resolve({ persistenceRevision: 2 })
+      late.resolve(acknowledged(2))
       await vi.advanceTimersByTimeAsync(0)
     }
   )
@@ -788,7 +918,7 @@ describe('measurement-clock deadline wakeups', () => {
     ).rejects.toThrow('event timer arm failed')
     expect(adapter.saveChat).not.toHaveBeenCalled()
     const reads = oldClock.mock.calls.length
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const newer = start({ api: adapter, windowMs: 5 })
     await vi.advanceTimersByTimeAsync(0)
@@ -804,7 +934,7 @@ describe('measurement-clock deadline wakeups', () => {
     retiredCallbacks[0]()
     expect(oldClock).toHaveBeenCalledTimes(reads)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
     expect((await measured({ api: adapter })).evidenceEligible).toBe(true)
     expect(oldClock).toHaveBeenCalledTimes(reads)
@@ -814,7 +944,7 @@ describe('measurement-clock deadline wakeups', () => {
     vi.useFakeTimers()
     const origin = Date.now()
     const adapter = api()
-    const late = deferred<{ persistenceRevision: number }>()
+    const late = deferred<ReturnType<typeof acknowledged>>()
     adapter.saveChat.mockImplementationOnce(() => late.promise)
     const pending = start({
       api: adapter,
@@ -831,7 +961,7 @@ describe('measurement-clock deadline wakeups', () => {
     expect(result.evidenceEligible).toBe(false)
     expect(result.run.evidence.windows).toHaveLength(1)
     await expect(start({ api: adapter })).rejects.toThrow('still owned')
-    late.resolve({ persistenceRevision: 2 })
+    late.resolve(acknowledged(2))
     await vi.advanceTimersByTimeAsync(0)
   })
 })

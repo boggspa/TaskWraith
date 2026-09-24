@@ -18,21 +18,31 @@
  * but fail closed for actor-bound access and wire projection (no invent /
  * reassign). Records retain target + authority for Host-internal use without
  * credentials, unrestricted arguments/tool output, or hidden reasoning.
+ *
+ * Durable-before-witness: every mutator appends and fsyncs its journal event
+ * before the in-memory index or any returned receipt reflects it. A failed
+ * append is rolled back (truncate + fsync on the same journal); an unproven
+ * rollback blocks this instance's write authority until a fresh instance
+ * reopens from repaired disk state. Reads of already-durable receipts stay
+ * available while writes are blocked.
+ *
  * Not wired to BridgeActionExecutor or control server yet.
  */
 
 import { createHash, randomUUID } from 'node:crypto'
 import {
-  appendFileSync,
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
+  ftruncateSync,
   mkdirSync,
   openSync,
   readFileSync,
   renameSync,
   unlinkSync,
-  writeFileSync
+  writeFileSync,
+  writeSync
 } from 'node:fs'
 import { join } from 'node:path'
 
@@ -341,6 +351,18 @@ export type HostCommandReceiptLookupResult =
   /** Legacy/incomplete identity or position — retained but not safely accessible. */
   | { kind: 'incomplete' }
 
+/**
+ * Whether this store instance may still append durable journal events.
+ * `unavailable` preserves the last durable in-memory view and refuses writes
+ * or adoption of further disk evidence. Recovery requires a fresh instance.
+ */
+export type HostCommandReceiptDurabilityStatus =
+  | { kind: 'ok' }
+  | {
+      kind: 'unavailable'
+      code: 'journal_append_uncertain' | 'reopen_failed' | 'checkpoint_unreadable'
+    }
+
 export interface HostCommandReceiptStoreOptions {
   /** Injected Host data directory. Required — no Electron app path lookup. */
   dataDir: string
@@ -369,12 +391,14 @@ export interface HostCommandReceiptStoreOptions {
 interface CheckpointDocument {
   schemaVersion: typeof HOST_COMMAND_RECEIPT_SCHEMA_VERSION
   updatedAt: string
+  /** Last durable journal sequence this checkpoint covers; absent on legacy files. */
+  journalSeq?: number
   records: HostCommandReceiptRecord[]
 }
 
 type JournalEvent =
-  | { op: 'upsert'; record: HostCommandReceiptRecord }
-  | { op: 'compact'; retainedCommandIds: string[]; at: string }
+  | { op: 'upsert'; record: HostCommandReceiptRecord; seq?: number }
+  | { op: 'compact'; retainedCommandIds: string[]; at: string; seq?: number }
 
 type HostCommandReceiptRetentionPin = {
   ownerCommandId: string
@@ -399,6 +423,9 @@ export class HostCommandReceiptStore {
   private recordsByCommandId = new Map<string, HostCommandReceiptRecord>()
   private commandIdByIdempotencyKey = new Map<string, string>()
   private journalRecordCount = 0
+  /** Monotonic durable journal sequence; the checkpoint records the last one it covers. */
+  private journalSeq = 0
+  private durability: HostCommandReceiptDurabilityStatus = { kind: 'ok' }
 
   constructor(options: HostCommandReceiptStoreOptions) {
     if (!options.dataDir || typeof options.dataDir !== 'string') {
@@ -419,7 +446,13 @@ export class HostCommandReceiptStore {
     )
     this.getPosition = options.getPosition
     this.now = options.now ?? (() => new Date().toISOString())
-    this.log = options.log ?? (() => {})
+    this.log = (message) => {
+      try {
+        options.log?.(message)
+      } catch {
+        // Diagnostics must not change recovery authority or a committed result.
+      }
+    }
     this.spans = options.spans
     this.nowMs = options.nowMs ?? (() => Date.now())
     this.resolveSpanChatId = options.resolveSpanChatId
@@ -487,71 +520,140 @@ export class HostCommandReceiptStore {
   /**
    * Re-read checkpoint + journal from disk. Any still-pending receipt is marked
    * indeterminate (recoverable) so callers never re-execute blindly.
+   *
+   * Recovery is built privately and swapped in only after it succeeds, so a
+   * failed reopen leaves the prior durable view readable while write authority
+   * is blocked. A blocked instance keeps that view without touching disk;
+   * only a fresh instance can recover and sync new evidence before exposing it.
    */
   reopen(): void {
-    this.recordsByCommandId = new Map()
-    this.commandIdByIdempotencyKey = new Map()
-    this.journalRecordCount = 0
-    this.spanChatIds.clear()
+    if (this.durability.kind !== 'ok') return
+    try {
+      this.reopenFromDisk()
+    } catch (error) {
+      if (this.durability.kind === 'ok') {
+        this.durability = { kind: 'unavailable', code: 'reopen_failed' }
+      }
+      throw error
+    }
+  }
 
-    const checkpointRecords = this.readCheckpoint()
-    for (const record of checkpointRecords) {
-      this.indexRecord(record)
+  private reopenFromDisk(): void {
+    const records = new Map<string, HostCommandReceiptRecord>()
+    const idempotencyOwners = new Map<string, string>()
+    const index = (record: HostCommandReceiptRecord): void => {
+      records.set(record.commandId, record)
+      if (record.status !== 'conflict') {
+        idempotencyOwners.set(record.idempotencyKey, record.commandId)
+      }
     }
 
+    const checkpoint = this.readCheckpoint()
+    if (checkpoint === 'unreadable') {
+      // A checkpoint that exists but cannot be read as a document is not an
+      // empty store. Replaying the journal over unknown retained state, or
+      // accepting new writes, would invent history: fail closed for writes.
+      // Keep any already-durable in-memory reads on a failed same-instance reopen.
+      this.durability = { kind: 'unavailable', code: 'checkpoint_unreadable' }
+      return
+    }
+    for (const record of checkpoint?.records ?? []) {
+      index(record)
+    }
+
+    // Journal events the durable checkpoint already covers must not replay
+    // over it: a checkpoint can be durable while retiring the old journal
+    // failed, and replaying would resurrect evicted rows. A sequenced checkpoint
+    // also covers the legacy prefix present at upgrade, including journalSeq=0.
+    // Downgrading the writer after upgrade is unsupported; readJournal rejects
+    // unsequenced rows after a sequenced row instead of guessing their coverage.
+    const checkpointSeq = checkpoint?.journalSeq
+    let journalSeq = checkpointSeq ?? 0
+    let journalRecordCount = 0
+    let retired = 0
     const journalEvents = this.readJournal()
-    for (const event of journalEvents) {
-      this.journalRecordCount += 1
+    for (const event of journalEvents ?? []) {
+      journalRecordCount += 1
+      if (checkpointSeq !== undefined && (event.seq === undefined || event.seq <= checkpointSeq)) {
+        retired += 1
+        continue
+      }
+      if (event.seq !== undefined) journalSeq = event.seq
       if (event.op === 'upsert') {
-        this.indexRecord(event.record)
+        index(event.record)
       } else if (event.op === 'compact') {
         const retain = new Set(event.retainedCommandIds)
-        for (const commandId of [...this.recordsByCommandId.keys()]) {
+        for (const commandId of [...records.keys()]) {
           if (!retain.has(commandId)) {
-            const existing = this.recordsByCommandId.get(commandId)
+            const existing = records.get(commandId)
             if (existing) {
               // Delete the idempotency mapping only when it currently maps to
               // this removed non-conflict owner. Evicting a conflict must not
               // erase a live owner's key.
               if (
                 existing.status !== 'conflict' &&
-                this.commandIdByIdempotencyKey.get(existing.idempotencyKey) === commandId
+                idempotencyOwners.get(existing.idempotencyKey) === commandId
               ) {
-                this.commandIdByIdempotencyKey.delete(existing.idempotencyKey)
+                idempotencyOwners.delete(existing.idempotencyKey)
               }
-              this.recordsByCommandId.delete(commandId)
+              records.delete(commandId)
             }
           }
         }
       }
     }
+    if (retired > 0) {
+      this.log(
+        `[HostCommandReceiptStore] skipped ${retired} journal event(s) already covered by the checkpoint`
+      )
+    }
 
     // Recovery must fail before pending -> indeterminate promotion mutates the
     // journal. A lowered bound cannot partially rewrite durable evidence and
     // then throw from compaction.
-    if (this.countProtectedAnchors() > this.maxRecords) {
+    if (countProtectedAnchorsIn(records) > this.maxRecords) {
       throw new Error(
         'HostCommandReceiptStore: protected anchors exceed maxRecords during recovery'
       )
     }
 
+    // Readable bytes may survive a killed process or a failed append sync.
+    // Validate and sync every recovered file, then its directory entry, before
+    // any terminal row becomes visible. A failed barrier leaves prior maps intact.
+    if (checkpoint !== null) this.syncRecoveredFile(this.checkpointPath)
+    if (journalEvents !== null) this.syncRecoveredFile(this.journalPath)
+    if ((checkpoint !== null || journalEvents !== null) && process.platform !== 'win32') {
+      this.syncDataDirectory()
+    }
+
     // Host restart while a command was in-flight: surface indeterminate recovery
-    // state. Do not auto-succeed, auto-fail, or re-run.
-    let pendingPromoted = false
-    for (const [, record] of this.recordsByCommandId) {
+    // state. Do not auto-succeed, auto-fail, or re-run. Each promotion is
+    // durable before it is indexed.
+    const promotions: HostCommandReceiptRecord[] = []
+    for (const [, record] of records) {
       if (record.status === 'pending') {
-        const promoted: HostCommandReceiptRecord = {
+        promotions.push({
           ...record,
           status: 'indeterminate',
           recoveryState: 'recoverable-indeterminate',
           updatedAt: this.now()
-        }
-        this.indexRecord(promoted)
-        pendingPromoted = true
-        this.appendJournalEvent({ op: 'upsert', record: promoted })
+        })
       }
     }
-    if (pendingPromoted) {
+    for (const promoted of promotions) {
+      const seq = journalSeq + 1
+      this.writeJournalEvent({ op: 'upsert', seq, record: promoted })
+      journalSeq = seq
+      journalRecordCount += 1
+      index(promoted)
+    }
+
+    this.recordsByCommandId = records
+    this.commandIdByIdempotencyKey = idempotencyOwners
+    this.spanChatIds.clear()
+    this.journalRecordCount = journalRecordCount
+    this.journalSeq = journalSeq
+    if (promotions.length > 0) {
       this.maybeCompact()
     }
   }
@@ -668,8 +770,8 @@ export class HostCommandReceiptStore {
     // Phase is non-terminal evidence and must never stamp completion.
     delete next.completedAt
 
-    this.indexRecord(next)
     this.appendJournalEvent({ op: 'upsert', record: next })
+    this.indexRecord(next)
     this.maybeCompact()
     return { kind: 'updated', receipt: cloneRecord(next) }
   }
@@ -759,8 +861,8 @@ export class HostCommandReceiptStore {
           errorCode: 'idempotency_key_command_mismatch'
         }
 
-        this.indexRecord(conflictRecord)
         this.appendJournalEvent({ op: 'upsert', record: conflictRecord })
+        this.indexRecord(conflictRecord)
         this.maybeCompact({
           ownerCommandId: existing.commandId,
           conflictCommandId: conflictRecord.commandId
@@ -802,8 +904,8 @@ export class HostCommandReceiptStore {
       updatedAt: createdAt
     }
 
-    this.indexRecord(record)
     this.appendJournalEvent({ op: 'upsert', record })
+    this.indexRecord(record)
     this.maybeCompact()
     this.rememberSpanChatId(record)
     return { kind: 'created', receipt: cloneRecord(record) }
@@ -876,8 +978,8 @@ export class HostCommandReceiptStore {
     delete next.recoveryState
 
     try {
-      this.indexRecord(next)
       this.appendJournalEvent({ op: 'upsert', record: next })
+      this.indexRecord(next)
       this.maybeCompact()
       if (startedAt !== undefined) this.recordReceiptDelivery(next, startedAt)
       return cloneRecord(next)
@@ -962,13 +1064,17 @@ export class HostCommandReceiptStore {
     // Explicit indeterminate is non-terminal: never stamp completedAt.
     delete next.completedAt
 
-    this.indexRecord(next)
     this.appendJournalEvent({ op: 'upsert', record: next })
+    this.indexRecord(next)
     this.maybeCompact()
     return { kind: 'marked', receipt: cloneRecord(next) }
   }
 
-  /** Force compaction of journal into checkpoint, enforcing maxRecords. */
+  /**
+   * Force compaction of journal into checkpoint, enforcing maxRecords. Unlike
+   * inline compaction after a durable append, an explicit compact reports its
+   * failure to the caller.
+   */
   compact(): void {
     this.writeCheckpointAndResetJournal()
   }
@@ -977,14 +1083,23 @@ export class HostCommandReceiptStore {
     return this.recordsByCommandId.size
   }
 
+  /**
+   * Whether this instance may still append durable journal events. Reads of
+   * already-durable receipts remain available while unavailable.
+   */
+  get durabilityStatus(): HostCommandReceiptDurabilityStatus {
+    return { ...this.durability }
+  }
+
+  private assertWritable(): void {
+    if (this.durability.kind === 'ok') return
+    throw new Error(
+      `HostCommandReceiptStore: durable journal state is uncertain (${this.durability.code}); reopen a fresh store instance`
+    )
+  }
+
   private countProtectedAnchors(): number {
-    let count = 0
-    for (const [, record] of this.recordsByCommandId) {
-      if (record.status === 'pending' || record.status === 'indeterminate') {
-        count += 1
-      }
-    }
-    return count
+    return countProtectedAnchorsIn(this.recordsByCommandId)
   }
 
   private canRetainDurableConflict(ownerCommandId: string): boolean {
@@ -1009,11 +1124,22 @@ export class HostCommandReceiptStore {
     }
   }
 
+  /**
+   * Inline compaction runs only after the triggering event is durable. It is
+   * housekeeping: a failure is logged and retried on the next durable event,
+   * and never undoes or hides the witness that was just committed.
+   */
   private maybeCompact(retentionPin?: HostCommandReceiptRetentionPin): void {
-    if (this.journalRecordCount >= this.compactAfterRecords) {
+    const due =
+      this.journalRecordCount >= this.compactAfterRecords ||
+      this.recordsByCommandId.size > this.maxRecords
+    if (!due) return
+    try {
       this.writeCheckpointAndResetJournal(retentionPin)
-    } else if (this.recordsByCommandId.size > this.maxRecords) {
-      this.writeCheckpointAndResetJournal(retentionPin)
+    } catch (err) {
+      this.log(
+        `[HostCommandReceiptStore] deferred compaction after durable append: ${err instanceof Error ? err.message : String(err)}`
+      )
     }
   }
 
@@ -1093,6 +1219,7 @@ export class HostCommandReceiptStore {
   }
 
   private writeCheckpointAndResetJournal(retentionPin?: HostCommandReceiptRetentionPin): void {
+    this.assertWritable()
     const records = this.selectRecordsForRetention(
       [...this.recordsByCommandId.values()],
       retentionPin
@@ -1107,111 +1234,331 @@ export class HostCommandReceiptStore {
       )
     }
 
-    this.recordsByCommandId = new Map()
-    this.commandIdByIdempotencyKey = new Map()
-    for (const record of records) {
-      this.indexRecord(record)
-    }
-
     const doc: CheckpointDocument = {
       schemaVersion: HOST_COMMAND_RECEIPT_SCHEMA_VERSION,
       updatedAt: this.now(),
+      journalSeq: this.journalSeq,
       records: records.map(cloneRecord)
     }
 
     mkdirSync(this.dataDir, { recursive: true })
     const tmpPath = `${this.checkpointPath}.${process.pid}.${randomUUID()}.tmp`
-    writeFileSync(tmpPath, `${JSON.stringify(doc)}\n`, { encoding: 'utf8', mode: 0o600 })
-    const fd = openSync(tmpPath, 'r+')
+    let descriptor: number | null = null
     try {
-      fsyncSync(fd)
-    } finally {
-      closeSync(fd)
+      writeFileSync(tmpPath, `${JSON.stringify(doc)}\n`, { encoding: 'utf8', mode: 0o600 })
+      descriptor = openSync(tmpPath, 'r+')
+      fsyncSync(descriptor)
+      const closing = descriptor
+      descriptor = null
+      closeSync(closing)
+      renameSync(tmpPath, this.checkpointPath)
+    } catch (error) {
+      if (descriptor !== null) {
+        const closing = descriptor
+        descriptor = null
+        try {
+          closeSync(closing)
+        } catch {
+          // Preserve the original write/fsync failure and never retry close.
+        }
+      }
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        // The temp file may never have been created; the live checkpoint is untouched.
+      }
+      throw error
     }
-    renameSync(tmpPath, this.checkpointPath)
+    // The rename is durable only once its directory entry is. Never retire the
+    // journal, or switch memory to the retained set, before that witness.
+    if (process.platform !== 'win32') this.syncDataDirectory()
 
     try {
       if (existsSync(this.journalPath)) {
         unlinkSync(this.journalPath)
       }
     } catch (err) {
+      // The checkpoint is durable and records journalSeq, so reopen skips the
+      // events it already covers. Keep memory and the journal count so the
+      // next compaction retries retirement; memory never shrinks ahead of disk.
       this.log(
-        `[HostCommandReceiptStore] journal reset failed: ${err instanceof Error ? err.message : String(err)}`
+        `[HostCommandReceiptStore] journal retirement failed: ${err instanceof Error ? err.message : String(err)}`
       )
+      return
+    }
+
+    this.recordsByCommandId = new Map()
+    this.commandIdByIdempotencyKey = new Map()
+    for (const record of records) {
+      this.indexRecord(record)
     }
     this.journalRecordCount = 0
   }
 
+  /** Durable append for mutators: assigns the next sequence and refuses while blocked. */
   private appendJournalEvent(event: JournalEvent): void {
-    mkdirSync(this.dataDir, { recursive: true })
-    const line = `${JSON.stringify(event)}\n`
-    const descriptor = openSync(this.journalPath, 'a', 0o600)
-    try {
-      appendFileSync(descriptor, line, 'utf8')
-      fsyncSync(descriptor)
-    } finally {
-      closeSync(descriptor)
-    }
+    this.assertWritable()
+    const seq = this.journalSeq + 1
+    this.writeJournalEvent({ ...event, seq })
+    this.journalSeq = seq
     this.journalRecordCount += 1
   }
 
-  private readCheckpoint(): HostCommandReceiptRecord[] {
-    if (!existsSync(this.checkpointPath)) return []
-    try {
-      const raw = readFileSync(this.checkpointPath, 'utf8')
-      const parsed: unknown = JSON.parse(raw)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        this.log('[HostCommandReceiptStore] checkpoint malformed (not an object); starting empty')
-        return []
+  /**
+   * Append one journal line and return only once it is durable. On failure the
+   * partial write is rolled back on the same journal; an unproven rollback
+   * leaves the tail uncertain and blocks this instance's write authority.
+   */
+  private writeJournalEvent(event: JournalEvent): void {
+    const write = this.appendJournalLine(`${JSON.stringify(event)}\n`)
+    if (!write.ok) {
+      if (!write.rolledBack) {
+        this.durability = { kind: 'unavailable', code: 'journal_append_uncertain' }
       }
-      const doc = parsed as Partial<CheckpointDocument>
-      if (
-        doc.schemaVersion !== HOST_COMMAND_RECEIPT_SCHEMA_VERSION ||
-        !Array.isArray(doc.records)
-      ) {
-        this.log('[HostCommandReceiptStore] checkpoint schema mismatch; starting empty')
-        return []
-      }
-      return doc.records
-        .map(normalizeStoredRecord)
-        .filter((r): r is HostCommandReceiptRecord => r !== null)
-    } catch (err) {
-      this.log(
-        `[HostCommandReceiptStore] checkpoint load failed: ${err instanceof Error ? err.message : String(err)}`
-      )
-      return []
+      throw write.error
     }
   }
 
-  private readJournal(): JournalEvent[] {
-    if (!existsSync(this.journalPath)) return []
+  private appendJournalLine(
+    line: string
+  ): { ok: true } | { ok: false; error: unknown; rolledBack: boolean } {
+    mkdirSync(this.dataDir, { recursive: true })
+    const existed = existsSync(this.journalPath)
+    let descriptor: number | null = null
+    let previousLength: number | null = null
+    try {
+      descriptor = openSync(this.journalPath, 'a+', 0o600)
+      const stat = fstatSync(descriptor)
+      if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < 0) {
+        throw new Error('HostCommandReceiptStore: journal length is invalid')
+      }
+      previousLength = stat.size
+      const bytes = Buffer.from(line, 'utf8')
+      let written = 0
+      while (written < bytes.length) {
+        const count = writeSync(descriptor, bytes, written, bytes.length - written, null)
+        if (!Number.isSafeInteger(count) || count <= 0) {
+          throw new Error('HostCommandReceiptStore: journal write made no progress')
+        }
+        written += count
+      }
+      fsyncSync(descriptor)
+      // A newly created journal is durable only once its directory entry is.
+      if (!existed && process.platform !== 'win32') this.syncDataDirectory()
+      return { ok: true }
+    } catch (error) {
+      let rolledBack = descriptor === null
+      if (descriptor !== null && previousLength !== null) {
+        // O_APPEND descriptors refuse truncation on Windows, so roll back through
+        // a separate read/write descriptor on the same journal.
+        let rollbackDescriptor: number | null = null
+        try {
+          rollbackDescriptor = openSync(this.journalPath, 'r+')
+          ftruncateSync(rollbackDescriptor, previousLength)
+          fsyncSync(rollbackDescriptor)
+          if (!existed && process.platform !== 'win32') this.syncDataDirectory()
+          rolledBack = true
+        } catch {
+          rolledBack = false
+        } finally {
+          if (rollbackDescriptor !== null) {
+            const closing = rollbackDescriptor
+            rollbackDescriptor = null
+            try {
+              closeSync(closing)
+            } catch {
+              // The truncate/fsync above already decided the rollback verdict.
+            }
+          }
+        }
+      }
+      return { ok: false, error, rolledBack }
+    } finally {
+      if (descriptor !== null) {
+        const closing = descriptor
+        descriptor = null
+        try {
+          closeSync(closing)
+        } catch {
+          // The write/fsync or rollback boundary above decides authority.
+        }
+      }
+    }
+  }
+
+  private syncRecoveredFile(path: string): void {
+    let descriptor: number | null = openSync(path, 'r+')
+    try {
+      fsyncSync(descriptor)
+      const closing = descriptor
+      descriptor = null
+      closeSync(closing)
+    } finally {
+      if (descriptor !== null) {
+        const closing = descriptor
+        descriptor = null
+        try {
+          closeSync(closing)
+        } catch {
+          // Preserve the sync failure; closing cannot establish durability.
+        }
+      }
+    }
+  }
+
+  private syncDataDirectory(): void {
+    let descriptor: number | null = openSync(this.dataDir, 'r')
+    try {
+      fsyncSync(descriptor)
+      const closing = descriptor
+      descriptor = null
+      closeSync(closing)
+    } finally {
+      if (descriptor !== null) {
+        const closing = descriptor
+        descriptor = null
+        try {
+          closeSync(closing)
+        } catch {
+          // Preserve the fsync failure that prevented the directory witness.
+        }
+      }
+    }
+  }
+
+  /**
+   * `null` when no checkpoint exists. `'unreadable'` when one exists but is
+   * not a checkpoint document — never silently an empty store. Read I/O
+   * errors other than ENOENT propagate so reopen fails closed.
+   */
+  private readCheckpoint():
+    | { records: HostCommandReceiptRecord[]; journalSeq?: number }
+    | null
+    | 'unreadable' {
+    let raw: string
+    try {
+      raw = readFileSync(this.checkpointPath, 'utf8')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw err
+    }
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      this.log('[HostCommandReceiptStore] checkpoint JSON malformed; write authority blocked')
+      return 'unreadable'
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      this.log(
+        '[HostCommandReceiptStore] checkpoint malformed (not an object); write authority blocked'
+      )
+      return 'unreadable'
+    }
+    const doc = parsed as Partial<CheckpointDocument>
+    if (doc.schemaVersion !== HOST_COMMAND_RECEIPT_SCHEMA_VERSION || !Array.isArray(doc.records)) {
+      this.log('[HostCommandReceiptStore] checkpoint schema mismatch; write authority blocked')
+      return 'unreadable'
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(doc, 'journalSeq') &&
+      (typeof doc.journalSeq !== 'number' ||
+        !Number.isSafeInteger(doc.journalSeq) ||
+        doc.journalSeq < 0)
+    ) {
+      this.log(
+        '[HostCommandReceiptStore] checkpoint journal sequence invalid; write authority blocked'
+      )
+      return 'unreadable'
+    }
+    const records: HostCommandReceiptRecord[] = []
+    for (const row of doc.records) {
+      const record = normalizeStoredRecord(row)
+      if (!record) {
+        this.log('[HostCommandReceiptStore] checkpoint record malformed; write authority blocked')
+        return 'unreadable'
+      }
+      records.push(record)
+    }
+    const journalSeq = doc.journalSeq
+    return journalSeq === undefined ? { records } : { records, journalSeq }
+  }
+
+  /**
+   * Read journal events. A final line without its newline never finished
+   * landing, even when it happens to parse: it is discarded and durably
+   * truncated so the next append cannot
+   * concatenate it into an accepted record. Read I/O errors other than
+   * ENOENT propagate so reopen fails closed instead of starting empty.
+   */
+  private readJournal(): JournalEvent[] | null {
     let source: string
     try {
       source = readFileSync(this.journalPath, 'utf8')
     } catch (err) {
-      this.log(
-        `[HostCommandReceiptStore] journal read failed: ${err instanceof Error ? err.message : String(err)}`
-      )
-      return []
+      if ((err as NodeJS.ErrnoException)?.code === 'ENOENT') return null
+      throw err
     }
 
     const events: JournalEvent[] = []
+    let previousSeq: number | undefined
+    let repairLength: number | null = null
+    let offset = 0
     const lines = source.split('\n')
     const endsWithNewline = source.endsWith('\n')
     const lastContentIndex = endsWithNewline ? lines.length - 2 : lines.length - 1
 
     for (let index = 0; index < lines.length; index += 1) {
       const line = lines[index]
+      const lineOffset = offset
+      offset += Buffer.byteLength(line, 'utf8') + 1
       if (!line) continue
+      if (index === lastContentIndex && !endsWithNewline) {
+        repairLength = lineOffset
+        this.log('[HostCommandReceiptStore] dropped truncated journal tail')
+        break
+      }
+      let event: JournalEvent
       try {
-        const event = parseJournalEvent(line)
-        if (event) events.push(event)
+        event = parseJournalEvent(line)
       } catch {
-        if (index === lastContentIndex && !endsWithNewline) {
-          this.log('[HostCommandReceiptStore] dropped truncated journal tail')
-          break
+        // Parser errors can quote persisted payloads. Keep diagnostics content-free.
+        throw new Error(`HostCommandReceiptStore: corrupt journal line at index ${index}`)
+      }
+      if (event.seq === undefined) {
+        if (previousSeq !== undefined) {
+          throw new Error(
+            'HostCommandReceiptStore: unsequenced journal event after sequenced event'
+          )
         }
-        this.log(`[HostCommandReceiptStore] skipped corrupt journal line at index ${index}`)
+      } else {
+        if (previousSeq !== undefined && event.seq <= previousSeq) {
+          throw new Error('HostCommandReceiptStore: nonmonotonic journal sequence')
+        }
+        previousSeq = event.seq
+      }
+      events.push(event)
+    }
+
+    if (repairLength !== null) {
+      // Reopen fails closed if this repair cannot be made durable.
+      let descriptor: number | null = openSync(this.journalPath, 'r+')
+      try {
+        ftruncateSync(descriptor, repairLength)
+        fsyncSync(descriptor)
+        const closing = descriptor
+        descriptor = null
+        closeSync(closing)
+      } finally {
+        if (descriptor !== null) {
+          const closing = descriptor
+          descriptor = null
+          try {
+            closeSync(closing)
+          } catch {
+            // Preserve the truncate/fsync failure; close cannot repair the tail.
+          }
+        }
       }
     }
     return events
@@ -1237,6 +1584,16 @@ export function hostCommandFingerprint(parts: {
 
 function cloneRecord(record: HostCommandReceiptRecord): HostCommandReceiptRecord {
   return JSON.parse(JSON.stringify(record)) as HostCommandReceiptRecord
+}
+
+function countProtectedAnchorsIn(records: ReadonlyMap<string, HostCommandReceiptRecord>): number {
+  let count = 0
+  for (const [, record] of records) {
+    if (record.status === 'pending' || record.status === 'indeterminate') {
+      count += 1
+    }
+  }
+  return count
 }
 
 function normalizeId(value: string, field: string): string {
@@ -1588,25 +1945,36 @@ function normalizeStoredRecord(value: unknown): HostCommandReceiptRecord | null 
   }
 }
 
-function parseJournalEvent(line: string): JournalEvent | null {
+function parseJournalEvent(line: string): JournalEvent {
   const parsed: unknown = JSON.parse(line)
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
     throw new Error('malformed journal event')
   }
   const raw = parsed as Record<string, unknown>
+  let seq: number | undefined
+  if (Object.prototype.hasOwnProperty.call(raw, 'seq')) {
+    if (typeof raw.seq !== 'number' || !Number.isSafeInteger(raw.seq) || raw.seq < 1) {
+      throw new Error('invalid journal sequence')
+    }
+    seq = raw.seq
+  }
   if (raw.op === 'upsert') {
     const record = normalizeStoredRecord(raw.record)
     if (!record) throw new Error('malformed upsert record')
-    return { op: 'upsert', record }
+    return seq === undefined ? { op: 'upsert', record } : { op: 'upsert', record, seq }
   }
   if (raw.op === 'compact') {
-    if (!Array.isArray(raw.retainedCommandIds) || typeof raw.at !== 'string') {
+    if (
+      !Array.isArray(raw.retainedCommandIds) ||
+      !raw.retainedCommandIds.every((id) => typeof id === 'string' && id.length > 0) ||
+      typeof raw.at !== 'string'
+    ) {
       throw new Error('malformed compact event')
     }
-    const retainedCommandIds = raw.retainedCommandIds.filter(
-      (id): id is string => typeof id === 'string' && id.length > 0
-    )
-    return { op: 'compact', retainedCommandIds, at: raw.at }
+    const retainedCommandIds: string[] = raw.retainedCommandIds
+    return seq === undefined
+      ? { op: 'compact', retainedCommandIds, at: raw.at }
+      : { op: 'compact', retainedCommandIds, at: raw.at, seq }
   }
   throw new Error('unknown journal op')
 }

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { promises as fs, type BigIntStats } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { devNull } from 'node:os'
+import { armSharedWorkspaceIntentExpiry } from './SharedWorkspaceIntentClaims'
 
 import type {
   SharedWorkspaceContribution,
@@ -581,6 +582,9 @@ async function refreshMarker(
     await fs.rm(marker, { force: true })
     return
   }
+  // Settlement/recovery may inspect an old actor's remaining records. Those
+  // records preserve work, but do not prove that actor is still running.
+  if (!actorOverride) return
   if (paths.some((p) => /[\r\n]/.test(p) || p.trim() !== p)) return // Keep byte-sensitive names in the journal, not lossy YAML.
   if (
     [actor.chatId, actor.runId, actor.lockOwnerId].some(
@@ -609,6 +613,12 @@ async function refreshMarker(
     ''
   ].join('\n')
   await atomicText(marker, text)
+  armSharedWorkspaceIntentExpiry(
+    marker,
+    text,
+    join(journal.commonDir, 'taskwraith', 'retired-intent-claims', journal.worktreeId, id),
+    now.getTime() + LEASE_MS
+  )
 }
 
 async function journalRoot(root: string): Promise<JournalRoot | null> {

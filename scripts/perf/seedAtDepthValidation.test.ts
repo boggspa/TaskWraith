@@ -70,7 +70,7 @@ describe('seed-at-depth validation (A1.49 Ruling 1)', () => {
       })
       expect(report.generatorFlags.lean).toBe(true)
       expect(report.evidentiaryLaunchMustBeNonLean).toBe(true)
-      expect(report.fixtureGeneratorVersion).toBe(3)
+      expect(report.fixtureGeneratorVersion).toBe(4)
       expect(report.snapshotByteThresholdBytes).toBe(SNAPSHOT_BYTE_THRESHOLD_BYTES)
 
       const above = report.aboveThreshold

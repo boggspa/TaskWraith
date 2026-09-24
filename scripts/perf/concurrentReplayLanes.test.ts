@@ -42,13 +42,13 @@ function fakeApi(callLog: string[] = []) {
     async saveChat(record: Record<string, unknown>) {
       const chatId = record.appChatId as string
       callLog.push(`save:${chatId}`)
-      // The real store always answers with a HIGHER revision than sent;
-      // replayDriver treats a non-advancing ack as a rejected save.
+      // This permissive fixture explicitly acknowledges an accepted save.
+      // The dedicated continuity regressions use a rejecting CAS store.
       const sent = typeof record.persistenceRevision === 'number' ? record.persistenceRevision : 0
       const next = Math.max((revisions.get(chatId) || 0) + 1, sent + 1)
       revisions.set(chatId, next)
       store.set(chatId, record)
-      return { persistenceRevision: next }
+      return { accepted: true, appChatId: chatId, persistenceRevision: next }
     }
   }
 }

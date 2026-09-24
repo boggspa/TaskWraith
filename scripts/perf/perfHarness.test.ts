@@ -1222,11 +1222,11 @@ describe('T2 replay against a revision-CAS store (ChatService contract)', () => 
         if ((chat.persistenceRevision || 1) !== entry.revision) {
           rejected += 1
           // ChatService returns the CURRENT record unchanged on CAS mismatch.
-          return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+          return { accepted: false, appChatId: chat.appChatId, persistenceRevision: entry.revision }
         }
         entry.revision += 1
         accepted += 1
-        return { appChatId: chat.appChatId, persistenceRevision: entry.revision }
+        return { accepted: true, appChatId: chat.appChatId, persistenceRevision: entry.revision }
       }
     }
   }
@@ -1707,7 +1707,11 @@ describe('T2 runner (no Electron launch)', () => {
       getChat: async (id) => saved.filter((c) => c.appChatId === id).at(-1) || null,
       saveChat: async (c) => {
         saved.push(JSON.parse(JSON.stringify(c)))
-        return { ok: true }
+        return {
+          accepted: true,
+          appChatId: c.appChatId,
+          persistenceRevision: c.persistenceRevision + 1
+        }
       }
     }
     const result = await runDeterministicReplay({
@@ -1746,7 +1750,11 @@ describe('T2 runner (no Electron launch)', () => {
         getChat: async (id) => saved.get(id) || null,
         saveChat: async (chat) => {
           saved.set(chat.appChatId, chat)
-          return { ok: true }
+          return {
+            accepted: true,
+            appChatId: chat.appChatId,
+            persistenceRevision: chat.persistenceRevision + 1
+          }
         }
       },
       onEventStart: (info) => starts.push(info),

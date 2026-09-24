@@ -70,6 +70,10 @@ import { installPerfStatsHandle } from './perfStatsHandle'
 import { createChatJournal, type ChatJournalStats } from './chatJournal'
 import { createIncrementalChatJournal } from './IncrementalChatJournal'
 import {
+  CheckpointPreparationWorker,
+  isCheckpointPreparationWorkerEnabled
+} from './CheckpointPreparationWorker'
+import {
   createIncrementalChatPersistence,
   DEFERRED_TERMINAL_CHECKPOINT_APPEND_CAP,
   type IncrementalChatPersistenceBoundary,
@@ -655,7 +659,13 @@ const deferredHostMaterialize = (): DeferredHostMaterialization => {
       // journal had nothing deferred, so small-chat timer fires stay cheap.
       materialize: (chatId) => {
         try {
-          incrementalChatPersistence.checkpointChat(chatId)
+          if (checkpointPreparationWorker) {
+            // Compaction is optimistic maintenance. Compatibility publication
+            // keeps its existing independent boolean/durability contract.
+            void incrementalChatPersistence.checkpointChatDeferred(chatId)
+          } else {
+            incrementalChatPersistence.checkpointChat(chatId)
+          }
         } catch {
           // The next save, barrier, or shutdown drain retries the checkpoint.
         }
@@ -1092,8 +1102,12 @@ let catalogueSourceWriteGuard: ((chatId: string) => void) | null = null
 function incrementalJournalSidebandWritable(): boolean {
   return legacyStoreCanWrite() || legacyStoreWriterGate.snapshot().state === 'host-owned'
 }
+const checkpointPreparationWorker = isCheckpointPreparationWorkerEnabled()
+  ? new CheckpointPreparationWorker()
+  : undefined
 const incrementalChatPersistence = createIncrementalChatPersistence({
   journal: createIncrementalChatJournal(incrementalChatJournalDir, {
+    checkpointPreparation: checkpointPreparationWorker,
     beforeSourceMutation: (chatId) => catalogueSourceWriteGuard?.(chatId),
     maintenanceScope: 'opened',
     canWrite: incrementalJournalSidebandWritable,
@@ -1138,7 +1152,13 @@ const chatUpdateProjectionTracker = new ChatUpdateProjectionTracker()
 const incrementalChatIdleCheckpointTimer = setInterval(() => {
   if (!legacyStoreCanWrite()) return
   try {
-    incrementalChatPersistence.checkpointIdle()
+    if (checkpointPreparationWorker) {
+      void incrementalChatPersistence.checkpointIdleDeferred().catch((error: unknown) => {
+        console.error('[incremental-chat] deferred idle checkpoint failed', error)
+      })
+    } else {
+      incrementalChatPersistence.checkpointIdle()
+    }
   } catch (error) {
     console.error('[incremental-chat] idle checkpoint timer failed', error)
   }
@@ -8972,6 +8992,10 @@ export class AppStore {
    * loudly and quit proceeds; the incremental checkpoint remains recoverable.
    */
   static async flushAllChatSaves(options?: { hostDrainTimeoutMs?: number }): Promise<void> {
+    if (checkpointPreparationWorker) {
+      deferredHostMaterialization?.dispose()
+      clearInterval(incrementalChatIdleCheckpointTimer)
+    }
     if (legacyStoreCanWrite()) {
       saveCoalescer.flushAll()
       incrementalChatPersistence.checkpointAll()
@@ -9559,6 +9583,7 @@ export class AppStore {
    * (NON-NEGOTIABLE #4), so they are removed directly.
    */
   private static purgeChatJournalArtifactsHostOwned(chatId: string): void {
+    incrementalChatPersistence.cancelCheckpointPreparations(chatId)
     // A staged full-record checkpoint is another resurrection source even
     // before it reaches the Host client's queue. Erasure must retire it with
     // every journal artifact.
@@ -9631,6 +9656,7 @@ export class AppStore {
       chatUpdateProjectionTracker.clear()
       chatComposerSelectionOverlayStore.clearCache()
       removePathStrict(path.join(userDataPath, 'chat-journal'), 'chat journal directory')
+      incrementalChatPersistence.cancelCheckpointPreparations()
       removePathStrict(path.join(userDataPath, 'chat-journal-v2'), 'chat journal v2 directory')
       // Stage 3: the segmented store is a durable transcript copy; a global
       // clear must retire it (and its in-memory baselines) with the rest.

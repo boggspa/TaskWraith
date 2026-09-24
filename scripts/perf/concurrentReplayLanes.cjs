@@ -45,9 +45,64 @@ const {
   validateRunEvidence
 } = require('./interferenceMatrix.cjs')
 const { toPersistedChatRecord } = require('./materializeUserData.cjs')
+const {
+  createReplayRevisionState,
+  bindReplayRevisionState,
+  assertReplaySaveContinuity,
+  invalidateReplayRevisionState
+} = require('./replayRevisionState.cjs')
 
 const LANE_ROLES = Object.freeze(['light', 'heavy'])
 const PAIRING_ROLES = Object.freeze(['light-alone', 'light-beside'])
+const MAX_FAILURE_DETAILS_PER_LANE_WINDOW = 8
+
+// Diagnostics retain the observed boundary, never exception messages, stacks,
+// chat content or arbitrary rejection objects. Counts remain exhaustive even
+// when the per-window examples are full; these fields do not qualify evidence.
+function describeReplayFailure(entry) {
+  const event = entry.state.lane.schedule[entry.index]
+  let message = ''
+  let code
+  try {
+    const value = typeof entry.value === 'string' ? entry.value : entry.value?.message
+    if (typeof value === 'string') message = value.slice(0, 4096)
+    code = entry.value?.code
+  } catch {
+    // Rejections can be arbitrary values, including throwing accessors.
+  }
+  let reason = entry.outcome === 'failed' ? 'exception' : 'run_missing'
+  let hostMethod = null
+  if (entry.outcome === 'failed') {
+    const boundaryMessage = message
+      .replace(/^T2 replay page evaluation failed: /, '')
+      .replace(/^Error: /, '')
+    if (code === 'T2_REPLAY_SAVE_REJECTED') {
+      reason = 'replay_save_rejected'
+    } else if (code === 'host_unavailable') {
+      reason = 'host_unavailable'
+    } else if (boundaryMessage.startsWith('TaskWraith Host request timed out: ')) {
+      reason = 'host_request_timeout'
+      hostMethod =
+        boundaryMessage.match(
+          /^TaskWraith Host request timed out: (command\.submit|host\.lease)(?=\s|$)/
+        )?.[1] || null
+    } else if (/^TaskWraith Host projection client closed\.(?:\n|$)/.test(boundaryMessage)) {
+      reason = 'host_client_closed'
+    } else if (/^Timed out connecting to the TaskWraith Host\.(?:\n|$)/.test(boundaryMessage)) {
+      reason = 'host_connection_timeout'
+    }
+  }
+  return {
+    eventIndex: entry.index,
+    eventSeq: Number.isSafeInteger(event.seq) ? event.seq : null,
+    eventKind:
+      typeof event.kind === 'string' && /^[a-z_]{1,64}$/.test(event.kind) ? event.kind : 'unknown',
+    apiMethod: entry.lastApiMethod,
+    elapsedMs: entry.finishedAtMs - entry.startedAtMs,
+    reason,
+    hostMethod
+  }
+}
 
 /**
  * Seeded-tail length in messages from the seeded head. Independent of
@@ -248,7 +303,7 @@ function percentileSummary(values) {
  * per lane, so two chats' revision/counter state never bleed into each
  * other while they share the injected page adapter.
  */
-function makeLaneContext(api, lane) {
+function makeLaneContext(api, lane, revisionState) {
   const chatsById = new Map()
   for (const chat of lane.chats || []) chatsById.set(chat.appChatId, chat)
   return {
@@ -256,7 +311,7 @@ function makeLaneContext(api, lane) {
     chatsById,
     unsupported: [],
     savedCounts: new Map(),
-    canonicalRevisions: new Map()
+    canonicalRevisions: revisionState.canonicalRevisions
   }
 }
 
@@ -554,6 +609,10 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
           throw new Error('replay effect is outside its owned chat/window')
         }
         const entry = state.inFlightBy
+        entry.lastApiMethod = name
+        if (name === 'saveChat' || name === 'savePrefix') {
+          assertReplaySaveContinuity(state.aggregate.revisionState)
+        }
         entry.apiCalls += 1
         entry.apiPending += 1
         for (const other of allEntries) {
@@ -577,7 +636,9 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     }
     return adapter
   }
-  for (const state of laneStates) state.ctx = makeLaneContext(guardApi(state), state.lane)
+  for (const state of laneStates) {
+    state.ctx = makeLaneContext(guardApi(state), state.lane, state.aggregate.revisionState)
+  }
 
   const launch = (state) => {
     const at = readTime()
@@ -595,6 +656,7 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
       consumed: false,
       apiCalls: 0,
       apiPending: 0,
+      lastApiMethod: null,
       overlapped: false,
       unsupportedBefore: state.ctx.unsupported.length,
       timeout: null
@@ -614,6 +676,12 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     const settle = (outcome, value) => {
       entry.outcome = outcome
       entry.value = value
+      if (
+        outcome === 'failed' &&
+        (entry.lastApiMethod === 'saveChat' || entry.lastApiMethod === 'savePrefix')
+      ) {
+        invalidateReplayRevisionState(state.aggregate.revisionState)
+      }
       entry.finishedAtMs = collecting ? readTime() : null
       entry.settled = true
       clearTimer(timers, entry.timeout)
@@ -634,6 +702,10 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     pending.delete(entry)
     const state = entry.state
     state.inFlightBy = null
+    if (entry.outcome === 'failed' && state.aggregate.revisionState.invalid) {
+      // No dependent save can skip a failed seed or borrow an uncertain base.
+      stop('save_failed')
+    }
     if (entry.finishedAtMs === null || entry.finishedAtMs > deadlineAtMs) {
       state.lateEvents += 1
       return
@@ -641,6 +713,9 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     state.completedEvents += 1
     if (entry.outcome === 'failed' || entry.value?.runPresent === false) {
       state.failures += 1
+      if (state.failureDetails.length < MAX_FAILURE_DETAILS_PER_LANE_WINDOW) {
+        state.failureDetails.push(describeReplayFailure(entry))
+      }
     } else if (entry.value?.ok !== true || entry.value.delegated === true) {
       state.unsupportedEvents += 1
     } else {
@@ -709,6 +784,8 @@ async function runOneWindow(laneStates, options, prng, ownership, repetition) {
     startedEvents: state.nextIndex,
     completedEvents: state.completedEvents,
     failedEvents: state.failures,
+    failureDetails: state.failureDetails,
+    failureDetailsOmitted: state.failures - state.failureDetails.length,
     unsupportedEvents: state.unsupportedEvents,
     annotatedEvents: state.annotatedEvents,
     pendingEvents: [...pending].filter((entry) => entry.state === state).length,
@@ -842,15 +919,17 @@ async function runConcurrentReplayLanes(options) {
       replayPlan: planned
     }
   })
-  const ownership = reserveChats(options.api, lanes)
+  const revisionSession = options.replayRevisionState ?? createReplayRevisionState(options.api)
   const aggregates = lanes.map((lane) => ({
     lane,
+    revisionState: bindReplayRevisionState(revisionSession, options.api, lane),
     latencies: [],
     applied: 0,
     failures: 0,
     unsupported: [],
     censored: false
   }))
+  const ownership = reserveChats(options.api, lanes)
   const windows = []
   let cleanup = { status: 'not_needed' }
   try {
@@ -863,6 +942,7 @@ async function runConcurrentReplayLanes(options) {
         latencies: [],
         applied: 0,
         failures: 0,
+        failureDetails: [],
         completedEvents: 0,
         unsupportedEvents: 0,
         annotatedEvents: 0,
@@ -886,6 +966,10 @@ async function runConcurrentReplayLanes(options) {
       const { pending, ...observed } = window
       windows.push(observed)
       if (pending.length) {
+        for (const entry of pending) {
+          const aggregate = aggregates.find((candidate) => candidate.lane.chatId === entry.chatId)
+          invalidateReplayRevisionState(aggregate.revisionState)
+        }
         cleanup = await boundedCleanup(
           options.cancelPending,
           pending,
@@ -902,9 +986,10 @@ async function runConcurrentReplayLanes(options) {
       // eligible evidence. A censored window continues; anything we could not
       // finish or drain still aborts the remaining repetitions.
       if (
-        window.outcome !== 'complete' &&
-        window.outcome !== 'diagnostic' &&
-        window.outcome !== 'censored'
+        states.some((state) => state.aggregate.revisionState.invalid) ||
+        (window.outcome !== 'complete' &&
+          window.outcome !== 'diagnostic' &&
+          window.outcome !== 'censored')
       )
         break
     }

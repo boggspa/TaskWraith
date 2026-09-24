@@ -28,6 +28,7 @@ const { runConcurrentReplayLanes } = require('./concurrentReplayLanes.cjs')
 const { FIXTURE_GENERATOR_VERSION } = require('./fixtureGenerator.cjs')
 const { cellName, parseCellName, lightAloneCellFor, pairRuns } = require('./interferenceMatrix.cjs')
 const { buildT2LaneSpecs } = require('./t2WindowOrchestration.cjs')
+const { createReplayRevisionState } = require('./replayRevisionState.cjs')
 
 function isPlainObject(value) {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -53,6 +54,7 @@ async function runT2PairedReplay(options) {
   const aloneCellName = besideCell === null ? besideCellName : lightAloneCellFor(besideCell).name
   const shared = {
     ...rest,
+    replayRevisionState: createReplayRevisionState(options.api),
     fixtureVersions: fixtureVersions ?? { fixtureGenerator: FIXTURE_GENERATOR_VERSION }
   }
   const lightLanes = lanes.filter((lane) => lane.role === 'light')

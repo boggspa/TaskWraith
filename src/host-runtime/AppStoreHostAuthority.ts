@@ -896,7 +896,13 @@ export class AppStoreHostAuthority implements HostAuthority {
         ? this.runtime.receiptStore.getByCommandId(parsed.commandId, actor)
         : this.runtime.receiptStore.getByIdempotencyKey(parsed.idempotencyKey, actor)
 
-    if (found.kind === 'not_found') return { ok: true, outcome: 'not_found' }
+    if (found.kind === 'not_found') {
+      // A failed recovery can leave readable durable rows without establishing
+      // that any other identity is absent. Preserve that distinction for retries.
+      return this.runtime.receiptStore.durabilityStatus.kind === 'ok'
+        ? { ok: true, outcome: 'not_found' }
+        : { ok: false, error: 'host_unavailable' }
+    }
     if (found.kind === 'actor_mismatch') return { ok: true, outcome: 'actor_mismatch' }
     if (found.kind === 'incomplete') return { ok: true, outcome: 'incomplete' }
 
@@ -911,21 +917,28 @@ export class AppStoreHostAuthority implements HostAuthority {
     context: HostAuthorityCallContext,
     command: HostCommand
   ): Promise<HostAuthorityResult<HostCommandReceipt>> {
-    // A queued start can be waiting for capacity held by a run that needs a
-    // cancellation or a human reply. Keep those release paths out of the queue;
-    // they still pass through the same validation, policy, and observation.
-    if (
-      command?.name === 'run.cancel' ||
-      command?.name === 'approval.decide' ||
-      command?.name === 'question.answer' ||
-      this.usesQueuedComposerSend(command)
-    ) {
-      return this.executeCommand(context, command)
+    try {
+      // A queued start can be waiting for capacity held by a run that needs a
+      // cancellation or a human reply. Keep those release paths out of the queue;
+      // they still pass through the same validation, policy, and observation.
+      if (
+        command?.name === 'run.cancel' ||
+        command?.name === 'approval.decide' ||
+        command?.name === 'question.answer' ||
+        this.usesQueuedComposerSend(command)
+      ) {
+        return await this.executeCommand(context, command)
+      }
+      return await this.runProjectionOperation(
+        () => this.executeCommand(context, command),
+        projectionQueueLabel(command)
+      )
+    } catch {
+      // Receipt admission and completion can fail at a durable I/O boundary.
+      // Preserve the uncertain outcome; never manufacture a failed receipt or
+      // retry the executor after an exception that may follow domain effects.
+      return { ok: false, error: 'host_unavailable' }
     }
-    return this.runProjectionOperation(
-      () => this.executeCommand(context, command),
-      projectionQueueLabel(command)
-    )
   }
 
   private async executeCommand(

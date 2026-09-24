@@ -179,6 +179,9 @@ describe('HostDeltaStore independent batch durability review', () => {
       position: { generation: 1, cursor: 3 }
     })
     expect(seen).toEqual([1, 2, 3])
+    // Recovery must refuse unreadable durable files. Remove this artificial
+    // obstruction before checking that the committed journal survives reopen.
+    rmSync(join(dataDir, HOST_DELTA_CHECKPOINT_FILENAME), { recursive: true })
     expect(new HostDeltaStore({ dataDir, now }).getPosition().cursor).toBe(3)
   })
 

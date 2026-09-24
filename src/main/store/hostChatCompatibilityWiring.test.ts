@@ -14,10 +14,23 @@
  * deleted, so none of these can keep passing over a moved or missing target.
  */
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 
 import { MainSourceProbe } from '../mainSourceProbe.testutil'
 
 const store = new MainSourceProbe('src/main/store/index.ts', new URL('./index.ts', import.meta.url))
+
+function appStoreMethod(name: string): string {
+  const appStore = store.source.statements.find(
+    (node) => ts.isClassDeclaration(node) && node.name?.text === 'AppStore'
+  )
+  if (!appStore || !ts.isClassDeclaration(appStore)) throw new Error('Missing AppStore')
+  const method = appStore.members.find(
+    (node) => ts.isMethodDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === name
+  )
+  if (!method) throw new Error(`Missing AppStore.${name}`)
+  return store.text(method)
+}
 
 describe('Host compatibility checkpoint wiring in store/index.ts', () => {
   it('constructs the one compatibility coordinator with the policy interval', () => {
@@ -36,6 +49,44 @@ describe('Host compatibility checkpoint wiring in store/index.ts', () => {
     const getter = store.propText(built[0], 0, 'getPendingMutationBytes')
     expect(getter).not.toBeNull()
     expect(getter).toContain('incrementalChatPersistence.pendingMutationBytes(chatId)')
+  })
+
+  it('uses background compaction only when the worker is explicitly enabled', () => {
+    const built = store.construction('DeferredHostMaterialization')
+    const materialize = store.propText(built[0], 0, 'materialize')!
+    expect(materialize).toContain('if (checkpointPreparationWorker)')
+    expect(materialize).toContain('void incrementalChatPersistence.checkpointChatDeferred(chatId)')
+    expect(materialize).toContain('incrementalChatPersistence.checkpointChat(chatId)')
+    expect(materialize).toContain('return materializeHostChatCompatibility(chatId)')
+    expect(store.text(store.binding('checkpointPreparationWorker'))).toContain(
+      'isCheckpointPreparationWorkerEnabled()'
+    )
+    const journal = store.callsTo(store.source, 'createIncrementalChatJournal')
+    expect(journal).toHaveLength(1)
+    expect(store.propText(journal[0], 1, 'checkpointPreparation')).toBe(
+      'checkpointPreparationWorker'
+    )
+  })
+
+  it('retires worker custody before Host-owned direct erasure and shutdown drains', () => {
+    const purge = appStoreMethod('purgeChatJournalArtifactsHostOwned')
+    expect(
+      purge.indexOf('incrementalChatPersistence.cancelCheckpointPreparations(chatId)')
+    ).toBeGreaterThan(-1)
+    expect(
+      purge.indexOf('incrementalChatPersistence.cancelCheckpointPreparations(chatId)')
+    ).toBeLessThan(purge.indexOf('fs.rmSync'))
+    const erase = appStoreMethod('executeHostChatRecordErasure')
+    expect(
+      erase.indexOf('incrementalChatPersistence.cancelCheckpointPreparations()')
+    ).toBeGreaterThan(-1)
+    expect(erase.indexOf('incrementalChatPersistence.cancelCheckpointPreparations()')).toBeLessThan(
+      erase.indexOf("removePathStrict(path.join(userDataPath, 'chat-journal-v2')")
+    )
+    const shutdown = appStoreMethod('flushAllChatSaves')
+    expect(shutdown).toContain('deferredHostMaterialization?.dispose()')
+    expect(shutdown).toContain('clearInterval(incrementalChatIdleCheckpointTimer)')
+    expect(shutdown).toContain('incrementalChatPersistence.checkpointAll()')
   })
 
   it('derives run liveness from the shared status predicate, never the raw running string', () => {

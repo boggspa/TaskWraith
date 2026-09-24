@@ -542,6 +542,24 @@ is a backstop, not a guarantee — the rules above still stand on their own.
 
 ### The clock, for the hours between commits
 
+Contribution-marker maintenance is separate from the read-only work guard:
+
+```bash
+node scripts/reconcile-work-claims.cjs /path/to/worktree --json
+node scripts/reconcile-work-claims.cjs /path/to/worktree --apply --json
+```
+
+The first command reports only. The second archives verified expired host
+contribution projections under the Git common directory, preserving their
+journals and recovery refs. It leaves manual claims and runtime projections
+for their owners. Inspect the report, coordinate active peers, and verify the
+archive receipts afterwards. Never use an age-based shell deletion sweep.
+
+The host source also arms expiry for newly renewed contribution markers and
+does not revive an old actor from its journal during settlement or recovery.
+This behavior requires a build containing those changes; existing running
+artifacts may still need the report-first maintenance command after a crash.
+
 Everything above is edge-triggered on `git commit`: the hook, "raise your
 marker before your first edit", "drop it in the same breath as your final
 commit". On 2026-07-30 every failure happened in the gaps. One session sat

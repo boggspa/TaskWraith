@@ -14,6 +14,7 @@ import type {
   IncrementalChatReplayResult
 } from './IncrementalChatJournal'
 import type { ChatMessage, ChatRecord } from './types'
+import type { DeferredCheckpointResult } from './CheckpointPreparationProtocol'
 
 export type IncrementalChatPersistenceBoundary = 'normal' | 'approval' | 'terminal'
 
@@ -80,6 +81,9 @@ export interface IncrementalChatPersistence {
   checkpointAll(): number
   /** Flush one chat's deferred terminal checkpoint. False when nothing is due. */
   checkpointChat(chatId: string): boolean
+  checkpointChatDeferred(chatId: string): Promise<DeferredCheckpointResult>
+  checkpointIdleDeferred(nowMs?: number): Promise<number>
+  cancelCheckpointPreparations(chatId?: string): void
   /** Appended batches since this chat's last checkpoint (deferral depth). */
   appendsSinceCheckpoint(chatId: string): number
   /**
@@ -471,6 +475,32 @@ export function createIncrementalChatPersistence(
     }
   }
 
+  const checkpointChatDeferred = async (chatId: string): Promise<DeferredCheckpointResult> => {
+    if (!canWrite() || !journal.checkpointDeferred) return 'unavailable'
+    const head = headRecordByChatId.get(chatId)
+    try {
+      const result = await journal.checkpointDeferred(chatId)
+      if (result === 'checkpointed') {
+        // A newer save may have run between adoption and this continuation.
+        // Overcounting is conservative; resetting its byte count is not.
+        if (headRecordByChatId.get(chatId) === head) noteCheckpoint(chatId)
+        idleCheckpoints += 1
+      }
+      return result
+    } catch (error) {
+      failures += 1
+      logger.error('[incremental-chat] deferred preparation failed', error)
+      return 'unavailable'
+    }
+  }
+
+  const checkpointIdleDeferred = async (nowMs?: number): Promise<number> => {
+    if (!canWrite() || !journal.checkpointIdleDeferred) return 0
+    const count = await journal.checkpointIdleDeferred(nowMs)
+    idleCheckpoints += count
+    return count
+  }
+
   const appendsSinceCheckpoint = (chatId: string): number =>
     appendsSinceCheckpointByChatId.get(chatId) ?? 0
 
@@ -529,6 +559,9 @@ export function createIncrementalChatPersistence(
     checkpointIdle,
     checkpointAll,
     checkpointChat,
+    checkpointChatDeferred,
+    checkpointIdleDeferred,
+    cancelCheckpointPreparations: (chatId) => journal.cancelCheckpointPreparations?.(chatId),
     appendsSinceCheckpoint,
     pendingMutationBytes,
     purge,

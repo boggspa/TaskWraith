@@ -48,9 +48,14 @@ function fakeApi(behavior: Record<string, unknown> = {}) {
       calls.push({ op: 'save', revision: chat.persistenceRevision })
       const next = (revisions.get(chat.appChatId) ?? 0) + 1
       revisions.set(chat.appChatId, next)
-      if (behavior.staleAck) return { persistenceRevision: chat.persistenceRevision }
+      if (behavior.staleAck)
+        return {
+          accepted: false,
+          appChatId: chat.appChatId,
+          persistenceRevision: chat.persistenceRevision
+        }
       if (behavior.nullAck) return null
-      return { persistenceRevision: next, updatedAt: 1 }
+      return { accepted: true, appChatId: chat.appChatId, persistenceRevision: next, updatedAt: 1 }
     }
   }
 }
@@ -145,7 +150,7 @@ describe('provider turn replay (P1)', () => {
     expect(result.scriptFingerprints).toHaveLength(1)
   })
 
-  it('fails closed on a non-advancing ack and continues later parts', async () => {
+  it('fails closed on a rejected ack without attempting dependent parts', async () => {
     const result = await runProviderTurnReplay(
       replayInput({
         api: fakeApi({ staleAck: true }),
@@ -155,14 +160,14 @@ describe('provider turn replay (P1)', () => {
     )
     expect(result.turns[0].parts.map((part: { outcome: string }) => part.outcome)).toEqual([
       'failed',
-      'failed'
+      'not_attempted'
     ])
     expect(result.turns[0].parts[0].reason).toBe('save_rejected')
     expect(result.status).toBe('failed')
     expect(result.ok).toBe(false)
   })
 
-  it('skips the advance assertion for degraded adapters without a revision ack', async () => {
+  it('fails without an explicit accepted revision ack', async () => {
     const result = await runProviderTurnReplay(
       replayInput({
         api: fakeApi({ nullAck: true }),
@@ -170,8 +175,9 @@ describe('provider turn replay (P1)', () => {
         shape: { chunksPerTurn: 1, chunkBytes: 10, toolCallsPerTurn: 0 }
       })
     )
-    expect(result.turns[0].parts[0].outcome).toBe('completed')
-    expect(result.status).toBe('complete')
+    expect(result.turns[0].parts[0].outcome).toBe('failed')
+    expect(result.turns[0].parts[0].reason).toBe('save_rejected')
+    expect(result.status).toBe('failed')
   })
 
   it('reports a missing chat as unsupported without attempting saves', async () => {
@@ -243,7 +249,8 @@ describe('provider turn replay (P1)', () => {
   it('refuses a second concurrent run over the same chat, then releases it', async () => {
     let release!: () => void
     const gate = new Promise((resolve) => {
-      release = () => resolve({ persistenceRevision: 11, updatedAt: 1 })
+      release = () =>
+        resolve({ accepted: true, appChatId: 'chat-light', persistenceRevision: 11, updatedAt: 1 })
     })
     const api = {
       async getChat(chatId: string) {
