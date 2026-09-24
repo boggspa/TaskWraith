@@ -49,6 +49,7 @@ const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const os = require('node:os')
 const path = require('node:path')
+const { markerKind } = require('./work-claim-policy.cjs')
 const {
   advanceMarkerObservations,
   queryWorkProvenance,
@@ -519,9 +520,14 @@ function advanceHeartbeats(root, markers, dirty, now) {
 }
 
 function liveness(marker, side, now) {
+  const kind = markerKind(marker.file, marker.agent, marker.derived)
   const entry = side?.schemaVersion === 2 ? side.markers?.[marker.file] : side?.[marker.file]
   const lastSeen = Number(entry?.lastSeen) || null
-  const heartbeatFresh = lastSeen !== null && now - lastSeen < HEARTBEAT_STALE_MS
+  // File mtimes can belong to a later contributor. Only the host may renew
+  // a captured-edit intent lease; historical recovery records are not activity.
+  const heartbeatFresh =
+    kind === 'manual' &&
+    lastSeen !== null && now >= lastSeen && now - lastSeen < HEARTBEAT_STALE_MS
   const alive = pidAlive(marker.pid)
   // A manual lease may not exceed MAX_LEASE_MS and must be renewed by hand
   // (2026-08-06). Nothing bounded it before — `expires: 2099-…` held a path for
@@ -557,7 +563,7 @@ function liveness(marker, side, now) {
   const validOpaqueId = Boolean(marker.lockOwnerId) && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(marker.lockOwnerId)
   const ownerHeld = validOpaqueId && leaseHeld
   return {
-    live: heartbeatFresh || (alive && !expired) || ownerHeld,
+    live: kind === 'runtime' || heartbeatFresh || (alive && !expired) || ownerHeld,
     heartbeatFresh,
     alive,
     ownerHeld,

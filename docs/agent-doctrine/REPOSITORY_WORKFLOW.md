@@ -2,6 +2,11 @@
 
 Read this file in full before any repository mutation, formatter use, work-marker or worktree action, staging or commit, or irreversible release action.
 
+For marker actions also read the shared
+[work-claim lifecycle](WORK_CLAIM_LIFECYCLE.md). Contribution intent markers
+expire separately from their recovery records; they are not durable runtime
+lock projections. A fresh file heartbeat cannot renew an old contribution owner.
+
 ## Formatting policy for agents
 
 `npm run format` formats only files you have **staged**. It is scoped on
@@ -304,11 +309,10 @@ id is its only normal bypass. Restart TaskWraith to reconcile a dead runtime
 owner, and use the explicit recovery path rather than deleting the marker.
 Manual markers retain the expiry-authoritative rule above.
 
-Size `expires` accordingly: it is when you would _want_ someone to move in if
-you went silent. Take an hour and **renew** (rewrite the marker with a later
-`expires`) when you need more, rather than taking an afternoon up front and
-going dark inside it. A lease that outlives the work by hours is how an
-abandoned claim impersonates a live one.
+Size `expires` accordingly: use at most 20 minutes and renew both timestamps
+while work continues. Expiry prompts an activity and stranded-work check; it
+does not authorize discarding dirty work. A lease that outlives its work is how
+an abandoned claim impersonates a live one.
 
 Drop your marker in the same breath as your final commit — before the host
 process goes idle, not "at the end of the session"; an idle-but-alive host is
@@ -537,6 +541,24 @@ Hooks are not cloned by a fresh checkout and only fire at commit time, so this
 is a backstop, not a guarantee — the rules above still stand on their own.
 
 ### The clock, for the hours between commits
+
+Contribution-marker maintenance is separate from the read-only work guard:
+
+```bash
+node scripts/reconcile-work-claims.cjs /path/to/worktree --json
+node scripts/reconcile-work-claims.cjs /path/to/worktree --apply --json
+```
+
+The first command reports only. The second archives verified expired host
+contribution projections under the Git common directory, preserving their
+journals and recovery refs. It leaves manual claims and runtime projections
+for their owners. Inspect the report, coordinate active peers, and verify the
+archive receipts afterwards. Never use an age-based shell deletion sweep.
+
+The host source also arms expiry for newly renewed contribution markers and
+does not revive an old actor from its journal during settlement or recovery.
+This behavior requires a build containing those changes; existing running
+artifacts may still need the report-first maintenance command after a crash.
 
 Everything above is edge-triggered on `git commit`: the hook, "raise your
 marker before your first edit", "drop it in the same breath as your final
