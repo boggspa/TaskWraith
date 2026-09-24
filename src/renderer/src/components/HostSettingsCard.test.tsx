@@ -9,12 +9,16 @@
  * the returned element tree.
  */
 
-import { isValidElement, type ReactElement, type ReactNode } from 'react'
+import { act, isValidElement, type ReactElement, type ReactNode } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { renderToStaticMarkup } from 'react-dom/server'
 import ts from 'typescript'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { HostLifecycleSnapshot } from '../../../shared/hostLifecycle'
+import type {
+  HostLifecycleInspectResult,
+  HostLifecycleSnapshot
+} from '../../../shared/hostLifecycle'
 import type { HostStatusProjection } from '../../../shared/hostProtocol'
 import { MainSourceProbe } from '../../../main/mainSourceProbe.testutil'
 import {
@@ -22,8 +26,9 @@ import {
   type HostLifecycleBridge,
   type HostLifecycleInspection
 } from '../lib/host/hostLifecycleIpcClient'
-import type { HostProjectionState } from '../lib/host/HostProjectionStore'
+import type { HostProjectionState, HostProjectionStore } from '../lib/host/HostProjectionStore'
 import type { HostProjectedSnapshot } from '../lib/host/hostSnapshotProjection'
+import * as projectionProvider from './HostProjectionProvider'
 import {
   HOST_FACT_NOT_AVAILABLE,
   HostSettingsCard,
@@ -37,6 +42,7 @@ import {
 } from './HostSettingsCard'
 
 const PAYLOAD = `sha256:${'ab'.repeat(32)}`
+let mountedRoot: Root | null = null
 
 function lifecycle(overrides: Partial<HostLifecycleSnapshot> = {}): HostLifecycleSnapshot {
   return {
@@ -164,8 +170,128 @@ function findClickableByLabel(node: ReactNode, label: string): Clickable {
   return found
 }
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (error: Error) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((accept, decline) => {
+    resolve = accept
+    reject = decline
+  })
+  return { promise, resolve, reject }
+}
+
+function projectedRuns(count: number): HostProjectionState {
+  return {
+    status: 'live',
+    projection: {
+      runs: Array.from({ length: count }, (_, index) => ({
+        runId: `run-${index}`,
+        threadId: 'thread-1',
+        providerId: 'codex',
+        providerOutcome: 'running'
+      }))
+    } as unknown as HostProjectedSnapshot
+  }
+}
+
+/** Mount the real card hooks; capture its view props so no browser DOM is needed. */
+async function mountCard(bridge: HostLifecycleBridge, initialProjection = projectedRuns(0)) {
+  class TestElement {}
+  class TestFrame extends TestElement {}
+  const document = {
+    nodeType: 9,
+    activeElement: null,
+    body: null,
+    documentElement: {},
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined
+  }
+  const window = {
+    document,
+    event: undefined,
+    HTMLElement: TestElement,
+    HTMLIFrameElement: TestFrame
+  }
+  Object.assign(document, { defaultView: window })
+  vi.stubGlobal('window', window)
+  vi.stubGlobal('document', document)
+  vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  const container = {
+    nodeType: 1,
+    nodeName: 'DIV',
+    tagName: 'DIV',
+    namespaceURI: 'http://www.w3.org/1999/xhtml',
+    ownerDocument: document,
+    firstChild: null,
+    lastChild: null,
+    addEventListener: () => undefined,
+    removeEventListener: () => undefined,
+    appendChild: () => undefined,
+    removeChild: () => undefined
+  } as unknown as Element
+  let projected = initialProjection
+  const listeners = new Set<(state: HostProjectionState) => void>()
+  const store = {
+    getState: () => projected,
+    refresh: vi.fn(async () => undefined),
+    subscribe: (listener: (state: HostProjectionState) => void) => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+  }
+  vi.spyOn(projectionProvider, 'useHostProjectionStore').mockReturnValue(
+    store as unknown as HostProjectionStore
+  )
+  let lifecycleListener: (snapshot: HostLifecycleSnapshot) => void = () => undefined
+  vi.mocked(bridge.onHostLifecycleChanged).mockImplementation((listener) => {
+    lifecycleListener = listener
+    return () => undefined
+  })
+  const client = new HostLifecycleIpcClient(bridge)
+  const initialSnapshot = lifecycle()
+  const initialInspect = inspection()
+  let current: HostSettingsCardViewProps | undefined
+  function Harness(): null {
+    const element = HostSettingsCard({ initialSnapshot, initialInspect, lifecycleClient: client })
+    current = element.props as HostSettingsCardViewProps
+    return null
+  }
+  await act(async () => {
+    mountedRoot = createRoot(container)
+    mountedRoot.render(<Harness />)
+  })
+  const view = (): HostSettingsCardViewProps => {
+    if (!current) throw new Error('Host card has not rendered')
+    return current
+  }
+  return {
+    view,
+    click: async (label: string) => {
+      await act(async () =>
+        findClickableByLabel(HostSettingsCardView(view()), label).props.onClick?.()
+      )
+    },
+    project: (next: HostProjectionState, notify = true) => {
+      act(() => {
+        projected = next
+        if (notify) for (const listener of listeners) listener(next)
+      })
+    },
+    lifecycle: async (next: HostLifecycleSnapshot) => {
+      await act(async () => lifecycleListener(next))
+    }
+  }
+}
+
 afterEach(() => {
+  act(() => mountedRoot?.unmount())
+  mountedRoot = null
   vi.restoreAllMocks()
+  vi.unstubAllGlobals()
 })
 
 describe('HostSettingsCard · first paint from props', () => {
@@ -225,12 +351,38 @@ describe('HostSettingsCard · first paint from props', () => {
   it('never presents a stopped Host’s last pid as a live fact', () => {
     const markup = renderCard(
       lifecycle({ phase: 'stopped', desired: 'stopped', reason: 'user-stop' }),
-      null
+      inspection()
     )
 
     expect(markup).toContain('<dt>pid</dt><dd>Not running</dd>')
     expect(markup).not.toContain('4242')
     expect(markup).toContain('>Stopped by you</span>')
+    expect(markup).not.toContain('tui-7f3a')
+    expect(markup).not.toContain('Held · app open')
+    expect(markup).not.toContain('3h 12m')
+  })
+
+  it.each([
+    { pid: 777 },
+    { startedAt: '2026-09-23T13:00:00.000Z' },
+    { hostId: 'replacement-install' }
+  ])('never shows an earlier inspection beside a changed lifecycle identity: %j', (identity) => {
+    const next = lifecycle({ revision: 8, host: { ...lifecycle().host!, ...identity } })
+    const markup = renderCard(next, inspection())
+
+    expect(markup).toContain(`<dt>pid</dt><dd>${next.host!.pid}</dd>`)
+    expect(markup).toContain('<dt>Uptime</dt><dd>Checking…</dd>')
+    expect(markup).not.toContain('tui-7f3a')
+    expect(markup).not.toContain('Held · app open')
+  })
+
+  it('rejects a Host status whose identity disagrees with its inspection lifecycle', () => {
+    const markup = renderCard(lifecycle(), inspection({ host: hostStatus({ pid: 777 }) }))
+
+    expect(markup).toContain('<dt>pid</dt><dd>4242</dd>')
+    expect(markup).not.toContain('777')
+    expect(markup).not.toContain('3h 12m')
+    expect(markup).not.toContain('tui-7f3a')
   })
 
   it('counts down the last-lease grace in the Host’s own milliseconds', () => {
@@ -398,7 +550,7 @@ describe('HostSettingsCard · actions', () => {
     expect(onCancelConfirm).toHaveBeenCalledTimes(1)
   })
 
-  it('counts live runs as the menu does: the Host’s own count first, then the projection', () => {
+  it('counts the larger live-work observation without treating unavailable counts as zero', () => {
     const projected = (outcomes: string[]): HostProjectionState => ({
       status: 'live',
       projection: {
@@ -411,16 +563,243 @@ describe('HostSettingsCard · actions', () => {
       } as unknown as HostProjectedSnapshot
     })
 
-    // The Host's own status wins whenever it is known, above or below the projection.
+    // Either source may discover a live run before the other does.
     expect(countLiveHostRuns(projected(['completed']), hostStatus({ liveWork: { runs: 3 } }))).toBe(
       3
     )
-    expect(countLiveHostRuns(projected(['running', 'running']), hostStatus())).toBe(0)
+    expect(countLiveHostRuns(projected(['running', 'running']), hostStatus())).toBe(2)
     expect(countLiveHostRuns({ status: 'idle' }, hostStatus({ liveWork: { runs: 1 } }))).toBe(1)
     // Without it, the update-restart barrier's rule over the projection.
     expect(countLiveHostRuns(projected(['running', 'completed', 'running']), null)).toBe(2)
     expect(countLiveHostRuns(projected([]), null)).toBe(0)
     expect(countLiveHostRuns({ status: 'idle' }, null)).toBeNull()
+  })
+})
+
+describe('HostSettingsCard · interactive lifecycle', () => {
+  it('re-inspects on restart click and confirms projected work even when fresh Host status says zero', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const inspect = vi.mocked(bridge.hostLifecycleInspect!)
+    const callsBefore = inspect.mock.calls.length
+    card.project(projectedRuns(2))
+
+    await card.click('Restart Host')
+
+    expect(inspect).toHaveBeenCalledTimes(callsBefore + 1)
+    expect(card.view().confirm).toBe('2 runs are in progress. Restarting the Host cancels them.')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    await card.click('Keep running')
+    expect(card.view().confirm).toBeNull()
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+  })
+
+  it('uses fresh Host work rather than the cached idle inspection before dispatching a confirmed restart', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    vi.mocked(bridge.hostLifecycleInspect!).mockResolvedValueOnce({
+      ok: true,
+      ...inspection({ host: hostStatus({ liveWork: { runs: 3 } }) })
+    })
+
+    await card.click('Restart Host')
+
+    expect(card.view().confirm).toBe('3 runs are in progress. Restarting the Host cancels them.')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    await card.click('Restart anyway')
+    expect(bridge.hostLifecycleSet).toHaveBeenCalledExactlyOnceWith({ action: 'restart' })
+  })
+
+  it('reads the latest projection after a pending inspect and prevents duplicate restart reads', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const answer = deferred<HostLifecycleInspectResult>()
+    const inspect = vi.mocked(bridge.hostLifecycleInspect!)
+    const callsBefore = inspect.mock.calls.length
+    inspect.mockReturnValueOnce(answer.promise)
+
+    await card.click('Restart Host')
+    await card.click('Restart Host')
+    card.project(projectedRuns(1), false)
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    await act(async () => answer.resolve({ ok: true, ...inspection() }))
+
+    expect(inspect).toHaveBeenCalledTimes(callsBefore + 1)
+    expect(card.view().confirm).toBe('1 run is in progress. Restarting the Host cancels it.')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+  })
+
+  it('dispatches an idle restart only after the click-time inspection answers', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const answer = deferred<HostLifecycleInspectResult>()
+    vi.mocked(bridge.hostLifecycleInspect!).mockReturnValueOnce(answer.promise)
+
+    await card.click('Restart Host')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    await act(async () => answer.resolve({ ok: true, ...inspection() }))
+
+    expect(card.view().confirm).toBeNull()
+    expect(bridge.hostLifecycleSet).toHaveBeenCalledExactlyOnceWith({ action: 'restart' })
+  })
+
+  it.each([
+    {
+      change: 'stopped',
+      next: inspection({
+        snapshot: lifecycle({
+          revision: 8,
+          phase: 'stopped',
+          desired: 'stopped',
+          reason: 'user-stop'
+        }),
+        host: null,
+        lease: null
+      })
+    },
+    {
+      change: 'replacement',
+      next: inspection({
+        snapshot: lifecycle({
+          revision: 8,
+          host: {
+            ...lifecycle().host!,
+            pid: 777,
+            hostId: 'replacement-host',
+            startedAt: '2026-09-24T12:05:00.000Z'
+          }
+        }),
+        host: hostStatus({
+          pid: 777,
+          hostId: 'replacement-host',
+          startedAt: '2026-09-24T12:05:00.000Z'
+        })
+      })
+    },
+    {
+      change: 'new lifecycle revision',
+      next: inspection({ snapshot: lifecycle({ revision: 8 }) })
+    },
+    {
+      change: 'stale lifecycle revision',
+      next: inspection({ snapshot: lifecycle({ revision: 6 }) })
+    }
+  ])('cancels restart when click-time inspection itself returns $change', async ({ next }) => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const answer = deferred<HostLifecycleInspectResult>()
+    vi.mocked(bridge.hostLifecycleInspect!).mockReturnValueOnce(answer.promise)
+
+    await card.click('Restart Host')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    await act(async () => answer.resolve({ ok: true, ...next }))
+
+    expect(card.view().snapshot?.revision).toBe(Math.max(7, next.snapshot.revision))
+    expect(card.view().snapshot?.phase).toBe(next.snapshot.phase)
+    expect(card.view().confirm).toBeNull()
+    expect(card.view().pending).toBeNull()
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+  })
+
+  it('asks when click-time inspection fails even with an idle projected count', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    vi.mocked(bridge.hostLifecycleInspect!).mockRejectedValueOnce(new Error('Host status failed'))
+
+    await card.click('Restart Host')
+
+    expect(card.view().confirm).toContain('cannot tell whether runs are in progress')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+  })
+
+  it('asks when click-time inspection fails and no projected count is available', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge, { status: 'idle' })
+    vi.mocked(bridge.hostLifecycleInspect!).mockRejectedValueOnce(new Error('Host status failed'))
+
+    await card.click('Restart Host')
+
+    expect(card.view().confirm).toContain('cannot tell whether runs are in progress')
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+  })
+
+  it('does not dispatch a pending restart check after a stopped lifecycle arrives', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const answer = deferred<HostLifecycleInspectResult>()
+    const stopped = lifecycle({
+      revision: 8,
+      phase: 'stopped',
+      desired: 'stopped',
+      reason: 'user-stop'
+    })
+    vi.mocked(bridge.hostLifecycleInspect!)
+      .mockReturnValueOnce(answer.promise)
+      .mockResolvedValue({
+        ok: true,
+        ...inspection({ snapshot: stopped, host: null, lease: null })
+      })
+
+    await card.click('Restart Host')
+    await card.lifecycle(stopped)
+    await act(async () => answer.resolve({ ok: true, ...inspection() }))
+
+    expect(card.view().snapshot?.phase).toBe('stopped')
+    expect(card.view().inspect).toBeNull()
+    expect(card.view().confirm).toBeNull()
+    expect(bridge.hostLifecycleSet).not.toHaveBeenCalled()
+    const markup = renderToStaticMarkup(HostSettingsCardView(card.view()))
+    expect(markup).not.toContain('4242')
+    expect(markup).not.toContain('Held · app open')
+    expect(markup).not.toContain('tui-7f3a')
+  })
+
+  it('clears old inspection errors and ignores an old read while a replacement inspection is pending', async () => {
+    const bridge = silentBridge()
+    const card = await mountCard(bridge)
+    const inspect = vi.mocked(bridge.hostLifecycleInspect!)
+    inspect.mockRejectedValueOnce(new Error('old Host error'))
+    await card.click('Refresh')
+    expect(card.view().inspectError).toBe('old Host error')
+    const oldAnswer = deferred<HostLifecycleInspectResult>()
+    const newAnswer = deferred<HostLifecycleInspectResult>()
+    inspect.mockReturnValueOnce(oldAnswer.promise).mockReturnValueOnce(newAnswer.promise)
+    await card.click('Refresh')
+    const replacementHost = hostStatus({
+      pid: 777,
+      startedAt: '2026-09-23T13:00:00.000Z',
+      clients: []
+    })
+    const replacement = lifecycle({
+      revision: 8,
+      host: {
+        ...lifecycle().host!,
+        pid: replacementHost.pid,
+        startedAt: replacementHost.startedAt
+      }
+    })
+
+    await card.lifecycle(replacement)
+
+    expect(card.view().inspect).toBeNull()
+    expect(card.view().inspectError).toBeUndefined()
+    let markup = renderToStaticMarkup(HostSettingsCardView(card.view()))
+    expect(markup).toContain('<dt>pid</dt><dd>777</dd>')
+    expect(markup).not.toContain('tui-7f3a')
+    expect(markup).not.toContain('old Host error')
+    await act(async () => oldAnswer.reject(new Error('late old Host failure')))
+    expect(card.view().inspectError).toBeUndefined()
+    await act(async () =>
+      newAnswer.resolve({
+        ok: true,
+        ...inspection({ snapshot: replacement, host: replacementHost })
+      })
+    )
+
+    markup = renderToStaticMarkup(HostSettingsCardView(card.view()))
+    expect(markup).toContain('<dt>pid</dt><dd>777</dd>')
+    expect(markup).toContain('No clients are attached.')
+    expect(markup).not.toContain('late old Host failure')
   })
 })
 
@@ -487,17 +866,5 @@ describe('HostSettingsCard · source pin', () => {
 
     expect(viewAttributes.get('snapshot')).toBe(`{${stateFromSeed('initialSnapshot')}}`)
     expect(viewAttributes.get('inspect')).toBe(`{${stateFromSeed('initialInspect')}}`)
-
-    // The container's glue: every click goes through the plan, and a dispatch
-    // sends exactly the action that was planned.
-    const plans = probe.callsTo(body, 'planHostCardAction')
-    expect(plans.map((call) => probe.argText(call, 0))).toEqual(['action'])
-    expect(plans.map((call) => probe.argText(call, 1))).toEqual(['liveRuns'])
-    const counts = probe.callsTo(body, 'countLiveHostRuns')
-    expect(counts.map((call) => [probe.argText(call, 0), probe.argText(call, 1)])).toEqual([
-      ['projection', 'inspect?.host ?? null']
-    ])
-    const sets = probe.callsTo(body, 'set')
-    expect(sets.map((call) => probe.argText(call, 0))).toEqual(['action'])
   })
 })

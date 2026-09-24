@@ -19,8 +19,8 @@
  *
  * RESTART CONFIRMS WHILE RUNS ARE LIVE OR UNCOUNTED, by the rule of the
  * menu's Restart Host (`createHostRestartAction`): the Host's own live-work
- * count when its status is known, else the projected runs whose provider
- * outcome is still `running` (the update-restart barrier's rule), and a count
+ * count read when Restart is clicked and the current projected runs whose
+ * provider outcome is still `running`, taking the larger count. A count
  * neither source can give asks too.
  *
  * AN ABSENT FACT IS NEVER AN ERROR. An inspect answer may carry no Host status
@@ -148,19 +148,39 @@ function describeHostClients(
 }
 
 /**
- * Live runs on the Host, read as the menu's Restart Host reads them
- * (`countHostLiveRuns`): the Host's own live-work count when its status is
- * known, else the projected runs whose provider outcome is still `running`
- * (the update-restart barrier's rule), else null.
+ * Either source can see work before the other. Never let one source's zero
+ * erase live work the other already knows about; absent counts stay unknown.
  */
 export function countLiveHostRuns(
   projection: HostProjectionState,
   host: HostStatusProjection | null
 ): number | null {
-  if (host) return host.liveWork.runs
-  return projection.projection
+  const projected = projection.projection
     ? projection.projection.runs.filter((run) => run.providerOutcome === 'running').length
     : null
+  return host ? Math.max(host.liveWork.runs, projected ?? 0) : projected
+}
+
+/** An inspection can describe only the running lifecycle that supplied it. */
+function currentHostInspection(
+  snapshot: HostLifecycleSnapshot | null,
+  inspect: HostLifecycleInspection | null
+): HostLifecycleInspection | null {
+  if (snapshot?.phase !== 'running' || inspect?.snapshot.phase !== 'running') return null
+  const identity = snapshot.host
+  const inspectedIdentity = inspect.snapshot.host
+  if (!identity || !inspectedIdentity) {
+    // The in-process Host has no lifecycle identity; a revision change then
+    // invalidates the entire old answer instead of guessing its process.
+    return !identity && !inspectedIdentity && snapshot.revision === inspect.snapshot.revision
+      ? inspect
+      : null
+  }
+  const matches = (candidate: { pid: number; startedAt: string; hostId: string }): boolean =>
+    candidate.pid === identity.pid &&
+    candidate.startedAt === identity.startedAt &&
+    candidate.hostId === identity.hostId
+  return matches(inspectedIdentity) && (!inspect.host || matches(inspect.host)) ? inspect : null
 }
 
 export type HostCardActionPlan =
@@ -271,17 +291,20 @@ export function HostSettingsCardView({
   onCancelConfirm,
   onRefresh
 }: HostSettingsCardViewProps): React.JSX.Element {
-  const host = inspect?.host ?? null
+  const currentInspect = currentHostInspection(snapshot, inspect)
+  const host = currentInspect?.host ?? null
   // The snapshot's identity block is the pid before the first inspect, and
   // only while the Host runs: a stopped Host's last pid is not a live fact.
   const identity = snapshot?.phase === 'running' ? snapshot.host : undefined
-  const missing = describeMissingHostFact(snapshot, inspect, inspectError)
+  const visibleInspectError =
+    snapshot?.phase === 'running' && (!inspect || currentInspect) ? inspectError : undefined
+  const missing = describeMissingHostFact(snapshot, currentInspect, visibleInspectError)
   const pid = host?.pid ?? identity?.pid
   const payload = host ? host.payloadVersion : identity?.payloadVersion
   const control = describeHostLifecycleControl(snapshot, pending !== null, lifecycleError)
   const buttons = describeHostCardButtons(snapshot, pending)
   const clients = host ? describeHostClients(host.clients) : null
-  const lease = inspect ? describeHostAppLease(inspect.lease) : missing
+  const lease = currentInspect ? describeHostAppLease(currentInspect.lease) : missing
 
   return (
     <div className="settings-host-page">
@@ -295,7 +318,7 @@ export function HostSettingsCardView({
           </span>
         </div>
         <p className="settings-hint">{HOST_LEASE_LIFETIME_NOTE}</p>
-        {inspect?.lease?.mode === 'legacy' ? (
+        {currentInspect?.lease?.mode === 'legacy' ? (
           <p className="settings-host-note" role="note">
             This Host predates lease support. Restart it to upgrade.
           </p>
@@ -392,10 +415,10 @@ export function HostSettingsCardView({
             Host control is unavailable: {lifecycleError}
           </p>
         ) : null}
-        {inspectError ? (
+        {visibleInspectError ? (
           <p className="settings-hint" role="status">
-            Live Host status is unavailable: {inspectError}
-            {inspect ? ' Showing the last answer.' : ''}
+            Live Host status is unavailable: {visibleInspectError}
+            {currentInspect ? ' Showing the last answer.' : ''}
           </p>
         ) : null}
       </section>
@@ -479,44 +502,83 @@ export function HostSettingsCard({
   const [actionError, setActionError] = useState<string | undefined>(undefined)
   const [pending, setPending] = useState<HostLifecycleAction | null>(null)
   const [confirm, setConfirm] = useState<string | null>(null)
+  // Async reads use the latest event immediately; displayed facts still come
+  // only from React state, including the declarative first paint above.
+  const [reads] = useState(() => ({
+    snapshot: initialSnapshot,
+    generation: 0,
+    actionPending: false,
+    mounted: true
+  }))
   // Bumped by a lifecycle event, a finished action or Refresh; each bump asks
   // main for a fresh inspect and retires the answer to the previous one.
   const [inspectRequest, setInspectRequest] = useState(0)
 
+  const acceptSnapshot = (next: HostLifecycleSnapshot): boolean => {
+    const current = reads.snapshot
+    if (newerSnapshot(current, next) !== next) return false
+    reads.snapshot = next
+    setSnapshot(next)
+    if (
+      current?.revision !== next.revision ||
+      current.phase !== next.phase ||
+      current.host?.pid !== next.host?.pid ||
+      current.host?.startedAt !== next.host?.startedAt ||
+      current.host?.hostId !== next.host?.hostId
+    ) {
+      reads.generation += 1
+      setInspect(null)
+      setInspectError(undefined)
+      setActionError(undefined)
+      setConfirm(null)
+    }
+    return true
+  }
+
   useEffect(() => {
     let alive = true
+    reads.mounted = true
     const unsubscribe = client.subscribe((next) => {
       if (!alive) return
-      setSnapshot((current) => newerSnapshot(current, next))
-      setInspectRequest((count) => count + 1)
+      if (acceptSnapshot(next)) {
+        setLifecycleError(undefined)
+        setInspectRequest((count) => count + 1)
+      }
     })
+    const requestedRevision = reads.snapshot?.revision
     void client.status().then(
       (next) => {
         if (!alive) return
-        setSnapshot((current) => newerSnapshot(current, next))
+        if (acceptSnapshot(next)) setInspectRequest((count) => count + 1)
         setLifecycleError(undefined)
       },
       (error: unknown) => {
-        if (alive) setLifecycleError(errorMessage(error))
+        if (alive && reads.snapshot?.revision === requestedRevision) {
+          setLifecycleError(errorMessage(error))
+        }
       }
     )
     return () => {
       alive = false
+      reads.mounted = false
+      reads.generation += 1
       unsubscribe()
     }
   }, [client])
 
   useEffect(() => {
     let alive = true
+    const generation = ++reads.generation
     void client.inspect().then(
       (next) => {
-        if (!alive) return
-        setSnapshot((current) => newerSnapshot(current, next.snapshot))
-        setInspect(next)
+        if (!alive || generation !== reads.generation || !acceptSnapshot(next.snapshot)) return
+        setInspect(currentHostInspection(reads.snapshot, next))
         setInspectError(undefined)
       },
       (error: unknown) => {
-        if (alive) setInspectError(errorMessage(error))
+        if (alive && generation === reads.generation && reads.snapshot?.phase === 'running') {
+          setInspectError(errorMessage(error))
+        }
       }
     )
     return () => {
@@ -524,31 +586,60 @@ export function HostSettingsCard({
     }
   }, [client, inspectRequest])
 
-  const liveRuns = countLiveHostRuns(projection, inspect?.host ?? null)
-
   const requestAction = (action: HostLifecycleAction, confirmed: boolean): void => {
-    if (pending !== null) return
-    const plan = planHostCardAction(action, liveRuns, confirmed)
-    if (plan.kind === 'confirm') {
-      setConfirm(plan.message)
-      return
-    }
-    setConfirm(null)
-    setPending(action)
+    if (pending !== null || reads.actionPending) return
+    reads.actionPending = true
     setActionError(undefined)
-    void client
-      .set(action)
-      .then((result) => {
-        const next = result.snapshot
-        if (next) setSnapshot((current) => newerSnapshot(current, next))
+    void (async () => {
+      let dispatched = false
+      try {
+        if (action === 'restart' && !confirmed) {
+          const target = reads.snapshot
+          if (target?.phase !== 'running') return
+          const generation = ++reads.generation
+          let fresh: HostLifecycleInspection | null = null
+          try {
+            const next = await client.inspect()
+            if (!reads.mounted || generation !== reads.generation) return
+            // Accepting the answer may itself advance the lifecycle and invalidate this click.
+            if (!acceptSnapshot(next.snapshot) || generation !== reads.generation) return
+            fresh = currentHostInspection(target, next)
+            if (!fresh) return
+            setInspect(fresh)
+            setInspectError(undefined)
+          } catch (error) {
+            if (!reads.mounted || generation !== reads.generation) return
+            setInspectError(errorMessage(error))
+          }
+          const liveRuns = countLiveHostRuns(store?.getState() ?? projection, fresh?.host ?? null)
+          const plan = planHostCardAction(
+            action,
+            fresh === null && liveRuns === 0 ? null : liveRuns,
+            confirmed
+          )
+          if (plan.kind === 'confirm') {
+            setConfirm(plan.message)
+            return
+          }
+        }
+        setConfirm(null)
+        setPending(action)
+        dispatched = true
+        const result = await client.set(action)
+        if (!reads.mounted) return
+        if (result.snapshot) acceptSnapshot(result.snapshot)
         if (!result.ok) setActionError(result.error)
         void store?.refresh().catch(() => undefined)
-      })
-      .catch((error: unknown) => setActionError(errorMessage(error)))
-      .finally(() => {
-        setPending(null)
-        setInspectRequest((count) => count + 1)
-      })
+      } catch (error) {
+        if (reads.mounted) setActionError(errorMessage(error))
+      } finally {
+        reads.actionPending = false
+        if (reads.mounted) {
+          setPending(null)
+          if (dispatched) setInspectRequest((count) => count + 1)
+        }
+      }
+    })()
   }
 
   return (
